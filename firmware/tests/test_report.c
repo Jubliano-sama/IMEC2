@@ -54,6 +54,10 @@ static void test_range_transport_sequence_is_unique_across_retry_attempts(void)
 
 static void test_click_report_packet_counts_as_click(void)
 {
+    const uint64_t participant_anchor_ids[] = {
+        UINT64_C(0x5555666677778888),
+        UINT64_C(0x6666777788889999),
+    };
     const int32_t distance_samples[] = {4550, 4567, 4580};
     const uint8_t round_indices[] = {0u, 1u, 2u};
     const uint64_t sequence_start_timestamps_ms[] = {
@@ -82,6 +86,10 @@ static void test_click_report_packet_counts_as_click(void)
         .range_round_indices = round_indices,
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = 3u,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count =
+            (uint8_t)(sizeof(participant_anchor_ids) /
+                      sizeof(participant_anchor_ids[0])),
         .diagnostics = &diagnostics,
     };
     uint8_t payload[256];
@@ -158,6 +166,12 @@ static void test_click_report_packet_counts_as_click(void)
                     &value, &value_len) == PROTO_ERR_NOT_FOUND);
     assert(tlv_find(payload, payload_len, TLV_ANCHOR_DIAG_BYTES, &value, &value_len) ==
            PROTO_ERR_NOT_FOUND);
+
+    assert(tlv_find(payload, payload_len, TLV_PEER_ID_LIST,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(participant_anchor_ids));
+    assert(proto_get_u64_le(&value[0]) == participant_anchor_ids[0]);
+    assert(proto_get_u64_le(&value[8]) == participant_anchor_ids[1]);
 }
 
 static void test_diagnostic_range_packet_is_not_click(void)
@@ -701,15 +715,40 @@ static void test_rejects_missing_sample_data(void)
     assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) == PROTO_ERR_MALFORMED);
 }
 
-static void test_max_single_packet_range_samples_fit_one_uwb_mesh_frame(void)
+static void test_four_sample_counted_click_fits_two_mesh_fragments(void)
 {
-    int32_t distance_samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
-    uint8_t round_indices[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
-    uint64_t sequence_start_timestamps_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
-    const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0x10u, 0x11u, 0x12u, 0x20u, 0x21u, 0x22u};
-    const struct range_report_fields fields = {
-        .clicker_id = 0x1111222233334444ull,
-        .anchor_id = 0x5555666677778888ull,
+    const uint64_t participant_anchor_ids[] = {
+        UINT64_C(0x1111222233334444),
+        UINT64_C(0x3333444455556666),
+        UINT64_C(0x5555666677778888),
+        UINT64_C(0x777788889999aaaa),
+    };
+    int32_t distance_samples[] = {4500, 4501, 4502, 4503};
+    uint8_t round_indices[4u];
+    uint64_t sequence_start_timestamps_ms[4u];
+    uint8_t clicker_diag[RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET] = {0};
+    const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {
+        0x10u, 0x11u, 0x12u, 0x20u, 0x21u, 0x22u,
+    };
+    const struct range_report_diagnostics diagnostics = {
+        .status_flags = RANGE_DIAG_CLICKER_PRESENT |
+                        RANGE_DIAG_ANCHOR_PRESENT,
+        .burst_id = 0x12345678u,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .burst_duration_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
+        .click_latency_ms = 20u,
+        .uwb_awake_time_us = 30000u,
+        .diag_bytes_captured = sizeof(clicker_diag) + sizeof(cir_sample),
+        .diag_bytes_transmitted = sizeof(clicker_diag) + sizeof(cir_sample),
+        .report_fragment_count = 2u,
+        .phy_config_id = UWB_CHANNEL_WAKE_CONTACT,
+        .clicker_diag = clicker_diag,
+        .clicker_diag_len = sizeof(clicker_diag),
+        .click_latency_present = true,
+    };
+    struct range_report_fields fields = {
+        .clicker_id = UINT64_C(0xaaaa000000000001),
+        .anchor_id = UINT64_C(0x5555666677778888),
         .event_seq = 123u,
         .timestamp_ms = 987654u,
         .distance_mm = 4567,
@@ -720,48 +759,101 @@ static void test_max_single_packet_range_samples_fit_one_uwb_mesh_frame(void)
         .distance_samples_mm = distance_samples,
         .range_round_indices = round_indices,
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
-        .sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET,
+        .sample_count = 4u,
+        .distance_sample_count = 4u,
+        .burst_id = 0x12345678u,
+        .burst_id_present = true,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count = 4u,
+        .diagnostics = &diagnostics,
     };
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    size_t payload_len = 0u;
-    struct proto_packet packet = {0};
-    struct mesh_outbound outbound = {
-        .next_hop_id = 0x9999888877776666ull,
-    };
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    struct proto_packet packet = {0};
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    size_t payload_len = 0u;
     size_t frame_len = 0u;
 
-    for (uint16_t i = 0u; i < RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET; i++) {
-        distance_samples[i] = 4500 + (int32_t)i;
+    fill_sample_metadata(round_indices, sequence_start_timestamps_ms, 4u, 0u);
+    for (size_t i = 0u; i < sizeof(clicker_diag); i++) {
+        clicker_diag[i] = (uint8_t)i;
     }
-    fill_sample_metadata(round_indices,
-                         sequence_start_timestamps_ms,
-                         RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET,
-                         0u);
 
-    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) == PROTO_OK);
-    assert(payload_len <= PACKET_MAX_PAYLOAD_LEN);
+    /* This is the app builder's pessimistic first attempt. It shrinks the
+     * diagnostic-heavy first chunk until it fits, without losing a sample. */
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_ERR_NO_SPACE);
+
+    fields.distance_sample_count = 1u;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
     assert(report_init_click_packet(&packet,
                                     fields.anchor_id,
-                                    outbound.next_hop_id,
+                                    UINT64_C(0x9999888877776666),
                                     proto_click_report_session_id(
                                         fields.clicker_id, fields.event_seq),
                                     1u,
                                     (uint8_t)payload_len) == PROTO_OK);
-
-    outbound.packet = packet;
-    outbound.payload_len = (uint8_t)payload_len;
-    memcpy(outbound.payload, payload, payload_len);
-
-    assert(uwb_mesh_frame_encode(0x494D4543u,
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_SAMPLE_INDEX,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == 2u && proto_get_u16_le(value) == 0u);
+    assert(tlv_find(payload, payload_len, TLV_DISTANCE_SAMPLES_MM,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(distance_samples[0]));
+    assert((int32_t)proto_get_u32_le(value) == distance_samples[0]);
+    assert(uwb_mesh_frame_encode(UINT32_C(0x494d4543),
                                  fields.anchor_id,
-                                 outbound.next_hop_id,
-                                 &outbound.packet,
-                                 outbound.payload,
+                                 UINT64_C(0x9999888877776666),
+                                 &packet,
+                                 payload,
                                  frame,
                                  sizeof(frame),
                                  &frame_len) == PROTO_OK);
-    assert(frame_len <= UWB_MESH_MAX_FRAME_LEN);
+
+    fields.distance_samples_mm = &distance_samples[1];
+    fields.range_round_indices = &round_indices[1];
+    fields.sequence_start_timestamps_ms = &sequence_start_timestamps_ms[1];
+    fields.sample_index = 1u;
+    fields.distance_sample_count = 3u;
+    fields.omit_rsl = true;
+    fields.omit_cir = true;
+    fields.diagnostics = NULL;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
+    assert(report_init_click_packet(&packet,
+                                    fields.anchor_id,
+                                    UINT64_C(0x9999888877776666),
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
+                                    2u,
+                                    (uint8_t)payload_len) == PROTO_OK);
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_SAMPLE_INDEX,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == 2u && proto_get_u16_le(value) == 1u);
+    assert(tlv_find(payload, payload_len, TLV_DISTANCE_SAMPLES_MM,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == 3u * sizeof(distance_samples[0]));
+    for (uint8_t i = 0u; i < 3u; i++) {
+        assert((int32_t)proto_get_u32_le(
+                   &value[(size_t)i * sizeof(uint32_t)]) ==
+               distance_samples[i + 1u]);
+    }
+    frame_len = 0u;
+    assert(uwb_mesh_frame_encode(UINT32_C(0x494d4543),
+                                 fields.anchor_id,
+                                 UINT64_C(0x9999888877776666),
+                                 &packet,
+                                 payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &frame_len) == PROTO_OK);
 }
 
 static void test_first_fragmented_range_chunk_has_single_diagnostics(void)
@@ -1030,6 +1122,10 @@ static void test_click_report_adds_optional_detection_attempt_metadata(void)
 
 static void test_click_payload_semantic_validation(void)
 {
+    const uint64_t participant_anchor_ids[] = {
+        UINT64_C(0x1111),
+        UINT64_C(0x2222),
+    };
     const int32_t samples[] = {1234};
     const uint8_t rounds[] = {0u};
     const uint64_t starts[] = {UINT64_C(1000)};
@@ -1045,6 +1141,8 @@ static void test_click_payload_semantic_validation(void)
         .range_round_indices = rounds,
         .sequence_start_timestamps_ms = starts,
         .sample_count = 1u,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count = 2u,
         .burst_id = 9u,
         .burst_id_present = true,
         .omit_rsl = true,
@@ -1135,6 +1233,163 @@ static void test_click_payload_semantic_validation(void)
            PROTO_ERR_MALFORMED);
 }
 
+static void append_raw_participant_list(uint8_t *payload,
+                                        size_t payload_cap,
+                                        size_t *payload_len,
+                                        const uint64_t *participant_ids,
+                                        size_t participant_count)
+{
+    uint8_t encoded[5u * sizeof(uint64_t)];
+
+    assert(participant_count <= 5u);
+    for (size_t i = 0u; i < participant_count; i++) {
+        proto_put_u64_le(&encoded[i * sizeof(uint64_t)], participant_ids[i]);
+    }
+    assert(tlv_append_bytes(payload,
+                            payload_cap,
+                            payload_len,
+                            TLV_PEER_ID_LIST,
+                            encoded,
+                            (uint8_t)(participant_count * sizeof(uint64_t))) ==
+           PROTO_OK);
+}
+
+static void test_counted_click_requires_canonical_participant_anchor_list(void)
+{
+    const uint64_t reporter_id = UINT64_C(0x2222);
+    const uint64_t valid_two[] = {
+        UINT64_C(0x1111),
+        UINT64_C(0x2222),
+    };
+    const uint64_t valid_four[] = {
+        UINT64_C(0x1111),
+        UINT64_C(0x2222),
+        UINT64_C(0x3333),
+        UINT64_C(0x4444),
+    };
+    const uint64_t one_id[] = {reporter_id};
+    const uint64_t five_ids[] = {
+        UINT64_C(0x1111),
+        UINT64_C(0x2222),
+        UINT64_C(0x3333),
+        UINT64_C(0x4444),
+        UINT64_C(0x5555),
+    };
+    const uint64_t zero_id[] = {0u, reporter_id};
+    const uint64_t duplicate_id[] = {reporter_id, reporter_id};
+    const uint64_t missing_reporter[] = {
+        UINT64_C(0x1111),
+        UINT64_C(0x3333),
+    };
+    const uint64_t out_of_order[] = {
+        UINT64_C(0x3333),
+        reporter_id,
+    };
+    const int32_t samples[] = {1234};
+    const uint8_t rounds[] = {0u};
+    const uint64_t starts[] = {UINT64_C(1000)};
+    struct range_report_fields fields = {
+        .clicker_id = UINT64_C(0xaaaa),
+        .anchor_id = reporter_id,
+        .event_seq = 21u,
+        .timestamp_ms = 1000u,
+        .distance_mm = 1234,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+        .distance_samples_mm = samples,
+        .range_round_indices = rounds,
+        .sequence_start_timestamps_ms = starts,
+        .sample_count = 1u,
+        .burst_id = 21u,
+        .burst_id_present = true,
+        .omit_rsl = true,
+        .omit_cir = true,
+    };
+    struct proto_packet packet;
+    uint8_t base[192];
+    uint8_t payload[256];
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    size_t base_len = 0u;
+    size_t payload_len;
+
+    assert(report_append_range_tlvs(base, sizeof(base), &base_len, &fields) ==
+           PROTO_OK);
+    assert(report_init_click_packet(&packet,
+                                    reporter_id,
+                                    UINT64_C(0x9999),
+                                    proto_click_report_session_id(
+                                        fields.clicker_id,
+                                        fields.event_seq),
+                                    1u,
+                                    (uint8_t)base_len) == PROTO_OK);
+    assert(report_validate_click_payload(&packet, base, base_len) ==
+           PROTO_ERR_MALFORMED);
+
+    fields.participant_anchor_ids = valid_two;
+    fields.participant_anchor_count = 2u;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_PEER_ID_LIST,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(valid_two));
+    assert(proto_get_u64_le(&value[0]) == valid_two[0]);
+    assert(proto_get_u64_le(&value[8]) == valid_two[1]);
+
+    fields.participant_anchor_ids = valid_four;
+    fields.participant_anchor_count = 4u;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_OK);
+
+#define ASSERT_RAW_PARTICIPANTS_REJECTED(ids_)                                \
+    do {                                                                      \
+        memcpy(payload, base, base_len);                                      \
+        payload_len = base_len;                                               \
+        append_raw_participant_list(payload, sizeof(payload), &payload_len,   \
+                                    (ids_),                                   \
+                                    sizeof(ids_) / sizeof((ids_)[0]));        \
+        packet.payload_len = (uint16_t)payload_len;                           \
+        assert(report_validate_click_payload(&packet, payload, payload_len) ==\
+               PROTO_ERR_MALFORMED);                                         \
+    } while (0)
+
+    ASSERT_RAW_PARTICIPANTS_REJECTED(one_id);
+    ASSERT_RAW_PARTICIPANTS_REJECTED(five_ids);
+    ASSERT_RAW_PARTICIPANTS_REJECTED(zero_id);
+    ASSERT_RAW_PARTICIPANTS_REJECTED(duplicate_id);
+    ASSERT_RAW_PARTICIPANTS_REJECTED(missing_reporter);
+    ASSERT_RAW_PARTICIPANTS_REJECTED(out_of_order);
+#undef ASSERT_RAW_PARTICIPANTS_REJECTED
+
+    memcpy(payload, base, base_len);
+    payload_len = base_len;
+    assert(tlv_append_bytes(payload, sizeof(payload), &payload_len,
+                            TLV_PEER_ID_LIST,
+                            (const uint8_t *)"bad", 3u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+
+    fields.participant_anchor_ids = valid_two;
+    fields.participant_anchor_count = 2u;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
+    append_raw_participant_list(payload, sizeof(payload), &payload_len,
+                                valid_two, 2u);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_click_payload_semantic_validation_accepts_cir_fragment(void)
 {
     const uint8_t cir[] = {1u, 2u, 3u, 4u};
@@ -1190,12 +1445,13 @@ int main(void)
     test_anchor_heartbeat_report_is_best_effort();
     test_rejects_bad_range_fields();
     test_rejects_missing_sample_data();
-    test_max_single_packet_range_samples_fit_one_uwb_mesh_frame();
+    test_four_sample_counted_click_fits_two_mesh_fragments();
     test_first_fragmented_range_chunk_has_single_diagnostics();
     test_later_fragmented_range_chunk_omits_single_diagnostics();
     test_partial_cir_fragment_fits_and_encodes_reassembly_metadata();
     test_click_report_adds_optional_detection_attempt_metadata();
     test_click_payload_semantic_validation();
+    test_counted_click_requires_canonical_participant_anchor_list();
     test_click_payload_semantic_validation_accepts_cir_fragment();
     return 0;
 }

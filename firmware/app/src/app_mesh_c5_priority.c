@@ -344,6 +344,29 @@ bool app_mesh_c5_route_wake_should_listen(
            app_mesh_c5_wake_followup_is_control(claim_flags);
 }
 
+bool app_mesh_c5_connected_gap_route_handoff_required(
+    uint64_t source_id,
+    uint64_t gateway_id,
+    uint8_t claim_flags,
+    bool require_relayed_route_req,
+    bool require_relayed_gateway_control)
+{
+    /*
+     * The connected-gap receiver uses the standard wake PHY.  Every allowed
+     * non-click wake announces an extended-PHR payload next, including
+     * EVENT_PROPOSE timing repair wakes which deliberately do not carry the
+     * CONTROL_FOLLOWUP bit.  Hand those wakes to the extended listener before
+     * continuing the standard-PHR scan.
+     */
+    return app_mesh_c5_wake_followup_uses_extended_phr(claim_flags) &&
+           app_mesh_c5_route_wake_claim_allowed(
+               source_id,
+               gateway_id,
+               claim_flags,
+               require_relayed_route_req,
+               require_relayed_gateway_control);
+}
+
 bool app_mesh_c5_gateway_control_copy_allowed(
     uint64_t source_id,
     uint64_t previous_hop_id,

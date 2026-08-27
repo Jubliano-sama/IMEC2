@@ -23,10 +23,18 @@ extern "C" {
     (MESH_RELAY_ANCHOR_DOWNLINK_ROUTES - MESH_RELAY_DOWNLINK_ROUTES)
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX MESH_CONNECTED_MAX_ANCHORS
-#define MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN 4u
-#define MESH_RELAY_GATEWAY_ACK_CAPACITY \
+#define MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN 4u
+#define MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN \
+    MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH
+#define MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY \
     (MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX * \
-     MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN)
+     MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN)
+#define MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY \
+    (MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN - \
+     MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN)
+#define MESH_RELAY_GATEWAY_ACK_CAPACITY \
+    (MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY + \
+     MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY)
 /* A failed pair can require ABORT results from both endpoints while each
  * endpoint's ordinary replay partition is still occupied by exact terminal
  * proof debt. Keep those two cleanup identities outside the shared ordinary
@@ -274,9 +282,9 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_DELIVER_LOCAL = 1u << 1,
     MESH_RELAY_ACTION_FORWARD = 1u << 2,
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
-    /* An exact next-hop ACK transferred an assignment response into the
-     * parent's RAM custody. The source may retire its Channel-9 exchange;
-     * TABLE END or ABORT still decides the provisional assignment. */
+    /* An exact next-hop ACK transferred an eligible gateway-bound packet
+     * into the parent's RAM custody. The source may retire its Channel-9
+     * exchange; TABLE END or ABORT still decides a provisional assignment. */
     MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED = 1u << 4,
     MESH_RELAY_ACTION_DROP = 1u << 6,
     /* The original gateway ACK was authenticated. The immutable source packet
@@ -330,6 +338,16 @@ struct mesh_outbound {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
     uint16_t payload_len;
     uint8_t radio_channel;
+    uint8_t flood_retry_count;
+    bool queued_at_valid;
+    bool earliest_tx_valid;
+    /*
+     * Optional custody provenance for a response handed to another owner.
+     * Ordinary packets leave this zero. Keep the 32-bit member here so the
+     * following 64-bit custody IDs do not leave a repeated alignment hole in
+     * every queued outbound record.
+     */
+    uint32_t handoff_owner_generation;
     uint64_t next_hop_id;
     /*
      * Physical child that handed this transit packet to the local relay.
@@ -338,18 +356,8 @@ struct mesh_outbound {
      * edge instead of consulting a newer or shorter mutable downlink.
      */
     uint64_t ingress_previous_hop_id;
-    /*
-     * Optional custody provenance for a response handed to another owner.
-     * Ordinary packets leave these fields zero.  A transit gateway ACK keeps
-     * the handoff owner generation beside the queued bytes so a later commit
-     * cannot infer its physical edge from mutable route state.
-     */
-    uint32_t handoff_owner_generation;
     uint32_t queued_at_ms;
     uint32_t earliest_tx_ms;
-    uint8_t flood_retry_count;
-    bool queued_at_valid;
-    bool earliest_tx_valid;
 };
 
 struct mesh_gateway_route_adv_snapshot {
@@ -418,10 +426,13 @@ _Static_assert(sizeof(struct mesh_command_replay_window) == 48u,
  * External gateway-only acceptance history. The production gateway overlays
  * this store on anchor-only batch state instead of charging every relay role.
  * Semantic identities remain exact terminal-proof authority after their
- * phase deadline. Each source has a fixed four-identity ordinary partition;
- * the two serialized pair endpoints share two ABORT-result reserve entries.
- * A fifth ordinary identity may replace only a confirmed source-local
- * tombstone.
+ * phase deadline. Each source is guaranteed four ordinary identities, while
+ * a shared overflow lets one source retain its complete 16-report queue.
+ * Overflow admission is bounded separately so a noisy source cannot consume
+ * another roster member's four guaranteed identities. The two serialized
+ * pair endpoints share two ABORT-result reserve entries. Once a source reaches
+ * its 16-identity bound, another ordinary identity may replace only a
+ * confirmed source-local tombstone.
  * Assignment candidates use normal partitions within the append-only
  * 50-member roster bound, never a 51st origin. A candidate identity is
  * reserved only after the gateway assignment state machine validates the
@@ -478,13 +489,23 @@ struct mesh_anchor_downlink_store {
 
 _Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 44u,
                "gateway ACK identity must retain a full semantic commitment");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 26u,
+_Static_assert(MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN >=
+                   MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN,
+               "gateway ACK per-origin capacity must cover its guarantee");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ==
+                   MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH,
+               "gateway ACK history must cover one complete anchor backlog");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY == 200u,
+               "gateway ACK history must guarantee four slots to 50 members");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY == 12u,
+               "gateway ACK overflow must extend one member from four to 16");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 27u,
                "gateway ACK candidate bitmap must cover every identity");
-_Static_assert(sizeof(struct mesh_gateway_ack_store) == 9544u,
+_Static_assert(sizeof(struct mesh_gateway_ack_store) == 10072u,
                "gateway ACK store must fit role-overlaid static storage");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u,
-               "gateway ACK history must cover 50 four-packet members");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 202u,
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 212u,
+               "gateway ACK history must preserve fleet and backlog bounds");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 214u,
                "gateway ACK history must reserve both pair cleanup results");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY <= UINT8_MAX,
                "per-origin identity counts must not overflow");
@@ -560,6 +581,9 @@ struct mesh_pending_tx {
     bool gateway_ack_confirm_pending;
     /* Bitset: newer-epoch recovery authorization and pre-replay quarantine. */
     uint8_t gateway_ack_recovery_flags;
+    /* Consecutive missed HOP_ACKs for this exact ordinary report and parent.
+     * Route history must not make a fresh packet skip its bounded retries. */
+    uint8_t parent_hop_ack_miss_count;
 };
 
 struct mesh_relay_outbox_snapshot {
@@ -809,6 +833,13 @@ void mesh_relay_remove_direct_gateway_route(struct mesh_relay *relay);
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
+int mesh_relay_select_next_hop_for_packet(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms,
+    uint64_t *next_hop_id);
 uint16_t mesh_route_reply_nonce(uint64_t origin_id,
                                 uint64_t target_id,
                                 uint32_t session_id,

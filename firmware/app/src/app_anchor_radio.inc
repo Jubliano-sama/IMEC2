@@ -1,7 +1,7 @@
 /*
- * A mesh handoff reserves report custody before this anchor enters RF.  Later
- * Channel-5 claims can still be arbitrated for an ordinary scan, but they
- * must not replace an identity whose report reservation is already live.
+ * A live report reservation may follow a better click only before discovery,
+ * while it still owns capacity but no report bytes.  Same-epoch copies remain
+ * admissible and a different claim must actually outrank the reserved one.
  */
 static bool anchor_claim_collection_candidate_allowed(
     const struct uwb_anchor_epoch *epoch,
@@ -27,7 +27,16 @@ static bool anchor_claim_collection_candidate_allowed(
     if (same_epoch != NULL) {
         *same_epoch = matches;
     }
-    return !admitted_handoff_identity_frozen || matches;
+    return !admitted_handoff_identity_frozen || matches ||
+           uwb_claim_precedence_compare(
+               claim->attempt_index,
+               claim->priority_id,
+               claim->clicker_id,
+               claim->click_event_id,
+               epoch->attempt_index,
+               epoch->priority_id,
+               epoch->clicker_id,
+               epoch->click_event_id) > 0;
 }
 
 #if !defined(APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY)
@@ -653,6 +662,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     {
         int report_ret =
             build_uwb_schedule_report_if_relevant(&anchor_uwb_session,
+                                                  schedule,
                                                   schedule->flags,
                                                   &window_report);
 
@@ -682,6 +692,89 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     return retained_sleep_us;
 }
 
+static int anchor_consider_active_click_claim(
+    struct uwb_wake_claim_frame *selected_claim,
+    int64_t *selected_rx_ms,
+    uint8_t *selected_quality,
+    const struct uwb_wake_claim_frame *claim,
+    int64_t claim_rx_ms,
+    uint8_t claim_quality,
+    bool report_reservation_live,
+    enum uwb_anchor_claim_decision *decision,
+    bool *selection_changed)
+{
+    struct uwb_anchor_session candidate_session;
+    bool same_epoch;
+    int ret;
+
+    if (selected_claim == NULL || selected_rx_ms == NULL ||
+        selected_quality == NULL || claim == NULL || decision == NULL ||
+        selection_changed == NULL) {
+        return -EINVAL;
+    }
+    *selection_changed = false;
+    if (!anchor_claim_collection_candidate_allowed(
+            &anchor_uwb_session.epoch,
+            claim,
+            report_reservation_live,
+            &same_epoch)) {
+        return PROTO_ERR_BUSY;
+    }
+
+    candidate_session = anchor_uwb_session;
+    ret = uwb_anchor_accept_wake_claim(&candidate_session,
+                                       claim,
+                                       (uint32_t)claim_rx_ms,
+                                       decision);
+    if (ret != PROTO_OK) {
+        anchor_uwb_session = candidate_session;
+        return ret;
+    }
+    if (same_epoch) {
+        anchor_uwb_session = candidate_session;
+        if (claim_quality > *selected_quality) {
+            *selected_quality = claim_quality;
+        }
+        return PROTO_OK;
+    }
+
+    if (report_reservation_live) {
+        ret = mesh_range_report_batch_rebind(
+            selected_claim->clicker_id,
+            selected_claim->click_event_id,
+            selected_claim->attempt_index,
+            claim->clicker_id,
+            claim->click_event_id,
+            claim->attempt_index);
+        if (ret < 0) {
+            LOG_ERR("anchor retained current click because empty report reservation could not follow priority claim: ret=%d",
+                    ret);
+            return ret;
+        }
+    }
+
+    ret = app_anchor_click_event_runtime_claim(claim,
+                                               (uint32_t)claim_rx_ms,
+                                               NULL);
+    if (ret < 0) {
+        if (report_reservation_live) {
+            mesh_range_report_batch_abort(claim->clicker_id,
+                                          claim->click_event_id,
+                                          claim->attempt_index);
+        }
+        anchor_click_event_abort_if_needed("priority-claim-phase");
+        uwb_anchor_abort_epoch(&anchor_uwb_session);
+        return -ECANCELED;
+    }
+
+    anchor_uwb_session = candidate_session;
+    *selected_claim = *claim;
+    *selected_rx_ms = claim_rx_ms;
+    *selected_quality = claim_quality;
+    *selection_changed = true;
+    return PROTO_OK;
+}
+
 static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_claim,
                                     uint8_t first_quality,
                                     int64_t first_rx_ms,
@@ -708,6 +801,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     int last_discovery_decode_ret = PROTO_OK;
     int64_t discovery_start_ms;
     int64_t discovery_deadline_ms;
+    int64_t claim_arbitration_deadline_ms;
     enum uwb_anchor_claim_decision decision = UWB_ANCHOR_CLAIM_ACCEPTED;
     enum uwb_anchor_claim_decision selected_decision = UWB_ANCHOR_CLAIM_ACCEPTED;
     bool discover_received = false;
@@ -719,6 +813,20 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     bool click_priority = false;
     uint32_t discovery_late_guard_ms;
     uint32_t preempt_deadline_ms;
+    uint32_t trace_preempt_start_ms = 0u;
+    uint32_t trace_preempt_end_ms = 0u;
+    int trace_preempt_ret = 0;
+    int64_t trace_schedule_arm_ms = -1;
+    int64_t trace_schedule_deadline_ms = -1;
+    int trace_schedule_ret = -EINPROGRESS;
+    int trace_schedule_decode_ret = -EINPROGRESS;
+    int trace_schedule_accept_ret = -EINPROGRESS;
+    uint16_t trace_schedule_frames = 0u;
+    uint16_t trace_schedule_errors = 0u;
+    uint8_t trace_schedule_last_type = 0u;
+    enum dwm3000_rx_failure trace_schedule_last_failure =
+        DWM3000_RX_FAILURE_NONE;
+    bool trace_range_authorized = false;
 
     if (first_claim == NULL) {
         return false;
@@ -744,6 +852,8 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
     selected_claim = *first_claim;
     selected_rx_ms = first_rx_ms;
+    claim_arbitration_deadline_ms =
+        first_rx_ms + UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS;
     ret = uwb_anchor_accept_wake_claim(&anchor_uwb_session,
                                        first_claim,
                                        (uint32_t)first_rx_ms,
@@ -786,7 +896,8 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         struct uwb_wake_claim_frame claim;
         uint8_t quality = 0u;
         int64_t remaining_ms = collect_deadline_ms - k_uptime_get();
-        bool same_epoch;
+        int64_t claim_rx_ms;
+        bool selection_changed;
 
         ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
                                                       frame,
@@ -826,22 +937,17 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             continue;
         }
 
-        if (!anchor_claim_collection_candidate_allowed(
-                &anchor_uwb_session.epoch,
-                &claim,
-                admitted_handoff_identity_frozen,
-                &same_epoch)) {
-            LOG_DBG("anchor retained reserved UWB claim during collection: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx",
-                    (unsigned long long)claim.clicker_id,
-                    claim.click_event_id,
-                    claim.attempt_index,
-                    (unsigned long long)claim.priority_id);
-            continue;
-        }
-        ret = uwb_anchor_accept_wake_claim(&anchor_uwb_session,
-                                           &claim,
-                                           k_uptime_get_32(),
-                                           &decision);
+        claim_rx_ms = k_uptime_get();
+        ret = anchor_consider_active_click_claim(
+            &selected_claim,
+            &selected_rx_ms,
+            &selected_quality,
+            &claim,
+            claim_rx_ms,
+            quality,
+            admitted_handoff_identity_frozen,
+            &decision,
+            &selection_changed);
         LOG_DBG("anchor UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u",
                 (unsigned long long)claim.clicker_id,
                 claim.click_event_id,
@@ -849,33 +955,11 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 (unsigned long long)claim.priority_id,
                 ret,
                 decision);
-        if (ret == PROTO_OK &&
-            (decision == UWB_ANCHOR_CLAIM_ACCEPTED ||
-             decision == UWB_ANCHOR_CLAIM_REPLACED_BY_PRIORITY)) {
-            /*
-             * Keep the first copy's absolute schedule.  Later copies carry
-             * countdowns and may arrive with bounded transport skew; using
-             * each last copy would let that skew accumulate into a missed
-             * discovery window.
-             */
-            if (!same_epoch) {
-                selected_claim = claim;
-                selected_rx_ms = k_uptime_get();
-                selected_quality = quality;
-                ret = app_anchor_click_event_runtime_claim(&claim,
-                                                           k_uptime_get_32(),
-                                                           NULL);
-                if (ret < 0) {
-                    LOG_ERR("anchor priority claim replaced RF epoch but event phase could not restart: ret=%d",
-                            ret);
-                    uwb_anchor_abort_epoch(&anchor_uwb_session);
-                    return false;
-                }
-            } else if (quality > selected_quality) {
-                selected_quality = quality;
-            }
+        if (ret == -ECANCELED) {
+            return false;
+        }
+        if (ret == PROTO_OK) {
             selected_decision = decision;
-        } else {
         }
     }
 
@@ -892,14 +976,47 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     preempt_deadline_ms = (uint32_t)discovery_start_ms;
     click_priority = app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
     anchor_click_window_set_active(click_priority);
-    if (click_priority &&
-        mesh_preempt_for_click_event_until(preempt_deadline_ms) < 0) {
-        anchor_click_window_set_active(false);
-        LOG_ERR("anchor click claim deferred because mesh custody preemption failed");
-        anchor_click_event_abort_if_needed("mesh-preemption");
-        return false;
+    if (click_priority && !admitted_handoff_identity_frozen) {
+        trace_preempt_start_ms = k_uptime_get_32();
+        trace_preempt_ret =
+            mesh_preempt_for_click_event_until(preempt_deadline_ms);
+        trace_preempt_end_ms = k_uptime_get_32();
+        if (trace_preempt_ret < 0) {
+            anchor_click_window_set_active(false);
+            LOG_ERR("anchor click claim deferred because mesh custody preemption failed");
+            anchor_click_event_abort_if_needed("mesh-preemption");
+            if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+                status_debug_printf("DBG_CH_AP2 e=%08x a=%02x d=%08x r=%08x w=%01x\n",
+                                    selected_claim.click_event_id,
+                                    selected_claim.attempt_index,
+                                    preempt_deadline_ms,
+                                    (uint32_t)trace_preempt_ret,
+                                    anchor_click_window_active() ? 1u : 0u);
+            }
+            return false;
+        }
+    } else if (click_priority) {
+        /*
+         * mesh_handoff_anchor_click_claim() completed the deadline-bound
+         * custody preemption before this queued worker was admitted.  The
+         * handoff callback also reserved this exact click's report batch.
+         * Repeating either admission after workqueue/radio setup can reject
+         * an already-owned click merely because its original bridge cutoff
+         * has passed.
+         */
+        trace_preempt_start_ms = k_uptime_get_32();
+        trace_preempt_end_ms = trace_preempt_start_ms;
+        trace_preempt_ret = 0;
+        if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+            status_debug_printf(
+                "DBG_CH_AP_ADMITTED e=%08x a=%02x now=%08x d=%08x\n",
+                selected_claim.click_event_id,
+                selected_claim.attempt_index,
+                trace_preempt_start_ms,
+                preempt_deadline_ms);
+        }
     }
-    if (click_priority) {
+    if (click_priority && !admitted_handoff_identity_frozen) {
         ret = mesh_range_report_batch_reserve_capacity(
             selected_claim.clicker_id,
             selected_claim.click_event_id,
@@ -925,8 +1042,9 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         app_mesh_c5_wake_followup_uses_extended_phr(selected_claim.flags);
     discovery_late_guard_ms = discovery_uses_extended_phr ?
                               MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS :
-                              UWB_DISCOVERY_RX_LATE_GUARD_MS;
-    discovery_deadline_ms = discovery_start_ms + discovery_late_guard_ms;
+                              UWB_CLICK_DISCOVERY_RX_LATE_GUARD_MS;
+    discovery_deadline_ms = MIN(discovery_start_ms + discovery_late_guard_ms,
+                                claim_arbitration_deadline_ms);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_DISC_WAIT now=%u start=%lld deadline=%lld guard=%u listen=%u phr=%s\n",
                             k_uptime_get_32(),
@@ -1020,10 +1138,62 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
             ret = uwb_decode_wake_claim(frame, frame_len, &late_claim);
             if (ret == PROTO_OK) {
-                LOG_DBG("anchor ignored late UWB WAKE_CLAIM while waiting for DISCOVER: clicker=0x%016llx event_seq=%u attempt=%u",
+                int64_t claim_rx_ms = k_uptime_get();
+                bool selection_changed = false;
+
+                if (!app_mesh_c5_wake_claim_requires_anchor_handoff(
+                        late_claim.flags, true)) {
+                    LOG_DBG("anchor ignored non-click WAKE_CLAIM during click discovery wait: clicker=0x%016llx event_seq=%u flags=0x%02x",
+                            (unsigned long long)late_claim.clicker_id,
+                            late_claim.click_event_id,
+                            late_claim.flags);
+                    continue;
+                }
+                ret = anchor_consider_active_click_claim(
+                    &selected_claim,
+                    &selected_rx_ms,
+                    &selected_quality,
+                    &late_claim,
+                    claim_rx_ms,
+                    quality,
+                    true,
+                    &decision,
+                    &selection_changed);
+                LOG_DBG("anchor late UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u replaced=%u",
                         (unsigned long long)late_claim.clicker_id,
                         late_claim.click_event_id,
-                        late_claim.attempt_index);
+                        late_claim.attempt_index,
+                        (unsigned long long)late_claim.priority_id,
+                        ret,
+                        decision,
+                        selection_changed ? 1u : 0u);
+                if (ret == -ECANCELED) {
+                    return false;
+                }
+                if (ret == PROTO_OK) {
+                    selected_decision = decision;
+                }
+                if (selection_changed) {
+                    discovery_start_ms =
+                        selected_rx_ms + selected_claim.discovery_starts_in_ms;
+                    discovery_deadline_ms = MIN(
+                        discovery_start_ms +
+                            UWB_CLICK_DISCOVERY_RX_LATE_GUARD_MS,
+                        claim_arbitration_deadline_ms);
+                    LOG_INF("anchor switched pending click before discovery: clicker=0x%016llx event_seq=%u attempt=%u deadline=%lld",
+                            (unsigned long long)selected_claim.clicker_id,
+                            selected_claim.click_event_id,
+                            selected_claim.attempt_index,
+                            (long long)discovery_deadline_ms);
+                    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                        status_debug_printf("DBG_ANCHOR_LATE_WAKE_REPLACE clicker=0x%llx evt=%u attempt=%u start=%lld deadline=%lld\n",
+                                            (unsigned long long)selected_claim.clicker_id,
+                                            selected_claim.click_event_id,
+                                            selected_claim.attempt_index,
+                                            (long long)discovery_start_ms,
+                                            (long long)discovery_deadline_ms);
+                    }
+                }
                 continue;
             }
         }
@@ -1130,16 +1300,6 @@ discovery_miss:
             claim_handled = true;
             goto claim_complete;
         }
-        if (provisioning_state == APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
-            status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED event=%u attempt=%u reply=fallback slot=%u\n",
-                                discover.click_event_id,
-                                discover.attempt_index,
-                                reply.anchor_slot);
-            LOG_WRN("anchor UWB DISCOVERY_REPLY using deterministic fallback while UNPROVISIONED: event=%u attempt=%u slot=%u",
-                    discover.click_event_id,
-                    discover.attempt_index,
-                    reply.anchor_slot);
-        }
 #endif
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -1212,7 +1372,11 @@ discovery_miss:
         int64_t schedule_deadline_ms = k_uptime_get() + schedule_rx_window_ms;
         int last_schedule_ret = -ETIMEDOUT;
 
+        trace_schedule_arm_ms = k_uptime_get();
+        trace_schedule_deadline_ms = schedule_deadline_ms;
+
         while (k_uptime_get() < schedule_deadline_ms) {
+            enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
             uint8_t frame_type = 0u;
             int64_t remaining_ms = schedule_deadline_ms - k_uptime_get();
 
@@ -1222,23 +1386,30 @@ discovery_miss:
                                                           &frame_len,
                                                           NULL,
                                                           NULL,
-                                                          NULL);
+                                                          &rx_failure);
             if (ret == -ETIMEDOUT) {
+                trace_schedule_last_failure = rx_failure;
                 break;
             }
             if (ret < 0) {
                 last_schedule_ret = ret;
+                trace_schedule_errors++;
+                trace_schedule_last_failure = rx_failure;
                 continue;
             }
+            trace_schedule_frames++;
             if (frame_len < UWB_SYNC_HEADER_LEN) {
                 last_schedule_ret = -EBADMSG;
+                trace_schedule_errors++;
                 continue;
             }
 
             frame_type = frame[2];
+            trace_schedule_last_type = frame_type;
             if (frame_type != MSG_UWB_RANGE_SCHEDULE &&
                 frame_type != MSG_UWB_RANGE_RELEASE) {
                 last_schedule_ret = -EBADMSG;
+                trace_schedule_errors++;
                 LOG_DBG("anchor ignored non-schedule frame while waiting for RANGE_SCHEDULE: type=0x%02x len=%u",
                         frame_type,
                         (unsigned int)frame_len);
@@ -1252,6 +1423,7 @@ discovery_miss:
         if (!schedule_frame_ready) {
             ret = last_schedule_ret;
         }
+        trace_schedule_ret = ret;
     }
     if (ret == 0) {
         struct uwb_range_schedule_frame schedule;
@@ -1292,6 +1464,7 @@ discovery_miss:
         }
 
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
+        trace_schedule_decode_ret = ret;
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB RANGE_SCHEDULE decode failed: %d", ret);
             anchor_click_event_abort_if_needed("range-schedule-decode");
@@ -1303,6 +1476,7 @@ discovery_miss:
                                                &schedule,
                                                (uint32_t)schedule_rx_ms,
                                                UWB_SCHEDULE_GUARD_MS);
+        trace_schedule_accept_ret = ret;
         if (ret == PROTO_ERR_NOT_FOUND) {
             LOG_INF("anchor not selected in UWB RANGE_SCHEDULE: clicker=0x%016llx event_seq=%u",
                     (unsigned long long)schedule.clicker_id,
@@ -1341,6 +1515,7 @@ discovery_miss:
             anchor_click_event_abort_if_needed("range-due-transition");
             goto claim_complete;
         }
+        trace_range_authorized = true;
 
         range_sleep_us = anchor_run_scheduled_uwb_ranges(
             &schedule,
@@ -1368,6 +1543,42 @@ discovery_miss:
     claim_handled = true;
 
 claim_complete:
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE) && click_priority) {
+        status_debug_printf("DBG_CH_AP1 n=%016llx e=%08x a=%02x s=%08x x=%08x\n",
+                            (unsigned long long)DEVICE_ID,
+                            selected_claim.click_event_id,
+                            selected_claim.attempt_index,
+                            trace_preempt_start_ms,
+                            trace_preempt_end_ms);
+        status_debug_printf("DBG_CH_AP2 e=%08x a=%02x d=%08x r=%08x w=%01x\n",
+                            selected_claim.click_event_id,
+                            selected_claim.attempt_index,
+                            preempt_deadline_ms,
+                            (uint32_t)trace_preempt_ret,
+                            anchor_click_window_active() ? 1u : 0u);
+        status_debug_printf("DBG_CH_AS1 e=%08x a=%02x arm=%08x dl=%08x rx=%08x r=%08x\n",
+                            selected_claim.click_event_id,
+                            selected_claim.attempt_index,
+                            (uint32_t)trace_schedule_arm_ms,
+                            (uint32_t)trace_schedule_deadline_ms,
+                            (uint32_t)schedule_rx_ms,
+                            (uint32_t)trace_schedule_ret);
+        status_debug_printf("DBG_CH_AS2 e=%08x a=%02x f=%04x err=%04x t=%02x fail=%02x dec=%08x acc=%08x\n",
+                            selected_claim.click_event_id,
+                            selected_claim.attempt_index,
+                            trace_schedule_frames,
+                            trace_schedule_errors,
+                            trace_schedule_last_type,
+                            (unsigned int)trace_schedule_last_failure,
+                            (uint32_t)trace_schedule_decode_ret,
+                            (uint32_t)trace_schedule_accept_ret);
+        status_debug_printf("DBG_CH_AST e=%08x a=%02x range=%01x state=%02x w=%01x\n",
+                            selected_claim.click_event_id,
+                            selected_claim.attempt_index,
+                            trace_range_authorized ? 1u : 0u,
+                            (unsigned int)app_anchor_click_event_runtime_state(),
+                            anchor_click_window_active() ? 1u : 0u);
+    }
     if (click_priority) {
         mesh_range_report_batch_abort(selected_claim.clicker_id,
                                       selected_claim.click_event_id,
@@ -2776,7 +2987,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     mesh_rx_active = mesh_rx_response_busy;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         mesh_rx_queue_depth = mesh_rx_pending_count();
-        ch9_ack_wait_active = mesh_report_ch9_ack_wait_active();
+        ch9_ack_wait_active = app_mesh_ch9_core_ack_wait_active(
+            &mesh_runtime.pending, relay_tx_active);
     }
     uwb_radio_busy = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                      radio_guard_uwb_busy();
@@ -2813,20 +3025,21 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         atomic_set(&anchor_ch5_post_ch9_recovery_scan_pending, 1);
     }
     /*
-     * Relay, route-wait, and gateway-ACK records are passive custody between
-     * physical attempts. They must not suppress the Channel-5 contact scan.
-     * Once a retained retry is actually due, however, it owns one bounded
-     * radio turn; otherwise a zero-gap contact scan can starve the exact
-     * packet until its semantic-custody deadline.
+     * Relay and route-wait records are passive custody between physical
+     * attempts, so they must not suppress the Channel-5 contact scan. A live
+     * Channel-9 ACK wait already owns the receive turn, however, and retuning
+     * to Channel 5 here would guarantee that the hop ACK is missed.
      */
     if (anchor_uwb_window_active() ||
         relay_tx_retry_blocks_scan ||
         protocol_flood_pending ||
         mesh_rx_active ||
+        ch9_ack_wait_active ||
         ch9_rx_conflict ||
         uwb_radio_busy) {
         uint32_t retry_ms = relay_tx_retry_blocks_scan ? relay_tx_retry_ms :
                             mesh_rx_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
+                            ch9_ack_wait_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
                             uwb_radio_busy ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
                             ch9_rx_conflict ? ch9_retry_ms : blocked_retry_ms;
 

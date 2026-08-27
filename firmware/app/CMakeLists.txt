@@ -298,6 +298,19 @@ if(IMEC_STACK_DIAGNOSTICS_BUILD)
         "${CMAKE_CURRENT_LIST_DIR}/conf/mesh-stack-diagnostics.conf")
 endif()
 
+if(IMEC_BUILD_PRESET STREQUAL "mesh_gateway")
+    set(IMEC_GATEWAY_STACK_FIT_CONF
+        "${CMAKE_CURRENT_BINARY_DIR}/imec-gateway-stack-fit.conf")
+    file(WRITE "${IMEC_GATEWAY_STACK_FIT_CONF}"
+        # Gateway HIL traces measured at most 480 bytes on the logging worker.
+        # A 1536-byte stack preserves more than 1 KiB of measured free space
+        # while returning 512 bytes to the mandatory static-RAM reserve. Keep
+        # this role-specific override after the shared diagnostics fragment;
+        # anchor logging stacks retain their independently qualified 2048 B.
+        "CONFIG_LOG_PROCESS_THREAD_STACK_SIZE=1536\n")
+    list(APPEND EXTRA_CONF_FILE "${IMEC_GATEWAY_STACK_FIT_CONF}")
+endif()
+
 if(IMEC_STACK_STRESS_BUILD)
     if(NOT IMEC_DEPLOYABLE_MESH_PRESET)
         message(FATAL_ERROR

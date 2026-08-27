@@ -25,13 +25,14 @@ static void test_long_typed_records_are_complete(void)
 
     length = app_stack_diag_record_format(
         record, sizeof(record),
-        "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u samples=%u sequence=%u previous=%u uptime=%u\n",
+        "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u samples=%u attempts=%u errors=%u last_error=%d mutex_drops=%u short_drops=%u sequence=%u previous=%u uptime=%u\n",
         (unsigned long long)UINT64_MAX, UINT32_MAX,
         "gateway_priority_control", "system_workqueue",
         "direct_ack_failure", UINT16_MAX, UINT16_MAX, UINT16_MAX,
         UINT16_MAX, UINT16_MAX,
         (unsigned long long)UINT64_MAX, (unsigned long long)UINT64_MAX,
         UINT32_MAX, UINT16_MAX, UINT8_MAX, UINT32_MAX, UINT32_MAX,
+        UINT32_MAX, INT32_MIN, UINT32_MAX, UINT32_MAX, UINT32_MAX,
         UINT32_MAX, UINT32_MAX);
     assert(length == APP_STACK_DIAG_MAX_FORMATTED_LENGTH);
     assert((size_t)length + 1u <= sizeof(record));

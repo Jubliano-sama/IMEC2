@@ -134,6 +134,13 @@ BUILD_ASSERT(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS >
 BUILD_ASSERT(UWB_CLICKER_CLAIMED_DURATION_MS <=
              UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
              "wake claim timing bounds must cover the configured advertised click epoch");
+BUILD_ASSERT(UWB_CLICK_DISCOVERY_DELAY_MS ==
+             APP_WAKE_TRAIN_POLITE_SNIFF_MS,
+             "click discovery countdown must include the post-wake courtesy sniff");
+BUILD_ASSERT(UWB_CLICK_DISCOVERY_RX_LATE_GUARD_MS ==
+             UWB_CLICK_PRIORITY_LISTEN_EXTENSION_MS +
+                 UWB_DISCOVERY_RX_LATE_GUARD_MS,
+             "click discovery listener extension must stay explicit");
 BUILD_ASSERT(UWB_POLITE_RELEVANT_FRAME_WAIT_MS <=
              UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
              "decoded UWB politeness wait fallback must stay bounded");

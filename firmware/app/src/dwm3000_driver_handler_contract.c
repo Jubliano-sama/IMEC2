@@ -131,8 +131,13 @@ int dwm3000_driver_compute_distance_mm(const struct uwb_final_frame *final,
 
     tof_dtu = ((ra * rb) - (da * db)) / denominator;
     if (tof_dtu < 0.0) {
-        /* A negative time of flight is an impossible exchange, not a range. */
-        return -ERANGE;
+        /*
+         * A negative calibrated ToF is physically below the measurable
+         * origin.  Preserve the otherwise-valid exchange as a zero-distance
+         * sample instead of turning it into a ranging failure.
+         */
+        *distance_mm = 0;
+        return 0;
     }
     distance_m = tof_dtu * DWM3000_DRIVER_TIME_UNITS *
                  DWM3000_DRIVER_SPEED_OF_LIGHT_MPS;

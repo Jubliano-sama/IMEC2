@@ -90,6 +90,14 @@ def _function_body(source: str, name: str) -> str:
     raise AssertionError(f"unterminated function: {name}")
 
 
+def _unsigned_define(source: str, name: str) -> int:
+    match = re.search(rf"^#define\s+{re.escape(name)}\s+(\d+)u$", source,
+                      re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"unsigned integer define not found: {name}")
+    return int(match.group(1))
+
+
 class MeshReportRoleStorageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -106,11 +114,11 @@ class MeshReportRoleStorageTests(unittest.TestCase):
             "pending batch references compile outside ROLE_ANCHOR at lines "
             + ",".join(str(line) for line in failures),
         )
-        self.assertIn("sizeof(mesh_ch9_tx_pending) == 4184u", self.report_source)
+        self.assertIn("sizeof(mesh_ch9_tx_pending) == 4152u", self.report_source)
         self.assertIn("mesh_ch9_tx_batch_storage.pending", self.report_source)
         self.assertIn("mesh_ch9_tx_batch_storage.candidates", self.report_source)
         self.assertIn(
-            "sizeof(mesh_ch9_tx_batch_storage) == 4184u",
+            "sizeof(mesh_ch9_tx_batch_storage) == 4152u",
             self.report_source,
         )
         self.assertIn(
@@ -123,13 +131,21 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         self.assertNotIn("mesh_result_action_tx", self.report_source)
 
     def test_gateway_store_is_initialized_then_attached_after_relay_init(self) -> None:
-        self.assertIn("sizeof(mesh_gateway_ack_store) == 9544u", self.report_source)
+        self.assertIn("sizeof(mesh_gateway_ack_store) == 10072u", self.report_source)
         self.assertIn(
-            "sizeof(struct mesh_gateway_ack_store) == 9544u",
+            "sizeof(struct mesh_gateway_ack_store) == 10072u",
             self.relay_header,
         )
         self.assertIn(
-            "MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u",
+            "MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY == 200u",
+            self.relay_header,
+        )
+        self.assertIn(
+            "MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY == 12u",
+            self.relay_header,
+        )
+        self.assertIn(
+            "MESH_RELAY_GATEWAY_ACK_CAPACITY == 212u",
             self.relay_header,
         )
         self.assertIn(
@@ -137,7 +153,7 @@ class MeshReportRoleStorageTests(unittest.TestCase):
             self.relay_header,
         )
         self.assertIn(
-            "MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 202u",
+            "MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 214u",
             self.relay_header,
         )
         self.assertRegex(
@@ -236,13 +252,41 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         self.assertLess(deferred_ack_at, route_unlock_at)
 
     def test_shared_capacity_names_nominal_and_recovery_storage(self) -> None:
-        self.assertIn("MESH_CONNECTED_MAX_ANCHORS 50u", self.capacity_header)
-        self.assertIn("MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 9u",
-                      self.capacity_header)
-        self.assertIn("MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY 1u",
-                      self.capacity_header)
-        self.assertIn("MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY",
-                      self.capacity_header)
+        shared_click_anchors = _unsigned_define(
+            self.capacity_header,
+            "MESH_CONNECTED_SHARED_RELAY_CLICK_ANCHORS",
+        )
+        queue_depth = _unsigned_define(
+            self.capacity_header,
+            "MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH",
+        )
+        recovery_capacity = _unsigned_define(
+            self.capacity_header,
+            "MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY",
+        )
+
+        self.assertEqual(
+            50,
+            _unsigned_define(self.capacity_header,
+                             "MESH_CONNECTED_MAX_ANCHORS"),
+        )
+        self.assertEqual(4, shared_click_anchors)
+        self.assertEqual(4 * shared_click_anchors, queue_depth)
+        self.assertEqual(1, recovery_capacity)
+        self.assertEqual(17, queue_depth + recovery_capacity)
+        self.assertRegex(
+            self.capacity_header,
+            r"MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY\s+\\\n"
+            r"\s*\(MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH \+ \\\n"
+            r"\s*MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY\)",
+        )
+        self.assertRegex(
+            self.report_source,
+            r"REPORT_TX_QUEUE_DEPTH >=\s*"
+            r"MESH_CONNECTED_SHARED_RELAY_CLICK_ANCHORS \*\s*"
+            r"\(ANCHOR_CLICK_RANGE_REPORT_FRAGMENT_CAPACITY \+\s*"
+            r"RANGE_REPORT_MAX_CIR_FRAGMENTS\)",
+        )
 
 
 if __name__ == "__main__":

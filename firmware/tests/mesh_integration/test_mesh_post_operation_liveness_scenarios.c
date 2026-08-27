@@ -20,7 +20,7 @@ struct transit_operation {
     struct proto_packet gateway_ack;
     uint8_t gateway_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
     size_t gateway_ack_payload_len;
-    struct mesh_outbound forwarded_ack;
+    struct mesh_outbound gateway_confirm;
 };
 
 static int failures;
@@ -43,6 +43,45 @@ static bool has_action(const struct mesh_relay_result *result,
     return result != NULL && (result->actions & action) != 0u;
 }
 
+static int build_gateway_ack_for_outbound(
+    const struct mesh_outbound *outbound,
+    uint16_t ack_seq,
+    struct proto_packet *ack,
+    uint8_t *ack_payload,
+    size_t ack_payload_cap,
+    size_t *ack_payload_len)
+{
+    int ret;
+
+    if (outbound == NULL || ack == NULL || ack_payload == NULL ||
+        ack_payload_len == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    *ack_payload_len = 0u;
+    ret = mesh_append_requested_seq(ack_payload,
+                                    ack_payload_cap,
+                                    ack_payload_len,
+                                    outbound->packet.seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_ack_semantic_identity(ack_payload,
+                                            ack_payload_cap,
+                                            ack_payload_len,
+                                            &outbound->packet,
+                                            outbound->payload,
+                                            outbound->payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return mesh_init_gateway_ack(ack,
+                                 GATEWAY_ID,
+                                 outbound->packet.src_id,
+                                 outbound->packet.session_id,
+                                 ack_seq,
+                                 (uint8_t)*ack_payload_len);
+}
+
 static bool pending_identity_matches(const struct mesh_pending_tx *actual,
                                      const struct mesh_pending_tx *expected)
 {
@@ -60,7 +99,9 @@ static bool pending_identity_matches(const struct mesh_pending_tx *actual,
                expected->gateway_ack_deadline_ms &&
            actual->retry_after_ms == expected->retry_after_ms &&
            actual->gateway_ack_forward_pending ==
-               expected->gateway_ack_forward_pending;
+               expected->gateway_ack_forward_pending &&
+           actual->gateway_ack_confirm_pending ==
+               expected->gateway_ack_confirm_pending;
 }
 
 static int setup_relay(struct mesh_relay *relay, uint32_t now_ms)
@@ -91,10 +132,9 @@ static int build_operation(struct transit_operation *operation,
 
     memset(operation, 0, sizeof(*operation));
     /*
-     * Command results now require collection identity and use the result
-     * bundle/EACK path.  These scenarios exercise the independent transit
-     * gateway-ACK handoff, so use a valid diagnostic mesh-data packet whose
-     * source custody still follows that path.
+     * Command results require collection identity and use the result
+     * bundle/EACK path. These scenarios exercise ordinary report hop custody,
+     * so use a valid diagnostic mesh-data packet from the same approved class.
      */
     operation->payload[0] = 0x5au;
     operation->payload_len = 1u;
@@ -198,18 +238,85 @@ static int receive_gateway_ack(struct mesh_relay *relay,
     if (actions != NULL) {
         *actions = result.actions;
     }
-    if (ret == PROTO_OK && has_action(&result, MESH_RELAY_ACTION_FORWARD)) {
-        operation->forwarded_ack = result.forward;
-        operation->forwarded_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    return ret;
+}
+
+static int emit_gateway_confirm(struct mesh_relay *relay,
+                                struct transit_operation *operation,
+                                uint32_t now_ms)
+{
+    struct mesh_relay_result tick = {0};
+    int ret;
+
+    ret = mesh_relay_tick(relay, now_ms, &tick);
+    if (ret != PROTO_OK ||
+        tick.actions != MESH_RELAY_ACTION_RETRANSMIT ||
+        tick.retransmit.packet.msg_type != MSG_GATEWAY_ACK_CONFIRM ||
+        tick.retransmit.packet.src_id != operation->packet.src_id ||
+        tick.retransmit.packet.dst_id != GATEWAY_ID ||
+        tick.retransmit.packet.session_id != operation->packet.session_id ||
+        tick.retransmit.packet.seq != operation->packet.seq ||
+        tick.retransmit.next_hop_id != GATEWAY_ID) {
+        return PROTO_ERR_MALFORMED;
+    }
+    operation->gateway_confirm = tick.retransmit;
+    mesh_relay_note_tx_sent(relay, &operation->gateway_confirm, now_ms);
+    return PROTO_OK;
+}
+
+static int receive_gateway_confirm_ack(struct mesh_relay *relay,
+                                       struct transit_operation *operation,
+                                       uint32_t now_ms,
+                                       uint32_t *actions)
+{
+    struct proto_packet ack = {0};
+    struct mesh_relay_result result = {0};
+    uint8_t ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
+    size_t ack_payload_len = 0u;
+    int ret;
+
+    ret = build_gateway_ack_for_outbound(
+        &operation->gateway_confirm,
+        (uint16_t)(operation->gateway_confirm.packet.seq + UINT16_C(0x5000)),
+        &ack,
+        ack_payload,
+        sizeof(ack_payload),
+        &ack_payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_relay_handle_rx(relay,
+                               &ack,
+                               ack_payload,
+                               ack_payload_len,
+                               GATEWAY_ID,
+                               98u,
+                               now_ms,
+                               &result);
+    if (actions != NULL) {
+        *actions = result.actions;
     }
     return ret;
+}
+
+static int commit_gateway_confirm(struct mesh_relay *relay,
+                                  const struct transit_operation *operation,
+                                  uint32_t now_ms)
+{
+    return mesh_relay_commit_gateway_ack_confirm_terminal(
+        relay,
+        &operation->gateway_confirm.packet,
+        operation->gateway_confirm.payload,
+        operation->gateway_confirm.payload_len,
+        now_ms);
 }
 
 static void test_duplicate_ack_burst_is_bounded(void)
 {
     struct mesh_relay relay;
     struct transit_operation operation;
-    uint32_t forward_count = 0u;
+    uint32_t confirmation_count = 0u;
+    uint32_t actions = MESH_RELAY_ACTION_NONE;
 
     phase = "duplicate-gateway-ack-burst";
     CHECK(setup_relay(&relay, 1000u) == PROTO_OK, "relay setup failed");
@@ -219,25 +326,35 @@ static void test_duplicate_ack_burst_is_bounded(void)
           "transit setup failed");
 
     for (uint32_t i = 0u; i < DUPLICATE_ACK_BURST; i++) {
-        uint32_t actions = MESH_RELAY_ACTION_NONE;
+        actions = MESH_RELAY_ACTION_NONE;
 
         CHECK(receive_gateway_ack(&relay, &operation, 1020u + i, &actions) ==
                   PROTO_OK,
               "duplicate ACK %u was rejected", i);
-        if ((actions & MESH_RELAY_ACTION_FORWARD) != 0u) {
-            forward_count++;
+        if ((actions & MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING) != 0u) {
+            confirmation_count++;
         }
-        CHECK(relay.pending.state ==
-                  MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
-                  relay.pending.gateway_ack_forward_pending &&
+        CHECK(relay.pending.gateway_ack_confirm_pending &&
+                  !relay.pending.gateway_ack_forward_pending &&
                   relay.pending.packet.session_id == operation.packet.session_id,
               "duplicate ACK %u corrupted custody state", i);
     }
 
-    CHECK(forward_count == 1u,
-          "%u identical ACK receptions produced %u child-directed ACK sends; "
-          "only the first may enqueue traffic",
-          DUPLICATE_ACK_BURST, forward_count);
+    CHECK(confirmation_count == 1u,
+          "%u identical ACK receptions produced %u confirmation owners; "
+          "only the first may create debt",
+          DUPLICATE_ACK_BURST, confirmation_count);
+    CHECK(emit_gateway_confirm(&relay, &operation, 1030u) == PROTO_OK,
+          "gateway confirmation was not emitted");
+    CHECK(receive_gateway_confirm_ack(&relay, &operation, 1040u, &actions) ==
+              PROTO_OK &&
+              actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED,
+          "gateway confirmation was not acknowledged");
+    CHECK(commit_gateway_confirm(&relay, &operation, 1041u) == PROTO_OK &&
+              relay.pending.state == MESH_RELAY_TX_IDLE &&
+              !relay.pending.gateway_ack_confirm_pending &&
+              !relay.outbox_record.valid,
+          "duplicate ACK burst left live gateway confirmation debt");
 }
 
 static void test_queueable_report_burst_never_creates_busy_control(void)
@@ -332,18 +449,15 @@ static void test_stale_ack_and_commit_cannot_cross_operations(void)
           "old operation setup failed");
     CHECK(receive_gateway_ack(&relay, &old_operation, 2020u, &actions) ==
               PROTO_OK &&
-              (actions & MESH_RELAY_ACTION_FORWARD) != 0u,
-          "old operation did not enter ACK-forward custody");
-    CHECK(mesh_relay_commit_transit_gateway_ack_forward(
-              &relay, &old_operation.forwarded_ack, 2021u, &actions) ==
-              PROTO_OK &&
-              actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED,
-          "old operation did not complete exactly once");
+              actions == MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING &&
+              emit_gateway_confirm(&relay, &old_operation, 2021u) == PROTO_OK &&
+              receive_gateway_confirm_ack(
+                  &relay, &old_operation, 2022u, &actions) == PROTO_OK &&
+              actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED &&
+              commit_gateway_confirm(&relay, &old_operation, 2023u) == PROTO_OK,
+          "old operation did not complete its exact confirmation once");
     terminal_count++;
-    CHECK(mesh_relay_commit_transit_gateway_ack_forward(
-              &relay, &old_operation.forwarded_ack, 2022u, &actions) !=
-              PROTO_OK &&
-              actions == MESH_RELAY_ACTION_NONE,
+    CHECK(commit_gateway_confirm(&relay, &old_operation, 2024u) != PROTO_OK,
           "duplicate commit completed the old operation twice");
 
     CHECK(build_operation(&new_operation, UINT32_C(0xd2000002), 22u) ==
@@ -352,11 +466,8 @@ static void test_stale_ack_and_commit_cannot_cross_operations(void)
           "new operation setup failed");
     new_pending = relay.pending;
 
-    CHECK(mesh_relay_commit_transit_gateway_ack_forward(
-              &relay, &old_operation.forwarded_ack, 2031u, &actions) !=
-              PROTO_OK &&
-              actions == MESH_RELAY_ACTION_NONE,
-          "stale ACK commit was accepted by the new operation");
+    CHECK(commit_gateway_confirm(&relay, &old_operation, 2031u) != PROTO_OK,
+          "stale confirmation commit was accepted by the new operation");
     CHECK(pending_identity_matches(&relay.pending, &new_pending),
           "stale ACK commit mutated the new operation");
     CHECK(receive_gateway_ack(&relay, &old_operation, 2032u, &actions) ==
@@ -368,17 +479,19 @@ static void test_stale_ack_and_commit_cannot_cross_operations(void)
 
     CHECK(receive_gateway_ack(&relay, &new_operation, 2040u, &actions) ==
               PROTO_OK &&
-              (actions & MESH_RELAY_ACTION_FORWARD) != 0u,
-          "new operation did not enter ACK-forward custody");
-    CHECK(mesh_relay_commit_transit_gateway_ack_forward(
-              &relay, &new_operation.forwarded_ack, 2041u, &actions) ==
-              PROTO_OK &&
-              actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED,
+              actions == MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING &&
+              emit_gateway_confirm(&relay, &new_operation, 2041u) == PROTO_OK &&
+              receive_gateway_confirm_ack(
+                  &relay, &new_operation, 2042u, &actions) == PROTO_OK &&
+              actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED &&
+              commit_gateway_confirm(&relay, &new_operation, 2043u) == PROTO_OK,
           "new operation did not complete");
     terminal_count++;
     CHECK(terminal_count == 2u && !mesh_relay_tx_active(&relay) &&
-              relay.pending.state == MESH_RELAY_TX_IDLE,
-          "operations did not terminate once each");
+              relay.pending.state == MESH_RELAY_TX_IDLE &&
+              !relay.pending.gateway_ack_confirm_pending &&
+              !relay.outbox_record.valid,
+          "operations did not terminate once each without confirmation debt");
 }
 
 static void test_delayed_ack_retry_and_post_settle_polling_are_bounded(void)
@@ -397,8 +510,9 @@ static void test_delayed_ack_retry_and_post_settle_polling_are_bounded(void)
           "operation setup failed");
     CHECK(receive_gateway_ack(&relay, &operation, 3020u, &actions) ==
               PROTO_OK &&
-              (actions & MESH_RELAY_ACTION_FORWARD) != 0u,
-          "operation did not enter ACK-forward custody");
+              actions == MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING &&
+              emit_gateway_confirm(&relay, &operation, 3021u) == PROTO_OK,
+          "operation did not enter gateway-confirm custody");
     rf_actions++;
 
     CHECK(mesh_relay_tick_with_random(
@@ -406,25 +520,27 @@ static void test_delayed_ack_retry_and_post_settle_polling_are_bounded(void)
               PROTO_OK &&
               tick.actions == MESH_RELAY_ACTION_NONE &&
               relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF,
-          "ACK-forward expiry did not enter bounded backoff");
+          "gateway-confirm expiry did not enter bounded backoff");
     retry_at_ms = relay.pending.retry_after_ms;
     CHECK(mesh_relay_tick_with_random(&relay, retry_at_ms, 9u, &tick) ==
               PROTO_OK &&
-              tick.actions == MESH_RELAY_ACTION_RETRANSMIT,
-          "bounded backoff did not yield one retry");
+              tick.actions == MESH_RELAY_ACTION_RETRANSMIT &&
+              tick.retransmit.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM,
+          "bounded backoff did not yield one confirmation retry");
+    operation.gateway_confirm = tick.retransmit;
+    mesh_relay_note_tx_sent(&relay, &operation.gateway_confirm, retry_at_ms);
     rf_actions++;
     CHECK(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK,
-          "retry did not return to gateway-ACK wait");
+          "confirmation retry did not return to gateway-ACK wait");
 
-    CHECK(receive_gateway_ack(&relay, &operation, retry_at_ms + 1u,
-                              &actions) == PROTO_OK &&
-              (actions & MESH_RELAY_ACTION_FORWARD) != 0u,
-          "delayed gateway ACK did not resume child ACK forwarding");
-    rf_actions++;
-    CHECK(mesh_relay_commit_transit_gateway_ack_forward(
-              &relay, &operation.forwarded_ack, retry_at_ms + 2u, &actions) ==
-              PROTO_OK &&
+    CHECK(receive_gateway_confirm_ack(&relay,
+                                      &operation,
+                                      retry_at_ms + 1u,
+                                      &actions) == PROTO_OK &&
               actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED,
+          "delayed gateway confirmation ACK was not accepted");
+    CHECK(commit_gateway_confirm(&relay, &operation, retry_at_ms + 2u) ==
+              PROTO_OK,
           "delayed operation did not settle");
 
     for (uint32_t i = 0u; i < POST_SETTLE_POLL_BOUND; i++) {
@@ -433,10 +549,11 @@ static void test_delayed_ack_retry_and_post_settle_polling_are_bounded(void)
                   tick.actions == MESH_RELAY_ACTION_NONE,
               "idle poll %u emitted post-operation traffic", i);
     }
-    CHECK(rf_actions == 3u && relay.pending.state == MESH_RELAY_TX_IDLE &&
+    CHECK(rf_actions == 2u && relay.pending.state == MESH_RELAY_TX_IDLE &&
+              !relay.pending.gateway_ack_confirm_pending &&
               !relay.pending.gateway_ack_forward_pending &&
               !relay.outbox_record.valid,
-          "delayed path exceeded its RF bound or retained custody");
+          "delayed path exceeded its RF bound or retained confirmation debt");
 }
 
 static void test_reset_drains_ack_forward_ownership(void)
@@ -466,20 +583,23 @@ static void test_reset_drains_ack_forward_ownership(void)
           "operation setup failed");
     CHECK(receive_gateway_ack(&node->relay, &operation, 4020u, &actions) ==
               PROTO_OK &&
-              (actions & MESH_RELAY_ACTION_FORWARD) != 0u,
-          "operation did not enter ACK-forward custody");
+              actions == MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING &&
+              emit_gateway_confirm(&node->relay, &operation, 4021u) == PROTO_OK,
+          "operation did not enter gateway-confirm custody");
     CHECK(mesh_sim_runtime_reserve_transit(
-              &world, relay_index, &operation.forwarded_ack, world.now_us + 10u) ==
+              &world, relay_index, &operation.gateway_confirm,
+              world.now_us + 10u) ==
               MESH_SIM_OK &&
               node->runtime.transit_reserved,
-          "simulator did not own delayed ACK-forward work");
+          "simulator did not own delayed gateway-confirm work");
 
     CHECK(mesh_sim_reset_role(&world, relay_index) == MESH_SIM_OK,
           "reset boundary failed");
     CHECK(node->relay.pending.state == MESH_RELAY_TX_IDLE &&
+              !node->relay.pending.gateway_ack_confirm_pending &&
               !node->relay.pending.gateway_ack_forward_pending &&
               !node->relay.outbox_record.valid,
-          "reset left relay custody or its persistent outbox orphaned");
+          "reset left confirmation custody or its persistent outbox orphaned");
     CHECK(!node->runtime.transit_reserved &&
               node->runtime.radio_owner == MESH_RUNTIME_RADIO_NONE &&
               node->tx_queue_count == 0u &&

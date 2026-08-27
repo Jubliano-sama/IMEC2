@@ -174,6 +174,7 @@ int append_anchor_status_tlvs(uint8_t *payload,
                               size_t *payload_len);
 int build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
+    const struct uwb_range_schedule_frame *schedule,
     uint8_t schedule_flags,
     const struct anchor_range_window_report *report);
 uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity);
@@ -275,6 +276,12 @@ int mesh_range_report_batch_reserve_capacity(uint64_t clicker_id,
                                     uint32_t event_seq,
                                     uint8_t attempt_index,
                                     uint8_t fragment_capacity);
+int mesh_range_report_batch_rebind(uint64_t current_clicker_id,
+                                   uint32_t current_event_seq,
+                                   uint8_t current_attempt_index,
+                                   uint64_t replacement_clicker_id,
+                                   uint32_t replacement_event_seq,
+                                   uint8_t replacement_attempt_index);
 void mesh_range_report_batch_abort(uint64_t clicker_id,
                                    uint32_t event_seq,
                                    uint8_t attempt_index);
@@ -312,6 +319,7 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                     bool *valid_mesh_frame,
                                     uint64_t *previous_hop_id);
 /* BLE completion boundary for a gateway-local ACK-required host item. */
+void mesh_gateway_host_receipt_ingress_queued(void);
 void mesh_gateway_host_receipt_ready(void);
 bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
                                           size_t frame_len,

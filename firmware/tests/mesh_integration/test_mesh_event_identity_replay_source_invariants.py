@@ -52,6 +52,13 @@ assert "local_payload_digest[SEMANTIC_DIGEST_SHA256_LEN]" in owner_header
 assert "remote_payload_digest[SEMANTIC_DIGEST_SHA256_LEN]" in owner_header
 assert "semantic_digest_sha256(payload, payload_len, digest)" in retry_source
 assert "semantic_digest_equal(lhs->payload_digest" in retry_source
+accept_classify = function_body(retry_source, "app_mesh_event_accept_classify")
+retry_guard = accept_classify.index("proposal->rf_attempts != 0u")
+legacy_result = accept_classify.index("return APP_MESH_EVENT_ACCEPT_LEGACY")
+assert retry_guard < legacy_result
+assert "return APP_MESH_EVENT_ACCEPT_REJECT;" in accept_classify[
+    retry_guard:legacy_result
+]
 assert "semantic_digest_sha256(payload, payload_len, digest)" in owner_source
 assert "semantic_digest_equal(digest, previous_digest" in owner_source
 proposal_bind_digest = function_body(
@@ -204,6 +211,9 @@ drain = function_body(delivery, "mesh_drain_rx_queue_locked")
 delivered = drain.index("delivered_event_control = true")
 handled = drain.index("admitted_event_control = mesh_handle_event_control(")
 contact = drain.index("mesh_c5_control_rx_semantically_admitted(", handled)
+contact_note = drain.index("mesh_note_c5_control_rx(", contact)
 consumed = drain.index("if (delivered_event_control)", contact)
-assert delivered < handled < contact < consumed
-assert "admitted_event_control))" in drain[contact:consumed]
+assert delivered < handled < contact < contact_note < consumed
+contact_guard = drain[contact:contact_note]
+assert "admitted_event_control) &&" in contact_guard
+assert "pending->packet.msg_type != MSG_MESH_EVENT_PROPOSE" in contact_guard

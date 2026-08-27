@@ -583,6 +583,41 @@ static size_t count_matching_receptions(const struct mesh_sim_world *world,
     return count;
 }
 
+static size_t count_exact_hop_ack_receptions(
+    const struct mesh_sim_world *world,
+    uint64_t sender_id,
+    uint64_t receiver_id,
+    const struct proto_packet *acknowledged_packet,
+    const uint8_t *acknowledged_payload,
+    size_t acknowledged_payload_len)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *reception = &world->receptions[i];
+        bool contains = false;
+
+        if (reception->outcome != MESH_SIM_RX_DECODED ||
+            reception->protocol_status != PROTO_OK ||
+            reception->source_id != sender_id ||
+            reception->receiver_id != receiver_id ||
+            reception->packet.msg_type != MSG_MESH_HOP_ACK ||
+            mesh_ack_payload_contains_packet(
+                &reception->packet,
+                reception->payload,
+                reception->payload_len,
+                acknowledged_packet,
+                acknowledged_payload,
+                acknowledged_payload_len,
+                &contains) != PROTO_OK ||
+            !contains) {
+            continue;
+        }
+        count++;
+    }
+    return count;
+}
+
 static int build_forcedhop_payload(uint8_t *payload,
                                    size_t payload_cap,
                                    uint32_t batch_id,
@@ -720,11 +755,11 @@ static int keep_connection_alive_until(struct mesh_sim_world *world,
     return mesh_sim_run_until(world, world->now_us);
 }
 
-static int schedule_origin_retry(struct mesh_sim_world *world,
-                                 uint8_t transmitter,
-                                 uint16_t connection)
+static int schedule_pending_retry(struct mesh_sim_world *world,
+                                  uint8_t owner,
+                                  uint16_t connection)
 {
-    struct mesh_relay *relay = &world->roles[transmitter].relay;
+    struct mesh_relay *relay = &world->roles[owner].relay;
     uint64_t due_us;
 
     CHECK(relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
@@ -732,7 +767,7 @@ static int schedule_origin_retry(struct mesh_sim_world *world,
     if (due_us < world->now_us) {
         due_us = world->now_us;
     }
-    CHECK(mesh_sim_schedule_relay_tick(world, transmitter, due_us) ==
+    CHECK(mesh_sim_schedule_relay_tick(world, owner, due_us) ==
           MESH_SIM_OK);
     CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
     CHECK(relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
@@ -741,13 +776,13 @@ static int schedule_origin_retry(struct mesh_sim_world *world,
     if (due_us < world->now_us) {
         due_us = world->now_us;
     }
-    CHECK(mesh_sim_schedule_relay_tick(world, transmitter, due_us) ==
+    CHECK(mesh_sim_schedule_relay_tick(world, owner, due_us) ==
           MESH_SIM_OK);
     CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
     /*
      * If the retry deadline coincides with the next owned Channel-9 turn,
      * the scheduler may admit the freshly queued retry immediately.  The
-     * durable source custody is the invariant; queue occupancy is only one
+     * durable owner's custody is the invariant; queue occupancy is only one
      * transient implementation state.
      */
     CHECK(mesh_relay_tx_active(relay));
@@ -764,21 +799,6 @@ static int drive_until_packet_reaches_relay(struct mesh_sim_world *world,
         if (count_matching_receptions(world, ANCHOR_ID, MSG_MESH_DATA,
                                       session_id, seq) >=
             expected_receptions) {
-            return 0;
-        }
-        CHECK(run_connection_action(world, connection, false) == MESH_SIM_OK);
-    }
-    return MESH_SIM_ERR_EVENT_ORDER;
-}
-
-static int drive_until_transition_count(struct mesh_sim_world *world,
-                                        uint16_t connection,
-                                        enum mesh_sim_transition_kind kind,
-                                        uint64_t node_id,
-                                        size_t expected_count)
-{
-    for (size_t step = 0u; step < 32u; step++) {
-        if (mesh_sim_count_transitions(world, kind, node_id) >= expected_count) {
             return 0;
         }
         CHECK(run_connection_action(world, connection, false) == MESH_SIM_OK);
@@ -972,11 +992,12 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
             (payload_loss_mask & (uint8_t)(1u << packet_index)) != 0u;
         bool ack_loss_pending =
             (ack_loss_mask & (uint8_t)(1u << packet_index)) != 0u;
-        size_t relay_receptions = 0u;
-        size_t hop_progress = mesh_sim_count_transitions(
-            &world, MESH_SIM_TRANSITION_HOP_PROGRESS, TRANSMITTER_ID);
-        size_t gateway_confirms = mesh_sim_count_transitions(
-            &world, MESH_SIM_TRANSITION_GATEWAY_ACKED, TRANSMITTER_ID);
+        size_t relay_receptions = count_matching_receptions(
+            &world, ANCHOR_ID, MSG_MESH_DATA,
+            packet.session_id, packet.seq);
+        size_t hop_ack_receptions;
+        size_t relay_gateway_confirms = mesh_sim_count_transitions(
+            &world, MESH_SIM_TRANSITION_GATEWAY_ACKED, ANCHOR_ID);
         bool delivered = false;
 
         CHECK(build_forcedhop_payload(
@@ -984,21 +1005,40 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
                   sizeof(payload),
                   packet.session_id ^ packet.seq,
                   (uint8_t)(0x20u + packet_index)) == PROTO_OK);
+        hop_ack_receptions = count_exact_hop_ack_receptions(
+            &world, ANCHOR_ID, TRANSMITTER_ID,
+            &packet, payload, sizeof(payload));
         CHECK(mesh_sim_queue_originated(&world, transmitter, &packet,
                                         payload, sizeof(payload)) ==
               MESH_SIM_OK);
+        relay_receptions++;
+        CHECK(drive_until_packet_reaches_relay(
+                  &world, connection, packet.session_id, packet.seq,
+                  relay_receptions) == 0);
+        for (size_t step = 0u;
+             step < 32u &&
+             count_exact_hop_ack_receptions(
+                 &world, ANCHOR_ID, TRANSMITTER_ID,
+                 &packet, payload, sizeof(payload)) == hop_ack_receptions;
+             step++) {
+            CHECK(run_connection_action(&world, connection, false) ==
+                  MESH_SIM_OK);
+        }
+        CHECK(count_exact_hop_ack_receptions(
+                  &world, ANCHOR_ID, TRANSMITTER_ID,
+                  &packet, payload, sizeof(payload)) ==
+              hop_ack_receptions + 1u);
+        CHECK(world.roles[transmitter].relay.pending.state ==
+              MESH_RELAY_TX_IDLE);
+        CHECK(world.roles[transmitter].tx_queue_count == 0u);
+        CHECK(mesh_sim_count_transitions(
+                  &world, MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                  TRANSMITTER_ID) == 0u);
+
         for (size_t attempt = 0u; attempt < 3u; attempt++) {
             bool lose_payload = payload_loss_pending;
             size_t delivery_count_before = world.roles[gateway].delivery_count;
 
-            relay_receptions++;
-            CHECK(drive_until_packet_reaches_relay(
-                      &world, connection, packet.session_id, packet.seq,
-                      relay_receptions) == 0);
-            hop_progress++;
-            CHECK(drive_until_transition_count(
-                      &world, connection, MESH_SIM_TRANSITION_HOP_PROGRESS,
-                      TRANSMITTER_ID, hop_progress) == 0);
             CHECK(run_relay_to_gateway_payload_attempt(
                       &world, anchor, gateway, packet.session_id, packet.seq,
                       lose_payload) == 0);
@@ -1009,8 +1049,10 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
                 CHECK(queued_gateway_ack_for_sender(
                           &world.roles[gateway], ANCHOR_ID, TRANSMITTER_ID,
                           packet.session_id) == NULL);
-                CHECK(schedule_origin_retry(&world, transmitter,
-                                            connection) == 0);
+                CHECK(world.roles[transmitter].relay.pending.state ==
+                      MESH_RELAY_TX_IDLE);
+                CHECK(schedule_pending_retry(&world, anchor,
+                                             connection) == 0);
                 continue;
             }
 
@@ -1025,38 +1067,19 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
                       &world, anchor, gateway, ack_loss_pending) == 0);
             if (ack_loss_pending) {
                 ack_loss_pending = false;
-                CHECK(schedule_origin_retry(&world, transmitter,
-                                            connection) == 0);
+                CHECK(world.roles[transmitter].relay.pending.state ==
+                      MESH_RELAY_TX_IDLE);
+                CHECK(schedule_pending_retry(&world, anchor,
+                                             connection) == 0);
                 continue;
             }
 
-            {
-                size_t confirm_receptions = count_matching_receptions(
-                    &world,
-                    ANCHOR_ID,
-                    MSG_GATEWAY_ACK_CONFIRM,
-                    packet.session_id,
-                    packet.seq);
-
-                for (size_t step = 0u;
-                     step < 32u &&
-                     count_matching_receptions(
-                         &world,
-                         ANCHOR_ID,
-                         MSG_GATEWAY_ACK_CONFIRM,
-                         packet.session_id,
-                         packet.seq) == confirm_receptions;
-                     step++) {
-                    CHECK(run_connection_action(&world, connection, false) ==
-                          MESH_SIM_OK);
-                }
-                CHECK(count_matching_receptions(
-                          &world,
-                          ANCHOR_ID,
-                          MSG_GATEWAY_ACK_CONFIRM,
-                          packet.session_id,
-                          packet.seq) == confirm_receptions + 1u);
-            }
+            CHECK(world.roles[transmitter].relay.pending.state ==
+                  MESH_RELAY_TX_IDLE);
+            CHECK(queued_packet_for_peer(
+                      &world.roles[anchor], GATEWAY_ID,
+                      MSG_GATEWAY_ACK_CONFIRM,
+                      packet.session_id, packet.seq) != NULL);
             CHECK(run_relay_to_gateway_confirm_attempt(
                       &world,
                       anchor,
@@ -1069,11 +1092,11 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
                       packet.session_id) != NULL);
             CHECK(run_gateway_to_relay_ack_attempt(
                       &world, anchor, gateway, false) == 0);
-            gateway_confirms++;
-            CHECK(drive_until_transition_count(
-                      &world, connection, MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                      TRANSMITTER_ID, gateway_confirms) == 0);
-            CHECK(world.roles[transmitter].relay.pending.state ==
+            relay_gateway_confirms++;
+            CHECK(mesh_sim_count_transitions(
+                      &world, MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                      ANCHOR_ID) == relay_gateway_confirms);
+            CHECK(world.roles[anchor].relay.pending.state ==
                   MESH_RELAY_TX_IDLE);
             break;
         }
@@ -1081,6 +1104,13 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
         CHECK(delivered);
         CHECK(!payload_loss_pending);
         CHECK(!ack_loss_pending);
+        CHECK(count_matching_receptions(
+                  &world, ANCHOR_ID, MSG_MESH_DATA,
+                  packet.session_id, packet.seq) == relay_receptions);
+        CHECK(count_exact_hop_ack_receptions(
+                  &world, ANCHOR_ID, TRANSMITTER_ID,
+                  &packet, payload, sizeof(payload)) ==
+              hop_ack_receptions + 1u);
         CHECK(world.roles[gateway].delivery_count == packet_index + 1u);
         CHECK(world.roles[gateway].deliveries[packet_index].packet.src_id ==
               TRANSMITTER_ID);
@@ -1092,16 +1122,40 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
               FORCEDHOP_PAYLOAD_LEN);
         CHECK(memcmp(world.roles[gateway].deliveries[packet_index].payload,
                      payload, sizeof(payload)) == 0);
+        CHECK(!mesh_relay_gateway_identity_confirmation_pending(
+            &world.roles[gateway].relay,
+            packet.src_id,
+            packet.msg_type,
+            packet.session_id,
+            packet.seq,
+            (uint32_t)(world.now_us / 1000u)));
     }
 
     CHECK(world.roles[gateway].delivery_count == FORCEDHOP_BURST_COUNT);
     CHECK(world.connection_count == 1u);
     CHECK(world.roles[gateway].tx_queue_count == 0u);
+    CHECK(world.roles[anchor].tx_queue_count == 0u);
+    CHECK(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      TRANSMITTER_ID) ==
+          0u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     ANCHOR_ID) ==
           FORCEDHOP_BURST_COUNT);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_ROUTE_REQUIRED,
+                                     0u) == 0u);
+    CHECK(mesh_sim_count_transitions(
+              &world,
+              MESH_SIM_TRANSITION_CONNECTION_REPAIR_STARTED,
+              0u) == 0u);
+    CHECK(world.connections[connection].completed_repairs == 0u);
+    CHECK(world.connections[connection].timing_a.timing_fresh);
+    CHECK(world.connections[connection].timing_b.timing_fresh);
+    CHECK(world.last_error == MESH_SIM_OK);
     return 0;
 }
 

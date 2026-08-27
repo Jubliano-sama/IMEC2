@@ -1,10 +1,12 @@
 #include "app_radio_recovery.h"
 
+#include "app_board.h"
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 
 #include <stddef.h>
 
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(app_radio_recovery, LOG_LEVEL_DBG);
@@ -34,14 +36,55 @@ static int radio_transition_with_bounded_recovery(
     int recovery_ret;
     int retry_ret;
 
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+        status_debug_printf(
+            "DBG_RADIO_RECOVERY step=first_begin target=%s reason=%s tid=%p\n",
+            radio_recovery_target_name(target),
+            reason == NULL ? "unspecified" : reason,
+            k_current_get());
+    }
     first_ret = radio_recovery_transition(target);
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+        status_debug_printf(
+            "DBG_RADIO_RECOVERY step=first_end target=%s reason=%s ret=%d\n",
+            radio_recovery_target_name(target),
+            reason == NULL ? "unspecified" : reason,
+            first_ret);
+    }
     if (first_ret >= 0) {
         return 0;
     }
 
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+        status_debug_printf(
+            "DBG_RADIO_RECOVERY step=force_begin target=%s reason=%s first_ret=%d\n",
+            radio_recovery_target_name(target),
+            reason == NULL ? "unspecified" : reason,
+            first_ret);
+    }
     recovery_ret = dwm3000_driver_force_recovery();
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+        status_debug_printf(
+            "DBG_RADIO_RECOVERY step=force_end target=%s reason=%s ret=%d\n",
+            radio_recovery_target_name(target),
+            reason == NULL ? "unspecified" : reason,
+            recovery_ret);
+    }
     if (recovery_ret >= 0) {
+        if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+            status_debug_printf(
+                "DBG_RADIO_RECOVERY step=retry_begin target=%s reason=%s\n",
+                radio_recovery_target_name(target),
+                reason == NULL ? "unspecified" : reason);
+        }
         retry_ret = radio_recovery_transition(target);
+        if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+            status_debug_printf(
+                "DBG_RADIO_RECOVERY step=retry_end target=%s reason=%s ret=%d\n",
+                radio_recovery_target_name(target),
+                reason == NULL ? "unspecified" : reason,
+                retry_ret);
+        }
         if (retry_ret >= 0) {
             LOG_WRN("radio %s recovered: reason=%s first_ret=%d",
                     radio_recovery_target_name(target),

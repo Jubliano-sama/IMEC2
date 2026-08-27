@@ -203,6 +203,10 @@ static void append_batch_metadata(uint8_t *payload,
 
 static void build_range_record(void)
 {
+    static const uint64_t participant_anchor_ids[] = {
+        TEST_ANCHOR_ID,
+        TEST_ANCHOR_ID + 1u,
+    };
     static const int32_t distance_samples[] = {4182, 4175, 4191};
     static const uint8_t round_indices[] = {2u, 5u, 9u};
     static const uint64_t sequence_timestamps[] = {
@@ -256,6 +260,8 @@ static void build_range_record(void)
         .sample_index = 0u,
         .sample_count = 3u,
         .distance_sample_count = 3u,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count = 2u,
         .diagnostics = &diagnostics,
     };
     struct expected_record *record = &expected_records[TEST_RECORD_RANGE];
@@ -1674,6 +1680,14 @@ static void verify_range_tlvs(const uint8_t *payload, size_t payload_len)
                    TLV_CLICKER_ID, TEST_CLICKER_ID, "clicker-id");
     expect_tlv_u64(payload, payload_len, &offset,
                    TLV_ANCHOR_ID, TEST_ANCHOR_ID, "anchor-id");
+    value = expect_tlv(payload, payload_len, &offset,
+                       TLV_PEER_ID_LIST,
+                       2u * sizeof(uint64_t),
+                       "participant-anchors");
+    CHECK(proto_get_u64_le(&value[0]) == TEST_ANCHOR_ID &&
+              proto_get_u64_le(&value[sizeof(uint64_t)]) ==
+                  TEST_ANCHOR_ID + 1u,
+          "participant anchor list changed");
     expect_tlv_u32(payload, payload_len, &offset,
                    TLV_EVENT_SEQ, TEST_EVENT_SEQ, "event-seq");
     expect_tlv_u64(payload, payload_len, &offset,

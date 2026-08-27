@@ -109,7 +109,7 @@ static uint8_t reserved_attempt_index;
 static bool click_reservation_committed;
 static struct uwb_wake_claim_frame injected_competing_claim;
 static bool inject_competing_claim;
-static bool competing_claim_ignored;
+static bool competing_claim_replaced;
 
 static struct mesh_pending_tx repair_pending;
 static struct app_mesh_ch9_ack_table repair_ack_table;
@@ -221,6 +221,7 @@ static bool anchor_handle_uwb_claim(
     uint32_t *retained_sleep_us,
     bool *deferred_mesh_rx_queued)
 {
+    struct uwb_wake_claim_frame selected_claim;
     int ret;
 
     ARG_UNUSED(link_quality);
@@ -233,6 +234,7 @@ static bool anchor_handle_uwb_claim(
     zassert_equal(reserved_attempt_index, claim->attempt_index);
     zassert_not_equal(click_reservation.token, 0u);
     zassert_false(click_reservation_committed);
+    selected_claim = *claim;
 
     anchor_uwb_session.epoch = (struct uwb_anchor_epoch) {
         .active = true,
@@ -249,25 +251,35 @@ static bool anchor_handle_uwb_claim(
 
         zassert_true(admitted_handoff_identity_frozen,
                      "handoff did not freeze its reserved click identity");
-        zassert_true(injected_competing_claim.priority_id > claim->priority_id,
+        zassert_true(injected_competing_claim.priority_id < claim->priority_id,
                      "test competitor is not higher priority");
-        zassert_false(anchor_claim_collection_candidate_allowed(
-                          &anchor_uwb_session.epoch,
-                          &injected_competing_claim,
-                          admitted_handoff_identity_frozen,
-                          &same_epoch),
-                      "higher-priority claim replaced reserved handoff identity");
+        zassert_true(anchor_claim_collection_candidate_allowed(
+                         &anchor_uwb_session.epoch,
+                         &injected_competing_claim,
+                         admitted_handoff_identity_frozen,
+                         &same_epoch),
+                     "higher-priority claim could not follow empty reservation");
         zassert_false(same_epoch,
                       "higher-priority test claim unexpectedly matched handoff");
-        competing_claim_ignored = true;
+        zassert_ok(mesh_range_report_batch_rebind(
+            claim->clicker_id,
+            claim->click_event_id,
+            claim->attempt_index,
+            injected_competing_claim.clicker_id,
+            injected_competing_claim.click_event_id,
+            injected_competing_claim.attempt_index));
+        zassert_ok(app_anchor_click_event_runtime_claim(
+            &injected_competing_claim, k_uptime_get_32(), NULL));
+        selected_claim = injected_competing_claim;
+        competing_claim_replaced = true;
     }
 
-    click_report_build(claim);
+    click_report_build(&selected_claim);
     ret = app_node_comm_commit_reliable_uplink_reservation(
         &click_reservation,
         &click_outbound,
         (uint64_t)k_uptime_get() + 60000u,
-        claim->click_event_id,
+        selected_claim.click_event_id,
         &click_delivery_handle);
     zassert_ok(ret, "composed six-slot click commit failed: %d", ret);
     click_reservation_committed = true;
@@ -324,6 +336,30 @@ bool uwb_anchor_epoch_matches(const struct uwb_anchor_epoch *epoch,
            epoch->click_event_id == click_event_id &&
            epoch->attempt_index == attempt_index &&
            epoch->nonce == nonce;
+}
+
+int uwb_claim_precedence_compare(uint8_t left_attempt_index,
+                                 uint64_t left_priority_id,
+                                 uint64_t left_clicker_id,
+                                 uint32_t left_click_event_id,
+                                 uint8_t right_attempt_index,
+                                 uint64_t right_priority_id,
+                                 uint64_t right_clicker_id,
+                                 uint32_t right_click_event_id)
+{
+    if (left_attempt_index != right_attempt_index) {
+        return left_attempt_index > right_attempt_index ? 1 : -1;
+    }
+    if (left_priority_id != right_priority_id) {
+        return left_priority_id < right_priority_id ? 1 : -1;
+    }
+    if (left_clicker_id != right_clicker_id) {
+        return left_clicker_id < right_clicker_id ? 1 : -1;
+    }
+    if (left_click_event_id != right_click_event_id) {
+        return left_click_event_id < right_click_event_id ? 1 : -1;
+    }
+    return 0;
 }
 
 bool mesh_anchor_connected_radio_active(void)
@@ -384,13 +420,37 @@ int mesh_range_report_batch_reserve_capacity(uint64_t requested_clicker_id,
                                            attempt_index);
 }
 
+int mesh_range_report_batch_rebind(uint64_t current_clicker_id,
+                                   uint32_t current_event_seq,
+                                   uint8_t current_attempt_index,
+                                   uint64_t replacement_clicker_id,
+                                   uint32_t replacement_event_seq,
+                                   uint8_t replacement_attempt_index)
+{
+    if (click_reservation_committed) {
+        return -EBUSY;
+    }
+    if (reserved_clicker_id != current_clicker_id ||
+        reserved_event_seq != current_event_seq ||
+        reserved_attempt_index != current_attempt_index ||
+        click_reservation.token == 0u) {
+        return -ESTALE;
+    }
+    reserved_clicker_id = replacement_clicker_id;
+    reserved_event_seq = replacement_event_seq;
+    reserved_attempt_index = replacement_attempt_index;
+    return 0;
+}
+
 void mesh_range_report_batch_abort(uint64_t requested_clicker_id,
                                    uint32_t event_seq,
                                    uint8_t attempt_index)
 {
-    zassert_equal(reserved_clicker_id, requested_clicker_id);
-    zassert_equal(reserved_event_seq, event_seq);
-    zassert_equal(reserved_attempt_index, attempt_index);
+    if (reserved_clicker_id != requested_clicker_id ||
+        reserved_event_seq != event_seq ||
+        reserved_attempt_index != attempt_index) {
+        return;
+    }
     if (!click_reservation_committed && click_reservation.token != 0u) {
         zassert_ok(app_node_comm_cancel_reliable_uplink_reservation(
             &click_reservation));
@@ -742,7 +802,7 @@ static void fixture_reset(void)
     click_reservation_committed = false;
     memset(&injected_competing_claim, 0, sizeof(injected_competing_claim));
     inject_competing_claim = false;
-    competing_claim_ignored = false;
+    competing_claim_replaced = false;
     anchor_click_window_busy = false;
     anchor_scan_recovery_gap_requested = false;
     anchor_uwb_busy = false;
@@ -863,8 +923,8 @@ ZTEST(production_seam_click_handoff,
     injected_competing_claim = claim;
     injected_competing_claim.clicker_id = UINT64_C(0x5555666677778888);
     injected_competing_claim.click_event_id = click_event_seq + 1u;
-    injected_competing_claim.attempt_index = click_attempt_index + 1u;
-    injected_competing_claim.priority_id = claim.priority_id + 1u;
+    injected_competing_claim.attempt_index = click_attempt_index;
+    injected_competing_claim.priority_id = claim.priority_id - 1u;
     injected_competing_claim.nonce = UINT64_C(0x8877665544332211);
     inject_competing_claim = true;
 
@@ -882,18 +942,20 @@ ZTEST(production_seam_click_handoff,
                "click worker did not execute the transferred lease");
     zassert_true(anchor_uwb_busy);
     zassert_true(radio_guard_uwb_busy());
-    zassert_true(competing_claim_ignored,
-                 "post-handoff higher-priority claim was not rejected");
+    zassert_true(competing_claim_replaced,
+                 "post-handoff higher-priority claim did not follow capacity");
     zassert_true(click_reservation_committed);
     zassert_equal(app_node_comm_delivery_handle_state(click_delivery_handle),
                   1);
     zassert_equal(app_node_comm_pending_delivery_count(), 1u);
-    zassert_equal(reserved_clicker_id, claim.clicker_id);
-    zassert_equal(reserved_event_seq, claim.click_event_id);
-    zassert_equal(reserved_attempt_index, claim.attempt_index);
+    zassert_equal(reserved_clicker_id, injected_competing_claim.clicker_id);
+    zassert_equal(reserved_event_seq, injected_competing_claim.click_event_id);
+    zassert_equal(reserved_attempt_index,
+                  injected_competing_claim.attempt_index);
     zassert_equal(click_outbound.packet.session_id,
-                  proto_click_report_session_id(claim.clicker_id,
-                                               claim.click_event_id));
+                  proto_click_report_session_id(
+                      injected_competing_claim.clicker_id,
+                      injected_competing_claim.click_event_id));
 
     /* It remains blocked for the complete physical click interval. */
     repair_attempt_run();

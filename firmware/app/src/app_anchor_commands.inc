@@ -107,10 +107,27 @@ static int anchor_save_discovery_assignment_semantic(
 #if defined(CONFIG_IMEC_DURABLE_STATE)
     if (anchor_discovery_assignment_ram_only_iteration) {
         anchor_ram_discovery_assignment_snapshot = *snapshot;
+        status_debug_printf(
+            "DBG_DISCOVERY_SLOT_SAVE mode=ram epoch=%u pending_epoch=%u slot=%u slot_count=%u provisioned=%u pending=%u\n",
+            snapshot->epoch,
+            snapshot->pending_epoch,
+            snapshot->slot,
+            snapshot->slot_count,
+            snapshot->provisioned,
+            snapshot->pending_valid);
         return 0;
     }
     anchor_assignment_snapshot_to_durable(snapshot, &assignment);
     ret = app_durable_state_save_anchor_assignment(GATEWAY_ID, &assignment);
+    status_debug_printf(
+        "DBG_DISCOVERY_SLOT_SAVE mode=nvs ret=%d epoch=%u pending_epoch=%u slot=%u slot_count=%u provisioned=%u pending=%u\n",
+        ret,
+        snapshot->epoch,
+        snapshot->pending_epoch,
+        snapshot->slot,
+        snapshot->slot_count,
+        snapshot->provisioned,
+        snapshot->pending_valid);
     if (ret < 0) {
         return ret;
     }
@@ -3555,6 +3572,11 @@ static int anchor_apply_discovery_assignment_command(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
+    status_debug_printf(
+        "DBG_DISCOVERY_POLICY phase=%u epoch=%u ram_only=%u\n",
+        phase,
+        epoch,
+        anchor_discovery_assignment_ram_only_iteration ? 1u : 0u);
     ret = gateway_command_extract_options(payload,
                                           payload_len,
                                           &assignment_options);

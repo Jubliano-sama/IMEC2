@@ -217,6 +217,29 @@ static void test_margin_boundaries(void)
               PROTO_ERR_BAD_LENGTH);
 }
 
+static void test_gateway_logging_hardware_watermark(void)
+{
+    struct stack_budget_role_config gateway;
+    struct stack_budget_result result;
+
+    CHECK_INT(stack_budget_role_baseline(STACK_BUDGET_ROLE_GATEWAY,
+                                         &gateway),
+              PROTO_OK);
+    CHECK_U32(gateway.log_processor_bytes,
+              STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES);
+    CHECK_INT(stack_budget_evaluate(
+                  gateway.log_processor_bytes,
+                  STACK_BUDGET_GATEWAY_LOG_PROCESSOR_MEASURED_MAX_BYTES,
+                  0u,
+                  STACK_BUDGET_OWNER_LOG_PROCESSOR,
+                  &result),
+              PROTO_OK);
+    CHECK_TRUE(result.passes);
+    CHECK_U32(result.remaining_bytes, 1056u);
+    CHECK_TRUE(result.remaining_bytes >=
+               STACK_BUDGET_GATEWAY_LOG_PROCESSOR_MEASURED_MIN_FREE_BYTES);
+}
+
 static void test_large_local_guard(void)
 {
     CHECK_TRUE(stack_budget_large_local_allowed(0u));
@@ -404,6 +427,7 @@ int main(void)
     test_exact_role_baselines();
     test_role_config_drift_rejected();
     test_margin_boundaries();
+    test_gateway_logging_hardware_watermark();
     test_large_local_guard();
     test_assignment_publish_large_local_budget();
     test_anchor_delivery_restore_hardware_watermark();

@@ -36,11 +36,28 @@ static bool pending_expired_at(const struct mesh_pending_tx *pending,
 static bool pending_click_transferable(const struct mesh_pending_tx *pending,
                                        uint32_t now_ms)
 {
+    bool exact_hop_ack_may_still_arrive;
+
     if (pending == NULL || pending->gateway_ack_confirm_pending ||
         pending->gateway_ack_recovery_flags != 0u ||
         pending->gateway_ack_forward_pending ||
         (pending->state != MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
          pending->state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF)) {
+        return false;
+    }
+
+    /* A local report sent through an intermediate has already handed the
+     * immutable packet to that parent, which may return its exact HOP_ACK in
+     * any retained receive slot. Moving the report back to the ordinary
+     * queue would erase the active/retry-backoff RX predicate and let a new
+     * report TX outrank that ACK after click preemption. Keep this one owner
+     * in relay->pending; direct-gateway reports retain the existing atomic
+     * queue handoff because their next hop is the final destination. */
+    exact_hop_ack_may_still_arrive =
+        pending->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+        pending->next_hop_id != 0u &&
+        pending->next_hop_id != pending->packet.dst_id;
+    if (exact_hop_ack_may_still_arrive) {
         return false;
     }
 

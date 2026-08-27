@@ -326,6 +326,60 @@ struct reciprocal_endpoint {
     bool reciprocal_window_open;
 };
 
+static int reciprocal_endpoint_prepare_proposal_at(
+    struct reciprocal_endpoint *endpoint,
+    uint32_t session_id,
+    uint16_t sequence,
+    uint32_t encoded_at_ms,
+    uint32_t first_event_ms)
+{
+    struct mesh_event_params params = connection_params(first_event_ms);
+    size_t payload_len = 0u;
+    int ret;
+
+    memset(&endpoint->proposal_timing, 0, sizeof(endpoint->proposal_timing));
+    memset(&endpoint->proposal, 0, sizeof(endpoint->proposal));
+    memset(endpoint->proposal_payload, 0, sizeof(endpoint->proposal_payload));
+    ret = mesh_event_timing_negotiate(&endpoint->proposal_timing,
+                                      &params,
+                                      true);
+    if (ret != PROTO_OK ||
+        !mesh_event_timing_bind_proposal_session(
+            &endpoint->proposal_timing, session_id)) {
+        return ret == PROTO_OK ? PROTO_ERR_ARG : ret;
+    }
+    ret = mesh_append_event_timing_tlvs_at(
+        endpoint->proposal_payload,
+        sizeof(endpoint->proposal_payload),
+        &payload_len,
+        &endpoint->proposal_timing,
+        encoded_at_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u64(endpoint->proposal_payload,
+                         sizeof(endpoint->proposal_payload),
+                         &payload_len,
+                         TLV_MESH_EVENT_BOOT_NONCE,
+                         endpoint->boot_nonce);
+    if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+    }
+    ret = mesh_init_event_control(&endpoint->proposal,
+                                  MSG_MESH_EVENT_PROPOSE,
+                                  endpoint->id,
+                                  endpoint->peer_id,
+                                  session_id,
+                                  sequence,
+                                  (uint8_t)payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    endpoint->proposal_payload_len = payload_len;
+    endpoint->proposal_pending = true;
+    return PROTO_OK;
+}
+
 static int reciprocal_endpoint_init(struct reciprocal_endpoint *endpoint,
                                     uint64_t id,
                                     uint64_t peer_id,
@@ -335,8 +389,6 @@ static int reciprocal_endpoint_init(struct reciprocal_endpoint *endpoint,
                                     uint32_t first_event_ms,
                                     bool installed)
 {
-    struct mesh_event_params params = connection_params(first_event_ms);
-    size_t payload_len = 0u;
     int ret;
 
     memset(endpoint, 0, sizeof(*endpoint));
@@ -344,49 +396,19 @@ static int reciprocal_endpoint_init(struct reciprocal_endpoint *endpoint,
     endpoint->peer_id = peer_id;
     endpoint->boot_nonce = boot_nonce;
     endpoint->installed = installed;
-    endpoint->proposal_pending = !installed;
     endpoint->reciprocal_window_open = installed;
-    ret = mesh_event_timing_negotiate(&endpoint->proposal_timing,
-                                      &params,
-                                      true);
+    ret = reciprocal_endpoint_prepare_proposal_at(endpoint,
+                                                  session_id,
+                                                  sequence,
+                                                  0u,
+                                                  first_event_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (!mesh_event_timing_bind_proposal_session(
-            &endpoint->proposal_timing, session_id)) {
-        return PROTO_ERR_ARG;
-    }
-    ret = mesh_append_event_timing_tlvs_at(
-        endpoint->proposal_payload,
-        sizeof(endpoint->proposal_payload),
-        &payload_len,
-        &endpoint->proposal_timing,
-        0u);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u64(endpoint->proposal_payload,
-                         sizeof(endpoint->proposal_payload),
-                         &payload_len,
-                         TLV_MESH_EVENT_BOOT_NONCE,
-                         boot_nonce);
-    if (ret != PROTO_OK || payload_len > UINT8_MAX) {
-        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
-    }
-    ret = mesh_init_event_control(&endpoint->proposal,
-                                  MSG_MESH_EVENT_PROPOSE,
-                                  id,
-                                  peer_id,
-                                  session_id,
-                                  sequence,
-                                  (uint8_t)payload_len);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    endpoint->proposal_payload_len = payload_len;
     if (!installed) {
         return PROTO_OK;
     }
+    endpoint->proposal_pending = false;
     endpoint->installed_timing = endpoint->proposal_timing;
     ret = mesh_event_owner_begin(&endpoint->owner,
                                  peer_id,
@@ -935,6 +957,164 @@ static int run_lost_accept_exact_proposal_retry_case(void)
     return 0;
 }
 
+static int run_lost_accept_fresh_proposal_retry_case(void)
+{
+    static struct mesh_sim_world world;
+    struct reciprocal_endpoint proposer;
+    struct mesh_event_owner responder_owner = {0};
+    struct mesh_event_timing retry_received_timing = {0};
+    struct mesh_event_timing stale_received_timing = {0};
+    struct mesh_event_params params = connection_params(5000u);
+    struct mesh_relay_result relay_result;
+    struct proto_packet first_proposal;
+    uint8_t first_proposal_payload[CONTROL_PAYLOAD_CAPACITY];
+    size_t first_proposal_payload_len;
+    const uint8_t *delay_value = NULL;
+    uint8_t delay_len = 0u;
+    uint8_t proposer_index;
+    uint8_t responder_index;
+    uint16_t connection;
+    uint32_t first_session;
+    uint32_t retry_encoded_at_ms;
+    uint32_t retry_session;
+    uint16_t first_sequence;
+    uint16_t retry_sequence;
+
+    phase = "lost_accept_fresh_proposal_retry";
+    mesh_sim_init(&world, UINT32_C(0x17170005));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, LEAF_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &proposer_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, RELAY_A_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &responder_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, proposer_index, responder_index, 100u, 4u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_connection(&world, proposer_index, responder_index,
+                                  &params, true, &connection) == MESH_SIM_OK);
+    CHECK(reciprocal_endpoint_init(
+              &proposer, LEAF_ID, RELAY_A_ID,
+              UINT64_C(0x1717000000000005), UINT32_C(0x17170005), 15u,
+              6000u, false) == PROTO_OK);
+    first_session = proposer.proposal.session_id;
+    first_sequence = proposer.proposal.seq;
+    first_proposal = proposer.proposal;
+    first_proposal_payload_len = proposer.proposal_payload_len;
+    memcpy(first_proposal_payload,
+           proposer.proposal_payload,
+           first_proposal_payload_len);
+
+    CHECK(send_control_over_radio(
+              &world, connection, proposer_index, MSG_MESH_EVENT_PROPOSE,
+              proposer.proposal.session_id, proposer.proposal.seq,
+              proposer.proposal_payload, proposer.proposal_payload_len) ==
+          MESH_SIM_OK);
+    CHECK(mesh_event_owner_begin_with_boot_nonce(
+              &responder_owner,
+              LEAF_ID,
+              first_session,
+              first_sequence,
+              true,
+              proposer.boot_nonce) == PROTO_OK);
+    {
+        uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+        CHECK(semantic_digest_sha256(proposer.proposal_payload,
+                                    proposer.proposal_payload_len,
+                                    digest));
+        CHECK(mesh_event_owner_bind_remote_proposal_digest(
+                  &responder_owner,
+                  first_session,
+                  first_sequence,
+                  digest) == PROTO_OK);
+    }
+
+    /* Model a lost ACCEPT and the later same-parent contact retry. */
+    CHECK(mesh_sim_run_until(&world, world.now_us + UINT64_C(1000000)) ==
+          MESH_SIM_OK);
+    retry_encoded_at_ms = (uint32_t)(world.now_us / 1000u);
+    retry_session = first_session + 1u;
+    retry_sequence = sequence_after(first_sequence, 1u);
+    CHECK(reciprocal_endpoint_prepare_proposal_at(
+              &proposer,
+              retry_session,
+              retry_sequence,
+              retry_encoded_at_ms,
+              retry_encoded_at_ms + 600u) == PROTO_OK);
+    CHECK(proposer.proposal.session_id != first_session);
+    CHECK(proposer.proposal.seq != first_sequence);
+    CHECK(tlv_find_unique(proposer.proposal_payload,
+                          proposer.proposal_payload_len,
+                          TLV_MESH_NEXT_EVENT_TIME_MS,
+                          &delay_value,
+                          &delay_len) == PROTO_OK);
+    CHECK(delay_len == sizeof(uint32_t));
+    CHECK(proto_get_u32_le(delay_value) == 600u);
+
+    CHECK(send_control_over_radio(
+              &world, connection, proposer_index, MSG_MESH_EVENT_PROPOSE,
+              proposer.proposal.session_id, proposer.proposal.seq,
+              proposer.proposal_payload, proposer.proposal_payload_len) ==
+          MESH_SIM_OK);
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[responder_index].relay,
+              &proposer.proposal,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len,
+              LEAF_ID,
+              100u,
+              retry_encoded_at_ms,
+              0u,
+              &relay_result) == PROTO_OK);
+    CHECK(relay_result.status == PROTO_OK);
+    CHECK((relay_result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u);
+    CHECK(mesh_event_owner_classify_proposal(
+              &responder_owner,
+              RELAY_A_ID,
+              LEAF_ID,
+              &proposer.proposal,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len) == MESH_EVENT_OWNER_APPLY);
+    CHECK(mesh_event_timing_from_tlvs_at(
+              &retry_received_timing,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len,
+              retry_encoded_at_ms,
+              true) == PROTO_OK);
+    CHECK(retry_received_timing.next_event_time_ms ==
+          proposer.proposal_timing.next_event_time_ms);
+    CHECK(retry_received_timing.event_counter ==
+          proposer.proposal_timing.event_counter);
+
+    CHECK(mesh_event_owner_begin_with_boot_nonce(
+              &responder_owner,
+              LEAF_ID,
+              retry_session,
+              retry_sequence,
+              true,
+              proposer.boot_nonce) == PROTO_OK);
+    CHECK(responder_owner.session_id == retry_session);
+    CHECK(mesh_event_owner_retains_session(&responder_owner, first_session));
+
+    CHECK(mesh_event_timing_from_tlvs_at(
+              &stale_received_timing,
+              first_proposal_payload,
+              first_proposal_payload_len,
+              retry_encoded_at_ms,
+              true) == PROTO_OK);
+    CHECK(stale_received_timing.next_event_time_ms !=
+          retry_received_timing.next_event_time_ms);
+    CHECK(mesh_event_owner_classify_proposal(
+              &responder_owner,
+              RELAY_A_ID,
+              LEAF_ID,
+              &first_proposal,
+              first_proposal_payload,
+              first_proposal_payload_len) ==
+          MESH_EVENT_OWNER_STALE);
+    return 0;
+}
+
 static int run_reciprocal_proposal_arbitration_scenario(void)
 {
     phase = "reciprocal_pending_higher_arrives_first";
@@ -947,7 +1127,8 @@ static int run_reciprocal_proposal_arbitration_scenario(void)
     CHECK(run_reciprocal_proposal_case(false, true) == 0);
     phase = "expired_installed_proposal_replay";
     CHECK(run_expired_installed_proposal_replay_case() == 0);
-    return run_lost_accept_exact_proposal_retry_case();
+    CHECK(run_lost_accept_exact_proposal_retry_case() == 0);
+    return run_lost_accept_fresh_proposal_retry_case();
 }
 
 static int run_event_control_scenario(void)

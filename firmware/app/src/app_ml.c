@@ -115,7 +115,8 @@ static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config 
 };
 static const struct app_clicker_wake_train_config clicker_wake_train_config = {
     .wake_adv_ms = WAKE_ADV_MS,
-    .post_wake_claimed_duration_ms = UWB_POST_WAKE_CLAIMED_DURATION_MS,
+    .post_wake_claimed_duration_ms =
+        UWB_CLICK_POST_WAKE_CLAIMED_DURATION_MS,
     .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
 };
 static atomic_t ml_clicker_busy;

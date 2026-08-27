@@ -9,6 +9,8 @@
 int status_stack_diag_transaction_begin(void);
 int status_stack_diag_note(const char *text);
 void status_stack_diag_transaction_end(void);
+void status_debug_rtt_drop_counts(uint32_t *mutex_busy_drops,
+                                  uint32_t *short_write_drops);
 
 #define APP_CONFIG_H
 #define CONFIG_IMEC_STACK_DIAGNOSTICS 1
@@ -43,6 +45,8 @@ static unsigned fail_write_position;
 static bool transaction_active;
 static uint32_t fake_uptime;
 static uint32_t fake_random = 1u;
+static uint32_t fake_rtt_mutex_busy_drops;
+static uint32_t fake_rtt_short_write_drops;
 
 k_tid_t zephyr_shim_current_thread(void)
 {
@@ -95,6 +99,15 @@ void status_stack_diag_transaction_end(void)
 {
     assert(transaction_active);
     transaction_active = false;
+}
+
+void status_debug_rtt_drop_counts(uint32_t *mutex_busy_drops,
+                                  uint32_t *short_write_drops)
+{
+    assert(mutex_busy_drops != NULL);
+    assert(short_write_drops != NULL);
+    *mutex_busy_drops = fake_rtt_mutex_busy_drops;
+    *short_write_drops = fake_rtt_short_write_drops;
 }
 
 static bool capture_contains(const char *needle)
@@ -164,7 +177,48 @@ static void test_sample_failure_never_commits_end_or_count(void)
         assert(app_stack_diag_run_end(run_id, APP_STACK_DIAG_TERMINAL_ACK,
                                       &current) == 0);
         assert(capture_contains("samples=1"));
+        assert(capture_contains("attempts=2"));
+        assert(capture_contains("errors=1"));
+        assert(capture_contains("last_error=-5"));
     }
+}
+
+static void test_failed_sample_remains_visible_in_run_end(void)
+{
+    struct app_stack_diag_state current = state(25u);
+    uint32_t run_id = app_stack_diag_run_begin(
+        APP_STACK_DIAG_WORKLOAD_CLICK_ACTIVITY,
+        APP_STACK_DIAG_OWNER_CLICKER_ACTION, &current);
+
+    assert(run_id != 0u);
+    fail_write_position = 1u;
+    assert(app_stack_diag_sample(run_id, &current) == -EIO);
+
+    fail_write_position = 0u;
+    assert(app_stack_diag_run_end(run_id, APP_STACK_DIAG_TERMINAL_ERROR,
+                                  &current) == 0);
+    assert(capture_contains("DBG_STACK_RUN_END"));
+    assert(capture_contains("samples=0"));
+    assert(capture_contains("attempts=1"));
+    assert(capture_contains("errors=1"));
+    assert(capture_contains("last_error=-5"));
+}
+
+static void test_run_end_reports_cumulative_optional_rtt_drops(void)
+{
+    struct app_stack_diag_state current = state(26u);
+    uint32_t run_id = app_stack_diag_run_begin(
+        APP_STACK_DIAG_WORKLOAD_CLICK_ACTIVITY,
+        APP_STACK_DIAG_OWNER_CLICKER_ACTION, &current);
+
+    assert(run_id != 0u);
+    assert(app_stack_diag_sample(run_id, &current) == 0);
+    fake_rtt_mutex_busy_drops = 3u;
+    fake_rtt_short_write_drops = 2u;
+    assert(app_stack_diag_run_end(run_id, APP_STACK_DIAG_TERMINAL_ACK,
+                                  &current) == 0);
+    assert(capture_contains("mutex_drops=3"));
+    assert(capture_contains("short_drops=2"));
 }
 
 static void test_run_end_failure_retains_run_for_retry(void)
@@ -210,6 +264,8 @@ int main(void)
     assert(capture_contains("DBG_STACK_BOOT"));
     test_run_begin_failure_rolls_back_identity();
     test_sample_failure_never_commits_end_or_count();
+    test_failed_sample_remains_visible_in_run_end();
+    test_run_end_reports_cumulative_optional_rtt_drops();
     test_run_end_failure_retains_run_for_retry();
     test_thousand_run_commit_pressure();
     return 0;

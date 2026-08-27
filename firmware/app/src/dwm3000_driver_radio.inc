@@ -1,6 +1,18 @@
 #line 487 __BASE_FILE__
 static void clear_all_events(void);
 
+static uint32_t radio_transition_trace_next(void)
+{
+    return (uint32_t)atomic_inc(&radio_transition_trace_seq) + 1u;
+}
+
+#define DWM3000_TRANSITION_TRACE(...)                                      \
+    do {                                                                   \
+        if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {             \
+            status_debug_printf(__VA_ARGS__);                              \
+        }                                                                  \
+    } while (false)
+
 static void invalidate_radio_state_tagged(const char *tag)
 {
     status_debug_printf(
@@ -124,6 +136,18 @@ static uint64_t timestamp_to_u64(const uint8_t timestamp[5])
            ((uint64_t)timestamp[4] << 32);
 }
 
+static int64_t timestamp_delta_40(uint64_t lhs, uint64_t rhs)
+{
+    const uint64_t mask = (UINT64_C(1) << 40) - 1u;
+    const uint64_t sign = UINT64_C(1) << 39;
+    uint64_t delta = (lhs - rhs) & mask;
+
+    if ((delta & sign) != 0u) {
+        return (int64_t)(delta - (UINT64_C(1) << 40));
+    }
+    return (int64_t)delta;
+}
+
 static uint64_t read_tx_timestamp_u64(void)
 {
     uint8_t timestamp[5];
@@ -245,31 +269,54 @@ static int ensure_local_data(void)
 
 static int initialise_radio(bool idle_after_init)
 {
+    uint32_t trace_id = radio_transition_trace_next();
     int initialise_ret;
     int ret;
     int mode = idle_after_init ? DWT_DW_IDLE : DWT_DW_INIT;
 
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=entry tid=%p idle=%u spi=%u\n",
+        trace_id, k_current_get(), idle_after_init ? 1u : 0u,
+        (unsigned int)dwm3000_port_current_spi_hz());
     ret = dwm3000_port_init();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=port_init ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
         return ret;
     }
 
     ret = ensure_local_data();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=local_data ret=%d\n", trace_id, ret);
     if (ret < 0) {
         return ret;
     }
 
     dwm3000_port_clear_error();
     ret = dwm3000_port_set_slow_spi();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=slow_spi ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
         return ret;
     }
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=dwt_initialise_begin mode=%d\n",
+        trace_id, mode);
     initialise_ret = dwt_initialise(mode);
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=dwt_initialise_end ret=%d\n",
+        trace_id, initialise_ret);
     ret = take_port_error("initialise");
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=port_error ret=%d\n", trace_id, ret);
     if (ret < 0) {
         return ret;
     }
     ret = check_device_fatal_status("initialise");
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=fatal_status ret=%d\n", trace_id, ret);
     if (ret < 0) {
         return ret;
     }
@@ -277,15 +324,24 @@ static int initialise_radio(bool idle_after_init)
         return -EIO;
     }
     ret = validate_device_identity("initialise");
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=identity ret=%d\n", trace_id, ret);
     if (ret < 0) {
         return ret;
     }
     ret = dwm3000_port_set_fast_spi();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=fast_spi ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
         invalidate_radio_state_tagged(__func__);
         return ret;
     }
     mark_radio_awake_unconfigured_tagged(__func__);
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=done configured=%u awake=%u unknown=%u phy=%u\n",
+        trace_id, radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u, (unsigned int)active_phy_mode);
     return 0;
 }
 
@@ -443,11 +499,21 @@ static bool phy_configs_equal(const dwt_config_t *a, const dwt_config_t *b)
 static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
 {
     const dwt_config_t *config = config_for_phy(phy_mode);
+    uint32_t trace_id = radio_transition_trace_next();
     int ret;
 
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=entry tid=%p requested_phy=%u configured=%u awake=%u unknown=%u active_phy=%u spi=%u\n",
+        trace_id, k_current_get(), (unsigned int)phy_mode,
+        radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u, (unsigned int)active_phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
     invalidate_radio_state_tagged(__func__);
 
     ret = dwm3000_port_init();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=port_init ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_RESET_PORT_INIT_FAIL phy=%d ret=%d\n",
@@ -457,6 +523,9 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
     }
 
     ret = dwm3000_port_wakeup();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=wake_before_reset ret=%d\n",
+        trace_id, ret);
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_RESET_WAKE_PIN_FAIL phy=%d ret=%d\n",
@@ -466,6 +535,9 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
     }
 
     ret = dwm3000_port_hw_reset();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=hw_reset ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_RESET_HW_FAIL phy=%d ret=%d\n",
@@ -479,11 +551,18 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
      * transactions land on an awake device instead of returning the device
      * ID for every register. */
     ret = dwm3000_port_wakeup();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=wake_after_reset ret=%d\n",
+        trace_id, ret);
     if (ret < 0) {
         return ret;
     }
 
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=initialise_begin\n", trace_id);
     ret = initialise_radio(false);
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=initialise_end ret=%d\n", trace_id, ret);
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
@@ -494,7 +573,17 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
         return ret;
     }
 
-    return apply_radio_config(config, phy_mode);
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=apply_begin phy=%u spi=%u\n",
+        trace_id, (unsigned int)phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
+    ret = apply_radio_config(config, phy_mode);
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_RESET id=%u step=done ret=%d configured=%u awake=%u unknown=%u active_phy=%u spi=%u\n",
+        trace_id, ret, radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u, (unsigned int)active_phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
+    return ret;
 }
 
 static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
@@ -1359,12 +1448,14 @@ static bool read_rx_diagnostics(int8_t *rsl_dbm,
                                 int16_t *clock_offset_raw,
                                 bool *clock_offset_sampled,
                                 int32_t *carrier_integrator,
-                                bool *carrier_integrator_sampled)
+                                bool *carrier_integrator_sampled,
+                                uint64_t *ipatov_rx_timestamp)
 {
     dwt_rxdiag_t diagnostics;
 
     if (rsl_dbm == NULL && cir_sample == NULL &&
-        clock_offset_raw == NULL && carrier_integrator == NULL) {
+        clock_offset_raw == NULL && carrier_integrator == NULL &&
+        ipatov_rx_timestamp == NULL) {
         return true;
     }
     if (rsl_dbm != NULL) {
@@ -1388,6 +1479,9 @@ static bool read_rx_diagnostics(int8_t *rsl_dbm,
     if (carrier_integrator_sampled != NULL) {
         *carrier_integrator_sampled = false;
     }
+    if (ipatov_rx_timestamp != NULL) {
+        *ipatov_rx_timestamp = 0u;
+    }
 
     memset(&diagnostics, 0, sizeof(diagnostics));
     dwt_readdiagnostics(&diagnostics);
@@ -1398,6 +1492,9 @@ static bool read_rx_diagnostics(int8_t *rsl_dbm,
     }
     if (rsl_dbm != NULL) {
         *rsl_dbm = estimate_ipatov_rsl_dbm(&diagnostics);
+    }
+    if (ipatov_rx_timestamp != NULL) {
+        *ipatov_rx_timestamp = timestamp_to_u64(diagnostics.ipatovRxTime);
     }
     if (read_cir_sample(&diagnostics, cir_sample)) {
         if (cir_sampled != NULL) {

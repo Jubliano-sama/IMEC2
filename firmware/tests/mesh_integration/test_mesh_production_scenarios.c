@@ -347,6 +347,17 @@ static int no_route_discovery(const struct mesh_sim_world *world)
     return 1;
 }
 
+static bool all_relay_custody_settled(const struct mesh_sim_world *world)
+{
+    for (size_t i = 0u; i < world->role_count; i++) {
+        if (world->roles[i].relay.pending.state != MESH_RELAY_TX_IDLE ||
+            world->roles[i].tx_queue_count != 0u) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static size_t count_transitions_for_message(
     const struct mesh_sim_world *world,
     enum mesh_sim_transition_kind kind,
@@ -483,7 +494,8 @@ static int run_line_until_confirmed(struct mesh_sim_world *world,
         int ret;
 
         if (world->roles[gateway].delivery_count >= expected_deliveries &&
-            world->roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE) {
+            world->roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE &&
+            all_relay_custody_settled(world)) {
             return MESH_SIM_OK;
         }
         if (queued_for_gateway(&world->roles[final_relay])) {
@@ -517,6 +529,7 @@ static int test_line_depth(uint8_t relay_count)
     uint16_t connections[LINE_MAX_RELAYS + 1u];
     uint8_t payload[32];
     uint8_t gateway;
+    uint64_t terminal_owner_id;
     uint32_t seed = SCENARIO_SEED_LINE + relay_count;
 
     mesh_sim_init(&world, seed);
@@ -534,6 +547,8 @@ static int test_line_depth(uint8_t relay_count)
             mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
                               GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
     nodes[relay_count + 1u] = gateway;
+    terminal_owner_id = relay_count == 0u ?
+        TRANSMITTER_ID : ANCHOR_ID_BASE + relay_count - 1u;
 
     for (uint8_t i = 0u; i <= relay_count; i++) {
         REQUIRE("line_topology", seed,
@@ -585,13 +600,29 @@ static int test_line_depth(uint8_t relay_count)
                 world.roles[gateway].deliveries[seq - 1u].packet.seq == seq);
         if (mesh_sim_count_transitions(&world,
                                        MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                       TRANSMITTER_ID) != seq) {
+                                       terminal_owner_id) != seq) {
             print_line_failure(&world, relay_count);
         }
         REQUIRE("line_topology", seed,
                 mesh_sim_count_transitions(&world,
                                            MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                           TRANSMITTER_ID) == seq);
+                                           terminal_owner_id) == seq);
+        REQUIRE("line_topology", seed,
+                count_transitions_for_message(
+                    &world, MESH_SIM_TRANSITION_TX_START,
+                    terminal_owner_id, MSG_GATEWAY_ACK_CONFIRM) == seq);
+        for (uint8_t child = 0u; child < relay_count; child++) {
+            REQUIRE("line_topology", seed,
+                    count_transitions_for_message(
+                        &world, MESH_SIM_TRANSITION_TX_START,
+                        world.roles[nodes[child + 1u]].id,
+                        MSG_MESH_HOP_ACK) == seq);
+            REQUIRE("line_topology", seed,
+                    count_transitions_for_message(
+                        &world, MESH_SIM_TRANSITION_TX_START,
+                        world.roles[nodes[child]].id,
+                        MSG_GATEWAY_ACK_CONFIRM) == 0u);
+        }
     }
     REQUIRE("line_topology", seed,
             world.last_error == MESH_SIM_OK &&
@@ -629,6 +660,10 @@ static int test_click_preemption_and_retry(void)
     const int32_t distance_samples_mm[] = {1234};
     const uint8_t range_round_indices[] = {0u};
     const uint64_t sequence_start_timestamps_ms[] = {100u};
+    const uint64_t participant_anchor_ids[] = {
+        ANCHOR_ID_BASE,
+        ANCHOR_ID_BASE + 1u,
+    };
     const struct range_report_fields fields = {
         .clicker_id = CLICKER_ID,
         .anchor_id = ANCHOR_ID_BASE,
@@ -642,6 +677,8 @@ static int test_click_preemption_and_retry(void)
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = 1u,
         .distance_sample_count = 1u,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count = 2u,
         .burst_id = UINT32_C(0x52000001),
         .omit_rsl = true,
         .omit_cir = true,
@@ -746,7 +783,9 @@ static int test_click_preemption_and_retry(void)
                                        MESH_SIM_TRANSITION_RETRY_READY,
                                        TRANSMITTER_ID) == 1u);
     for (unsigned int event = 0u;
-         event < 24u && world.roles[transmitter].relay.pending.state != MESH_RELAY_TX_IDLE;
+         event < 48u &&
+             (world.roles[gateway].delivery_count != 2u ||
+              !all_relay_custody_settled(&world));
          event++) {
         int ret = run_earliest_connection(&world, connections, 2u);
 
@@ -956,7 +995,7 @@ int main(int argc, char **argv)
     failed |= test_click_preemption_and_retry();
     failed |= test_empty_receive_slots_preserve_timing_for_delayed_delivery();
     failed |= test_stalled_work_expires_watchdog();
-    for (uint8_t relay_count = 1u; relay_count <= LINE_MAX_RELAYS;
+    for (uint8_t relay_count = 0u; relay_count <= LINE_MAX_RELAYS;
          relay_count++) {
         failed |= test_line_depth(relay_count);
     }

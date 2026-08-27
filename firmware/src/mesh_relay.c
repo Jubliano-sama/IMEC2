@@ -2553,6 +2553,50 @@ static uint8_t gateway_ack_history_ordinary_owner_count(
     return count;
 }
 
+static uint16_t gateway_ack_history_overflow_count(
+    const struct mesh_gateway_ack_store *store)
+{
+    uint8_t owner_counts[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX] = {0};
+    uint16_t count = 0u;
+
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        const struct mesh_gateway_ack_identity_entry *identity =
+            &store->identities[i];
+
+        if (gateway_ack_identity_valid(identity)) {
+            owner_counts[gateway_ack_identity_owner_index(identity)]++;
+        }
+    }
+    for (uint8_t owner_index = 0u;
+         owner_index < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX;
+         owner_index++) {
+        uint8_t owner_count = owner_counts[owner_index];
+
+        if (owner_count >
+            MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN) {
+            count += owner_count -
+                MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN;
+        }
+    }
+    return count;
+}
+
+static bool gateway_ack_history_owner_can_grow(
+    const struct mesh_gateway_ack_store *store,
+    uint8_t owner_index)
+{
+    uint8_t owner_count = gateway_ack_history_ordinary_owner_count(
+        store, owner_index);
+
+    if (owner_count <
+        MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN) {
+        return true;
+    }
+    return owner_count < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN &&
+           gateway_ack_history_overflow_count(store) <
+               MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY;
+}
+
 static int gateway_ack_history_transition_reservation_index(
     const struct mesh_gateway_ack_store *store,
     uint8_t owner_index)
@@ -2620,9 +2664,8 @@ int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
         /* A confirmed semantic tombstone is safe source-local capacity for a
          * later assignment owner. Unconfirmed acceptance identity is exact
          * ACK-confirm authority and must never be displaced by admission. */
-        if (gateway_ack_history_ordinary_owner_count(
-                store, (uint8_t)origin_index) >=
-            MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN) {
+        if (!gateway_ack_history_owner_can_grow(
+                store, (uint8_t)origin_index)) {
             identity_index = gateway_ack_history_owner_replacement_index(
                 store, (uint8_t)origin_index, now_ms);
         } else {
@@ -3153,13 +3196,13 @@ static int gateway_ack_history_can_accept(
         }
     }
     /*
-     * Every source owns a fixed-size replay partition. A new identity can
-     * reuse only a confirmed source-local tombstone; four unconfirmed records
-     * are four live terminal-proof debts and fail closed.
+     * Four identities are guaranteed to every source. Growth above that uses
+     * the shared overflow pool up to one complete source report queue. Once
+     * growth is unavailable, only a confirmed source-local tombstone can be
+     * reused; live terminal-proof debt remains fail-closed.
      */
-    if (gateway_ack_history_ordinary_owner_count(
-            store, (uint8_t)origin_index) >=
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN) {
+    if (!gateway_ack_history_owner_can_grow(
+            store, (uint8_t)origin_index)) {
         int identity_index = gateway_ack_history_owner_replacement_index(
             store, (uint8_t)origin_index, now_ms);
 
@@ -3262,9 +3305,8 @@ static int gateway_ack_history_store(
             store, (uint8_t)origin_index);
     }
     if (identity_index < 0 && !initialize_origin &&
-        gateway_ack_history_ordinary_owner_count(
-            store, (uint8_t)origin_index) >=
-            MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN) {
+        !gateway_ack_history_owner_can_grow(
+            store, (uint8_t)origin_index)) {
         if (assignment_candidate_packet) {
             /*
              * CLAIM and TABLE ACK are one assignment-control owner. Reuse its

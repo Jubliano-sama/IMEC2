@@ -9,8 +9,8 @@
  * field at its wire-type maximum and the longest enum names selected. Keep a
  * small alignment-friendly margin while making the static RAM cost explicit.
  */
-#define APP_STACK_DIAG_MAX_FORMATTED_LENGTH 368u
-#define APP_STACK_DIAG_RECORD_CAPACITY 384u
+#define APP_STACK_DIAG_MAX_FORMATTED_LENGTH 475u
+#define APP_STACK_DIAG_RECORD_CAPACITY 476u
 
 #if APP_STACK_DIAG_RECORD_CAPACITY <= APP_STACK_DIAG_MAX_FORMATTED_LENGTH
 #error "stack diagnostic record must retain room for the terminating NUL"

@@ -53,6 +53,7 @@ from tools.gateway_gui.protocol import (
     TLV_DISCOVERY_ASSIGNMENT_TABLE,
     TLV_EXPECTED_NODE_COUNT,
     TLV_OPERATION_POLICY,
+    TLV_PEER_ID_LIST,
     TLV_NODE_BOOT_COUNTER,
     TLV_DISTANCE_MM,
     TLV_DISTANCE_SAMPLES_MM,
@@ -107,6 +108,12 @@ def click_payload() -> bytes:
     payload = bytearray()
     append_tlv(payload, TLV_CLICKER_ID, 0x1111222233334444.to_bytes(8, "little"))
     append_tlv(payload, TLV_ANCHOR_ID, 0x5555666677778888.to_bytes(8, "little"))
+    append_tlv(
+        payload,
+        TLV_PEER_ID_LIST,
+        0x4444555566667777.to_bytes(8, "little")
+        + 0x5555666677778888.to_bytes(8, "little"),
+    )
     append_tlv(payload, TLV_EVENT_SEQ, (0x11223344).to_bytes(4, "little"))
     append_tlv(payload, TLV_TIMESTAMP_MS, (1_234_567).to_bytes(8, "little"))
     append_tlv(payload, TLV_DISTANCE_MM, (4512).to_bytes(4, "little", signed=True))

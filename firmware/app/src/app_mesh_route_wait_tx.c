@@ -16,6 +16,12 @@ bool app_mesh_route_wait_tx_may_store(
     return owner == APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC;
 }
 
+bool app_mesh_route_wait_tx_should_wake_from_rx(bool waiting_valid,
+                                                bool work_pending)
+{
+    return waiting_valid && !work_pending;
+}
+
 bool app_mesh_route_wait_tx_clear_matches(
     enum app_mesh_route_wait_tx_owner active_owner,
     const struct proto_packet *active_packet,

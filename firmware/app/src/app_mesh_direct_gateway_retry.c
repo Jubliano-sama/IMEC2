@@ -48,6 +48,15 @@ int app_mesh_direct_gateway_retry_note(
         return -1;
     }
     memset(decision, 0, sizeof(*decision));
+    if (outcome == APP_MESH_DIRECT_GATEWAY_ATTEMPT_RF_BUSY) {
+        base_ms = exponential_base_ms(
+            APP_MESH_DIRECT_GATEWAY_ROUTE_BACKOFF_BASE_MS,
+            APP_MESH_DIRECT_GATEWAY_ROUTE_BACKOFF_MAX_BASE_MS,
+            state->attempts);
+        decision->delay_ms = base_ms + random_value % (base_ms + 1u);
+        decision->retry = true;
+        return 0;
+    }
     state->attempts++;
     decision->attempt_consumed = true;
     if (outcome == APP_MESH_DIRECT_GATEWAY_ATTEMPT_SUCCESS) {

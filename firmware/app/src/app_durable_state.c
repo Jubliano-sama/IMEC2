@@ -758,6 +758,7 @@ static int durable_validate_anchor_assignment(
     const struct app_durable_state_anchor_assignment *assignment)
 {
     bool finalized_identity_present;
+    bool listed_pending_present;
     bool pending_identity_present;
 
     if (assignment == NULL || assignment->provisioned > 1u ||
@@ -770,6 +771,8 @@ static int durable_validate_anchor_assignment(
     pending_identity_present =
         assignment->pending_epoch != 0u &&
         assignment->pending_table_command_seq != 0u;
+    listed_pending_present = assignment->pending_valid != 0u &&
+                             assignment->table_packet_seq != 0u;
     if ((assignment->epoch == 0u) !=
             (assignment->table_command_seq == 0u) ||
         (assignment->pending_epoch == 0u) !=
@@ -825,14 +828,12 @@ static int durable_validate_anchor_assignment(
         return -EINVAL;
     }
 
-    if (assignment->ack_pending != 0u) {
-        if (assignment->pending_valid == 0u ||
-            assignment->pending_slot >= assignment->pending_slot_count ||
+    if (listed_pending_present) {
+        if (assignment->pending_slot >= assignment->pending_slot_count ||
             assignment->response_spread_ms <
                 DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
             assignment->response_spread_ms >
-                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS ||
-            assignment->table_packet_seq == 0u) {
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
             return -EINVAL;
         }
     } else if (assignment->table_packet_seq != 0u ||
@@ -840,6 +841,11 @@ static int durable_validate_anchor_assignment(
                (assignment->pending_valid != 0u &&
                 assignment->pending_slot != 0u)) {
         return -EINVAL;
+    }
+    if (assignment->ack_pending != 0u) {
+        if (!listed_pending_present) {
+            return -EINVAL;
+        }
     }
     return durable_assignment_history_valid(assignment) ? 0 : -EINVAL;
 }

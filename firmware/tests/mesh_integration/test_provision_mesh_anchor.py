@@ -9,6 +9,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -238,6 +239,49 @@ class RouteRefreshQualificationTests(unittest.TestCase):
 
 
 class ProvisioningHelpersTests(unittest.TestCase):
+    def test_production_assignment_is_durable_unless_explicitly_ram_only(self) -> None:
+        captured: list[argparse.Namespace] = []
+
+        async def capture(args: argparse.Namespace) -> None:
+            captured.append(args)
+
+        base_args = [
+            "provision_mesh_anchor.py",
+            "--gateway",
+            "test",
+            "--command",
+            "assign-slots",
+        ]
+        with mock.patch.object(provision, "run", side_effect=capture):
+            with mock.patch.object(sys, "argv", base_args):
+                provision.main()
+            with mock.patch.object(
+                sys, "argv", [*base_args, "--ram-only-assignment"]
+            ):
+                provision.main()
+
+        self.assertFalse(captured[0].ram_only_assignment)
+        self.assertTrue(captured[1].ram_only_assignment)
+
+    def test_monitor_sigint_stops_cleanly_without_hiding_other_commands(self) -> None:
+        def interrupt(coroutine: object) -> None:
+            coroutine.close()
+            raise KeyboardInterrupt
+
+        for command, should_raise in (("monitor", False), ("here-i-am", True)):
+            with self.subTest(command=command), mock.patch.object(
+                sys, "argv", ["provision_mesh_anchor.py", "--gateway", "test", "--command", command]
+            ), mock.patch.object(
+                provision.asyncio, "run", side_effect=interrupt
+            ), mock.patch("builtins.print") as print_mock:
+                if should_raise:
+                    with self.assertRaises(KeyboardInterrupt):
+                        provision.main()
+                    print_mock.assert_not_called()
+                else:
+                    provision.main()
+                    print_mock.assert_called_once_with("BLE_MONITOR_STOPPED")
+
     def test_assignment_policy_uses_the_exact_depth_aware_budget(self) -> None:
         policy = provision._assignment_operation_policy(3, None, deepest_hop=2)
         expected = provision.assignment_required_budget_ms(

@@ -32,6 +32,8 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_STACK_CANARIES),
 struct stack_diag_run {
     uint32_t id;
     uint32_t sample_count;
+    uint16_t sample_error_count;
+    int16_t last_sample_error;
     uint32_t sequence;
     uint32_t previous_click_run;
     struct app_stack_diag_state identity;
@@ -438,14 +440,22 @@ int app_stack_diag_sample(uint32_t run_id,
             context.run_id, context.sample_id);
     }
     status_stack_diag_transaction_end();
-    if (context.emit_error == 0) {
-        key = k_spin_lock(&stack_diag_lock);
-        run = stack_diag_find_run(run_id);
-        if (run != NULL) {
+    key = k_spin_lock(&stack_diag_lock);
+    run = stack_diag_find_run(run_id);
+    if (run != NULL) {
+        if (context.emit_error == 0) {
             run->sample_count++;
+        } else {
+            if (run->sample_error_count < UINT16_MAX) {
+                run->sample_error_count++;
+            }
+            run->last_sample_error =
+                context.emit_error >= INT16_MIN &&
+                context.emit_error <= INT16_MAX ?
+                (int16_t)context.emit_error : (int16_t)-ERANGE;
         }
-        k_spin_unlock(&stack_diag_lock, key);
     }
+    k_spin_unlock(&stack_diag_lock, key);
     ret = context.emit_error;
     k_mutex_unlock(&stack_diag_emit_mutex);
     return ret;
@@ -467,6 +477,8 @@ int app_stack_diag_run_end(uint32_t run_id,
     const char *workload_name;
     const char *owner_name;
     const char *outcome_name;
+    uint32_t rtt_mutex_busy_drops;
+    uint32_t rtt_short_write_drops;
     int emit_ret;
     k_spinlock_key_t key;
 
@@ -496,8 +508,10 @@ int app_stack_diag_run_end(uint32_t run_id,
         k_mutex_unlock(&stack_diag_emit_mutex);
         return -ENOENT;
     }
+    status_debug_rtt_drop_counts(&rtt_mutex_busy_drops,
+                                 &rtt_short_write_drops);
     emit_ret = stack_diag_emit_record(
-        "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u samples=%u sequence=%u previous=%u uptime=%u\n",
+        "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u samples=%u attempts=%u errors=%u last_error=%d mutex_drops=%u short_drops=%u sequence=%u previous=%u uptime=%u\n",
         (unsigned long long)stack_diag_boot_epoch,
         completed.id, workload_name, owner_name, outcome_name,
         captured->queue_depth, captured->custody_depth,
@@ -507,7 +521,11 @@ int app_stack_diag_run_end(uint32_t run_id,
         (unsigned long long)captured->destination_id,
         captured->session_id, captured->packet_sequence,
         captured->message_type,
-        completed.sample_count, completed.sequence,
+        completed.sample_count,
+        completed.sample_count + (uint32_t)completed.sample_error_count,
+        (uint32_t)completed.sample_error_count,
+        (int)completed.last_sample_error,
+        rtt_mutex_busy_drops, rtt_short_write_drops, completed.sequence,
         completed.previous_click_run, k_uptime_get_32());
     status_stack_diag_transaction_end();
     if (emit_ret == 0) {

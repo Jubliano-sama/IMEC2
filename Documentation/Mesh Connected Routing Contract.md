@@ -21,9 +21,11 @@ The required production timing for one connection is:
 
 `60 ms retune/early-RX guard -> 120 ms event window -> 60 ms trailing reservation -> repeat every 640 ms`
 
-Because this rhythm is strict, the node farther from the gateway starts timing negotiation, but the connected parent owns the phase choice. If the child's phase already fits, the parent accepts it unchanged. If it conflicts only with the parent's one upstream rhythm, the parent returns the exact non-overlapping half-phase as a stable offset from the child's immutable proposal. Both peers apply that offset, so a repeated byte-identical ACCEPT cannot move the schedule. A relay with an existing downstream rhythm, exhausted capacity, or ambiguous timing ownership rejects the proposal.
+Because this rhythm is strict, the node farther from the gateway starts timing negotiation, but the connected parent owns the phase choice. If the child's phase already fits, the parent accepts it unchanged. If it conflicts only with the parent's one upstream rhythm, the parent returns the exact non-overlapping half-phase as a stable offset from that proposal attempt. Both peers apply that offset, so a repeated byte-identical ACCEPT cannot move the schedule. A relay with an existing downstream rhythm, exhausted capacity, or ambiguous timing ownership rejects the proposal.
 
 A route reply may omit a conflicting proposed timing while still returning the valid route. Route formation remains separate from connection scheduling; the subsequent PROPOSE/ACCEPT exchange installs the parent-aligned cadence.
+
+For click-report delivery, a failed PROPOSE/ACCEPT contact attempt does not invalidate that known parent. The sender makes the initial contact attempt plus three retries against the same parent, which lets four anchors sharing one relay establish contact in turn. Each retry is a fresh proposal identity whose relative delay is calculated immediately before that physical send; a delayed ACCEPT from an older attempt cannot move the current schedule. Only the fourth consecutive hard contact failure for that exact report and parent starts route repair; the existing contact cadence, receive windows, and retry delay remain unchanged.
 
 `Connection A: T, T + 640 ms, T + 1280 ms, ...`
 
@@ -39,7 +41,7 @@ The steady schedule is:
 
 Each channel 5 window during a connection is 100 percent receive duty unless the node is itself originating a wake flood. An node may use the window for wake transmission, therefore skipping a connection turn to make a new connection. Unrelated, malformed, or route-class frames do not end a receive window. Between adjacent windows the DWM3000 stays idle or retune-ready rather than entering retained or deep sleep.
 
-A route-request wake does not interrupt an active channel 9 rhythm. A valid click/ranging wake does. Once an anchor accepts a click claim, it stays on channel 5 continuously through the remaining wake train, discovery, reply, schedule reception, all inter-sample gaps, and all DS-TWR exchanges. It abandons the existing channel 9 rhythm. Wake overlap is therefore checked against the worst-case channel 5-off gap of the complete two-connection schedule, including guards and late receive tails. Every wake train reaches a channel 5 receive window before it ends.
+A route-request wake does not interrupt an active channel 9 rhythm. A valid click/ranging wake does. Once an anchor accepts a click claim, it stays on channel 5 continuously through the remaining wake train, the post-wake courtesy check, discovery, reply, schedule reception, all inter-sample gaps, and all DS-TWR exchanges. Until it accepts a valid discovery frame, it keeps arbitrating decoded click claims and moves its still-empty report reservation to a higher-precedence click. It abandons the existing channel 9 rhythm. Wake overlap is therefore checked against the worst-case channel 5-off gap of the complete two-connection schedule, including guards and late receive tails. Every wake train reaches a channel 5 receive window before it ends.
 
 ## **A wake flood repeats complete Channel 5 claims**
 
@@ -49,7 +51,7 @@ The on-air sequence is:
 
 `20 ms quiet check -> repeat [preamble + wake claim + optional typed suffix] for 500 ms of wake transmission -> 20 ms quiet check`
 
-The wake claim identifies the network, sender, event, attempt, priority, channels, required anchor count, and nonce. It also carries the remaining time until the flood ends, the follow-up begins, plus typed flags that distinguish click/ranging, route setup, and a separate control follow-up. Those countdowns are refreshed in every copy so a receiver that joins the flood late can still recover the same absolute schedule.
+The wake claim identifies the network, sender, event, attempt, priority, channels, required anchor count, and nonce. It also carries the remaining time until the flood ends, the follow-up begins after the 20 ms courtesy check, plus typed flags that distinguish click/ranging, route setup, and a separate control follow-up. Normal click claims reserve another 300 ms beyond the calculated discovery, schedule, and ranging path, while an anchor keeps its pre-discovery priority listener open for up to 1,000 ms after the advertised discovery start within a bounded two-second arbitration interval. Those countdowns are refreshed in every copy so a receiver that joins the flood late can still recover the same absolute schedule.
 
 The first frame of every normal-click DS-TWR exchange is an extended POLL carrying the clicker's current button-event age in milliseconds. The responder subtracts that age from its local POLL reception time and uses the projected button instant as the click report timestamp; diagnostic and survey POLLs retain the compact header-only form. The normal-click deadline must remain below the age field's saturation limit, so a report never silently substitutes a saturated age for a precise click time.
 
@@ -59,7 +61,9 @@ One logical packet has one custody owner. The communication service owns routing
 
 Normal deployments are expected to run continuously; frequent firmware restarts are not an operating assumption or a recovery mechanism. A restart requirement alone does not justify putting retry state, packet custody, duplicate history, click counters, or other hot state in persistent storage.
 
-Hop ACK transfers custody to the next anchor; gateway ACK proves final acceptance. Relay ACKs use the sender’s next channel 9 transmit window, with gateway ACK ahead of hop ACK. One slot may carry several packets and one multi-packet ACK.
+An exact hop ACK transfers custody to the next anchor: the child retires its copy, and that relay becomes the sole owner of every upstream retry. This repeats at every anchor-to-anchor edge. A gateway ACK proves final acceptance only to the immediate transmitting anchor and is never forwarded back through relays to the original child; that relay clears the gateway's exact receipt handshake itself. Direct-to-gateway sources retain their ACK_CONFIRM handshake. Relay ACKs use the sender’s next channel 9 transmit window, with gateway ACK ahead of hop ACK. One slot may carry several packets and one multi-packet ACK.
+
+Every normal click report carries the complete sorted list of anchors selected for that click. For that packet, each anchor chooses the best of its three cached routes whose interior excludes all participating anchors; the reporter and gateway endpoints do not disqualify a route. If no cached route is provably clean, it immediately uses the ordinary best route without delay, route repair, or mutation of the normal route selection.
 
 Direct-to-gateway traffic is batched. The sender reserves reply time, sends only what fits, marks the final packet, then switches to channel 9 receive. The gateway returns one batch ACK after the final marker. Missing entries retry in a later channel 9 window, without a new wake train while the connection remains alive.
 
@@ -104,6 +108,8 @@ The anchors respond with their unique hardware-derived hash over their known rou
 The gateway freezes the current-run responders, sends another wake flood, then publishes one immutable table of stable identities, hashes, and explicit slots in separate TABLE frames. Retained sparse slots never move; newly seen anchors are ordered by observed depth and identity and occupy free slots. A late new anchor is deferred to the next enumeration, while an old retained anchor is required in this run only if it answered the current CLAIM.
 
 Each current responder validates and durably stores the complete TABLE before acknowledging it. The first exact gateway ACK commits that pending table on the anchor, after which the anchor sends `ACK_CONFIRM` for the same epoch and table commitment. The gateway reports success only after every current responder confirms. A timeout reports an incomplete enumeration, retains the exact pending TABLE and confirmation debt, blocks survey or replacement publication, and resumes that same table after reset; it never rolls back to a different mapping or continues RF beyond the operation cap.
+
+Normal click discovery replies use only that committed enumeration slot. An anchor whose committed slot is absent, invalid, or belongs to a different advertised slot span stays silent for that discovery attempt; it never substitutes an identity hash because two anchors could choose the same slot and interfere with each other.
 
 ## **Survey discovers the graph and measures anchor pairs**
 

@@ -1456,7 +1456,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 args.expected_anchors,
                 assignment_command_budget_ms,
                 deepest_hop=getattr(args, "deepest_hop", 0),
-                ram_only_iteration=True,
+                ram_only_iteration=args.ram_only_assignment,
             )
             route_args = {
                 "host_id": args.host_id,
@@ -1567,7 +1567,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         args.expected_anchors,
                         assignment_command_budget_ms,
                         deepest_hop=getattr(args, "deepest_hop", 0),
-                        ram_only_iteration=True,
+                        ram_only_iteration=args.ram_only_assignment,
                     )
                     command_args["command_budget_ms"] = (
                         assignment_policy.assignment.operation_budget_ms
@@ -1726,6 +1726,14 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=0.05)
     parser.add_argument("--notification-hold-s", type=float, default=0.0)
     parser.add_argument("--require-assignment-success", action="store_true")
+    parser.add_argument(
+        "--ram-only-assignment",
+        action="store_true",
+        help=(
+            "do not persist assigned discovery slots; normal production "
+            "provisioning stores them durably"
+        ),
+    )
     parser.add_argument("--expected-anchors", type=int, default=3)
     parser.add_argument("--expected-direct-anchors", type=int)
     parser.add_argument("--expected-multihop-anchors", type=int)
@@ -1845,7 +1853,12 @@ def main() -> None:
             parser.error(
                 "--expected-multihop-anchors contradicts --expected-anchor-hop"
             )
-    asyncio.run(run(args))
+    try:
+        asyncio.run(run(args))
+    except KeyboardInterrupt:
+        if args.command != "monitor":
+            raise
+        print("BLE_MONITOR_STOPPED")
 
 
 if __name__ == "__main__":

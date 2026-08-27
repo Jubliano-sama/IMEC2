@@ -318,11 +318,12 @@ static bool test_wrong_target_timing_and_fcs(void)
         1000u + fixture.request.reply_delay_uus * TEST_DWT_PER_UUS,
         1001u + fixture.request.reply_delay_uus * TEST_DWT_PER_UUS,
         fixture.request.reply_delay_uus, &result, &evaluation);
-    CHECK(ret == -ERANGE && result.status == RANGE_INTERNAL_ERROR &&
+    CHECK(ret == PROTO_OK && result.status == RANGE_OK &&
               evaluation.final_valid && evaluation.timing_valid &&
-              evaluation.status == RANGE_INTERNAL_ERROR,
-          "negative ToF was reported as a valid distance ret=%d status=%u",
-          ret, result.status);
+              evaluation.status == RANGE_OK &&
+              result.distance_mm == 0 && evaluation.distance_mm == 0,
+          "negative ToF was not clamped to a valid zero distance ret=%d status=%u distance=%d/%d",
+          ret, result.status, result.distance_mm, evaluation.distance_mm);
 
     memcpy(poll_with_fcs, fixture.poll_bytes, fixture.poll_len);
     memcpy(&poll_with_fcs[fixture.poll_len], "\x00\x00", UWB_PHY_FCS_LEN);
@@ -339,13 +340,13 @@ static bool test_wrong_target_timing_and_fcs(void)
     return true;
 }
 
-static bool test_hardware_negative_tof_trace(void)
+static bool test_hardware_negative_tof_clamps_to_zero(void)
 {
     /*
      * Raw timestamps from a real two-anchor ranging exchange where the antennas were
      * close enough for the calibrated exchange to produce a negative ToF.
-     * Keep this exact trace at the production driver boundary: it must never
-     * be rounded or clamped into RANGE_OK with a zero distance.
+     * Keep this exact trace at the production driver boundary so the approved
+     * zero-distance behavior cannot regress back into a ranging failure.
      */
     struct uwb_final_frame final = {
         .poll_tx_ts_32 = UINT32_C(0x1e9af801),
@@ -361,8 +362,62 @@ static bool test_hardware_negative_tof_trace(void)
         UINT32_C(0x97010c01),
         UINT32_C(0xb5795695),
         &distance_mm);
+    CHECK(ret == 0 && distance_mm == 0,
+          "negative-ToF hardware trace was not clamped to zero ret=%d distance=%d",
+          ret,
+          distance_mm);
+    return true;
+}
+
+static bool test_positive_tof_remains_unchanged(void)
+{
+    struct uwb_final_frame final = {
+        .poll_tx_ts_32 = UINT32_C(100000),
+        .resp_rx_ts_32 = UINT32_C(611626),
+        .final_tx_ts_32 = UINT32_C(1122826),
+    };
+    int32_t distance_mm = -1;
+    int ret;
+
+    ret = dwm3000_driver_compute_distance_mm(
+        &final,
+        UINT32_C(100213),
+        UINT32_C(611413),
+        UINT32_C(1123039),
+        &distance_mm);
+    CHECK(ret == 0 && distance_mm >= 990 && distance_mm <= 1010,
+          "positive ToF changed while adding the zero clamp ret=%d distance=%d",
+          ret,
+          distance_mm);
+    return true;
+}
+
+static bool test_invalid_distance_arithmetic_still_fails_closed(void)
+{
+    const struct uwb_final_frame zero_denominator = {0};
+    const struct uwb_final_frame overflowing_positive = {
+        .poll_tx_ts_32 = 0u,
+        .resp_rx_ts_32 = UINT32_C(1000000000),
+        .final_tx_ts_32 = UINT32_C(1000000000),
+    };
+    int32_t distance_mm = INT32_C(12345);
+    int ret;
+
+    ret = dwm3000_driver_compute_distance_mm(
+        &zero_denominator, 0u, 0u, 0u, &distance_mm);
+    CHECK(ret == -EINVAL && distance_mm == INT32_C(12345),
+          "zero-denominator exchange escaped fail-closed handling ret=%d distance=%d",
+          ret,
+          distance_mm);
+
+    ret = dwm3000_driver_compute_distance_mm(
+        &overflowing_positive,
+        0u,
+        0u,
+        UINT32_C(2000000000),
+        &distance_mm);
     CHECK(ret == -ERANGE && distance_mm == INT32_C(12345),
-          "negative-ToF hardware trace became a usable distance ret=%d distance=%d",
+          "overflowing positive distance escaped fail-closed handling ret=%d distance=%d",
           ret,
           distance_mm);
     return true;
@@ -375,7 +430,9 @@ int main(void)
     ok = test_valid_exchange_and_header_contract() && ok;
     ok = test_timeout_and_malformed_frames() && ok;
     ok = test_wrong_target_timing_and_fcs() && ok;
-    ok = test_hardware_negative_tof_trace() && ok;
+    ok = test_hardware_negative_tof_clamps_to_zero() && ok;
+    ok = test_positive_tof_remains_unchanged() && ok;
+    ok = test_invalid_distance_arithmetic_still_fails_closed() && ok;
     if (!ok || failures != 0u) {
         fprintf(stderr, "DS-TWR production semantic contract: %u failure(s)\n",
                 failures);

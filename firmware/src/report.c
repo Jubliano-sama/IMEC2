@@ -62,6 +62,7 @@ enum click_payload_field {
     CLICK_PAYLOAD_CIR_TOTAL_BYTES = UINT32_C(1) << 18,
     CLICK_PAYLOAD_CIR_FIRST_PATH = UINT32_C(1) << 19,
     CLICK_PAYLOAD_CIR_START_INDEX = UINT32_C(1) << 20,
+    CLICK_PAYLOAD_PARTICIPANT_ANCHORS = UINT32_C(1) << 21,
 };
 
 #define CLICK_PAYLOAD_COMMON_FIELDS \
@@ -92,6 +93,8 @@ int report_validate_click_payload(const struct proto_packet *packet,
     uint16_t fragment_count = 0u;
     uint16_t cir_byte_offset = 0u;
     uint16_t cir_total_bytes = 0u;
+    uint64_t participant_anchor_ids[RANGE_REPORT_MAX_PARTICIPANT_ANCHORS] = {0};
+    uint8_t participant_anchor_count = 0u;
     size_t distance_sample_count = 0u;
     size_t round_index_count = 0u;
     size_t sequence_timestamp_count = 0u;
@@ -147,6 +150,27 @@ int report_validate_click_payload(const struct proto_packet *packet,
                 return PROTO_ERR_MALFORMED;
             }
             anchor_id = proto_get_u64_le(value);
+            break;
+        case TLV_PEER_ID_LIST:
+            field = CLICK_PAYLOAD_PARTICIPANT_ANCHORS;
+            if (length <
+                    RANGE_REPORT_MIN_PARTICIPANT_ANCHORS * sizeof(uint64_t) ||
+                length >
+                    RANGE_REPORT_MAX_PARTICIPANT_ANCHORS * sizeof(uint64_t) ||
+                length % sizeof(uint64_t) != 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            participant_anchor_count =
+                (uint8_t)(length / sizeof(uint64_t));
+            for (uint8_t i = 0u; i < participant_anchor_count; i++) {
+                participant_anchor_ids[i] =
+                    proto_get_u64_le(&value[(size_t)i * sizeof(uint64_t)]);
+                if (participant_anchor_ids[i] == 0u ||
+                    (i > 0u && participant_anchor_ids[i] <=
+                                   participant_anchor_ids[i - 1u])) {
+                    return PROTO_ERR_MALFORMED;
+                }
+            }
             break;
         case TLV_EVENT_SEQ:
             field = CLICK_PAYLOAD_EVENT_SEQ;
@@ -343,10 +367,62 @@ int report_validate_click_payload(const struct proto_packet *packet,
     if (mode_flags == FLAG_COUNT_AS_CLICK &&
         ((seen & CLICK_PAYLOAD_SAMPLE_FIELDS) !=
              CLICK_PAYLOAD_SAMPLE_FIELDS ||
-         (seen & CLICK_PAYLOAD_BURST_ID) == 0u)) {
+         (seen & CLICK_PAYLOAD_BURST_ID) == 0u ||
+         (seen & CLICK_PAYLOAD_PARTICIPANT_ANCHORS) == 0u)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (mode_flags == FLAG_COUNT_AS_CLICK) {
+        bool reporter_participates = false;
+
+        for (uint8_t i = 0u; i < participant_anchor_count; i++) {
+            if (participant_anchor_ids[i] == anchor_id) {
+                reporter_participates = true;
+                break;
+            }
+        }
+        if (!reporter_participates) {
+            return PROTO_ERR_MALFORMED;
+        }
+    } else if ((seen & CLICK_PAYLOAD_PARTICIPANT_ANCHORS) != 0u) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
+}
+
+static int append_participant_anchor_ids(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct range_report_fields *fields)
+{
+    uint8_t encoded[RANGE_REPORT_MAX_PARTICIPANT_ANCHORS * sizeof(uint64_t)];
+
+    if (fields->participant_anchor_count == 0u) {
+        return PROTO_OK;
+    }
+    if (fields->participant_anchor_ids == NULL ||
+        fields->participant_anchor_count <
+            RANGE_REPORT_MIN_PARTICIPANT_ANCHORS ||
+        fields->participant_anchor_count >
+            RANGE_REPORT_MAX_PARTICIPANT_ANCHORS) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (uint8_t i = 0u; i < fields->participant_anchor_count; i++) {
+        uint64_t anchor_id = fields->participant_anchor_ids[i];
+
+        if (anchor_id == 0u ||
+            (i > 0u && anchor_id <= fields->participant_anchor_ids[i - 1u])) {
+            return PROTO_ERR_MALFORMED;
+        }
+        proto_put_u64_le(&encoded[(size_t)i * sizeof(uint64_t)], anchor_id);
+    }
+    return tlv_append_bytes(
+        payload,
+        payload_cap,
+        offset,
+        TLV_PEER_ID_LIST,
+        encoded,
+        (uint8_t)(fields->participant_anchor_count * sizeof(uint64_t)));
 }
 
 static int append_distance_samples(uint8_t *payload,
@@ -606,6 +682,10 @@ int report_append_range_tlvs(uint8_t *payload,
         return ret;
     }
     ret = tlv_append_u64(payload, payload_cap, offset, TLV_ANCHOR_ID, fields->anchor_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = append_participant_anchor_ids(payload, payload_cap, offset, fields);
     if (ret != PROTO_OK) {
         return ret;
     }

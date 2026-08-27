@@ -24,6 +24,10 @@ enum gateway_ble_stream_reservation_result {
 int gateway_ble_init(void);
 int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len);
 void gateway_ble_get_status(struct gateway_ble_status *status);
+/* True from complete host-receipt frame admission until its BLE ingress
+ * worker has classified that frame.  The gateway radio owner uses this edge
+ * to yield a long receive slice before it can hide the receipt worker. */
+bool gateway_ble_host_receipt_ingress_pending(void);
 bool gateway_ble_uwb_quiet_active(void);
 void gateway_ble_enter_uwb_quiet(const char *reason);
 void gateway_ble_exit_uwb_quiet(const char *reason);

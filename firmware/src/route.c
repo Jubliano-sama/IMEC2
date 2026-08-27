@@ -461,6 +461,28 @@ int route_record_candidate_success_at(struct route_table *table,
     return route_select_best_at(table, now_ms);
 }
 
+int route_refresh_candidate_at(struct route_table *table,
+                               uint64_t next_hop_id,
+                               uint64_t gateway_id,
+                               uint32_t now_ms)
+{
+    int index;
+
+    if (table == NULL || next_hop_id == 0u || gateway_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    index = find_candidate_index(table, next_hop_id, gateway_id);
+    if (index < 0) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (!candidate_valid_for_epoch(&table->candidates[index],
+                                   table->current_epoch)) {
+        return PROTO_ERR_STALE;
+    }
+    table->candidates[index].last_seen_ms = now_ms;
+    return PROTO_OK;
+}
+
 void route_refresh_selected_at(struct route_table *table, uint32_t now_ms)
 {
     struct route_candidate *candidate;
@@ -480,8 +502,6 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
                                                    enum route_failure_kind kind,
                                                    uint32_t now_ms)
 {
-    struct route_candidate *candidate;
-
     if (kind != ROUTE_FAILURE_GATEWAY_ACK) {
         return ROUTE_DELIVERY_DISCOVER;
     }
@@ -490,9 +510,41 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
         return ROUTE_DELIVERY_DISCOVER;
     }
 
-    candidate = &table->candidates[table->selected_index];
-    if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
+    if (!candidate_valid_for_epoch(
+            &table->candidates[table->selected_index],
+            table->current_epoch)) {
         table->selected_index = ROUTE_NO_SELECTION;
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+
+    return route_record_candidate_failure_at(
+        table,
+        table->candidates[table->selected_index].next_hop_id,
+        table->candidates[table->selected_index].gateway_id,
+        kind,
+        now_ms);
+}
+
+enum route_delivery_action route_record_candidate_failure_at(
+    struct route_table *table,
+    uint64_t next_hop_id,
+    uint64_t gateway_id,
+    enum route_failure_kind kind,
+    uint32_t now_ms)
+{
+    struct route_candidate *candidate;
+    int index;
+
+    if (kind != ROUTE_FAILURE_GATEWAY_ACK || table == NULL ||
+        next_hop_id == 0u || gateway_id == 0u) {
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+    index = find_candidate_index(table, next_hop_id, gateway_id);
+    if (index < 0) {
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+    candidate = &table->candidates[index];
+    if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
         return ROUTE_DELIVERY_DISCOVER;
     }
 

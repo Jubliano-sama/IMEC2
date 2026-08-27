@@ -242,6 +242,7 @@ static int bind_transit_previous_hop_before_rf(
 
     if (pending_outbound->packet.dst_id != sender->gateway_id ||
         pending_outbound->packet.src_id == sender->id ||
+        pending_outbound->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM ||
         (pending_outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
         return MESH_SIM_OK;
     }
@@ -824,7 +825,6 @@ static int remove_queued_gateway_ack_confirm_predecessor(
     int ret;
 
     if (pending->state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
-        pending->packet.src_id != node->id ||
         pending->packet.dst_id != node->gateway_id ||
         pending->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM ||
         !node->relay.outbox_record.valid ||
@@ -852,7 +852,7 @@ static int remove_queued_gateway_ack_confirm_predecessor(
             &confirm_payload_len);
         if (ret == PROTO_OK) {
             ret = mesh_init_gateway_ack_confirm(&confirm_packet,
-                                                node->id,
+                                                pending->packet.src_id,
                                                 node->gateway_id,
                                                 pending->packet.session_id,
                                                 pending->packet.seq);

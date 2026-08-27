@@ -147,6 +147,17 @@ static size_t count_transitions_for_message(
     return count;
 }
 
+static bool all_relay_custody_settled(const struct mesh_sim_world *sim)
+{
+    for (size_t i = 0u; i < sim->role_count; i++) {
+        if (sim->roles[i].relay.pending.state != MESH_RELAY_TX_IDLE ||
+            sim->roles[i].tx_queue_count != 0u) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void run_connections_until_confirmed(struct mesh_sim_world *sim,
                                              const uint16_t *connections,
                                              size_t connection_count,
@@ -251,10 +262,21 @@ static void test_single_relay_delivery(void)
     assert(count_transitions_for_message(&world,
                                          MESH_SIM_TRANSITION_TX_START,
                                          TRANSMITTER_ID,
+                                         MSG_GATEWAY_ACK_CONFIRM) == 0u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         ANCHOR_1_ID,
                                          MSG_GATEWAY_ACK_CONFIRM) >= 1u);
     assert(mesh_sim_count_transitions(&world,
                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                      TRANSMITTER_ID) == 1u);
+                                      ANCHOR_1_ID) == 1u);
+    assert(mesh_sim_count_transitions(&world,
+                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                      TRANSMITTER_ID) == 0u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         ANCHOR_1_ID,
+                                         MSG_MESH_HOP_ACK) == 1u);
     delivery_transition = mesh_sim_find_transition(
         &world,
         MESH_SIM_TRANSITION_PACKET_DELIVERED,
@@ -344,10 +366,29 @@ static void test_two_relay_delivery(void)
     assert(count_transitions_for_message(&world,
                                          MESH_SIM_TRANSITION_TX_START,
                                          TRANSMITTER_ID,
+                                         MSG_GATEWAY_ACK_CONFIRM) == 0u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         ANCHOR_1_ID,
+                                         MSG_GATEWAY_ACK_CONFIRM) == 0u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         ANCHOR_2_ID,
                                          MSG_GATEWAY_ACK_CONFIRM) >= 1u);
     assert(mesh_sim_count_transitions(&world,
                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                      TRANSMITTER_ID) == 1u);
+                                      ANCHOR_2_ID) == 1u);
+    assert(mesh_sim_count_transitions(&world,
+                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                      TRANSMITTER_ID) == 0u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         ANCHOR_1_ID,
+                                         MSG_MESH_HOP_ACK) == 1u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         ANCHOR_2_ID,
+                                         MSG_MESH_HOP_ACK) == 1u);
     assert(world.roles[gateway].deliveries[0].delivered_at_us < 325000u);
     assert_no_route_fallback(&world);
 }
@@ -401,6 +442,10 @@ static size_t build_click_report(uint8_t *payload,
                                  size_t payload_cap,
                                  struct proto_packet *packet)
 {
+    const uint64_t participant_anchor_ids[] = {
+        ANCHOR_1_ID,
+        ANCHOR_2_ID,
+    };
     const int32_t distance_samples_mm[] = {1234};
     const uint8_t range_round_indices[] = {0u};
     const uint64_t sequence_start_timestamps_ms[] = {100u};
@@ -417,6 +462,8 @@ static size_t build_click_report(uint8_t *payload,
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = 1u,
         .distance_sample_count = 1u,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count = 2u,
         .burst_id = UINT32_C(0x2001),
         .omit_rsl = true,
         .omit_cir = true,
@@ -517,8 +564,7 @@ static void run_connections_until_confirmed(struct mesh_sim_world *sim,
     for (size_t i = 0u; i < max_events; i++) {
         size_t which;
 
-        if (sim->roles[transmitter_index].relay.pending.state ==
-            MESH_RELAY_TX_IDLE) {
+        if (all_relay_custody_settled(sim)) {
             return;
         }
         assert(earliest_connection_start(sim,

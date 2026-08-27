@@ -9,6 +9,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
@@ -81,6 +82,9 @@ static bool status0_power_red_on;
 static uint32_t status0_ch5_rx_hold_until_ms;
 
 #if defined(CONFIG_USE_SEGGER_RTT)
+static atomic_t status_debug_rtt_mutex_busy_drop_count;
+static atomic_t status_debug_rtt_short_write_drop_count;
+
 #if defined(CONFIG_SEGGER_RTT_CUSTOM_LOCKING)
 extern struct k_mutex rtt_term_mutex;
 #define status_debug_rtt_mutex rtt_term_mutex
@@ -497,14 +501,37 @@ static void status_debug_unknown_channel_pulse(uint8_t uwb_channel)
 static void debug_rtt_write_bytes(const char *text, size_t length)
 {
 #if defined(CONFIG_USE_SEGGER_RTT)
+    unsigned written;
+
     if (k_mutex_lock(&status_debug_rtt_mutex, K_NO_WAIT) != 0) {
+        atomic_inc(&status_debug_rtt_mutex_busy_drop_count);
         return;
     }
-    (void)SEGGER_RTT_Write(0, text, (unsigned)length);
+    written = SEGGER_RTT_Write(0, text, (unsigned)length);
+    if (written != (unsigned)length) {
+        atomic_inc(&status_debug_rtt_short_write_drop_count);
+    }
     k_mutex_unlock(&status_debug_rtt_mutex);
 #else
     ARG_UNUSED(text);
     ARG_UNUSED(length);
+#endif
+}
+
+void status_debug_rtt_drop_counts(uint32_t *mutex_busy_drops,
+                                  uint32_t *short_write_drops)
+{
+    if (mutex_busy_drops == NULL || short_write_drops == NULL) {
+        return;
+    }
+#if defined(CONFIG_USE_SEGGER_RTT)
+    *mutex_busy_drops = (uint32_t)atomic_get(
+        &status_debug_rtt_mutex_busy_drop_count);
+    *short_write_drops = (uint32_t)atomic_get(
+        &status_debug_rtt_short_write_drop_count);
+#else
+    *mutex_busy_drops = 0u;
+    *short_write_drops = 0u;
 #endif
 }
 
@@ -532,7 +559,8 @@ void status_debug_printf(const char *fmt, ...)
     size_t len;
 
     if ((!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-         !IS_ENABLED(CONFIG_IMEC_DS_TWR_RTT_DEBUG)) || fmt == NULL) {
+         !IS_ENABLED(CONFIG_IMEC_DS_TWR_RTT_DEBUG) &&
+         !IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) || fmt == NULL) {
         return;
     }
 
