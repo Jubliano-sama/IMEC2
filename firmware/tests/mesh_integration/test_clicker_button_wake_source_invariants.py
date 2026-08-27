@@ -43,8 +43,17 @@ def source_function_body(source: str, name: str) -> str:
 # RTT is an extra supervised input on the normal clicker, never a replacement
 # for the physical GPIO path.  The bench fragment may enable RTT only; startup
 # must arm the button before polling RTT, and RTT must inject through the same
-# gesture machine and bounded action FIFO as a real press/release pair.
-assert RTT_BENCH_CONFIG.strip() == "CONFIG_IMEC_CLICKER_RTT_CONTROL=y"
+# gesture machine and bounded action FIFO as a real press/release pair.  This
+# matched bench also opts into the explicit two-anchor click wire contract.
+rtt_bench_options = {
+    line.strip()
+    for line in RTT_BENCH_CONFIG.splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+}
+assert rtt_bench_options == {
+    "CONFIG_IMEC_CLICKER_RTT_CONTROL=y",
+    "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y",
+}
 main = source_function_body(MAIN, "main")
 button_start = main.index("app_clicker_button_init()")
 rtt_start = main.index("app_clicker_rtt_control_start()", button_start)

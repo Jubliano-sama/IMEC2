@@ -1,5 +1,6 @@
 #include "app_anchor.h"
 #include "app_board.h"
+#include "app_battery_indicator.h"
 #include "app_click_event_sequence.h"
 #include "app_clicker.h"
 #include "app_clicker_rtt_control.h"
@@ -151,10 +152,10 @@ BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_BACKOFF_MIN_MS == 200u &&
              "wake train C5 activity backoff must stay within 200-2000 ms");
 BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_MAX_RETRIES > 0u,
              "wake train C5 activity guard must have at least one retry");
-BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES == 2u,
-             "clicker politeness requires two consecutive quiet UWB samples");
-BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES * UWB_POLITE_SAMPLE_RX_MS >= 100u,
-             "clicker politeness must require at least 100 ms of quiet channel 5");
+BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES == 3u,
+             "clicker politeness requires three consecutive quiet UWB samples");
+BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES * UWB_POLITE_SAMPLE_RX_MS >= 150u,
+             "clicker politeness must require at least 150 ms of quiet channel 5");
 BUILD_ASSERT((UWB_POLITE_REQUIRED_QUIET_SAMPLES * UWB_POLITE_SAMPLE_RX_MS) <=
              BLE_COURTESY_MIN_WINDOW_MS,
              "BLE courtesy must remain active through the required UWB quiet window");
@@ -168,6 +169,13 @@ BUILD_ASSERT(BLE_COURTESY_PEER_FINISH_MS <= UWB_BLE_COURTESY_MAX_DURATION_MS,
              "BLE courtesy peer finish duration must fit in the advertised field");
 BUILD_ASSERT(BLE_COURTESY_SCAN_WINDOW_UNITS <= BLE_COURTESY_SCAN_INTERVAL_UNITS,
              "BLE courtesy scan window must fit inside scan interval");
+#if defined(CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH)
+BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS == 2u,
+             "two-anchor bench must compile the complete wire contract for two anchors");
+#else
+BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS == 3u,
+             "production normal clicks must require three unique anchors");
+#endif
 BUILD_ASSERT(CLICK_UWB_TIMEOUT_MS + UWB_SCHEDULE_GUARD_MS <= UWB_ANCHOR_RANGE_WINDOW_MS,
              "failed clicker DS-TWR response waits must fit inside one scheduled anchor slot");
 BUILD_ASSERT(GATEWAY_COMMAND_RESULT_TIMEOUT_MS >=
@@ -462,7 +470,7 @@ int main(void)
             MAX_SCHEDULED_ANCHORS,
             WAKE_ADV_MS,
             MAX_WAKE_ATTEMPTS,
-            UWB_NORMAL_CLICK_MIN_ANCHORS,
+            app_clicker_debug_min_anchor_count(),
             anchor_uwb_scan_interval_ms,
             ANCHOR_UWB_SCAN_RX_MS,
             UWB_MESH_ANCHOR_RX_INTERVAL_MS,
@@ -477,6 +485,11 @@ int main(void)
         LOG_WRN("status LED setup incomplete: %d", ret);
     }
 #endif
+
+    ret = app_battery_indicator_init();
+    if (ret < 0) {
+        LOG_WRN("battery indicator initialization failed: %d", ret);
+    }
 
     ret = dwm3000_port_init();
     if (ret < 0) {
@@ -541,6 +554,7 @@ int main(void)
         if (ret < 0) {
             runtime_start_fail_closed("anchor role startup", ret);
         }
+        app_battery_indicator_resume();
 #if !defined(CONFIG_IMEC_ML_ANCHOR)
         if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)

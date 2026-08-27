@@ -10,6 +10,12 @@ RADIO_RECOVERY = (
 ).read_text()
 MAIN = (ROOT / "app/src/main.c").read_text()
 APP_CONFIG = (ROOT / "app/src/app_config.h").read_text()
+APP_CMAKE = (ROOT / "app/CMakeLists.txt").read_text()
+APP_KCONFIG = (ROOT / "app/Kconfig").read_text()
+RTT_BENCH_CONF = (ROOT / "app/conf/mesh-clicker-rtt-bench.conf").read_text()
+TWO_ANCHOR_CONF = (
+    ROOT / "app/conf/mesh-two-anchor-click-bench.conf"
+).read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 DRIVER_RADIO = (ROOT / "app/src/dwm3000_driver_radio.inc").read_text()
 MESH_ARBITRATION = (
@@ -155,6 +161,10 @@ assert clip < sleep
 assert "return -ETIMEDOUT" in backoff_body[:sleep]
 
 politeness = function_body("clicker_politeness_phase")
+assert "#define UWB_POLITE_REQUIRED_QUIET_SAMPLES 3u" in APP_CONFIG
+assert "#define BLE_COURTESY_MIN_WINDOW_MS 150u" in APP_CONFIG
+assert "DBG_BLE_COURTESY_DECISION" in politeness
+assert "app_clicker_ble_courtesy_finish_gate(ret == 0 && release_ret >= 0)" in politeness
 clip_phase = politeness.index("app_wake_train_deadline_clip_delay")
 phase_deadline = politeness.index("deadline_ms = now_ms + phase_budget_ms")
 radio = politeness.index("radio_guard_uwb_claim", phase_deadline)
@@ -192,6 +202,47 @@ assert (
     < hard_receive_return_value
 )
 assert "click_deadline_ms" in politeness[:clip_phase]
+
+ble_start = function_body("app_clicker_ble_courtesy_start")
+assert "clicker_ble_courtesy_diag_start" in ble_start
+assert "DBG_BLE_COURTESY_ADV_STARTED" in ble_start
+assert "DBG_BLE_COURTESY_SCAN_STARTED" in ble_start
+assert "bt_le_adv_update_data" in ble_start
+assert "DBG_BLE_COURTESY_ADV_UPDATED" in ble_start
+ble_parse = function_body("clicker_ble_courtesy_parse_ad")
+assert "DBG_BLE_COURTESY_PEER" in ble_parse
+assert "DBG_BLE_COURTESY_HIGHER" in ble_parse
+ble_stop = function_body("app_clicker_ble_courtesy_stop")
+assert "clicker_ble_courtesy_diag_finish" in ble_stop
+ble_finish_gate = function_body("app_clicker_ble_courtesy_finish_gate")
+assert "clicker_ble_courtesy_stop_scanning" in ble_finish_gate
+assert "if (!retain_advertising || scan_ret < 0)" in ble_finish_gate
+assert "DBG_BLE_COURTESY_ADV_HELD" in ble_finish_gate
+
+debug_min_anchors = function_body("app_clicker_debug_min_anchor_count")
+assert "return UWB_NORMAL_CLICK_MIN_ANCHORS;" in debug_min_anchors
+assert "config IMEC_TWO_ANCHOR_CLICK_BENCH" in APP_KCONFIG
+assert "UWB_NORMAL_CLICK_MIN_ANCHORS=2u" in APP_CMAKE
+assert "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y" in RTT_BENCH_CONF
+assert "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y" in TWO_ANCHOR_CONF
+assert "UWB_NORMAL_CLICK_MIN_ANCHORS == 2u" in MAIN
+assert "UWB_NORMAL_CLICK_MIN_ANCHORS == 3u" in MAIN
+
+button_action = function_body("app_clicker_handle_button_action")
+normal_click = button_action.index("app_clicker_run_normal_click")
+stop_reservation = button_action.index("app_clicker_ble_courtesy_stop", normal_click)
+apply_status = button_action.index("status.click_accepted", normal_click)
+assert normal_click < stop_reservation < apply_status
+
+normal_click_runtime = function_body("app_clicker_run_normal_click")
+range_call = normal_click_runtime.index("app_clicker_range_scheduled_anchors")
+range_start_diag = normal_click_runtime.rindex(
+    "DBG_CLICKER_RANGE state=START", 0, range_call
+)
+range_end_diag = normal_click_runtime.index(
+    "DBG_CLICKER_RANGE state=END", range_call
+)
+assert range_start_diag < range_call < range_end_diag
 
 public_wake = function_body("app_clicker_send_wake_claim_train")
 assert "clicker_send_wake_claim_train_until" in public_wake

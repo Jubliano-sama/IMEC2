@@ -2,6 +2,7 @@
 #include "app_clicker_event_runtime.h"
 
 #include "app_board.h"
+#include "app_battery_indicator.h"
 #include "app_click_event_sequence.h"
 #include "app_durable_state.h"
 #include "app_radio_guard.h"
@@ -125,6 +126,7 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
                                    uint32_t peer_finish_ms);
 uint32_t app_clicker_ble_courtesy_higher_wait_ms(void);
 void app_clicker_ble_courtesy_stop(void);
+void app_clicker_ble_courtesy_finish_gate(bool retain_advertising);
 void app_clicker_arm_self_test_timeout(void);
 void app_clicker_cancel_self_test_timeout(void);
 
@@ -479,8 +481,17 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
 
     release_ret = clicker_release_radio_to_standby(
         &radio_lease, "politeness complete");
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
     if (ble_started) {
-        app_clicker_ble_courtesy_stop();
+        status_debug_printf("DBG_BLE_COURTESY_DECISION evt=%u att=%u defer=%u wait_ms=%u",
+                            event_seq,
+                            session->attempt_index,
+                            ret == -EAGAIN ? 1u : 0u,
+                            ble_defer_wait_ms != NULL ? *ble_defer_wait_ms : 0u);
+    }
+#endif
+    if (ble_started) {
+        app_clicker_ble_courtesy_finish_gate(ret == 0 && release_ret >= 0);
     }
     if (release_ret < 0) {
         LOG_ERR("clicker politeness radio release failed: %d",
@@ -2357,11 +2368,20 @@ int app_clicker_run_normal_click(bool *anchor_observed)
         if (ret < 0) {
             return ret;
         }
+        status_debug_printf("DBG_CLICKER_RANGE state=START evt=%u att=%u selected=%u",
+                            event_seq,
+                            session.attempt_index,
+                            schedule.selected_count);
         range_ret = app_clicker_range_scheduled_anchors(&session,
                                                         &schedule,
                                                         schedule_tx_ms,
                                                         click_deadline_ms,
                                                         &attempted_count);
+        status_debug_printf("DBG_CLICKER_RANGE state=END evt=%u att=%u ret=%d unique=%u",
+                            event_seq,
+                            session.attempt_index,
+                            range_ret,
+                            session.successful_unique_count);
         if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
             status_debug_printf("DBG_CH_CS e=%08x a=%02x tx=%08x end=%08x r=%08x state=%02x sel=%02x\n",
                                 event_seq,
@@ -2710,6 +2730,58 @@ static struct k_spinlock ble_courtesy_lock;
 static uint32_t ble_courtesy_higher_wait_ms;
 static uint8_t ble_courtesy_adv_data[UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN];
 static struct uwb_ble_courtesy_frame ble_courtesy_local;
+static int clicker_ble_courtesy_stop_advertising(void);
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+static atomic_t ble_courtesy_diag_active;
+static atomic_t ble_courtesy_diag_scan_reports;
+static atomic_t ble_courtesy_diag_decoded;
+static atomic_t ble_courtesy_diag_peers;
+static atomic_t ble_courtesy_diag_higher;
+#endif
+
+static void clicker_ble_courtesy_diag_start(uint32_t event_seq,
+                                            uint8_t attempt_index,
+                                            uint32_t peer_finish_ms)
+{
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    atomic_set(&ble_courtesy_diag_scan_reports, 0);
+    atomic_set(&ble_courtesy_diag_decoded, 0);
+    atomic_set(&ble_courtesy_diag_peers, 0);
+    atomic_set(&ble_courtesy_diag_higher, 0);
+    atomic_set(&ble_courtesy_diag_active, 1);
+    status_debug_printf("DBG_BLE_COURTESY_START evt=%u att=%u finish_ms=%u",
+                        event_seq,
+                        attempt_index,
+                        peer_finish_ms);
+#else
+    ARG_UNUSED(event_seq);
+    ARG_UNUSED(attempt_index);
+    ARG_UNUSED(peer_finish_ms);
+#endif
+}
+
+static void clicker_ble_courtesy_diag_finish(const char *stage, int ret)
+{
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    uint32_t wait_ms;
+
+    if (!atomic_cas(&ble_courtesy_diag_active, 1, 0)) {
+        return;
+    }
+    wait_ms = app_clicker_ble_courtesy_higher_wait_ms();
+    status_debug_printf("DBG_BLE_COURTESY_END stage=%s ret=%d reports=%u decoded=%u peers=%u higher=%u wait=%u",
+                        stage,
+                        ret,
+                        (uint32_t)atomic_get(&ble_courtesy_diag_scan_reports),
+                        (uint32_t)atomic_get(&ble_courtesy_diag_decoded),
+                        (uint32_t)atomic_get(&ble_courtesy_diag_peers),
+                        (uint32_t)atomic_get(&ble_courtesy_diag_higher),
+                        wait_ms);
+#else
+    ARG_UNUSED(stage);
+    ARG_UNUSED(ret);
+#endif
+}
 
 static int clicker_ble_courtesy_set_scan_channel(void)
 {
@@ -2745,9 +2817,8 @@ static void clicker_ble_courtesy_clear_higher_peer(void)
 static bool clicker_ble_courtesy_parse_ad(struct bt_data *data, void *user_data)
 {
     struct uwb_ble_courtesy_frame peer;
+    int8_t rssi = user_data != NULL ? *(const int8_t *)user_data : INT8_MIN;
     int cmp;
-
-    ARG_UNUSED(user_data);
 
     if (data->type != BT_DATA_MANUFACTURER_DATA) {
         return true;
@@ -2755,6 +2826,9 @@ static bool clicker_ble_courtesy_parse_ad(struct bt_data *data, void *user_data)
     if (uwb_ble_courtesy_decode(data->data, data->data_len, &peer) != PROTO_OK) {
         return true;
     }
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    atomic_inc(&ble_courtesy_diag_decoded);
+#endif
     if (peer.network_id != NETWORK_ID || peer.clicker_id == ble_courtesy_local.clicker_id) {
         return false;
     }
@@ -2767,10 +2841,30 @@ static bool clicker_ble_courtesy_parse_ad(struct bt_data *data, void *user_data)
                                        ble_courtesy_local.priority_id,
                                        ble_courtesy_local.clicker_id,
                                        ble_courtesy_local.click_event_id);
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    if (atomic_inc(&ble_courtesy_diag_peers) == 0) {
+        status_debug_printf("DBG_BLE_COURTESY_PEER peer=%llx evt=%u att=%u cmp=%d rssi=%d",
+                            (unsigned long long)peer.clicker_id,
+                            peer.click_event_id,
+                            peer.attempt_index,
+                            cmp,
+                            (int)rssi);
+    }
+#else
+    ARG_UNUSED(rssi);
+#endif
     if (cmp > 0) {
         uint32_t wait_ms = uwb_ble_courtesy_duration_ms(peer.defer_duration_units);
 
         clicker_ble_courtesy_note_higher_peer(wait_ms);
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+        if (atomic_inc(&ble_courtesy_diag_higher) == 0) {
+            status_debug_printf("DBG_BLE_COURTESY_HIGHER peer=%llx wait_ms=%u rssi=%d",
+                                (unsigned long long)peer.clicker_id,
+                                wait_ms,
+                                (int)rssi);
+        }
+#endif
         LOG_INF("BLE courtesy saw higher-precedence clicker: peer=%llx event=%u attempt=%u priority=%llx wait_ms=%u",
                 (unsigned long long)peer.clicker_id,
                 peer.click_event_id,
@@ -2793,7 +2887,10 @@ static void clicker_ble_courtesy_scan_cb(const bt_addr_le_t *addr,
     if (!ble_courtesy_scan_active) {
         return;
     }
-    bt_data_parse(buf, clicker_ble_courtesy_parse_ad, NULL);
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    atomic_inc(&ble_courtesy_diag_scan_reports);
+#endif
+    bt_data_parse(buf, clicker_ble_courtesy_parse_ad, &rssi);
 }
 
 static int clicker_ble_courtesy_init_once(void)
@@ -2865,10 +2962,15 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
                 sizeof(ble_courtesy_adv_data)),
     };
     size_t written = 0u;
+    bool advertising_was_active;
     int ret;
 
+    clicker_ble_courtesy_diag_start(event_seq,
+                                    attempt_index,
+                                    peer_finish_ms);
     ret = clicker_ble_courtesy_init_once();
     if (ret < 0) {
+        clicker_ble_courtesy_diag_finish("init", ret);
         return ret;
     }
 
@@ -2884,19 +2986,36 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
                                   sizeof(ble_courtesy_adv_data),
                                   &written);
     if (ret != PROTO_OK || written != sizeof(ble_courtesy_adv_data)) {
+        clicker_ble_courtesy_diag_finish("encode", -EINVAL);
         return -EINVAL;
     }
 
     clicker_ble_courtesy_clear_higher_peer();
+    advertising_was_active = ble_courtesy_adv_active;
     /* Legacy scan and advertising share the random-address state. Start the
      * identity advertiser before identity scanning so Zephyr accepts both.
      */
-    ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
+    if (advertising_was_active) {
+        ret = bt_le_adv_update_data(ad, ARRAY_SIZE(ad), NULL, 0u);
+    } else {
+        ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
+    }
     if (ret != 0) {
-        LOG_WRN("BLE courtesy advertising start failed: %d", ret);
+        LOG_WRN("BLE courtesy advertising %s failed: %d",
+                advertising_was_active ? "update" : "start",
+                ret);
+        (void)clicker_ble_courtesy_stop_advertising();
+        clicker_ble_courtesy_diag_finish(
+            advertising_was_active ? "advertise-update" : "advertise-start",
+            ret);
         return ret;
     }
     ble_courtesy_adv_active = true;
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    status_debug_printf(advertising_was_active ?
+                        "DBG_BLE_COURTESY_ADV_UPDATED" :
+                        "DBG_BLE_COURTESY_ADV_STARTED");
+#endif
 
     ble_courtesy_scan_active = true;
     ret = bt_le_scan_start(&scan_param, clicker_ble_courtesy_scan_cb);
@@ -2911,8 +3030,15 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
         } else {
             LOG_WRN("BLE courtesy advertising rollback failed: %d", stop_ret);
         }
+        clicker_ble_courtesy_diag_finish("scan", ret);
         return ret;
     }
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    status_debug_printf("DBG_BLE_COURTESY_SCAN_STARTED sense_ms=%u interval=%u window=%u",
+                        BLE_COURTESY_MIN_WINDOW_MS,
+                        BLE_COURTESY_SCAN_INTERVAL_UNITS,
+                        BLE_COURTESY_SCAN_WINDOW_UNITS);
+#endif
     return 0;
 }
 
@@ -2975,8 +3101,29 @@ static int clicker_ble_courtesy_stop_scanning(void)
 
 void app_clicker_ble_courtesy_stop(void)
 {
-    (void)clicker_ble_courtesy_stop_advertising();
-    (void)clicker_ble_courtesy_stop_scanning();
+    int adv_ret = clicker_ble_courtesy_stop_advertising();
+    int scan_ret = clicker_ble_courtesy_stop_scanning();
+
+    clicker_ble_courtesy_diag_finish("stop",
+                                     scan_ret < 0 ? scan_ret : adv_ret);
+}
+
+void app_clicker_ble_courtesy_finish_gate(bool retain_advertising)
+{
+    int scan_ret = clicker_ble_courtesy_stop_scanning();
+    int adv_ret = 0;
+
+    if (!retain_advertising || scan_ret < 0) {
+        adv_ret = clicker_ble_courtesy_stop_advertising();
+    }
+    clicker_ble_courtesy_diag_finish(
+        retain_advertising && scan_ret >= 0 ? "hold" : "stop",
+        scan_ret < 0 ? scan_ret : adv_ret);
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    if (retain_advertising && scan_ret >= 0) {
+        status_debug_printf("DBG_BLE_COURTESY_ADV_HELD");
+    }
+#endif
 }
 
 int app_clicker_ble_courtesy_low_power_stop(void)
@@ -3028,6 +3175,11 @@ uint32_t app_clicker_ble_courtesy_higher_wait_ms(void)
 
 void app_clicker_ble_courtesy_stop(void)
 {
+}
+
+void app_clicker_ble_courtesy_finish_gate(bool retain_advertising)
+{
+    ARG_UNUSED(retain_advertising);
 }
 
 int app_clicker_ble_courtesy_low_power_stop(void)
@@ -3287,6 +3439,7 @@ void app_clicker_handle_button_action(enum button_action action)
     bool normal_click_anchor_observed;
 
     if (action != BUTTON_ACTION_NONE) {
+        app_battery_indicator_suspend();
         ret = clicker_connect_status_leds_for_action();
         if (ret < 0) {
             LOG_ERR("clicker status LED reconnect failed after bounded retry: %d",
@@ -3299,6 +3452,7 @@ void app_clicker_handle_button_action(enum button_action action)
         status_debug_printf("DBG_CLICKER_CLICK state=START");
         normal_click_anchor_observed = false;
         ret = app_clicker_run_normal_click(&normal_click_anchor_observed);
+        app_clicker_ble_courtesy_stop();
         status.click_accepted = ret == 0;
         if (ret != 0) {
             status.click_failure =
@@ -3759,6 +3913,7 @@ void app_clicker_enter_systemoff_idle(void)
         return;
     }
 
+    app_battery_indicator_suspend();
     (void)battery_adc_divider_disable();
     clicker_prepare_radio_systemoff();
     status_leds_set(false, false, false);
@@ -3942,6 +4097,7 @@ static void clicker_enter_systemon_retained_idle(void)
             (unsigned int)CLICK_BUTTON_PIN_NUM);
     status_leds_set(false, false, false);
     status_leds_disconnect();
+    app_battery_indicator_resume();
 }
 
 void app_clicker_enter_idle(void)

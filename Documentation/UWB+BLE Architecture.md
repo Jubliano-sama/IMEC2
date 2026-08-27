@@ -217,6 +217,15 @@ Self-test traffic uses diagnostic flags and never sets the normal click flag. An
 | Green slow blink | Charged and idle on dock |
 | Red blink code repeated 3 times | Self-test failure, click failure, or module failure |
 
+The exact production anchor replaces the connected-routing debug lights and
+steady power LED with one 50 ms battery pulse every five seconds. It is red
+below 33%, blue from 33% through 66%, and green above 66%. The production
+clicker emits one 50 ms pulse every ten seconds: red below 20%, blue from 20%
+through 60%, and green above 60%. These thresholds linearly map the documented
+3.2-4.2 V cell range; ADC failures emit no possibly misleading color, and
+runtime samples remain in RAM. Forced-hop and synthetic test builds retain the
+channel-5 and channel-9 activity lights.
+
 Self-test failure codes:
 
 | Red blinks | Failure |
@@ -346,6 +355,13 @@ Assumptions:
 | UWB mesh report TX | 1000 × (2.67 ms startup/PLL + 20 ms TX timeout) × 75 mA | 0.47 | 1.0% |
 | **Daily total** | Estimated radio budget before margin | **49.06** | **100%** |
 | **With 1.5× safety margin** | 49.06 mAh/day × 1.5 | **73.59** | |
+
+The production anchor battery pulse itself costs approximately 0.07 mAh/day
+for green or blue and 0.24 mAh/day for red, using the fitted low-current RGB
+LED, 1.2 kΩ series resistance, and the 50 ms / 5 s duty cycle. The production
+clicker's worst-case red pulse costs about 0.12 mAh/day at 50 ms / 10 s. ADC
+and MCU wake overhead is separate and must be confirmed in the production
+power profile.
 
 The Stage 1 rxproof build now uses the same 380 ms / 5 ms scan setting as the normal anchor. Any future continuous-RX or over-budget debug profile is useful for proving the wake/discovery/range protocol path, but it must not be used for production battery sizing.
 

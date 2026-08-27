@@ -280,6 +280,15 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
                 "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n")
         endif()
     endif()
+    if(IMEC_DEPLOYABLE_MESH_PRESET)
+        file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+            "CONFIG_IMEC_PRODUCTION_STATUS_LEDS=y\n")
+    endif()
+    if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor" OR
+       IMEC_BUILD_PRESET STREQUAL "mesh_clicker")
+        file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+            "CONFIG_IMEC_PRODUCTION_BATTERY_INDICATOR=y\n")
+    endif()
     if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
         if(NOT IMEC_FORCED_GATEWAY_RELAY_HOPS MATCHES "^[1-8]$")
             message(FATAL_ERROR
@@ -436,9 +445,17 @@ set(IMEC_APP_LOCAL_SOURCES
 target_sources_ifdef(CONFIG_IMEC_DURABLE_STATE app PRIVATE
     src/app_durable_state.c)
 
+target_sources_ifdef(CONFIG_IMEC_PRODUCTION_BATTERY_INDICATOR app PRIVATE
+    src/app_battery_indicator.c
+    ../src/battery_status.c)
+
 target_sources_ifdef(CONFIG_IMEC_CLICKER_RTT_CONTROL app PRIVATE
     src/app_clicker_rtt_control.c
     ../src/clicker_rtt_command.c)
+
+if(CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH)
+    target_compile_definitions(app PRIVATE UWB_NORMAL_CLICK_MIN_ANCHORS=2u)
+endif()
 
 target_sources(app PRIVATE
     ../src/node_comm.c

@@ -281,6 +281,12 @@ static bool reserve_status1_for_power_indicator(void)
            (DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY);
 }
 
+static bool production_anchor_battery_indicator_enabled(void)
+{
+    return DEVICE_ROLE == ROLE_ANCHOR &&
+           IS_ENABLED(CONFIG_IMEC_PRODUCTION_BATTERY_INDICATOR);
+}
+
 static bool reserve_status0_for_route_test_power(void)
 {
     return reserve_status1_for_power_indicator();
@@ -288,7 +294,8 @@ static bool reserve_status0_for_route_test_power(void)
 
 static bool mesh_route_activity_leds_enabled(void)
 {
-    return reserve_status1_for_power_indicator();
+    return reserve_status1_for_power_indicator() &&
+           !IS_ENABLED(CONFIG_IMEC_PRODUCTION_STATUS_LEDS);
 }
 
 static void status0_route_test_power_apply(void)
@@ -346,6 +353,9 @@ void status_led1_set(bool red, bool green, bool blue)
 
 void status_power_indicator_set(bool enabled)
 {
+    if (production_anchor_battery_indicator_enabled()) {
+        enabled = false;
+    }
     status_power_indicator_enabled = enabled;
     if (reserve_status0_for_route_test_power()) {
         if (enabled) {
@@ -706,7 +716,8 @@ void status_debug_anchor_boot_test(void)
 {
     if (DEVICE_ROLE != ROLE_ANCHOR ||
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
-        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ||
+        production_anchor_battery_indicator_enabled()) {
         return;
     }
 

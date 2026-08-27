@@ -58,6 +58,16 @@ config IMEC_CLICKER_RTT_CONTROL
       keep it disabled in normal battery deployments because polling RTT keeps
       a periodic System ON work item active.
 
+config IMEC_TWO_ANCHOR_CLICK_BENCH
+    bool "Temporarily qualify normal-click ranging with two anchors"
+    default n
+    depends on IMEC_MESH_ROUTE_TEST
+    help
+      Compile the normal-click wire contract with a two-anchor minimum for an
+      explicitly matched clicker-and-anchor hardware bench. Every participant
+      must use the same setting. Leave this disabled in production, where a
+      normal click requires three unique anchors.
+
 endmenu
 
 menu "IMEC ML data collection"
@@ -126,6 +136,25 @@ config IMEC_MESH_ROUTE_TEST
       mesh clicker, anchor, and gateway presets. Bench transmitter presets add
       their synthetic traffic options separately. Legacy and ML roles remain
       untouched unless a mesh_* build preset selects this option.
+
+config IMEC_PRODUCTION_STATUS_LEDS
+    bool "Use production status-LED policy"
+    depends on IMEC_MESH_ROUTE_TEST
+    help
+      Disables channel-5 and channel-9 activity lights in exact deployable
+      mesh presets. Bench and forced-hop presets leave this disabled so their
+      visual RF diagnostics remain available.
+
+config IMEC_PRODUCTION_BATTERY_INDICATOR
+    bool "Enable production battery-status pulses"
+    depends on IMEC_PRODUCTION_STATUS_LEDS && ADC
+    help
+      On anchors, sample the Li-ion voltage and pulse for 50 ms every five
+      seconds: red below 33 percent, blue from 33 through 66 percent, and
+      green above 66 percent. On retained-idle clickers, sample every ten
+      seconds and pulse red below 20 percent, blue from 20 through 60 percent,
+      and green above 60 percent. Percentages use the documented 3.2-4.2 V
+      cell span and never write runtime samples to flash.
 
 config IMEC_MESH_CLICK_FULL_CIR_REPORTING
     bool "Capture and report the full CIR window for connected-mesh clicks"

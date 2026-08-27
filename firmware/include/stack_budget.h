@@ -108,6 +108,7 @@ extern "C" {
     X("app_clicker.c", "click_button_work_handler", "system_workqueue")       \
     X("app_clicker.c", "self_test_arm_timeout_handler", "system_workqueue")   \
     X("app_clicker_rtt_control.c", "app_clicker_rtt_poll_work_handler", "system_workqueue") \
+    X("app_battery_indicator.c", "battery_indicator_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_isr", "isr")                              \
     X("app_anchor.c", "anchor_discovery_claim_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_collection_result_work_handler", "system_workqueue") \

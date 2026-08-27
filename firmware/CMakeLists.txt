@@ -9,6 +9,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
+    src/battery_status.c
     src/debug_log.c
     src/clicker_rtt_command.c
     src/device_identity.c
@@ -451,6 +452,18 @@ set_tests_properties(production_device_identity_source_invariants PROPERTIES
 add_executable(test_status tests/test_status.c)
 target_link_libraries(test_status PRIVATE core)
 add_test(NAME status COMMAND test_status)
+
+add_executable(test_battery_status tests/test_battery_status.c)
+target_link_libraries(test_battery_status PRIVATE core)
+add_test(NAME battery_status COMMAND test_battery_status)
+set_tests_properties(battery_status PROPERTIES
+    LABELS "mesh_integration;hardware_models;power;status")
+
+add_test(NAME production_battery_indicator_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_production_battery_indicator_source_invariants.py)
+set_tests_properties(production_battery_indicator_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;power;status;static_analysis")
 
 add_executable(test_button_wake_recovery
     tests/test_button_wake_recovery.c)
