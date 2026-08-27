@@ -7,9 +7,11 @@ promotes that already-running image without programming it again.  A failed
 candidate must be explicitly rejected before another image can be staged.
 If the target was deliberately disconnected or replaced, an explicit abandon
 archives the journal and backup without claiming anything about target state.
-``--stage-only --initialize-storage`` is the explicit first-migration path for
-durable presets: it backs up the whole target, journals the storage preimage,
-and erases only the compiled storage partition before the candidate is reset.
+Durable-role changes are detected from the live target backup and initialize
+storage automatically.  ``--stage-only --initialize-storage`` remains the
+explicit first-migration path when the live image has no recognizable build
+identity.  Both paths journal the storage preimage and erase only the compiled
+storage partition before the candidate is reset.
 ``--complete-bench-qualification`` closes a non-promotable forced-hop bench
 journal only after its exact capture and three-role topology are validated.
 ``--supersede-staged-candidate`` retires a stale journal only after a live
@@ -62,6 +64,9 @@ STORAGE_PARTITION_SIZE = STORAGE_PARTITION_END - STORAGE_PARTITION_ADDRESS
 TRANSACTION_SCHEMA = 1
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SECTOR_ADDRESS_RE = re.compile(r"^0x[0-9a-f]{8}$")
+_DURABLE_BUILD_ID_RE = re.compile(
+    rb"imec-stack-v1:([a-z0-9_]+):[0-9a-f]{64}"
+)
 _REACHABILITY_SUCCESS_RE = re.compile(
     r"^HERE_I_AM_REACHABILITY_QUALIFICATION_OK "
     r"anchors=(\d+) direct=(\d+) multihop=(\d+) retries=(\d+)$",
@@ -99,6 +104,27 @@ def _probe_key(probe_id: str) -> str:
 
 def _journal_path(probe_id: str) -> Path:
     return TRANSACTION_DIRECTORY / f"{_probe_key(probe_id)}.json"
+
+
+def _durable_role(preset: str | None) -> str | None:
+    if preset in {"mesh_anchor", "mesh_anchor_forcedhop"}:
+        return "anchor"
+    if preset == "mesh_clicker":
+        return "clicker"
+    if preset == "mesh_gateway":
+        return "gateway"
+    return None
+
+
+def _live_durable_preset(target_backup: Path) -> str | None:
+    """Read the unique durable preset embedded in the running code image."""
+    code = target_backup.read_bytes()[:STORAGE_PARTITION_ADDRESS]
+    presets = {
+        match.group(1).decode("ascii")
+        for match in _DURABLE_BUILD_ID_RE.finditer(code)
+        if _durable_role(match.group(1).decode("ascii")) is not None
+    }
+    return next(iter(presets)) if len(presets) == 1 else None
 
 
 def _fsync_directory(path: Path) -> None:
@@ -1374,6 +1400,23 @@ def _start_transaction(
         created_at = _utc_text()
         backup_sha256 = _read_target_flash(probe_id, backup)
         backup_completed_at = _utc_text()
+        requested_storage_initialization = initialize_storage
+        previous_preset = _live_durable_preset(backup)
+        previous_role = _durable_role(previous_preset)
+        candidate_role = _durable_role(build.preset)
+        automatic_role_migration = (
+            not initialize_storage
+            and previous_role is not None
+            and candidate_role is not None
+            and previous_role != candidate_role
+        )
+        if automatic_role_migration:
+            initialize_storage = True
+            print(
+                "durable role change detected: "
+                f"{previous_role} ({previous_preset}) -> "
+                f"{candidate_role} ({build.preset}); initializing storage"
+            )
         _elf_path, hex_path = _artifact_paths(build_dir)
         expected_staged = _expected_staged_image(
             backup,
@@ -1416,6 +1459,14 @@ def _start_transaction(
         if initialize_storage:
             data["storage_initialization"] = {
                 "intent": "erase_storage_partition",
+                "trigger": (
+                    "explicit"
+                    if requested_storage_initialization
+                    else "durable_role_change"
+                ),
+                "previous_preset": previous_preset,
+                "previous_role": previous_role,
+                "candidate_role": candidate_role,
                 "range_start": STORAGE_PARTITION_ADDRESS,
                 "range_end": STORAGE_PARTITION_END,
                 "size": STORAGE_PARTITION_SIZE,
@@ -2168,7 +2219,13 @@ def main(argv: list[str] | None = None) -> int:
                 build, issues = _verify_stage_candidate(
                     args.build_dir, args.probe_id, args.bench_only,
                 )
-                if args.initialize_storage and build is not None:
+                if (
+                    build is not None
+                    and (
+                        args.initialize_storage
+                        or build.preset in verifier.DURABLE_STATE_PRESETS
+                    )
+                ):
                     issues.extend(_storage_initialization_issues(build))
                 if issues or build is None:
                     print("verified staging blocked:", file=sys.stderr)

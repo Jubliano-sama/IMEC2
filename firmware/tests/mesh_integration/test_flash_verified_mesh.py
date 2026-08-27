@@ -383,6 +383,13 @@ class VerifiedFlashTests(unittest.TestCase):
     def _stage_with_storage_initialization(self, build: Path) -> int:
         return flash.main(self._initialize_storage_args(build))
 
+    def _set_live_preset(self, preset: str) -> None:
+        image = bytearray(self.target.original)
+        identity = f"imec-stack-v1:{preset}:{'b' * 64}".encode("ascii")
+        image[0x10000:0x10000 + len(identity)] = identity
+        self.target.original = bytes(image)
+        self.target.target = self.target.original
+
     def _hardware_calls(self) -> list[list[str]]:
         return [
             call for call in self.target.calls
@@ -792,6 +799,44 @@ class VerifiedFlashTests(unittest.TestCase):
             call[:2] == [str(self.pyocd), "erase"]
             for call in self.target.calls
         ))
+
+    def test_same_durable_role_preserves_storage_automatically(self) -> None:
+        self._set_live_preset("mesh_clicker")
+        build, _ = self._valid()
+        original_storage = self.target.original[
+            flash.STORAGE_PARTITION_ADDRESS:flash.STORAGE_PARTITION_END
+        ]
+
+        self.assertEqual(0, self._stage(build))
+
+        journal = json.loads(self.journal.read_text(encoding="utf-8"))
+        self.assertIs(False, journal["storage_initialized"])
+        self.assertEqual(
+            original_storage,
+            self.target.target[
+                flash.STORAGE_PARTITION_ADDRESS:flash.STORAGE_PARTITION_END
+            ],
+        )
+
+    def test_durable_role_change_initializes_storage_automatically(self) -> None:
+        self._set_live_preset("mesh_anchor")
+        build, _ = self._valid()
+
+        self.assertEqual(0, self._stage(build))
+
+        journal = json.loads(self.journal.read_text(encoding="utf-8"))
+        self.assertIs(True, journal["storage_initialized"])
+        storage = journal["storage_initialization"]
+        self.assertEqual("durable_role_change", storage["trigger"])
+        self.assertEqual("mesh_anchor", storage["previous_preset"])
+        self.assertEqual("anchor", storage["previous_role"])
+        self.assertEqual("clicker", storage["candidate_role"])
+        self.assertEqual(
+            b"\xff" * flash.STORAGE_PARTITION_SIZE,
+            self.target.target[
+                flash.STORAGE_PARTITION_ADDRESS:flash.STORAGE_PARTITION_END
+            ],
+        )
 
     def test_preserved_storage_may_change_during_initial_stage_readback(self) -> None:
         build, _ = self._valid()
