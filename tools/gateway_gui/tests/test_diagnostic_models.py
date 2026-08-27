@@ -174,6 +174,36 @@ class WakeAndTopologyTests(unittest.TestCase):
             self.assertEqual(result.status, "exact")
             self.assertEqual(result.actual, (1, 2))
 
+    def test_count_mismatch_is_complete_with_a_warning(self):
+        with TemporaryDirectory() as temporary:
+            model = TopologyBaselineModel(Path(temporary) / "baseline.json")
+            for sequence, anchor in enumerate((1, 2, 3), 1):
+                model.observe(event(anchor=anchor, event_seq=sequence))
+            terminal = replace(
+                event(
+                    stage=12,
+                    flags=1,
+                    status=0,
+                    reason=6,
+                    total=4,
+                    event_seq=4,
+                ),
+                success_count=3,
+                failure_count=1,
+            )
+
+            result = model.observe(terminal)
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertTrue(result.complete)
+            self.assertEqual(result.status, "no_baseline")
+            self.assertIn("configured count was 4", result.eligibility_reason)
+            status, sentence = command_run_status((terminal,))
+            self.assertEqual(status, "Succeeded with warnings")
+            self.assertIn("3 anchors found", sentence)
+            self.assertIn("configured count was 4", command_step_sentence(terminal))
+
     def test_command_timeline_deduplicates_and_keeps_terminal(self):
         model = CommandTimelineModel(max_events=3)
         for sequence in (1, 2, 2, 3, 4):

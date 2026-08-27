@@ -23,6 +23,7 @@ from .command_orchestration import (
 from .command_telemetry import (
     CommandTelemetryDecodeError,
     decode_gateway_command_event,
+    is_enumeration_count_mismatch,
 )
 from .delivery_dedup import (
     CommandEventIdentity,
@@ -942,13 +943,23 @@ class GatewayGui(GatewayDiagnosticsMixin):
             if event.terminal:
                 self._store_enumeration_timing(event, anchors)
                 if self._survey_chain_pending:
+                    count_mismatch = (
+                        is_enumeration_count_mismatch(event)
+                        and len(anchors) == event.success_count
+                    )
                     enumeration_ok = (
                         not (event.flags & 0x04)
                         and event.command_status == 0
-                        and event.reason == 0
-                        and event.failure_count == 0
-                        and event.total_count > 0
-                        and len(anchors) == event.total_count
+                        and (
+                            (event.reason == 0 and event.failure_count == 0)
+                            or count_mismatch
+                        )
+                        and len(anchors) > 0
+                        and len(anchors) == (
+                            event.success_count
+                            if count_mismatch
+                            else event.total_count
+                        )
                         and all(
                             detail.discovery_slot != 255
                             and detail.hop_count != 0
@@ -956,6 +967,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
                         )
                     )
                     if enumeration_ok:
+                        if count_mismatch:
+                            self._append_log(
+                                "warning",
+                                f"Survey expected {event.total_count} anchors "
+                                f"but found {event.success_count}; continuing "
+                                "with the complete discovered slot table.",
+                            )
                         self._command_progress_text = (
                             "Survey: starting neighbor collection"
                         )
@@ -1358,15 +1376,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self, event: Any, anchors: dict[int, Any]
     ) -> None:
         gateway_id = getattr(self, "gateway_id", None)
+        count_mismatch = (
+            is_enumeration_count_mismatch(event)
+            and len(anchors) == event.success_count
+        )
         if (
             not isinstance(gateway_id, int)
             or gateway_id == 0
             or event.flags & 0x04
             or event.command_status != 0
-            or event.reason != 0
-            or event.failure_count != 0
-            or event.total_count == 0
-            or len(anchors) != event.total_count
+            or (event.reason != 0 and not count_mismatch)
+            or (event.failure_count != 0 and not count_mismatch)
+            or len(anchors) == 0
+            or len(anchors) != (
+                event.success_count if count_mismatch else event.total_count
+            )
         ):
             return
         details = tuple(anchors.values())

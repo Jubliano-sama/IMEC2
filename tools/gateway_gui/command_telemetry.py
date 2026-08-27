@@ -47,6 +47,32 @@ class GatewayCommandEvent:
         return bool(self.flags & 0x01) and self.stage == 12
 
 
+def is_enumeration_count_mismatch(event: GatewayCommandEvent) -> bool:
+    """Recognize a successful assignment whose configured count was only a hint.
+
+    Firmware reports fewer anchors than configured as ``COMMAND_OK`` plus a
+    timeout reason and a synthetic missing count.  More anchors than configured
+    are reported with a success count larger than the configured total.  Both
+    forms describe a complete assignment for the anchors that actually replied;
+    callers must still prove that they received that exact slot table.
+    """
+
+    if (
+        not event.terminal
+        or event.command_kind != 1
+        or event.command_status != 0
+        or event.success_count == 0
+        or event.success_count == event.total_count
+    ):
+        return False
+    if event.success_count < event.total_count:
+        return (
+            event.reason == 6
+            and event.failure_count == event.total_count - event.success_count
+        )
+    return event.reason == 0 and event.failure_count == 0
+
+
 GATEWAY_COMMAND_KIND_NAMES = {1: "Anchor enumeration", 3: "Route refresh"}
 GATEWAY_COMMAND_STAGE_NAMES = {
     1: "Accepted", 2: "Queued", 3: "Dispatching", 4: "Flood attempt",
@@ -108,7 +134,14 @@ class GatewayCommandRequestTracker:
         ):
             return False
         self.pending = None
-        self.last_outcome = "complete" if event.command_status == 0 and event.reason == 0 else "failed"
+        self.last_outcome = (
+            "complete"
+            if (
+                event.command_status == 0
+                and (event.reason == 0 or is_enumeration_count_mismatch(event))
+            )
+            else "failed"
+        )
         return True
 
     def observe_command_result(self, host_session_id: int, host_sequence: int,

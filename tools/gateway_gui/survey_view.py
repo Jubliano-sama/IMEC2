@@ -217,7 +217,7 @@ class SurveyGeometryView(ttk.Frame):
                 f"Relative 2D fit · RMSE {model.layout.rmse_m:.3f} m · "
                 f"max residual {model.layout.max_residual_m:.3f} m{warnings}"
             )
-        elif model.geometry_solve_ready:
+        elif model.geometry_solve_pending:
             self.geometry_var.set(
                 f"Solving relative 2D geometry from {len(model.geometry_pairs)} ranges..."
             )

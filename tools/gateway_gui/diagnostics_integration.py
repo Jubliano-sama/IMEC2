@@ -274,8 +274,7 @@ class GatewayDiagnosticsMixin:
     def _schedule_survey_geometry_solve(self) -> None:
         model = self.survey_model
         if (
-            not model.geometry_solve_ready
-            or model.layout_revision == model.geometry_revision
+            not model.geometry_solve_pending
         ):
             self._refresh_survey_view()
             return

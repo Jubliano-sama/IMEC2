@@ -15,7 +15,7 @@ from .anchor_geometry_visibility import solve_visibility_branching_tuned
 from .localization import LocalizationReading, LocalizationResult, solve_position
 from .command_telemetry import (
     GatewayCommandEvent, GATEWAY_COMMAND_REASON_NAMES,
-    GATEWAY_COMMAND_STAGE_NAMES,
+    GATEWAY_COMMAND_STAGE_NAMES, is_enumeration_count_mismatch,
 )
 from .protocol import (
     Packet, MSG_CLICK_REPORT, TLV_ANCHOR_ID, TLV_CLICKER_ID, TLV_ATTEMPT_INDEX,
@@ -368,23 +368,32 @@ class TopologyBaselineModel:
             return None
         actual = tuple(sorted(self.current_ids))
         telemetry_lost = terminal.lost_event_count > self._first_loss_by_key[key]
+        count_mismatch = is_enumeration_count_mismatch(terminal)
         if key not in self._live_keys:
             reason = (
                 "Incomplete: this enumeration is available only as replayed "
                 "history; run a new enumeration before accepting a baseline."
             )
-        elif terminal.command_status != 0 or terminal.reason != 0:
+        elif (
+            terminal.command_status != 0
+            or (terminal.reason != 0 and not count_mismatch)
+        ):
             reason = f"Gateway ended the enumeration with status {terminal.command_status}, reason {terminal.reason}."
         elif terminal.total_count == 0:
             reason = "Completed, but no anchors replied."
         elif telemetry_lost:
             reason = f"Incomplete: {terminal.lost_event_count - self._first_loss_by_key[key]} telemetry event(s) were lost during this run."
-        elif terminal.failure_count:
+        elif terminal.failure_count and not count_mismatch:
             reason = f"Incomplete: {terminal.failure_count} anchor assignment(s) failed."
-        elif terminal.success_count != terminal.total_count:
+        elif not count_mismatch and terminal.success_count != terminal.total_count:
             reason = f"Incomplete: gateway reported {terminal.success_count} of {terminal.total_count} successful anchors."
-        elif len(actual) != terminal.total_count:
-            reason = f"Waiting for anchor details: received {len(actual)} of {terminal.total_count}."
+        elif len(actual) != terminal.success_count:
+            reason = f"Waiting for anchor details: received {len(actual)} of {terminal.success_count}."
+        elif count_mismatch:
+            reason = (
+                f"Complete: found and assigned {terminal.success_count} anchors; "
+                f"the configured count was {terminal.total_count}."
+            )
         else:
             reason = f"Complete: {terminal.total_count} of {terminal.total_count} anchors reported and were assigned."
         complete = reason.startswith("Complete:")
@@ -505,6 +514,12 @@ def command_run_status(events: tuple[GatewayCommandEvent, ...]) -> tuple[str, st
             return "Running", "Waiting to retry after the gateway reported a busy radio path."
         return "Running", command_step_sentence(latest)
     loss_delta = terminal.lost_event_count - min(event.lost_event_count for event in events)
+    if is_enumeration_count_mismatch(terminal):
+        return (
+            "Succeeded with warnings",
+            f"Completed: {terminal.success_count} anchors found; configured "
+            f"count was {terminal.total_count}.",
+        )
     if terminal.command_status == 0 and terminal.reason == 0:
         if terminal.total_count == 0 and terminal.command_kind == 1:
             return "Incomplete", "Completed, but no anchors replied."
@@ -554,6 +569,11 @@ def command_step_sentence(event: GatewayCommandEvent) -> str:
     if event.stage == 8:
         return f"Assignment table prepared for {event.total_count} anchor(s)."
     if event.terminal:
+        if is_enumeration_count_mismatch(event):
+            return (
+                f"Enumeration completed with {event.success_count} anchors; "
+                f"configured count was {event.total_count}."
+            )
         reason = GATEWAY_COMMAND_REASON_NAMES[event.reason]
         if event.command_status == 0 and event.reason == 0:
             return f"Completed: {event.success_count} succeeded, {event.failure_count} failed."

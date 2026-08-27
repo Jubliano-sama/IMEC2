@@ -176,6 +176,53 @@ class AppModelTests(unittest.TestCase):
         self.assertIn("epoch=287454020", summary)
         self.assertNotIn("assigned_anchors=", summary)
 
+    def test_count_mismatch_updates_timing_from_complete_actual_table(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = 0xAABBCCDDEEFF0011
+        gui._topology_deepest_hop = 0
+        gui.assignment_expected_anchors_text = FakeVariable("4")  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_on_assignment_parameters_changed"] = Mock()
+        anchors = {
+            anchor_id: SimpleNamespace(discovery_slot=slot, hop_count=slot + 1)
+            for slot, anchor_id in enumerate((0xA1, 0xB2, 0xC3))
+        }
+        terminal = GatewayCommandEvent(
+            command_kind=1,
+            stage=12,
+            flags=GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
+            attempt=1,
+            command_status=0,
+            reason=6,
+            command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
+            route_epoch=7,
+            correlation_id=8,
+            gateway_sequence=9,
+            host_session_id=10,
+            host_sequence=11,
+            event_sequence=12,
+            anchor_id=0,
+            pair_initiator_id=0,
+            pair_responder_id=0,
+            previous_hop_id=0,
+            progress_count=3,
+            total_count=4,
+            success_count=3,
+            failure_count=1,
+            duplicate_count=0,
+            lost_event_count=0,
+            hop_count=0,
+            discovery_slot=255,
+        )
+
+        gui._store_enumeration_timing(terminal, anchors)
+
+        self.assertEqual(gui.assignment_expected_anchors_text.get(), "3")
+        self.assertEqual(gui._topology_slot_span, 3)
+        self.assertEqual(gui._topology_deepest_hop, 3)
+        self.assertIn("Topology: 3 anchors", gui._topology_timing_summary)
+        cast(Mock, gui._on_assignment_parameters_changed).assert_called_once()
+
     def test_commands_require_current_connection_identity_and_clear_on_disconnect(self) -> None:
         gui = self.identity_gui_model()
         gateway_id = 0xAABBCCDDEEFF0011

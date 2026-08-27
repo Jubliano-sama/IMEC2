@@ -5,6 +5,7 @@ from tools.gateway_gui.command_telemetry import (
     CommandTelemetryDecodeError, GatewayCommandEvent,
     GatewayCommandRequestTracker,
     decode_gateway_command_event,
+    is_enumeration_count_mismatch,
 )
 from tools.gateway_gui.protocol import COMMAND_STATUS_NAMES, MSG_GATEWAY_COMMAND_EVENT
 from tools.gateway_gui.tests.test_protocol import stream_record
@@ -101,6 +102,43 @@ class CommandTelemetryProtocolTests(unittest.TestCase):
         )
         self.assertTrue(tracker.observe_event(terminal))
         self.assertFalse(tracker.observe_event(terminal))
+
+    def test_expected_anchor_count_mismatch_completes_with_warning_semantics(self):
+        tracker = GatewayCommandRequestTracker()
+        self.assertTrue(tracker.begin(1, 300, 12, now=0.0))
+        intermediate = decode_gateway_command_event(
+            event_payload(), valid_statuses=set(COMMAND_STATUS_NAMES)
+        )
+        fewer = replace(
+            intermediate,
+            stage=12,
+            flags=1,
+            host_session_id=300,
+            host_sequence=12,
+            command_status=0,
+            reason=6,
+            total_count=4,
+            success_count=3,
+            failure_count=1,
+        )
+
+        self.assertTrue(is_enumeration_count_mismatch(fewer))
+        self.assertTrue(tracker.observe_event(fewer))
+        self.assertEqual(tracker.last_outcome, "complete")
+
+        more = replace(
+            fewer,
+            reason=0,
+            total_count=2,
+            success_count=3,
+            failure_count=0,
+        )
+        self.assertTrue(is_enumeration_count_mismatch(more))
+        self.assertFalse(
+            is_enumeration_count_mismatch(
+                replace(fewer, command_status=3)
+            )
+        )
 
 
 if __name__ == "__main__":

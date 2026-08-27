@@ -46,6 +46,8 @@ def command_event(
     terminal: bool = False,
     status: int = 0,
     reason: int = 0,
+    success: int | None = None,
+    failure: int = 0,
 ) -> GatewayCommandEvent:
     return GatewayCommandEvent(
         command_kind=kind,
@@ -67,8 +69,12 @@ def command_event(
         previous_hop_id=0,
         progress_count=progress,
         total_count=total,
-        success_count=total if terminal and status == 0 else progress,
-        failure_count=0,
+        success_count=(
+            success
+            if success is not None
+            else total if terminal and status == 0 else progress
+        ),
+        failure_count=failure,
         duplicate_count=0,
         lost_event_count=0,
         hop_count=hop,
@@ -212,14 +218,70 @@ class SurveyOperationModelTests(unittest.TestCase):
             sorted(round(pair.distance_m, 3) for pair in model.geometry_pairs),
             [3.0, 4.0, 5.0],
         )
-        model.observe_survey_event(result_event(terminal=True))
-
         revision = model.geometry_revision
         layout = solve_geometry(model.geometry_pairs, solver="Visibility branching tuned")
         self.assertTrue(model.apply_layout(revision, layout))
         self.assertEqual(set(layout.positions_m), {anchor_label for pair in model.geometry_pairs for anchor_label in (pair.anchor_a_id, pair.anchor_b_id)})
         self.assertEqual(model.steps["geometry"].state, "done")
+        self.assertFalse(model.geometry_solve_pending)
+
+        # A terminal event may repeat results after the asynchronous solver
+        # has already completed. It must not put the solved revision back into
+        # a permanent "running" state when no new solve will be scheduled.
+        model.observe_survey_event(result_event(terminal=True))
+        self.assertEqual(model.steps["geometry"].state, "done")
+        self.assertFalse(model.geometry_solve_pending)
         self.assertEqual(model.progress_percent, 100.0)
+
+    def test_unexpected_anchor_count_warns_and_continues_with_actual_table(self) -> None:
+        for configured, terminal_total, reason, failure in (
+            (4, 4, 6, 1),
+            (2, 2, 0, 0),
+        ):
+            with self.subTest(configured=configured):
+                model = SurveyOperationModel()
+                model.begin(expected_anchor_count=configured)
+                model.observe_command_event(
+                    command_event(
+                        kind=3,
+                        stage=12,
+                        command_id=CMD_FORCE_REDISCOVERY,
+                        terminal=True,
+                    )
+                )
+                for slot, anchor_id in enumerate(ANCHORS):
+                    model.observe_command_event(
+                        command_event(
+                            kind=1,
+                            stage=6,
+                            command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
+                            anchor_id=anchor_id,
+                            slot=slot,
+                            hop=slot + 1,
+                            progress=slot + 1,
+                            total=terminal_total,
+                        )
+                    )
+                model.observe_command_event(
+                    command_event(
+                        kind=1,
+                        stage=12,
+                        command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
+                        progress=3,
+                        total=terminal_total,
+                        terminal=True,
+                        reason=reason,
+                        success=3,
+                        failure=failure,
+                    )
+                )
+
+                self.assertTrue(model.active)
+                self.assertEqual(model.phase, "waiting-start")
+                self.assertEqual(model.expected_anchor_count, 3)
+                self.assertEqual(model.steps["enumeration"].state, "warning")
+                self.assertIn("configured count", model.steps["enumeration"].detail)
+                self.assertNotIn("failed", model.headline.lower())
 
     def test_new_run_rejects_an_already_seen_identity(self) -> None:
         model = self.model_after_enumeration()

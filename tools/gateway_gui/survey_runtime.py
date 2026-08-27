@@ -7,7 +7,10 @@ from dataclasses import dataclass
 import time
 
 from .anchor_geometry import AnchorLayoutResult, AnchorPairDistance
-from .command_telemetry import GatewayCommandEvent
+from .command_telemetry import (
+    GatewayCommandEvent,
+    is_enumeration_count_mismatch,
+)
 from .diagnostic_models import anchor_label
 from .protocol import (
     CMD_SURVEY_CANCEL,
@@ -310,27 +313,42 @@ class SurveyOperationModel:
         if not event.terminal:
             return True
 
+        mapped_count = len(self.slot_to_anchor)
+        exact_mapping = (
+            mapped_count > 0
+            and len(set(self.slot_to_anchor.values())) == mapped_count
+        )
+        count_mismatch = (
+            is_enumeration_count_mismatch(event)
+            and exact_mapping
+            and event.success_count == mapped_count
+        )
         complete = (
             event.command_status == 0
             and event.reason == 0
             and event.failure_count == 0
             and event.total_count > 0
-            and len(self.slot_to_anchor) == event.total_count
-            and len(set(self.slot_to_anchor.values())) == event.total_count
+            and mapped_count == event.total_count
+            and exact_mapping
         )
-        if not complete:
+        if not complete and not count_mismatch:
             self.fail(
                 "enumeration",
                 "Enumeration ended without one exact slot and hop for every anchor",
             )
             return True
-        self.expected_anchor_count = event.total_count
+        self.expected_anchor_count = mapped_count
         self._set_step(
             "enumeration",
-            "done",
-            f"{event.total_count} anchors mapped to exact discovery slots",
-            current=event.total_count,
-            total=event.total_count,
+            "warning" if count_mismatch else "done",
+            (
+                f"{mapped_count} anchors mapped to exact discovery slots; "
+                f"configured count was {event.total_count}"
+                if count_mismatch
+                else f"{mapped_count} anchors mapped to exact discovery slots"
+            ),
+            current=mapped_count,
+            total=mapped_count,
         )
         self.phase = "waiting-start"
         self._set_step(
@@ -584,7 +602,7 @@ class SurveyOperationModel:
             current=len(self.results),
             total=total,
         )
-        if self.geometry_solve_ready:
+        if self.geometry_solve_pending:
             self._set_step(
                 "geometry",
                 "running",
@@ -621,7 +639,7 @@ class SurveyOperationModel:
 
     def _geometry_changed(self) -> None:
         self.geometry_revision += 1
-        if self.geometry_solve_ready:
+        if self.geometry_solve_pending:
             self._set_step(
                 "geometry",
                 "running",
@@ -680,6 +698,15 @@ class SurveyOperationModel:
             seen.add(anchor)
             frontier.extend(adjacency[anchor] - seen)
         return seen == anchors
+
+    @property
+    def geometry_solve_pending(self) -> bool:
+        """Return whether the current geometry revision still needs solving."""
+
+        return (
+            self.geometry_solve_ready
+            and self.layout_revision != self.geometry_revision
+        )
 
     @property
     def geometry_requirement(self) -> str:
