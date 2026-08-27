@@ -335,11 +335,7 @@ def main() -> None:
     profile = OperationPolicyProfile(
         assignment=AssignmentOperationPolicy(expected_anchor_count=5)
     )
-    assignment_budget_hex = profile.assignment.operation_budget_ms.to_bytes(
-        4, "little"
-    ).hex()
     assert profile.assignment.operation_budget_ms == 1_800_000
-    assert assignment_budget_hex == "40771b00"
     policy_values = profile.encoded_values()
     full_policy_suffix = operation_policy_suffix(policy_values)
     assignment_policy_suffix = operation_policy_suffix(policy_values[:1])
@@ -348,14 +344,9 @@ def main() -> None:
         gateway_id=GATEWAY,
         session_id=0x1234567A,
         seq=19,
-        command_budget_ms=profile.assignment.operation_budget_ms,
-        expected_anchor_count=profile.assignment.expected_anchor_count,
         operation_policy=profile,
     )
-    expected_enumeration_payload = (
-        "1002040178020500ab04" + assignment_budget_hex
-        + assignment_policy_suffix
-    )
+    expected_enumeration_payload = "10020401" + assignment_policy_suffix
     policy_enumeration_parsed = firmware_parse(oracle, policy_enumeration.frame)
     assert "command_id=260" in policy_enumeration_parsed
     assert f"payload_len={len(policy_enumeration.packet.payload)}" in policy_enumeration_parsed

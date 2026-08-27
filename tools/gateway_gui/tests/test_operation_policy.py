@@ -62,16 +62,11 @@ class OperationPolicyTests(unittest.TestCase):
             with self.subTest(value=value.hex()), self.assertRaises(ValueError):
                 decode_operation_policy_value(value)
 
-    def test_assignment_budget_uses_safe_preclaim_depth(self) -> None:
+    def test_assignment_budget_uses_safe_preclaim_roster_bound(self) -> None:
         self.assertEqual(1_800_000, assignment_required_budget_ms(1_000))
         self.assertEqual(418_524, assignment_required_budget_ms(1_000, 3))
         self.assertEqual(421_064, assignment_required_budget_ms(10_000, 3))
         self.assertEqual(1_800_000, assignment_required_budget_ms(1_000, 50))
-        for live_depth in (1, 2, 3):
-            self.assertEqual(
-                418_524,
-                assignment_required_budget_ms(1_000, 3, live_depth),
-            )
 
 
 if __name__ == "__main__":

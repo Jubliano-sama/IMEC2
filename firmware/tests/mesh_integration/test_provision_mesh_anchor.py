@@ -282,16 +282,14 @@ class ProvisioningHelpersTests(unittest.TestCase):
                     provision.main()
                     print_mock.assert_called_once_with("BLE_MONITOR_STOPPED")
 
-    def test_assignment_policy_uses_the_exact_depth_aware_budget(self) -> None:
-        policy = provision._assignment_operation_policy(3, None, deepest_hop=2)
+    def test_assignment_policy_uses_the_exact_roster_budget(self) -> None:
+        policy = provision._assignment_operation_policy(3, None)
         expected = provision.assignment_required_budget_ms(
             provision.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             3,
-            deepest_hop=2,
         )
         self.assertEqual(expected, policy.assignment.operation_budget_ms)
         self.assertEqual(3, policy.assignment.expected_anchor_count)
-        self.assertEqual(2, policy.assignment.deepest_hop)
 
     def test_identity_allocator_never_returns_zero_or_reuses_previous(self) -> None:
         previous = provision._identity_state

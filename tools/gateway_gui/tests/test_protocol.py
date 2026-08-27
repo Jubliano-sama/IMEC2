@@ -1262,23 +1262,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([value.type_id for value in command.packet.tlvs], [TLV_COMMAND_ID])
         self.assertIn("ASSIGN_DISCOVERY_SLOTS", command.packet.tlvs[0].display)
 
-        bounded = build_assign_discovery_slots_command(
-            host_id=DEFAULT_HOST_ID,
-            gateway_id=gateway_id,
-            session_id=0x99AABBCD,
-            seq=13,
-            expected_anchor_count=50,
-        )
-        self.assertEqual(bounded.packet.value(TLV_EXPECTED_NODE_COUNT), 50)
-        with self.assertRaisesRegex(ValueError, "expected anchor count"):
-            build_assign_discovery_slots_command(
-                host_id=DEFAULT_HOST_ID,
-                gateway_id=gateway_id,
-                session_id=1,
-                seq=1,
-                expected_anchor_count=51,
-            )
-
         with self.assertRaisesRegex(ValueError, "gateway ID must differ from host ID"):
             build_assign_discovery_slots_command(
                 host_id=DEFAULT_HOST_ID,

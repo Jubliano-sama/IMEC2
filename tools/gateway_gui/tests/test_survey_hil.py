@@ -2,10 +2,22 @@ import unittest
 from types import SimpleNamespace
 
 from tools.gateway_gui.protocol import CMD_SURVEY_PLAN, CMD_SURVEY_START
-from tools.gateway_gui.survey_hil import SurveyHilEvidence
+from tools.gateway_gui.survey_hil import (
+    SurveyHilEvidence,
+    _configure_expected_anchors,
+)
 
 
 class SurveyHilEvidenceTests(unittest.TestCase):
+    def test_expected_anchor_count_configures_production_gui_input(self) -> None:
+        field = SimpleNamespace(value="3")
+        field.set = lambda value: setattr(field, "value", value)
+        gui = SimpleNamespace(assignment_expected_anchors_text=field)
+
+        _configure_expected_anchors(gui, 4)  # type: ignore[arg-type]
+
+        self.assertEqual(field.value, "4")
+
     def _complete_evidence(self) -> SurveyHilEvidence:
         return SurveyHilEvidence(
             command_status={CMD_SURVEY_START: 0, CMD_SURVEY_PLAN: 0},

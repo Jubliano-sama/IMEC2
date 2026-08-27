@@ -517,7 +517,12 @@ def command_run_status(events: tuple[GatewayCommandEvent, ...]) -> tuple[str, st
         return "Succeeded", result + "."
     reason = GATEWAY_COMMAND_REASON_NAMES[terminal.reason]
     if terminal.reason == 1:
-        return "Failed", "Invalid request: check the gateway identity and command parameters."
+        return (
+            "Failed",
+            "Gateway rejected this command payload. Restart the GUI from the "
+            "same firmware revision, then verify the gateway identity and "
+            "operation policy if it persists.",
+        )
     if terminal.reason == 2 or terminal.command_status == 3:
         return "Rejected", f"Rejected: {reason.lower()}."
     if terminal.reason in (6, 9):

@@ -142,12 +142,13 @@ acknowledgement or NVS-backed journal.
   gateway's bounded `MSG_GATEWAY_ROUTE_ADV` flood custody; it does not claim
   per-anchor reception. It also carries the current complete runtime policy.
 - **Assign discovery slots** sends local `CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104`
-  to the gateway's own `DEVICE_ID`. Its optional **Expected anchors** value is
-  encoded as `TLV_EXPECTED_NODE_COUNT`; when the roster is known, this lets a
-  delivered CLAIM flood advance as soon as every expected unique claim arrives.
-  Leave it blank when the roster is unknown so the gateway waits the complete
-  conservative multi-hop horizon. The GUI also exposes the total assignment
-  budget and equal randomized response spread. The gateway floods the resulting
+  to the gateway's own `DEVICE_ID`. **Expected anchors**, the derived operation
+  budget, and response spread travel once in the versioned assignment policy;
+  the removed legacy count and command-budget TLVs are no longer duplicated.
+  When the roster is known, the count lets a delivered CLAIM flood advance as
+  soon as every expected unique claim arrives. Leave it blank when the roster
+  is unknown so the gateway waits the complete conservative multi-hop horizon.
+  The gateway floods the resulting
   table and commits the ACKed subset; a nonempty useful subset may finish with
   `COMMAND_OK`, while terminal counters preserve missing claims or ACKs for
   optional strict qualification. The assigned-anchor count is returned in

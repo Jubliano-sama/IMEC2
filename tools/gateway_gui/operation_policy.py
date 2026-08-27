@@ -50,7 +50,6 @@ def _bounded(label: str, value: int, minimum: int, maximum: int) -> None:
 def assignment_required_budget_ms(
     response_spread_ms: int,
     expected_anchor_count: int = 0,
-    deepest_hop: int = 0,
 ) -> int:
     _bounded(
         "assignment response spread",
@@ -64,8 +63,6 @@ def assignment_required_budget_ms(
         0,
         EXPECTED_ANCHOR_COUNT_MAX,
     )
-    if deepest_hop != 0:
-        _bounded("deepest hop", deepest_hop, 1, 8)
     # The assignment request intentionally carries N, not a topology claim.
     # Before CLAIM evidence exists the safe rectangular-chain bound is D=N
     # (capped by the protocol's eight-hop TTL), exactly as in firmware.
@@ -109,7 +106,6 @@ class AssignmentOperationPolicy:
     expected_anchor_count: int = 0
     operation_budget_ms: int = ASSIGNMENT_DEFAULT_BUDGET_MS
     response_spread_ms: int = ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
-    deepest_hop: int = 0
     ram_only_iteration: bool = False
 
     family: ClassVar[int] = OPERATION_POLICY_FAMILY_ASSIGNMENT
@@ -133,14 +129,11 @@ class AssignmentOperationPolicy:
             ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
             ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
         )
-        if self.deepest_hop != 0:
-            _bounded("deepest hop", self.deepest_hop, 1, 8)
         if not isinstance(self.ram_only_iteration, bool):
             raise ValueError("RAM-only iteration must be a boolean")
         required_budget_ms = assignment_required_budget_ms(
             self.response_spread_ms,
             self.expected_anchor_count,
-            self.deepest_hop,
         )
         if self.operation_budget_ms < required_budget_ms:
             raise ValueError(

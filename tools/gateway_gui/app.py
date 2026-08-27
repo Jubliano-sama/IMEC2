@@ -156,8 +156,8 @@ ERROR = "#a72b2b"
 ERROR_BG = "#fbe9e8"
 HEADER = "#252b30"
 SELECTION = "#d8ebe6"
-DEFAULT_COMMAND_BUDGET_TEXT = ""
 DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT = "3"
+GUI_PROTOCOL_REVISION = "survey-event-v1"
 
 class Tooltip:
     def __init__(self, widget: tk.Widget, text: str) -> None:
@@ -201,7 +201,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("IMEC2 Gateway BLE Console")
+        self.root.title(
+            f"IMEC2 Gateway BLE Console — {GUI_PROTOCOL_REVISION}"
+        )
         self.root.geometry("1420x900")
         self.root.minsize(1080, 700)
         self.root.configure(background=APP_BG)
@@ -232,6 +234,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._command_progress_text = ""
         self._topology_gateway_id: int | None = None
         self._topology_slot_span: int | None = None
+        self._topology_deepest_hop = 0
         self._topology_timing_summary = "Topology estimate pending enumeration."
         self._survey_chain_pending = False
         self._survey_phase = "idle"
@@ -248,11 +251,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.status_text = tk.StringVar(value="Ready")
         self.error_text = tk.StringVar()
         self.host_id_text = tk.StringVar(value=f"0x{DEFAULT_HOST_ID:016x}")
-        self.command_budget_text = tk.StringVar(value=DEFAULT_COMMAND_BUDGET_TEXT)
         self.assignment_expected_anchors_text = tk.StringVar(
             value=DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
         )
-        self.deepest_hop_text = tk.StringVar(value="")
         self.assignment_budget_text = tk.StringVar(
             value=str(ASSIGNMENT_DEFAULT_BUDGET_MS)
         )
@@ -260,9 +261,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             value=str(ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS)
         )
         self.assignment_expected_anchors_text.trace_add(
-            "write", self._on_assignment_parameters_changed
-        )
-        self.deepest_hop_text.trace_add(
             "write", self._on_assignment_parameters_changed
         )
         self.assignment_response_spread_text.trace_add(
@@ -470,17 +468,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             justify="left",
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        # Advanced / Protocol Settings
-        advanced = ttk.LabelFrame(parent, text="Protocol Parameters", padding=10)
+        advanced = ttk.LabelFrame(parent, text="Enumeration Timing", padding=10)
         advanced.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         advanced.grid_columnconfigure(0, weight=1)
         advanced.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(advanced, text="Host ID").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(advanced, textvariable=self.host_id_text).grid(row=0, column=1, sticky="ew")
-
-        self._labeled_spin(advanced, 1, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
-        self._labeled_spin(advanced, 2, "Known max hop", self.deepest_hop_text, 1, 8)
+        self._labeled_spin(advanced, 0, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
     def _labeled_spin(
         self,
         parent: ttk.LabelFrame,
@@ -768,28 +761,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._last_command_session_id = session_id
         return session_id, self.sequence
 
-    def _command_budget_ms(self) -> int | None:
-        raw = self.command_budget_text.get().strip()
-        if not raw:
-            return None
-        budget_ms = self._parse_int("Command limit", raw)
-        if not (
-            GATEWAY_COMMAND_BUDGET_MIN_MS
-            <= budget_ms
-            <= GATEWAY_COMMAND_BUDGET_MAX_MS
-        ):
-            raise ValueError(
-                f"Command limit must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
-                f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms, or blank"
-            )
-        return budget_ms
-
     def _on_assignment_parameters_changed(self, *args: object) -> None:
         try:
             expected_raw = self.assignment_expected_anchors_text.get().strip()
             expected = int(expected_raw) if expected_raw else 0
-            hop_raw = self.deepest_hop_text.get().strip()
-            deepest = int(hop_raw) if hop_raw else 0
             spread_raw = self.assignment_response_spread_text.get().strip()
             spread = (
                 int(spread_raw)
@@ -798,13 +773,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
             if (
                 0 <= expected <= EXPECTED_ANCHOR_COUNT_MAX
-                and (deepest == 0 or 1 <= deepest <= 8)
                 and ASSIGNMENT_RESPONSE_SPREAD_MIN_MS
                 <= spread
                 <= ASSIGNMENT_RESPONSE_SPREAD_MAX_MS
             ):
                 budget = assignment_required_budget_ms(
-                    spread, expected, deepest
+                    spread, expected
                 )
                 self.assignment_budget_text.set(str(budget))
                 estimate_var = getattr(self, "operation_estimate_text", None)
@@ -834,16 +808,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._parse_int("Expected anchors", expected_raw)
             if expected_raw else 0
         )
-        deepest_hop_var = getattr(self, "deepest_hop_text", None)
-        deepest_hop_raw = (
-            deepest_hop_var.get().strip()
-            if deepest_hop_var is not None
-            else ""
-        )
-        deepest_hop = (
-            self._parse_int("Deepest hop", deepest_hop_raw)
-            if deepest_hop_raw else 0
-        )
         return OperationPolicyProfile(
             assignment=AssignmentOperationPolicy(
                 expected_anchor_count=expected_anchor_count,
@@ -854,7 +818,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     "Assignment response spread",
                     self.assignment_response_spread_text.get(),
                 ),
-                deepest_hop=deepest_hop,
                 ram_only_iteration=ram_only_iteration,
             ),
         )
@@ -1415,8 +1378,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         anchor_count = len(details)
         deepest_hop = max(detail.hop_count for detail in details)
         slot_span = max(detail.discovery_slot for detail in details) + 1
-        previous_raw = self.deepest_hop_text.get().strip()
-        previous_hop = int(previous_raw) if previous_raw else 0
+        previous_hop = self._topology_deepest_hop
         if previous_hop and deepest_hop > previous_hop:
             self._append_log(
                 "warning",
@@ -1425,8 +1387,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         self._topology_gateway_id = gateway_id
         self._topology_slot_span = slot_span
+        self._topology_deepest_hop = deepest_hop
         self.assignment_expected_anchors_text.set(str(anchor_count))
-        self.deepest_hop_text.set(str(deepest_hop))
         self._topology_timing_summary = (
             f"Topology: {anchor_count} anchors, max hop {deepest_hop}, "
             f"slot span {slot_span}."
@@ -1436,9 +1398,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _reset_topology_timing(self) -> None:
         self._topology_gateway_id = None
         self._topology_slot_span = None
+        self._topology_deepest_hop = 0
         self._topology_timing_summary = "Topology estimate pending enumeration."
-        if hasattr(self, "deepest_hop_text"):
-            self.deepest_hop_text.set("")
         if hasattr(self, "assignment_expected_anchors_text"):
             self.assignment_expected_anchors_text.set(
                 DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
@@ -1449,7 +1410,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
         *,
         host_id: int,
         gateway_id: int,
-        command_budget_ms: int | None,
         operation_policy: OperationPolicyProfile,
         status_text: str,
     ) -> GatewayCommandDispatch:
@@ -1459,7 +1419,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             gateway_id=gateway_id,
             session_id=session_id,
             seq=seq,
-            command_budget_ms=command_budget_ms,
             operation_policy=operation_policy,
         )
         return GatewayCommandDispatch(
@@ -1470,7 +1429,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             frame=command.frame,
             label=command.label,
             timeout_s=self._command_timeout_s(
-                command_budget_ms, ROUTE_REFRESH_DEFAULT_BUDGET_MS
+                None, ROUTE_REFRESH_DEFAULT_BUDGET_MS
             ),
             status_text=status_text,
         )
@@ -1479,12 +1438,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
-            command_budget_ms = self._command_budget_ms()
             operation_policy = self._operation_policy_profile()
             target = self._here_i_am_dispatch(
                 host_id=host_id,
                 gateway_id=gateway_id,
-                command_budget_ms=command_budget_ms,
                 operation_policy=operation_policy,
                 status_text="Writing Here I Am route-refresh request over BLE...",
             )
@@ -1512,8 +1469,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
-                command_budget_ms=command_budget_ms,
-                expected_anchor_count=expected_anchor_count,
                 operation_policy=operation_policy,
             )
             target = GatewayCommandDispatch(
@@ -1543,7 +1498,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             preflight = self._here_i_am_dispatch(
                 host_id=host_id,
                 gateway_id=gateway_id,
-                command_budget_ms=None,
                 operation_policy=operation_policy,
                 status_text=(
                     "Refreshing mesh routes before anchor enumeration and "

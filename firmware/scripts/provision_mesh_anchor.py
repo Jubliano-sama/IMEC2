@@ -84,7 +84,6 @@ BLE_RECONNECT_DELAY_DEFAULT_S = 0.5
 def _assignment_operation_policy(
     expected_anchor_count: int,
     command_budget_ms: int | None,
-    deepest_hop: int = 0,
     *,
     ram_only_iteration: bool = False,
 ) -> OperationPolicyProfile:
@@ -93,7 +92,6 @@ def _assignment_operation_policy(
         assignment_required_budget_ms(
             ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             expected_anchor_count,
-            deepest_hop=deepest_hop,
         )
         if command_budget_ms is None
         else command_budget_ms
@@ -103,7 +101,6 @@ def _assignment_operation_policy(
             expected_anchor_count=expected_anchor_count,
             operation_budget_ms=effective_budget_ms,
             response_spread_ms=ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
-            deepest_hop=deepest_hop,
             ram_only_iteration=ram_only_iteration,
         )
     )
@@ -694,7 +691,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         assignment_command_budget_ms = assignment_required_budget_ms(
             ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             args.expected_anchors,
-            deepest_hop=getattr(args, "deepest_hop", 0),
         )
     received = 0
     decode_errors: list[str] = []
@@ -1455,7 +1451,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             operation_policy = _assignment_operation_policy(
                 args.expected_anchors,
                 assignment_command_budget_ms,
-                deepest_hop=getattr(args, "deepest_hop", 0),
                 ram_only_iteration=args.ram_only_assignment,
             )
             route_args = {
@@ -1463,7 +1458,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "gateway_id": gateway_id,
                 "session_id": route_identity,
                 "seq": route_identity & 0xFFFF,
-                "command_budget_ms": assignment_command_budget_ms,
                 "operation_policy": operation_policy,
             }
             qualification = RouteRefreshQualification(
@@ -1505,10 +1499,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "gateway_id": gateway_id,
                 "session_id": assignment_identity,
                 "seq": assignment_identity & 0xFFFF,
-                "command_budget_ms": (
-                    assignment_policy.assignment.operation_budget_ms
-                ),
-                "expected_anchor_count": args.expected_anchors,
                 "operation_policy": assignment_policy,
             }
             qualification_done.clear()
@@ -1558,7 +1548,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     "gateway_id": gateway_id,
                     "session_id": identity,
                     "seq": identity & 0xFFFF,
-                    "command_budget_ms": command_budget_ms,
                 }
                 if args.command == "here-i-am":
                     command = build_here_i_am_command(**command_args)
@@ -1566,15 +1555,10 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     assignment_policy = _assignment_operation_policy(
                         args.expected_anchors,
                         assignment_command_budget_ms,
-                        deepest_hop=getattr(args, "deepest_hop", 0),
                         ram_only_iteration=args.ram_only_assignment,
-                    )
-                    command_args["command_budget_ms"] = (
-                        assignment_policy.assignment.operation_budget_ms
                     )
                     command = build_assign_discovery_slots_command(
                         **command_args,
-                        expected_anchor_count=args.expected_anchors,
                         operation_policy=assignment_policy,
                     )
                     if args.require_assignment_success:
@@ -1748,12 +1732,6 @@ def main() -> None:
             "per expected anchor"
         ),
     )
-    parser.add_argument(
-        "--deepest-hop",
-        type=int,
-        default=0,
-        help="Deepest expected hop count across the mesh (0 = automatic from expected anchors)",
-    )
     parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
     parser.add_argument("--assignment-timeout", type=float, default=240.0)
     parser.add_argument(
@@ -1805,7 +1783,6 @@ def main() -> None:
         required_assignment_budget_ms = assignment_required_budget_ms(
             ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             args.expected_anchors,
-            deepest_hop=args.deepest_hop,
         )
         if args.command_budget_ms < required_assignment_budget_ms:
             parser.error(

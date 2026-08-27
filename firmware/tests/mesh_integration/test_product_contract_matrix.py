@@ -66,8 +66,6 @@ def exercise_assignment_policy(oracle: str) -> None:
             gateway_id=0x9999888877776666,
             session_id=0x12345679,
             seq=18,
-            command_budget_ms=profile.assignment.operation_budget_ms,
-            expected_anchor_count=3,
             operation_policy=profile,
         )
         packet = parse_cobs_packet(command.frame)

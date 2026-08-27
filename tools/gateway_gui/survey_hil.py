@@ -144,12 +144,20 @@ def _emit(kind: str, **fields: object) -> None:
     print(kind, json.dumps(fields, sort_keys=True), flush=True)
 
 
+def _configure_expected_anchors(
+    gui: SurveyHilGui, expected_anchors: int
+) -> None:
+    """Apply the asserted roster size to the production enumeration input."""
+    gui.assignment_expected_anchors_text.set(str(expected_anchors))
+
+
 def run(args: argparse.Namespace) -> int:
     root = tk.Tk()
     if not args.show_window:
         root.withdraw()
     evidence = SurveyHilEvidence()
     gui = SurveyHilGui(root, evidence)
+    _configure_expected_anchors(gui, args.expected_anchors)
     started_at = time.monotonic()
     run_started_at: float | None = None
     terminal_seen_at: float | None = None

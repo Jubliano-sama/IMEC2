@@ -9,7 +9,7 @@ from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import tools.gateway_gui.app as gateway_app
-from tools.gateway_gui.app import DEFAULT_COMMAND_BUDGET_TEXT, GatewayGui
+from tools.gateway_gui.app import GatewayGui
 from tools.gateway_gui.cir_reassembly import CirReassembler
 from tools.gateway_gui.command_orchestration import (
     GATEWAY_COMMAND_COMPLETION_GUARD_S,
@@ -120,7 +120,7 @@ class AppModelTests(unittest.TestCase):
         gui: GatewayGui, *, expected_anchors: str = ""
     ) -> None:
         gui.assignment_expected_anchors_text = FakeVariable(expected_anchors)  # type: ignore[assignment]
-        gui.deepest_hop_text = FakeVariable("")  # type: ignore[assignment]
+        gui._topology_deepest_hop = 0
         gui.assignment_budget_text = FakeVariable(
             str(gateway_app.ASSIGNMENT_DEFAULT_BUDGET_MS)
         )  # type: ignore[assignment]
@@ -139,6 +139,7 @@ class AppModelTests(unittest.TestCase):
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = False
         gui.gateway_id = None
+        gui._topology_deepest_hop = 0
         gui.gateway_id_text = FakeVariable("Unavailable")  # type: ignore[assignment]
         gui.gateway_id_source = FakeVariable()  # type: ignore[assignment]
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
@@ -200,7 +201,7 @@ class AppModelTests(unittest.TestCase):
         gui.gateway_id = gateway_id
         gui._topology_gateway_id = gateway_id
         gui._topology_slot_span = 7
-        gui.deepest_hop_text.set("3")
+        gui._topology_deepest_hop = 3
         gui._topology_timing_summary = (
             "Topology: 4 anchors, max hop 3, slot span 7."
         )
@@ -210,7 +211,7 @@ class AppModelTests(unittest.TestCase):
             self.assertIsNone(gui.gateway_id)
             self.assertEqual(gui._topology_gateway_id, gateway_id)
             self.assertEqual(gui.assignment_expected_anchors_text.get(), "4")
-            self.assertEqual(gui.deepest_hop_text.get(), "3")
+            self.assertEqual(gui._topology_deepest_hop, 3)
             self.assertEqual(gui._topology_slot_span, 7)
             self.assertIn("4 anchors, max hop 3, slot span 7",
                           gui._topology_timing_summary)
@@ -219,7 +220,7 @@ class AppModelTests(unittest.TestCase):
         gui._set_connection_state("connected")
         self.assertEqual(gui._topology_gateway_id, gateway_id)
         self.assertEqual(gui.assignment_expected_anchors_text.get(), "4")
-        self.assertEqual(gui.deepest_hop_text.get(), "3")
+        self.assertEqual(gui._topology_deepest_hop, 3)
         self.assertEqual(gui._topology_slot_span, 7)
         self.assertIn("4 anchors, max hop 3, slot span 7",
                       gui._topology_timing_summary)
@@ -235,7 +236,7 @@ class AppModelTests(unittest.TestCase):
         gui.gateway_id = old_gateway_id
         gui._topology_gateway_id = old_gateway_id
         gui._topology_slot_span = 7
-        gui.deepest_hop_text.set("3")
+        gui._topology_deepest_hop = 3
         gui._topology_timing_summary = (
             "Topology: 4 anchors, max hop 3, slot span 7."
         )
@@ -257,13 +258,12 @@ class AppModelTests(unittest.TestCase):
             gui.assignment_expected_anchors_text.get(),
             gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT,
         )
-        self.assertEqual(gui.deepest_hop_text.get(), "")
+        self.assertEqual(gui._topology_deepest_hop, 0)
         policy = gui._operation_policy_profile()
         self.assertEqual(
             policy.assignment.expected_anchor_count,
             int(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT),
         )
-        self.assertEqual(policy.assignment.deepest_hop, 0)
     def test_packet_identity_contradiction_invalidates_connected_identity(self) -> None:
         gui = self.identity_gui_model()
         gui.connected = True
@@ -781,7 +781,6 @@ class AppModelTests(unittest.TestCase):
         gui.sequence = 0
         gui._last_command_session_id = 0
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui, expected_anchors="5")
         submit_command = Mock(return_value=True)
         show_error = Mock()
@@ -809,6 +808,14 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(len(target_policy), 1)
         self.assertEqual(target_policy, preflight_policy[:1])
         self.assertEqual(
+            [value.type_id for value in parse_cobs_packet(plan.target.frame).tlvs],
+            [TLV_COMMAND_ID, TLV_OPERATION_POLICY],
+        )
+        self.assertEqual(
+            [value.type_id for value in parse_cobs_packet(plan.preflight.frame).tlvs],
+            [TLV_COMMAND_ID, TLV_OPERATION_POLICY],
+        )
+        self.assertEqual(
             plan.target.timeout_s,
             DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0
             + GATEWAY_COMMAND_COMPLETION_GUARD_S,
@@ -826,7 +833,6 @@ class AppModelTests(unittest.TestCase):
         gui.sequence = 0
         gui._last_command_session_id = 0
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui)
         submit_command = Mock(return_value=True)
         show_error = Mock()
@@ -850,7 +856,6 @@ class AppModelTests(unittest.TestCase):
         gui.sequence = 0
         gui._last_command_session_id = 0
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui, expected_anchors="4")
         gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
         gui.__dict__["_show_error"] = Mock()
@@ -875,7 +880,6 @@ class AppModelTests(unittest.TestCase):
         gui.sequence = 0
         gui._last_command_session_id = 0
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui, expected_anchors="5")
         gui.assignment_response_spread_text = FakeVariable("750")  # type: ignore[assignment]
         submit_command = Mock(return_value=True)
@@ -894,6 +898,10 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(len(policies), 1)
         self.assertEqual(policies[0]["expected_anchor_count"], 5)
         self.assertEqual(policies[0]["response_spread_ms"], 750)
+        self.assertEqual(
+            [value.type_id for value in parse_cobs_packet(plan.target.frame).tlvs],
+            [TLV_COMMAND_ID, TLV_OPERATION_POLICY],
+        )
 
     def test_event_drain_consumes_received_packets_before_wall_clock_expiry(
         self,
@@ -944,14 +952,8 @@ class AppModelTests(unittest.TestCase):
         self.assertIsNone(gui.command_request_tracker.pending)
         update_command_state.assert_called_once()
 
-    def test_blank_command_limit_uses_full_robust_gui_wait(self) -> None:
+    def test_default_command_timeout_uses_full_robust_gui_wait(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
-        self.assertEqual(DEFAULT_COMMAND_BUDGET_TEXT, "")
-        gui.command_budget_text = FakeVariable(  # type: ignore[assignment]
-            DEFAULT_COMMAND_BUDGET_TEXT
-        )
-
-        self.assertIsNone(gui._command_budget_ms())
         self.assertEqual(
             gui._command_timeout_s(None),
             GATEWAY_COMMAND_BUDGET_MAX_MS / 1000.0

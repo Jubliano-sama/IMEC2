@@ -12,9 +12,7 @@ import math
 from typing import Any, Callable
 
 from .operation_policy import (
-    ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
     OperationPolicyProfile,
-    assignment_required_budget_ms,
     decode_operation_policy_value,
 )
 from .command_telemetry import (
@@ -2309,7 +2307,6 @@ def build_here_i_am_command(
     gateway_id: int,
     session_id: int,
     seq: int,
-    command_budget_ms: int | None = None,
     operation_policy: OperationPolicyProfile | None = None,
 ) -> CommandFrame:
     if host_id == 0:
@@ -2318,19 +2315,8 @@ def build_here_i_am_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
-    if command_budget_ms is not None and not (
-        GATEWAY_COMMAND_BUDGET_MIN_MS
-        <= command_budget_ms
-        <= GATEWAY_COMMAND_BUDGET_MAX_MS
-    ):
-        raise ValueError(
-            f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
-            f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
-        )
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_FORCE_REDISCOVERY.to_bytes(2, "little"))
-    if command_budget_ms is not None:
-        append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     if operation_policy is not None:
         append_operation_policy_tlvs(payload, operation_policy.encoded_values())
     return _build_command_frame(
@@ -2375,8 +2361,6 @@ def build_assign_discovery_slots_command(
     gateway_id: int,
     session_id: int,
     seq: int,
-    command_budget_ms: int | None = None,
-    expected_anchor_count: int | None = None,
     operation_policy: OperationPolicyProfile | None = None,
 ) -> CommandFrame:
     if host_id == 0:
@@ -2385,64 +2369,8 @@ def build_assign_discovery_slots_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
-    if command_budget_ms is not None and not (
-        GATEWAY_COMMAND_BUDGET_MIN_MS
-        <= command_budget_ms
-        <= GATEWAY_COMMAND_BUDGET_MAX_MS
-    ):
-        raise ValueError(
-            "assignment command budget must be in "
-            f"{GATEWAY_COMMAND_BUDGET_MIN_MS}.."
-            f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
-        )
-    if expected_anchor_count is not None and not 1 <= expected_anchor_count <= 50:
-        raise ValueError("expected anchor count must be in 1..50")
-    if command_budget_ms is not None:
-        response_spread_ms = (
-            operation_policy.assignment.response_spread_ms
-            if operation_policy is not None
-            else ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
-        )
-        deepest_hop = (
-            operation_policy.assignment.deepest_hop
-            if operation_policy is not None
-            else 0
-        )
-        required_budget_ms = assignment_required_budget_ms(
-            response_spread_ms,
-            (
-                operation_policy.assignment.expected_anchor_count
-                if operation_policy is not None
-                else expected_anchor_count or 0
-            ),
-            deepest_hop=deepest_hop,
-        )
-        if command_budget_ms < required_budget_ms:
-            raise ValueError(
-                "command budget must cover the selected assignment policy: "
-                f"minimum {required_budget_ms} ms"
-            )
-    if operation_policy is not None:
-        assignment = operation_policy.assignment
-        policy_expected = assignment.expected_anchor_count
-        if expected_anchor_count != (policy_expected or None):
-            raise ValueError(
-                "legacy expected anchor count must equal assignment operation policy"
-            )
-        if command_budget_ms != assignment.operation_budget_ms:
-            raise ValueError(
-                "legacy command budget must equal assignment operation policy"
-            )
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little"))
-    if expected_anchor_count is not None:
-        append_tlv(
-            payload,
-            TLV_EXPECTED_NODE_COUNT,
-            expected_anchor_count.to_bytes(2, "little"),
-        )
-    if command_budget_ms is not None:
-        append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     if operation_policy is not None:
         append_operation_policy_tlvs(
             payload,
