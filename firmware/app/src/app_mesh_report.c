@@ -1054,10 +1054,7 @@ static int mesh_schedule_tx_timeout(void);
 static void mesh_route_discovery_work_handler(struct k_work *work);
 static void mesh_event_negotiation_retry_work_handler(struct k_work *work);
 static int mesh_event_negotiation_schedule_next(void);
-static bool mesh_channel9_close_intent_next_delay(uint32_t now_ms,
-                                                  uint32_t *delay_ms_out);
 static bool mesh_channel9_close_intent_blocks_upstream(uint64_t peer_id);
-static void mesh_channel9_close_intent_service_due(uint32_t now_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_event_propose_prepare_immediate_send(
     const struct mesh_outbound *outbound);
@@ -1219,6 +1216,14 @@ static uint8_t mesh_advance_channel9_timing_past(uint64_t peer_id,
 static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
                                                       const char *reason);
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason);
+static bool mesh_channel9_close_intent_ready_for_peer(uint64_t peer_id);
+static bool mesh_select_channel9_close_tx_event(
+    uint32_t now_ms,
+    struct mesh_event_plan *selected_plan,
+    uint64_t *selected_peer);
+static int mesh_send_pending_channel9_close(
+    const struct mesh_event_plan *plan,
+    uint64_t peer_id);
 static void mesh_event_owner_abandon_peer(uint64_t peer_id);
 static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id);
 static uint32_t mesh_identity_backoff_ms(uint64_t node_id,

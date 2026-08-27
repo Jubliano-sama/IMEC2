@@ -13,7 +13,6 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
         MSG_MESH_EVENT_PROPOSE,
         MSG_MESH_EVENT_ACCEPT,
         MSG_MESH_EVENT_UPDATE,
-        MSG_MESH_EVENT_END,
         MSG_RELAY_BUSY,
         MSG_RESULT_BUSY,
         MSG_RESULT_OFFER,
@@ -29,6 +28,7 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
         MSG_GATEWAY_ROUTE_REQ,
         MSG_COMMAND_RESULT,
         MSG_RESULT_BUNDLE,
+        MSG_MESH_EVENT_END,
     };
     static const uint8_t rejected[] = {
         MSG_GATEWAY_COMMAND_EVENT,

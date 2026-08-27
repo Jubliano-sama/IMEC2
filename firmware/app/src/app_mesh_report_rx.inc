@@ -2457,6 +2457,18 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     }
 
     channel9_event = !gateway_route_preempt &&
+                     mesh_select_channel9_close_tx_event(
+                         k_uptime_get_32(),
+                         &channel9_plan,
+                         &channel9_peer_id);
+    if (channel9_event) {
+        (void)mesh_send_pending_channel9_close(&channel9_plan,
+                                               channel9_peer_id);
+        mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+        return;
+    }
+
+    channel9_event = !gateway_route_preempt &&
                      mesh_select_channel9_rx_event(k_uptime_get_32(),
                                                    &channel9_plan,
                                                    &channel9_peer_id,
@@ -2623,6 +2635,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                             deadline_ms);
         while (true) {
             struct dwm3000_rx_frame_timing rx_timing = {0};
+            bool frame_accepted;
             bool peer_observed_this_frame = false;
             uint32_t now_ms = k_uptime_get_32();
             uint32_t remaining_ms;
@@ -2693,19 +2706,24 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                     (unsigned int)frame_len,
                                     quality);
             }
-            (void)mesh_process_received_frame(frame,
-                                              frame_len,
-                                              quality,
-                                              true,
-                                              channel9_peer_id,
-                                              direct_gateway_ack_rx ? NULL :
-                                                  &channel9_plan,
-                                              observed_packet_ms,
-                                              protocol_validation_token,
-                                              &peer_observed_this_frame);
+            frame_accepted = mesh_process_received_frame(
+                frame,
+                frame_len,
+                quality,
+                true,
+                channel9_peer_id,
+                direct_gateway_ack_rx ? NULL : &channel9_plan,
+                observed_packet_ms,
+                protocol_validation_token,
+                &peer_observed_this_frame);
             protocol_validation_token = 0u;
             channel9_peer_observed = channel9_peer_observed || peer_observed_this_frame;
-            if (direct_gateway_ack_rx && peer_observed_this_frame) {
+            if (direct_gateway_ack_rx && frame_accepted) {
+                if (!peer_observed_this_frame &&
+                    IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_note(
+                        "DBG_DIRECT_GW_ACK_RX_YIELD_MESH\n");
+                }
                 break;
             }
         }

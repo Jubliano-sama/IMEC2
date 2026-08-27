@@ -642,7 +642,8 @@ static int mesh_send_event_control(uint64_t peer_id,
                                    const struct mesh_event_timing *accepted_timing,
                                    bool install_local,
                                    const char *reason,
-                                   struct mesh_event_timing *transmitted_timing)
+                                   struct mesh_event_timing *transmitted_timing,
+                                   const struct mesh_event_plan *channel9_plan)
 {
     struct mesh_event_timing timing = {0};
     struct mesh_outbound outbound = {0};
@@ -658,6 +659,9 @@ static int mesh_send_event_control(uint64_t peer_id,
     int ret;
 
     if (!mesh_id_is_unicast(peer_id) || peer_id == DEVICE_ID) {
+        return -EINVAL;
+    }
+    if (close_event && channel9_plan == NULL) {
         return -EINVAL;
     }
     if (owner_scoped) {
@@ -735,7 +739,8 @@ static int mesh_send_event_control(uint64_t peer_id,
 
     outbound.payload_len = (uint8_t)payload_len;
     outbound.next_hop_id = peer_id;
-    outbound.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    outbound.radio_channel = close_event ? MESH_EVENT_CHANNEL :
+                                           UWB_CHANNEL_WAKE_CONTACT;
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && !close_event) {
         status_debug_printf("DBG_EVENT_TX msg=%02x now=%u ref=%u next=%u cnt=%u txeven=%u\n",
@@ -747,6 +752,22 @@ static int mesh_send_event_control(uint64_t peer_id,
                             timing.local_tx_on_even_events ? 1u : 0u);
     }
     if (close_event) {
+        uint32_t required_ms = 0u;
+
+        if (!mesh_ch9_tx_fits_plan(&outbound,
+                                   channel9_plan,
+                                   now_ms,
+                                   &required_ms)) {
+            status_debug_printf(
+                "DBG_CH9_EVENT_END_SLOT_FULL now=%u end=%u req=%u\n",
+                now_ms,
+                channel9_plan->end_ms,
+                required_ms);
+            return -EBUSY;
+        }
+        outbound.earliest_tx_ms = mesh_ch9_slot_send_start_ms(
+            &outbound, channel9_plan, now_ms);
+        outbound.earliest_tx_valid = true;
         ret = mesh_send_outbound(
             &outbound, reason == NULL ? "mesh-event-control" : reason);
     } else if (msg_type == MSG_MESH_EVENT_ACCEPT) {
@@ -1063,7 +1084,6 @@ static int mesh_event_negotiation_schedule_next(void)
 {
     uint32_t now_ms = k_uptime_get_32();
     uint32_t delay_ms = UINT32_MAX;
-    uint32_t close_delay_ms = UINT32_MAX;
     const struct app_mesh_event_retry_state *states[] = {
         &mesh_event_accept_retry.retry,
         &mesh_event_propose_retry,
@@ -1090,10 +1110,6 @@ static int mesh_event_negotiation_schedule_next(void)
         if (candidate_ms < delay_ms) {
             delay_ms = candidate_ms;
         }
-    }
-    if (mesh_channel9_close_intent_next_delay(now_ms, &close_delay_ms) &&
-        close_delay_ms < delay_ms) {
-        delay_ms = close_delay_ms;
     }
     if (mesh_deferred_forwarded_ack_event_repair_authorization.valid &&
         delay_ms == UINT32_MAX) {
@@ -2584,7 +2600,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         mesh_relay_clear_channel9_timing(&mesh_runtime, previous_hop_id);
         mesh_event_owner_abandon(owner);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_note("DBG_C5_EVENT_END_RX\n");
+            status_debug_note("DBG_CH9_EVENT_END_RX\n");
         }
         mesh_restore_anchor_low_duty_if_no_ch9("event-end-rx");
         return true;
@@ -3046,8 +3062,6 @@ static void mesh_event_negotiation_retry_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
-    mesh_channel9_close_intent_service_due(now_ms);
-
     if (app_mesh_event_retry_expired(&mesh_event_accept_retry.retry, now_ms)) {
         mesh_event_accept_clear();
     } else if (app_mesh_event_retry_due(&mesh_event_accept_retry.retry,
@@ -3099,8 +3113,10 @@ static void mesh_event_negotiation_retry_work_handler(struct k_work *work)
     (void)mesh_event_negotiation_schedule_next();
 }
 
-static int mesh_try_close_channel9_connection(uint64_t peer_id,
-                                              const char *reason)
+static int mesh_try_close_channel9_connection(
+    uint64_t peer_id,
+    const char *reason,
+    const struct mesh_event_plan *plan)
 {
 #if DEVICE_ROLE != ROLE_GATEWAY
     int ret;
@@ -3108,7 +3124,7 @@ static int mesh_try_close_channel9_connection(uint64_t peer_id,
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         !mesh_id_is_unicast(peer_id) ||
         peer_id == DEVICE_ID ||
-        peer_id == GATEWAY_ID) {
+        peer_id == GATEWAY_ID || plan == NULL) {
         return -EINVAL;
     }
 
@@ -3117,11 +3133,14 @@ static int mesh_try_close_channel9_connection(uint64_t peer_id,
                                   NULL,
                                   false,
                                   reason == NULL ? "mesh-event-end" : reason,
-                                  NULL);
+                                  NULL,
+                                  plan);
     if (ret == 0) {
-        status_debug_note("DBG_C5_EVENT_END_TX\n");
+        status_debug_note("DBG_CH9_EVENT_END_TX\n");
+        /* Record the completed turn while its live timing still exists. */
+        mesh_note_channel9_local_tx(peer_id, plan->start_ms);
     } else {
-        status_debug_note("DBG_C5_EVENT_END_FAIL\n");
+        status_debug_note("DBG_CH9_EVENT_END_FAIL\n");
         LOG_WRN("mesh channel-9 event close TX failed: peer=0x%016llx ret=%d reason=%s",
                 (unsigned long long)peer_id,
                 ret,
@@ -3140,26 +3159,25 @@ static int mesh_try_close_channel9_connection(uint64_t peer_id,
 #else
     ARG_UNUSED(peer_id);
     ARG_UNUSED(reason);
+    ARG_UNUSED(plan);
     return -ENOTSUP;
 #endif
 }
 
-static bool mesh_channel9_close_intent_next_delay(uint32_t now_ms,
-                                                  uint32_t *delay_ms_out)
+static bool mesh_channel9_close_intent_ready_for_peer(uint64_t peer_id)
 {
 #if DEVICE_ROLE != ROLE_GATEWAY
-    uint32_t delay_ms = UINT32_MAX;
+    uint32_t now_ms = k_uptime_get_32();
 
-    if (delay_ms_out == NULL) {
+    if (!mesh_id_is_unicast(peer_id)) {
         return false;
     }
     for (size_t i = 0u; i < ARRAY_SIZE(mesh_ch9_close_intents); i++) {
-        struct mesh_ch9_close_intent *intent =
-            &mesh_ch9_close_intents[i];
+        struct mesh_ch9_close_intent *intent = &mesh_ch9_close_intents[i];
         const struct mesh_event_owner *owner;
-        uint32_t candidate_ms;
+        struct mesh_event_timing timing;
 
-        if (!intent->valid) {
+        if (!intent->valid || intent->peer_id != peer_id) {
             continue;
         }
         owner = mesh_event_owner_for_peer(intent->peer_id);
@@ -3169,22 +3187,127 @@ static bool mesh_channel9_close_intent_next_delay(uint32_t now_ms,
             memset(intent, 0, sizeof(*intent));
             continue;
         }
-        candidate_ms = uptime_deadline_reached(now_ms,
-                                               intent->retry_due_ms) ?
-                           0u :
-                           uptime_ms_until_deadline(now_ms,
-                                                    intent->retry_due_ms);
-        delay_ms = MIN(delay_ms, candidate_ms);
+        if (!intent->requires_live_timing ||
+            !mesh_find_active_channel9_timing(intent->peer_id,
+                                              now_ms,
+                                              &timing)) {
+            memset(intent, 0, sizeof(*intent));
+            return false;
+        }
+        return uptime_deadline_reached(now_ms, intent->retry_due_ms) &&
+               app_node_comm_pending_delivery_count() == 0u &&
+               !mesh_report_tx_backlog_active() &&
+               report_tx_queue_used() == 0u &&
+               !mesh_route_waiting_tx_valid &&
+               !mesh_relay_tx_active(&mesh_runtime) &&
+               !mesh_ch9_tx_pending_is_active() &&
+               !mesh_relay_result_bundle_pending(&mesh_runtime) &&
+               !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table) &&
+               k_msgq_num_used_get(&mesh_rx_msgq) == 0u &&
+               atomic_get(&mesh_rx_handler_active_state) == 0;
     }
-    if (delay_ms == UINT32_MAX) {
+    return false;
+#else
+    ARG_UNUSED(peer_id);
+    return false;
+#endif
+}
+
+static bool mesh_select_channel9_close_tx_event(
+    uint32_t now_ms,
+    struct mesh_event_plan *selected_plan,
+    uint64_t *selected_peer)
+{
+#if DEVICE_ROLE != ROLE_GATEWAY
+    struct mesh_channel5_requirements requirements;
+    uint32_t selected_delay_ms = UINT32_MAX;
+    bool selected = false;
+
+    if (selected_plan == NULL || selected_peer == NULL) {
         return false;
     }
-    *delay_ms_out = delay_ms;
-    return true;
+    mesh_fill_channel5_requirements(&requirements);
+    for (size_t i = 0u; i < ARRAY_SIZE(mesh_ch9_close_intents); i++) {
+        const struct mesh_ch9_close_intent *intent =
+            &mesh_ch9_close_intents[i];
+        struct mesh_event_plan plan = {0};
+        uint32_t delay_ms;
+        int ret;
+
+        if (!intent->valid ||
+            !mesh_channel9_close_intent_ready_for_peer(intent->peer_id)) {
+            continue;
+        }
+        ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
+                                                   intent->peer_id,
+                                                   &requirements,
+                                                   now_ms,
+                                                   &plan);
+        if (ret != PROTO_OK) {
+            continue;
+        }
+        delay_ms = uptime_deadline_reached(now_ms, plan.start_ms) ?
+            0u : uptime_ms_until_deadline(now_ms, plan.start_ms);
+        if (!selected || delay_ms < selected_delay_ms) {
+            *selected_plan = plan;
+            *selected_peer = intent->peer_id;
+            selected_delay_ms = delay_ms;
+            selected = true;
+        }
+    }
+    return selected;
 #else
     ARG_UNUSED(now_ms);
-    ARG_UNUSED(delay_ms_out);
+    ARG_UNUSED(selected_plan);
+    ARG_UNUSED(selected_peer);
     return false;
+#endif
+}
+
+static int mesh_send_pending_channel9_close(
+    const struct mesh_event_plan *plan,
+    uint64_t peer_id)
+{
+#if DEVICE_ROLE != ROLE_GATEWAY
+    for (size_t i = 0u; i < ARRAY_SIZE(mesh_ch9_close_intents); i++) {
+        struct mesh_ch9_close_intent *intent = &mesh_ch9_close_intents[i];
+        int ret;
+
+        if (!intent->valid || intent->peer_id != peer_id ||
+            !mesh_channel9_close_intent_ready_for_peer(peer_id)) {
+            continue;
+        }
+        mesh_ch9_event_set(CH9_EVENT_GRANTED,
+                           peer_id,
+                           plan,
+                           "channel9-event-close");
+        mesh_ch9_event_set(CH9_EVENT_TX_PAYLOAD,
+                           peer_id,
+                           plan,
+                           "channel9-event-close");
+        ret = mesh_try_close_channel9_connection(peer_id,
+                                                 intent->reason,
+                                                 plan);
+        if (ret == 0) {
+            mesh_ch9_event_set(CH9_EVENT_COMPLETE,
+                               peer_id,
+                               plan,
+                               "channel9-event-close");
+            memset(intent, 0, sizeof(*intent));
+            return 0;
+        }
+        mesh_ch9_event_set(CH9_EVENT_BUSY_RETRY_LATER,
+                           peer_id,
+                           plan,
+                           "channel9-event-close");
+        intent->retry_due_ms = k_uptime_get_32();
+        return ret;
+    }
+    return -ENOENT;
+#else
+    ARG_UNUSED(plan);
+    ARG_UNUSED(peer_id);
+    return -ENOTSUP;
 #endif
 }
 
@@ -3221,66 +3344,6 @@ static bool mesh_channel9_close_intent_blocks_upstream(uint64_t peer_id)
     return false;
 }
 
-static void mesh_channel9_close_intent_service_due(uint32_t now_ms)
-{
-#if DEVICE_ROLE != ROLE_GATEWAY
-    for (size_t i = 0u; i < ARRAY_SIZE(mesh_ch9_close_intents); i++) {
-        struct mesh_ch9_close_intent *intent = &mesh_ch9_close_intents[i];
-        const struct mesh_event_owner *owner;
-        struct mesh_event_timing timing;
-        int ret;
-
-        if (!intent->valid ||
-            !uptime_deadline_reached(now_ms, intent->retry_due_ms)) {
-            continue;
-        }
-        owner = mesh_event_owner_for_peer(intent->peer_id);
-        if (owner == NULL || !owner->active ||
-            owner->session_id != intent->owner_session_id ||
-            owner->generation != intent->owner_generation) {
-            memset(intent, 0, sizeof(*intent));
-            continue;
-        }
-        if (intent->requires_live_timing &&
-            !mesh_find_active_channel9_timing(intent->peer_id,
-                                              now_ms,
-                                              &timing)) {
-            memset(intent, 0, sizeof(*intent));
-            continue;
-        }
-        if (app_node_comm_pending_delivery_count() != 0u ||
-            mesh_report_tx_backlog_active() ||
-            report_tx_queue_used() != 0u ||
-            mesh_route_waiting_tx_valid ||
-            mesh_relay_tx_active(&mesh_runtime) ||
-            mesh_ch9_tx_pending_is_active() ||
-            mesh_relay_result_bundle_pending(&mesh_runtime) ||
-            app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table) ||
-            k_msgq_num_used_get(&mesh_rx_msgq) != 0u ||
-            atomic_get(&mesh_rx_handler_active_state) != 0 ||
-            !mesh_coordinator_c5_tx_allowed("ch9-event-close")) {
-            intent->retry_due_ms = now_ms +
-                                   MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS;
-            continue;
-        }
-        ret = mesh_try_close_channel9_connection(intent->peer_id,
-                                                 intent->reason);
-        if (ret == 0) {
-            memset(intent, 0, sizeof(*intent));
-            continue;
-        }
-        if (!intent->requires_live_timing && ret == -ESTALE) {
-            memset(intent, 0, sizeof(*intent));
-            continue;
-        }
-        intent->retry_due_ms = now_ms +
-                               MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS;
-    }
-#else
-    ARG_UNUSED(now_ms);
-#endif
-}
-
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
 {
 #if DEVICE_ROLE != ROLE_GATEWAY
@@ -3288,6 +3351,7 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
     const struct mesh_event_owner *owner;
     struct mesh_ch9_close_intent *free_intent = NULL;
     struct mesh_event_timing active_timing;
+    bool active_timing_valid;
     uint32_t now_ms;
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
@@ -3302,6 +3366,12 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
         owner->generation == 0u) {
         return;
     }
+    active_timing_valid = mesh_find_active_channel9_timing(peer_id,
+                                                           now_ms,
+                                                           &active_timing);
+    if (!active_timing_valid) {
+        return;
+    }
     for (size_t i = 0u; i < ARRAY_SIZE(mesh_ch9_close_intents); i++) {
         struct mesh_ch9_close_intent *intent = &mesh_ch9_close_intents[i];
 
@@ -3311,12 +3381,9 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
             intent->owner_generation = owner->generation;
             intent->upstream =
                 selected != NULL && selected->next_hop_id == peer_id;
-            intent->requires_live_timing =
-                mesh_find_active_channel9_timing(peer_id,
-                                                 now_ms,
-                                                 &active_timing);
+            intent->requires_live_timing = true;
             intent->retry_due_ms = now_ms;
-            (void)mesh_event_negotiation_schedule_next();
+            (void)mesh_schedule_uwb_rx(0u);
             return;
         }
         if (!intent->valid && free_intent == NULL) {
@@ -3336,14 +3403,13 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
         .owner_session_id = owner->session_id,
         .owner_generation = owner->generation,
         .upstream = selected != NULL && selected->next_hop_id == peer_id,
-        .requires_live_timing = mesh_find_active_channel9_timing(
-            peer_id, now_ms, &active_timing),
+        .requires_live_timing = true,
         .valid = true,
     };
-    status_debug_printf("DBG_C5_EVENT_END_ARM peer=0x%llx upstream=%u\n",
+    status_debug_printf("DBG_CH9_EVENT_END_ARM peer=0x%llx upstream=%u\n",
                         (unsigned long long)peer_id,
                         free_intent->upstream ? 1u : 0u);
-    (void)mesh_event_negotiation_schedule_next();
+    (void)mesh_schedule_uwb_rx(0u);
 #else
     ARG_UNUSED(peer_id);
     ARG_UNUSED(reason);

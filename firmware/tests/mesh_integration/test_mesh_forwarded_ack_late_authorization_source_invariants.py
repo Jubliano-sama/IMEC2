@@ -198,9 +198,7 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
             "*free_intent = (struct mesh_ch9_close_intent)"
         )
         valid = arm_close.index(".valid = true", publish)
-        schedule = arm_close.index(
-            "mesh_event_negotiation_schedule_next()", valid
-        )
+        schedule = arm_close.index("mesh_schedule_uwb_rx(0u)", valid)
         self.assertLess(publish, valid)
         self.assertLess(valid, schedule)
         self.assertIn(".peer_id = peer_id", arm_close[publish:valid])
@@ -253,126 +251,129 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
             r"!state->ack_batch_valid;",
         )
 
-    def test_deferred_close_worker_retries_without_one_sided_teardown(self):
-        worker = function_body(
-            REPORT, "mesh_event_negotiation_retry_work_handler"
+    def test_deferred_close_uses_existing_channel9_turn_without_one_sided_teardown(self):
+        ready = function_body(
+            REPORT, "mesh_channel9_close_intent_ready_for_peer"
         )
-        service = function_body(
-            REPORT, "mesh_channel9_close_intent_service_due"
+        select = function_body(
+            REPORT, "mesh_select_channel9_close_tx_event"
+        )
+        send = function_body(
+            REPORT, "mesh_send_pending_channel9_close"
         )
         attempt = function_body(REPORT, "mesh_try_close_channel9_connection")
 
-        service_call = worker.index(
-            "mesh_channel9_close_intent_service_due(now_ms)"
+        valid_gate = ready.index("if (!intent->valid")
+        owner_lookup = ready.index(
+            "owner = mesh_event_owner_for_peer(intent->peer_id)", valid_gate
         )
-        accept_retry = worker.index("mesh_event_accept_retry", service_call)
-        final_schedule = worker.rindex("mesh_event_negotiation_schedule_next()")
-        self.assertLess(service_call, accept_retry)
-        self.assertLess(accept_retry, final_schedule)
-
-        valid_gate = service.index("if (!intent->valid")
-        due_gate = service.index("intent->retry_due_ms", valid_gate)
-        live_timing = service.index("intent->requires_live_timing", due_gate)
-        supervision_retire = service.index(
+        owner_identity = ready.index(
+            "owner->session_id != intent->owner_session_id", owner_lookup
+        )
+        stale_clear = ready.index(
+            "memset(intent, 0, sizeof(*intent))", owner_identity
+        )
+        live_timing = ready.index("intent->requires_live_timing", stale_clear)
+        supervision_retire = ready.index(
             "memset(intent, 0, sizeof(*intent))", live_timing
         )
         drain_gates = (
-            "app_node_comm_pending_delivery_count() != 0u",
-            "mesh_report_tx_backlog_active()",
-            "report_tx_queue_used() != 0u",
-            "mesh_route_waiting_tx_valid",
-            "mesh_relay_tx_active(&mesh_runtime)",
-            "mesh_ch9_tx_pending_is_active()",
-            "mesh_relay_result_bundle_pending(&mesh_runtime)",
-            "app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)",
-            "k_msgq_num_used_get(&mesh_rx_msgq) != 0u",
-            "atomic_get(&mesh_rx_handler_active_state) != 0",
-            '!mesh_coordinator_c5_tx_allowed("ch9-event-close")',
+            "app_node_comm_pending_delivery_count() == 0u",
+            "!mesh_report_tx_backlog_active()",
+            "report_tx_queue_used() == 0u",
+            "!mesh_route_waiting_tx_valid",
+            "!mesh_relay_tx_active(&mesh_runtime)",
+            "!mesh_ch9_tx_pending_is_active()",
+            "!mesh_relay_result_bundle_pending(&mesh_runtime)",
+            "!app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)",
+            "k_msgq_num_used_get(&mesh_rx_msgq) == 0u",
+            "atomic_get(&mesh_rx_handler_active_state) == 0",
         )
         gate_positions = []
         gate_cursor = supervision_retire
         for gate in drain_gates:
-            gate_cursor = service.index(gate, gate_cursor)
+            gate_cursor = ready.index(gate, gate_cursor)
             gate_positions.append(gate_cursor)
-        defer_due = service.index(
-            "intent->retry_due_ms = now_ms +", gate_positions[-1]
-        )
-        defer_continue = service.index("continue;", defer_due)
-        send = service.index(
-            "mesh_try_close_channel9_connection(", defer_continue
-        )
-        success = service.index("if (ret == 0)", send)
-        success_clear = service.index(
-            "memset(intent, 0, sizeof(*intent))", success
-        )
-        retry_due = service.index("intent->retry_due_ms = now_ms +", success_clear)
-        self.assertLess(valid_gate, due_gate)
-        self.assertLess(due_gate, live_timing)
+        self.assertLess(valid_gate, owner_lookup)
+        self.assertLess(owner_lookup, owner_identity)
+        self.assertLess(owner_identity, stale_clear)
+        self.assertLess(stale_clear, live_timing)
         self.assertLess(live_timing, supervision_retire)
         self.assertEqual(gate_positions, sorted(gate_positions))
         self.assertLess(supervision_retire, gate_positions[0])
-        self.assertLess(gate_positions[-1], defer_due)
-        self.assertLess(defer_due, defer_continue)
-        self.assertLess(defer_continue, send)
-        self.assertLess(send, success)
-        self.assertLess(success, success_clear)
-        self.assertLess(success_clear, retry_due)
-        stale_without_timing = service.index(
-            "if (!intent->requires_live_timing && ret == -ESTALE)",
-            success_clear,
-        )
-        stale_clear = service.index(
-            "memset(intent, 0, sizeof(*intent))", stale_without_timing
-        )
-        self.assertLess(stale_without_timing, stale_clear)
-        self.assertLess(stale_clear, retry_due)
-        self.assertIn(
-            "MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS",
-            service[retry_due:],
-        )
-        self.assertNotIn("supervision_timeout_ms", service)
+
+        self.assertIn("mesh_relay_require_channel9_tx_event", select)
+        self.assertIn("mesh_channel9_close_intent_ready_for_peer", select)
+        self.assertIn("mesh_try_close_channel9_connection", send)
+        self.assertIn("intent->retry_due_ms = k_uptime_get_32()", send)
 
         send_end = attempt.index("mesh_send_event_control(")
         end_type = attempt.index("MSG_MESH_EVENT_END", send_end)
-        failure = attempt.index("if (ret == 0)", end_type)
+        plan = attempt.index("plan", end_type)
+        failure = attempt.index("if (ret == 0)", plan)
         retain_return = attempt.index("return ret;", failure)
-        clear_timing = attempt.index(
-            "mesh_relay_clear_channel9_timing", retain_return
-        )
-        success_return = attempt.index("return 0;", clear_timing)
+        clear_timing = attempt.index("mesh_relay_clear_channel9_timing", retain_return)
         self.assertLess(send_end, end_type)
-        self.assertLess(end_type, failure)
+        self.assertLess(end_type, plan)
+        self.assertLess(plan, failure)
         self.assertLess(failure, retain_return)
         self.assertLess(retain_return, clear_timing)
-        self.assertLess(clear_timing, success_return)
         self.assertNotIn(
             "mesh_relay_clear_channel9_timing", attempt[failure:retain_return]
         )
         self.assertNotIn("mesh_event_owner_abandon", attempt)
 
-    def test_event_end_trace_names_match_the_channel_five_transport(self):
+    def test_event_end_uses_the_existing_channel_nine_schedule(self):
         send = function_body(REPORT, "mesh_send_event_control")
         receive = function_body(REPORT, "mesh_handle_event_control")
         attempt = function_body(REPORT, "mesh_try_close_channel9_connection")
         arm = function_body(REPORT, "mesh_close_channel9_connection")
 
-        self.assertIn(
-            "outbound.radio_channel = UWB_CHANNEL_WAKE_CONTACT", send
-        )
-        self.assertIn('"DBG_C5_EVENT_END_RX\\n"', receive)
-        self.assertIn('"DBG_C5_EVENT_END_TX\\n"', attempt)
-        self.assertIn('"DBG_C5_EVENT_END_FAIL\\n"', attempt)
-        self.assertIn('"DBG_C5_EVENT_END_ARM peer=', arm)
-        self.assertNotIn("DBG_CH9_EVENT_END", REPORT)
+        self.assertIn("close_event ? MESH_EVENT_CHANNEL", send)
+        self.assertIn("mesh_ch9_tx_fits_plan", send)
+        self.assertIn("mesh_ch9_slot_send_start_ms", send)
+        self.assertIn('"DBG_CH9_EVENT_END_RX\\n"', receive)
+        self.assertIn('"DBG_CH9_EVENT_END_TX\\n"', attempt)
+        self.assertIn('"DBG_CH9_EVENT_END_FAIL\\n"', attempt)
+        self.assertIn('"DBG_CH9_EVENT_END_ARM peer=', arm)
+        self.assertNotIn("DBG_C5_EVENT_END", REPORT)
 
-    def test_pending_close_blocks_parent_switch_and_owns_scheduler_due_time(self):
+    def test_direct_gateway_ack_rx_yields_to_any_valid_mesh_frame(self):
+        rx_worker = function_body(REPORT, "mesh_uwb_rx_work_handler")
+
+        continuous_rx = rx_worker.index(
+            "if (ret == 0 && channel9_payload_rx &&"
+        )
+        accepted = rx_worker.index(
+            "frame_accepted = mesh_process_received_frame(", continuous_rx
+        )
+        yield_gate = rx_worker.index(
+            "if (direct_gateway_ack_rx && frame_accepted)", accepted
+        )
+        leave_listener = rx_worker.index("break;", yield_gate)
+        drain = rx_worker.index(
+            'mesh_process_queued_rx_now("direct-gateway-ack-rx")',
+            leave_listener,
+        )
+
+        self.assertLess(continuous_rx, accepted)
+        self.assertLess(accepted, yield_gate)
+        self.assertLess(yield_gate, leave_listener)
+        self.assertLess(leave_listener, drain)
+        self.assertIn(
+            '"DBG_DIRECT_GW_ACK_RX_YIELD_MESH\\n"',
+            rx_worker[yield_gate:leave_listener],
+        )
+
+    def test_pending_close_blocks_parent_switch_and_owns_a_channel9_turn(self):
         block = function_body(
             REPORT, "mesh_channel9_close_intent_blocks_upstream"
         )
         propose = function_body(
             REPORT, "mesh_propose_event_after_channel5_contact_authorized"
         )
-        schedule = function_body(REPORT, "mesh_event_negotiation_schedule_next")
+        activity = function_body(REPORT, "mesh_channel9_next_required_activity")
+        rx_worker = function_body(REPORT, "mesh_uwb_rx_work_handler")
 
         selected = block.index("route_selected(&mesh_runtime.upstream)")
         requested_parent = block.index(
@@ -396,24 +397,20 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         self.assertLess(close_gate, reject)
         self.assertLess(reject, timing_reuse)
 
-        close_due = schedule.index("mesh_channel9_close_intent_next_delay(")
-        earlier = schedule.index("close_delay_ms < delay_ms", close_due)
-        select_due = schedule.index("delay_ms = close_delay_ms", earlier)
-        cancel = schedule.index("mesh_cancel_delayable", select_due)
-        reschedule = schedule.index("mesh_reschedule_owned_work", cancel)
-        self.assertLess(close_due, earlier)
-        self.assertLess(earlier, select_due)
-        self.assertLess(select_due, cancel)
-        self.assertLess(cancel, reschedule)
+        self.assertIn("mesh_channel9_close_intent_ready_for_peer", activity)
+        close_select = rx_worker.index("mesh_select_channel9_close_tx_event")
+        close_send = rx_worker.index("mesh_send_pending_channel9_close", close_select)
+        rx_select = rx_worker.index("mesh_select_channel9_rx_event", close_send)
+        self.assertLess(close_select, close_send)
+        self.assertLess(close_send, rx_select)
 
     def test_close_intent_is_bound_to_exact_event_owner_identity(self):
         struct_start = REPORT.index("struct mesh_ch9_close_intent {")
         intent_struct = REPORT[struct_start:REPORT.index("};", struct_start)]
         arm = function_body(REPORT, "mesh_close_channel9_connection")
         helpers = (
-            function_body(REPORT, "mesh_channel9_close_intent_next_delay"),
+            function_body(REPORT, "mesh_channel9_close_intent_ready_for_peer"),
             function_body(REPORT, "mesh_channel9_close_intent_blocks_upstream"),
-            function_body(REPORT, "mesh_channel9_close_intent_service_due"),
         )
 
         for field in (

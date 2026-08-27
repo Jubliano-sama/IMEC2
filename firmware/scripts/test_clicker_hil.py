@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture the four-board click path with two anchors and a BLE gateway."""
+"""Capture the four-probe click path with three anchors and a BLE gateway."""
 
 from __future__ import annotations
 
@@ -14,18 +14,18 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LOGS_DIR = REPO_ROOT / "logs" / "clicker_two_anchor_qualification_20260826"
+LOGS_DIR = REPO_ROOT / "logs" / "clicker_three_anchor_qualification_20260827"
 
-GATEWAY_PROBE = "E46070D247233537"
 CLICKER_PROBE = "E4645C15CB0F3B37"
 ANCHOR_DIRECT_PROBE = "E4645C15CB365D30"
 ANCHOR_B_PROBE = "E46070D247394D36"
+ANCHOR_C_PROBE = "E46070D247233537"
 
 PROBES = {
-    "gateway": GATEWAY_PROBE,
     "clicker": CLICKER_PROBE,
     "anchor_a": ANCHOR_DIRECT_PROBE,
     "anchor_b": ANCHOR_B_PROBE,
+    "anchor_c": ANCHOR_C_PROBE,
 }
 
 RTT_INPUT_CHAR_DELAY_S = 0.05

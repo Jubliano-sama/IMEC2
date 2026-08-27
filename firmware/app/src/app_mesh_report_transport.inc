@@ -512,7 +512,9 @@ static bool mesh_channel9_next_required_activity(
               local_reliable_tx_peers,
               local_reliable_tx_peer_count) ||
           mesh_channel9_core_tx_pending_for_peer(entry->next_hop_id) ||
-          mesh_channel9_ack_pending_for_peer(entry->next_hop_id)))) {
+          mesh_channel9_ack_pending_for_peer(entry->next_hop_id) ||
+          mesh_channel9_close_intent_ready_for_peer(
+              entry->next_hop_id)))) {
         return true;
     }
 
