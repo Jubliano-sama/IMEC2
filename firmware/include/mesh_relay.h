@@ -472,6 +472,8 @@ struct mesh_upstream_ancestry_entry {
     struct mesh_route_path path;
     uint64_t next_hop_id;
     uint32_t route_epoch;
+    /* Nonzero only when a gateway route advertisement proved this path. */
+    uint32_t gateway_route_seq;
     bool valid;
 };
 
@@ -799,6 +801,16 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     const struct mesh_relay *relay,
     uint64_t target_id);
+/*
+ * Forced-depth bench anchors must not infer parent depth from a command's TTL:
+ * a deeper anchor can rebroadcast a short copy that looks locally correct.
+ * Require the current gateway route advertisement to prove that the physical
+ * ingress parent is on an exact, strictly descending gateway path.
+ */
+int mesh_relay_validate_forced_gateway_control_parent(
+    const struct mesh_relay *relay,
+    uint64_t previous_hop_id,
+    uint8_t required_gateway_relay_hops);
 /*
  * An accepted gateway-originated channel-5 control frame proves a fresh
  * reverse first hop for the immediate response. origin_ttl is the TTL used by

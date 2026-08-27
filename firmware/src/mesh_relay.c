@@ -466,9 +466,11 @@ static int store_upstream_candidate_ancestry(
     struct mesh_relay *relay,
     const struct route_candidate *candidate,
     const struct mesh_route_path *path,
+    uint32_t gateway_route_seq,
     struct mesh_upstream_ancestry_entry *previous)
 {
     struct mesh_upstream_ancestry_entry *entry;
+    uint32_t preserved_gateway_route_seq = 0u;
     int index = upstream_candidate_index(relay, candidate);
 
     if (index < 0 || path == NULL || !candidate->valid ||
@@ -496,6 +498,17 @@ static int store_upstream_candidate_ancestry(
     }
 
     entry = &relay->anchor_downlink_store->upstream_ancestry[index];
+    if (gateway_route_seq == 0u && entry->valid &&
+        entry->next_hop_id == candidate->next_hop_id &&
+        entry->route_epoch == candidate->route_epoch &&
+        entry->path.count == path->count &&
+        memcmp(entry->path.node_ids,
+               path->node_ids,
+               (size_t)path->count * sizeof(path->node_ids[0])) == 0) {
+        /* A route reply or control refresh of the identical ancestry does not
+         * make the current advertisement proof stale. A changed path does. */
+        preserved_gateway_route_seq = entry->gateway_route_seq;
+    }
     if (previous != NULL) {
         *previous = *entry;
     }
@@ -503,6 +516,8 @@ static int store_upstream_candidate_ancestry(
     entry->path = *path;
     entry->next_hop_id = candidate->next_hop_id;
     entry->route_epoch = candidate->route_epoch;
+    entry->gateway_route_seq = gateway_route_seq != 0u ?
+        gateway_route_seq : preserved_gateway_route_seq;
     entry->valid = true;
     return PROTO_OK;
 }

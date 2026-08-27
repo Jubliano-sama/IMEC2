@@ -369,6 +369,7 @@ static void assert_upstream_ancestry_equal(
     assert(expected != NULL);
     assert(actual->next_hop_id == expected->next_hop_id);
     assert(actual->route_epoch == expected->route_epoch);
+    assert(actual->gateway_route_seq == expected->gateway_route_seq);
     assert(actual->valid == expected->valid);
     assert(actual->path.count == expected->path.count);
     for (uint8_t i = 0u; i < actual->path.count; i++) {
@@ -438,6 +439,27 @@ static void seed_upstream_candidate_with_ancestry(
         ancestry->route_epoch = route_epoch;
         ancestry->valid = true;
         return;
+    }
+    assert(false);
+}
+
+static void mark_upstream_ancestry_gateway_route_seq(
+    struct mesh_relay *relay,
+    uint64_t next_hop_id,
+    uint32_t gateway_route_seq)
+{
+    assert(relay != NULL);
+    assert(relay->anchor_downlink_store != NULL);
+    assert(gateway_route_seq != 0u);
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct mesh_upstream_ancestry_entry *entry =
+            &relay->anchor_downlink_store->upstream_ancestry[i];
+
+        if (entry->valid && entry->next_hop_id == next_hop_id) {
+            entry->gateway_route_seq = gateway_route_seq;
+            return;
+        }
     }
     assert(false);
 }
@@ -18444,6 +18466,90 @@ static void test_gateway_control_reverse_route_preserves_parent_quarantine(void)
     assert(selected->next_hop_id == ANCHOR_B);
 }
 
+static void test_forced_gateway_control_parent_rejects_deeper_cycle_edge(void)
+{
+    static const uint64_t f1_path[] = {
+        GATEWAY, ANCHOR_A, ANCHOR_B,
+    };
+    static const uint64_t f2_path[] = {
+        GATEWAY, ANCHOR_A, ANCHOR_B, ANCHOR_C,
+    };
+    static const uint64_t f3_path[] = {
+        GATEWAY, ANCHOR_A, ANCHOR_B, ANCHOR_C, ANCHOR_D,
+    };
+    static const uint64_t f3_alternate_path[] = {
+        GATEWAY, ANCHOR_A, ANCHOR_C, ANCHOR_D, ANCHOR_B,
+    };
+    struct mesh_relay f1;
+    struct mesh_relay f2;
+    struct mesh_relay f3;
+    const struct route_candidate *f1_deeper_parent;
+    const struct mesh_upstream_ancestry_entry *f1_deeper_ancestry;
+    struct route_candidate candidate_before;
+    struct mesh_upstream_ancestry_entry ancestry_before;
+
+    mesh_relay_init(&f1, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 7u);
+    mesh_relay_init(&f2, MESH_RELAY_ROLE_ANCHOR, ANCHOR_C, GATEWAY, 7u);
+    mesh_relay_init(&f3, MESH_RELAY_ROLE_ANCHOR, ANCHOR_D, GATEWAY, 7u);
+
+    seed_upstream_candidate_with_ancestry(
+        &f1, ANCHOR_A, 7u, 1u, 90u, 1000u,
+        f1_path, (uint8_t)(sizeof(f1_path) / sizeof(f1_path[0])));
+    seed_upstream_candidate_with_ancestry(
+        &f2, ANCHOR_B, 7u, 2u, 90u, 1001u,
+        f2_path, (uint8_t)(sizeof(f2_path) / sizeof(f2_path[0])));
+    seed_upstream_candidate_with_ancestry(
+        &f3, ANCHOR_C, 7u, 3u, 90u, 1002u,
+        f3_path, (uint8_t)(sizeof(f3_path) / sizeof(f3_path[0])));
+    f1.gateway_route_adv_seq = 77u;
+    f2.gateway_route_adv_seq = 77u;
+    f3.gateway_route_adv_seq = 77u;
+    mark_upstream_ancestry_gateway_route_seq(&f1, ANCHOR_A, 77u);
+    mark_upstream_ancestry_gateway_route_seq(&f2, ANCHOR_B, 77u);
+    mark_upstream_ancestry_gateway_route_seq(&f3, ANCHOR_C, 77u);
+
+    /* These are the two legal gatewayward edges in F3 -> F2 -> F1 -> D. */
+    assert(mesh_relay_validate_forced_gateway_control_parent(
+               &f3, ANCHOR_C, 3u) == PROTO_OK);
+    assert(mesh_relay_validate_forced_gateway_control_parent(
+               &f2, ANCHOR_B, 2u) == PROTO_OK);
+    assert(mesh_relay_validate_forced_gateway_control_parent(
+               &f1, ANCHOR_A, 1u) == PROTO_OK);
+
+    /* An ancestry from an older advertisement cannot authorize a parent for
+     * a newer gateway control, even when its depth is otherwise exact. */
+    mark_upstream_ancestry_gateway_route_seq(&f2, ANCHOR_B, 76u);
+    assert(mesh_relay_validate_forced_gateway_control_parent(
+               &f2, ANCHOR_B, 2u) == PROTO_ERR_MALFORMED);
+    mark_upstream_ancestry_gateway_route_seq(&f2, ANCHOR_B, 77u);
+    assert(mesh_relay_validate_forced_gateway_control_parent(
+               &f2, ANCHOR_B, 2u) == PROTO_OK);
+
+    /* F1 can also hear a valid advertisement from F3 on another branch.
+     * Choosing that deeper anchor from a one-hop control copy would close the
+     * observed F3 -> F2 -> F1 -> F3 loop, so advertised depth must win over
+     * the control packet's apparently shallow TTL. */
+    seed_upstream_candidate_with_ancestry(
+        &f1, ANCHOR_D, 7u, 3u, 70u, 1003u,
+        f3_alternate_path,
+        (uint8_t)(sizeof(f3_alternate_path) /
+                  sizeof(f3_alternate_path[0])));
+    mark_upstream_ancestry_gateway_route_seq(&f1, ANCHOR_D, 77u);
+    f1_deeper_parent = find_route_candidate(&f1, ANCHOR_D);
+    f1_deeper_ancestry = find_upstream_ancestry(&f1, ANCHOR_D);
+    assert(f1_deeper_parent != NULL);
+    assert(f1_deeper_ancestry != NULL);
+    candidate_before = *f1_deeper_parent;
+    ancestry_before = *f1_deeper_ancestry;
+
+    assert(mesh_relay_validate_forced_gateway_control_parent(
+               &f1, ANCHOR_D, 1u) == PROTO_ERR_MALFORMED);
+    assert_route_candidate_equal(find_route_candidate(&f1, ANCHOR_D),
+                                 &candidate_before);
+    assert_upstream_ancestry_equal(find_upstream_ancestry(&f1, ANCHOR_D),
+                                   &ancestry_before);
+}
+
 
 static void test_downlink_recency_tie_break_survives_uptime_wrap(void)
 {
@@ -21221,6 +21327,7 @@ int main(void)
     test_direct_gateway_route_probe_clears_hold_down();
     test_remove_direct_gateway_route_selects_relay_candidate();
     test_gateway_control_reverse_route_preserves_parent_quarantine();
+    test_forced_gateway_control_parent_rejects_deeper_cycle_edge();
     test_downlink_recency_tie_break_survives_uptime_wrap();
     test_direct_gateway_probe_route_answers_pending_request();
     test_route_reply_scheduled_deadline_wraps_to_valid_zero();

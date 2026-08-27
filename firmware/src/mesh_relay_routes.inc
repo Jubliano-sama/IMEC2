@@ -109,6 +109,44 @@ const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     return selected;
 }
 
+int mesh_relay_validate_forced_gateway_control_parent(
+    const struct mesh_relay *relay,
+    uint64_t previous_hop_id,
+    uint8_t required_gateway_relay_hops)
+{
+    const struct route_candidate *candidate;
+    const struct mesh_route_path *path;
+    int candidate_index;
+
+    if (relay == NULL || relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        relay->anchor_downlink_store == NULL ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        required_gateway_relay_hops == 0u ||
+        required_gateway_relay_hops > MESH_NETWORK_MAX_HOPS) {
+        return PROTO_ERR_ARG;
+    }
+
+    candidate = find_upstream_candidate(relay,
+                                        previous_hop_id,
+                                        relay->upstream.current_epoch);
+    if (candidate == NULL ||
+        candidate->hop_count != required_gateway_relay_hops) {
+        return PROTO_ERR_MALFORMED;
+    }
+    path = upstream_candidate_ancestry(relay, candidate);
+    candidate_index = upstream_candidate_index(relay, candidate);
+    if (path == NULL || candidate_index < 0 ||
+        relay->gateway_route_adv_seq == 0u ||
+        relay->anchor_downlink_store->upstream_ancestry[candidate_index]
+                .gateway_route_seq != relay->gateway_route_adv_seq ||
+        path->count < 3u ||
+        path->node_ids[path->count - 2u] != previous_hop_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
 int mesh_relay_note_gateway_control_reverse_route(
     struct mesh_relay *relay,
     const struct proto_packet *packet,
@@ -220,6 +258,7 @@ int mesh_relay_note_gateway_control_reverse_route(
             ret = store_upstream_candidate_ancestry(relay,
                                                     stored,
                                                     &direct_path,
+                                                    0u,
                                                     NULL);
             if (ret != PROTO_OK) {
                 return ret;
@@ -332,6 +371,7 @@ int mesh_relay_note_flood_parent_candidate(
         ret = store_upstream_candidate_ancestry(relay,
                                                 stored,
                                                 &direct_path,
+                                                0u,
                                                 NULL);
         if (ret != PROTO_OK) {
             return ret;
@@ -1432,6 +1472,7 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
         ret = store_upstream_candidate_ancestry(relay,
                                                 candidate,
                                                 &direct_path,
+                                                0u,
                                                 NULL);
     }
     if (ret == PROTO_OK) {

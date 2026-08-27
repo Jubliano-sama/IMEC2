@@ -3333,6 +3333,22 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     reverse_route_hint_first = true;
 #endif
                 }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+                if (reverse_route_hint_first &&
+                    mesh_relay_validate_forced_gateway_control_parent(
+                        &mesh_runtime,
+                        parsed.previous_hop_id,
+                        CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS) !=
+                        PROTO_OK) {
+                    status_debug_printf(
+                        "DBG_C5_CONTROL_PARENT_DEPTH_REJECT msg=0x%02x prev=0x%llx required=%u adv_seq=%u\n",
+                        parsed.packet.msg_type,
+                        (unsigned long long)parsed.previous_hop_id,
+                        CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS,
+                        mesh_runtime.gateway_route_adv_seq);
+                    continue;
+                }
+#endif
                 if (reverse_route_hint_first &&
                     IS_ENABLED(
                         CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL) &&

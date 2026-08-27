@@ -710,7 +710,7 @@ static union {
 static struct mesh_anchor_downlink_store mesh_anchor_downlink_store;
 BUILD_ASSERT(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
              "report queue ownership has exactly one recovery reserve");
-BUILD_ASSERT(sizeof(mesh_anchor_downlink_store) == 1648u,
+BUILD_ASSERT(sizeof(mesh_anchor_downlink_store) == 1672u,
              "anchor downlink and route ancestry RAM contract changed");
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(sizeof(struct mesh_outbound) == 1024u,

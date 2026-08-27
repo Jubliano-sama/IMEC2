@@ -1345,6 +1345,7 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
         ret = store_upstream_candidate_ancestry(relay,
                                                 candidate,
                                                 &candidate_path,
+                                                fields.gateway_route_seq,
                                                 NULL);
         if (ret != PROTO_OK) {
             rollback_reactive_route(relay, &route_rollback);
@@ -2013,6 +2014,7 @@ static int handle_route_reply(struct mesh_relay *relay,
         ret = store_upstream_candidate_ancestry(relay,
                                                 candidate,
                                                 &candidate_path,
+                                                0u,
                                                 &ancestry_before);
         if (ret != PROTO_OK) {
             rollback_reactive_route(relay, &route_rollback);
