@@ -12,6 +12,9 @@ RTT_CONTROL = (
 RTT_BENCH_CONFIG = (
     ROOT / "app/conf/mesh-clicker-rtt-bench.conf"
 ).read_text(encoding="utf-8")
+RTT_CONTROL_CONFIG = (
+    ROOT / "app/conf/mesh-clicker-rtt-control.conf"
+).read_text(encoding="utf-8")
 
 
 def function_body(name: str) -> str:
@@ -54,6 +57,12 @@ assert rtt_bench_options == {
     "CONFIG_IMEC_CLICKER_RTT_CONTROL=y",
     "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y",
 }
+rtt_control_options = {
+    line.strip()
+    for line in RTT_CONTROL_CONFIG.splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+}
+assert rtt_control_options == {"CONFIG_IMEC_CLICKER_RTT_CONTROL=y"}
 main = source_function_body(MAIN, "main")
 button_start = main.index("app_clicker_button_init()")
 rtt_start = main.index("app_clicker_rtt_control_start()", button_start)

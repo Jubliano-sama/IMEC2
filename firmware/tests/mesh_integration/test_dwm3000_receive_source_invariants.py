@@ -194,8 +194,10 @@ assert_order(
     "dwt_read32bitreg(SYS_STATUS_HI_ID)",
     "take_port_error(operation)",
     "fatal_status = status_hi & DWM3000_SYS_STATUS_HI_FATAL_MASK",
+    '"DBG_DWM_FATAL_PROBE1 op=%s first=%08x fast_hi=%08x fast_id=%08x',
     "dwt_write32bitreg(SYS_STATUS_HI_ID, fatal_status)",
     'take_port_error("device-fatal-status-clear")',
+    '"DBG_DWM_FATAL operation=%s status_hi=0x%08x fatal=0x%08x clear_ret=%d\\n"',
     "invalidate_radio_state_tagged(__func__)",
 )
 assert "return ret < 0 ? ret : -EIO" in check_device_fatal_status, (

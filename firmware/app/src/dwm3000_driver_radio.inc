@@ -73,11 +73,76 @@ static int check_device_fatal_status(const char *operation)
         return 0;
     }
 
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+    {
+        uint32_t status_hi_fast;
+        uint32_t dev_id_fast;
+        uint32_t status_hi_slow;
+        uint32_t dev_id_slow;
+        int status_hi_fast_ret;
+        int dev_id_fast_ret;
+        int status_hi_slow_ret;
+        int dev_id_slow_ret;
+
+        /*
+         * A failed SYS_STATUS_HI read has previously returned a valid DEV_ID
+         * value.  Compare repeated register and identity reads at both SPI
+         * rates after the operation has already failed terminally.  This
+         * distinguishes a transient/header decode problem from a fast-SPI
+         * electrical problem without touching the successful runtime path.
+         */
+        dwm3000_port_clear_error();
+        status_hi_fast = dwt_read32bitreg(SYS_STATUS_HI_ID);
+        status_hi_fast_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        dev_id_fast = dwt_readdevid();
+        dev_id_fast_ret = dwm3000_port_take_error();
+
+        (void)dwm3000_port_set_slow_spi();
+        dwm3000_port_clear_error();
+        status_hi_slow = dwt_read32bitreg(SYS_STATUS_HI_ID);
+        status_hi_slow_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        dev_id_slow = dwt_readdevid();
+        dev_id_slow_ret = dwm3000_port_take_error();
+        (void)dwm3000_port_set_fast_spi();
+
+        status_debug_printf(
+            "DBG_DWM_FATAL_PROBE1 op=%s first=%08x fast_hi=%08x fast_id=%08x\n",
+            operation == NULL ? "unknown" : operation,
+            (unsigned int)status_hi,
+            (unsigned int)status_hi_fast,
+            (unsigned int)dev_id_fast);
+        status_debug_printf(
+            "DBG_DWM_FATAL_PROBE2 fast_ret=%d/%d slow_hi=%08x slow_id=%08x slow_ret=%d/%d\n",
+            status_hi_fast_ret,
+            dev_id_fast_ret,
+            (unsigned int)status_hi_slow,
+            (unsigned int)dev_id_slow,
+            status_hi_slow_ret,
+            dev_id_slow_ret);
+        status_debug_printf(
+            "DBG_DWM_FATAL_PROBE3 cfg=%u awake=%u unknown=%u phy=%u tid=%p uptime=%u\n",
+            radio_configured ? 1u : 0u,
+            radio_awake ? 1u : 0u,
+            radio_state_unknown ? 1u : 0u,
+            (unsigned int)active_phy_mode,
+            k_current_get(),
+            k_uptime_get_32());
+    }
+#endif
+
     dwt_write32bitreg(SYS_STATUS_HI_ID, fatal_status);
     ret = take_port_error("device-fatal-status-clear");
     if (ret >= 0) {
         driver_stats.spi_failures++;
     }
+    status_debug_printf(
+        "DBG_DWM_FATAL operation=%s status_hi=0x%08x fatal=0x%08x clear_ret=%d\n",
+        operation == NULL ? "unknown" : operation,
+        (unsigned int)status_hi,
+        (unsigned int)fatal_status,
+        ret);
     invalidate_radio_state_tagged(__func__);
     LOG_ERR("DWM3000 fatal command/SPI status: operation=%s status_hi=0x%08x",
             operation == NULL ? "unknown" : operation,
@@ -880,6 +945,15 @@ static int wait_status_internal(uint32_t mask,
             int ret = check_device_fatal_status("status-match");
 
             if (ret < 0) {
+                if (IS_ENABLED(CONFIG_IMEC_CLICKER_RTT_CONTROL)) {
+                    status_debug_printf(
+                        "DBG_DWM_STATUS_FATAL phase=match low=0x%08x mask=0x%08x polls=%u elapsed_us=%u ret=%d\n",
+                        (unsigned int)read_status,
+                        (unsigned int)mask,
+                        (unsigned int)poll_loops,
+                        (unsigned int)elapsed_us,
+                        ret);
+                }
                 if (status != NULL) {
                     *status = read_status;
                 }
@@ -970,6 +1044,15 @@ receive_abort_not_requested:
         int ret = check_device_fatal_status("status-boundary-match");
 
         if (ret < 0) {
+            if (IS_ENABLED(CONFIG_IMEC_CLICKER_RTT_CONTROL)) {
+                status_debug_printf(
+                    "DBG_DWM_STATUS_FATAL phase=boundary low=0x%08x mask=0x%08x polls=%u elapsed_us=%u ret=%d\n",
+                    (unsigned int)read_status,
+                    (unsigned int)mask,
+                    (unsigned int)poll_loops,
+                    (unsigned int)elapsed_us,
+                    ret);
+            }
             return ret;
         }
 

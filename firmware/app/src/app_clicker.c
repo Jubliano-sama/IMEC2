@@ -120,6 +120,13 @@ BUILD_ASSERT(SELF_TEST_REPORT_DELIVERY_POLL_MS <
 static struct app_clicker_callbacks clicker_callbacks;
 static struct app_clicker_event_runtime clicker_event_runtime;
 
+#define CLICKER_RTT_DIAG(...)                                             \
+    do {                                                                  \
+        if (IS_ENABLED(CONFIG_IMEC_CLICKER_RTT_CONTROL)) {                \
+            status_debug_printf(__VA_ARGS__);                             \
+        }                                                                 \
+    } while (false)
+
 int app_clicker_ble_courtesy_start(uint32_t event_seq,
                                    uint8_t attempt_index,
                                    uint64_t priority_id,
@@ -1418,10 +1425,23 @@ static int clicker_collect_uwb_attempt_with_options_until(
     if (schedule_tx_ms != NULL) {
         *schedule_tx_ms = -1;
     }
+    CLICKER_RTT_DIAG(
+        "DBG_CLICKER_ATTEMPT stage=wake_begin evt=%u att=%u candidates=%u uptime=%u",
+        session->config.click_event_id,
+        session->attempt_index,
+        session->candidate_count,
+        k_uptime_get_32());
     ret = clicker_send_wake_claim_train_until(session,
                                               priority_id,
                                               &clicker_wake_train_config,
                                               deadline_ms);
+    CLICKER_RTT_DIAG(
+        "DBG_CLICKER_ATTEMPT stage=wake_end evt=%u att=%u ret=%d tx=%u uptime=%u",
+        session->config.click_event_id,
+        session->attempt_index,
+        ret,
+        session->diagnostics.wake_claim_tx_count,
+        k_uptime_get_32());
     if (ret < 0) {
         return ret;
     }
@@ -1450,7 +1470,19 @@ static int clicker_collect_uwb_attempt_with_options_until(
 #endif
 
     if (!used_cached_discovery) {
+        CLICKER_RTT_DIAG(
+            "DBG_CLICKER_ATTEMPT stage=discovery_begin evt=%u att=%u uptime=%u",
+            session->config.click_event_id,
+            session->attempt_index,
+            k_uptime_get_32());
         ret = clicker_discover_uwb_anchors_until(session, deadline_ms);
+        CLICKER_RTT_DIAG(
+            "DBG_CLICKER_ATTEMPT stage=discovery_end evt=%u att=%u ret=%d candidates=%u uptime=%u",
+            session->config.click_event_id,
+            session->attempt_index,
+            ret,
+            session->candidate_count,
+            k_uptime_get_32());
         if (ret < 0) {
             return ret;
         }
@@ -1519,6 +1551,14 @@ static int clicker_collect_uwb_attempt_with_options_until(
                                             &range_tx_config,
                                             deadline_ms,
                                             schedule_tx_ms);
+    CLICKER_RTT_DIAG(
+        "DBG_CLICKER_ATTEMPT stage=schedule_end evt=%u att=%u ret=%d selected=%u tx_ms=%lld uptime=%u",
+        session->config.click_event_id,
+        session->attempt_index,
+        ret,
+        schedule->selected_count,
+        (long long)(schedule_tx_ms == NULL ? -1 : *schedule_tx_ms),
+        k_uptime_get_32());
     if (ret < 0) {
         (void)uwb_clicker_abort_attempt(session);
         LOG_WRN("clicker aborting UWB attempt before DS-TWR: reason=range_schedule_tx ret=%d attempt=%u retries=%u ds_fail=%u",
