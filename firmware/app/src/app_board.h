@@ -17,6 +17,7 @@ void status_debug_gateway_boot_test(void);
 void status_debug_anchor_boot_test(void);
 void status_debug_uwb_rx_channel_pulse(uint8_t uwb_channel);
 void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel);
+void status_debug_anchor_wake_claim_rx_pulse(void);
 void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel);
 void status_debug_tx_packet_sent_pulse(void);
 void status_debug_tx_wake_claim_sent_pulse(void);

@@ -356,6 +356,7 @@ static void anchor_hold_channel5_rx_until_ms(int64_t deadline_ms,
         if (uwb_decode_wake_claim(anchor_uwb_scan_frame,
                                   frame_len,
                                   &repeated_claim) == PROTO_OK) {
+            status_debug_anchor_wake_claim_rx_pulse();
             continue;
         }
 
@@ -925,6 +926,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                     (unsigned int)frame_len);
             continue;
         }
+        status_debug_anchor_wake_claim_rx_pulse();
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
@@ -1141,6 +1143,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 int64_t claim_rx_ms = k_uptime_get();
                 bool selection_changed = false;
 
+                status_debug_anchor_wake_claim_rx_pulse();
                 if (!app_mesh_c5_wake_claim_requires_anchor_handoff(
                         late_claim.flags, true)) {
                     LOG_DBG("anchor ignored non-click WAKE_CLAIM during click discovery wait: clicker=0x%016llx event_seq=%u flags=0x%02x",
@@ -3264,6 +3267,7 @@ scan_frame_ready:
                                 decode_ret);
         }
         if (decode_ret == PROTO_OK) {
+            status_debug_anchor_wake_claim_rx_pulse();
             if (anchor_enumeration_rx_active() &&
                 app_mesh_c5_wake_claim_requires_anchor_handoff(
                     claim.flags, true)) {

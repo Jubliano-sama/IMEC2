@@ -166,7 +166,12 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn(
             "compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR", send
         )
-        self.assertIn("send_wake_train = false", send)
+        compact_suppression = send.index(
+            "if (compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR)"
+        )
+        self.assertIn(
+            "send_wake_train = false", braced_block(send, compact_suppression)
+        )
 
         self.assertIn(
             "outbound.flood_retry_count = "
@@ -997,7 +1002,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("memset(outbound, 0, sizeof(*outbound))", gateway_origin)
         self.assertNotIn("flood_retry_count", gateway_origin)
         self.assertIn(
-            "discovery_assignment_control_propagation_hold_ms(hop_count)",
+            "discovery_assignment_activation_propagation_hold_ms(hop_count)",
             gateway_hold,
         )
         self.assertRegex(
@@ -2239,9 +2244,13 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         stale = send.index("return -ESTALE;")
         replace = send.index("protocol_rx_downstream_activation_clear", stale)
         needs_wake = send.index("protocol_rx_downstream_activation_needs_wake")
+        relay_wake = send.index(
+            "send_wake_train = send_wake_train && enumeration_needs_wake",
+            needs_wake,
+        )
         self.assertLess(stale, replace)
         self.assertLess(replace, needs_wake)
-        self.assertIn("send_wake_train = false", send)
+        self.assertLess(needs_wake, relay_wake)
         self.assertIn("aggregate_result.sent_count > 0u", send)
         end_clear = send[
             send.index("enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END") :

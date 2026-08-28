@@ -24,6 +24,9 @@ REPORT_ENCODER = (
 REPORT_TRANSPORT = (
     ROOT / "app" / "src" / "app_mesh_report_transport.inc"
 ).read_text(encoding="utf-8")
+REPORT_RX = (
+    ROOT / "app" / "src" / "app_mesh_report_rx.inc"
+).read_text(encoding="utf-8")
 REPORT_EVENT_TX = (
     ROOT / "app" / "src" / "app_mesh_report_event_tx.inc"
 ).read_text(encoding="utf-8")
@@ -50,6 +53,12 @@ ANCHOR_CONF = (ROOT / "app" / "conf" / "mesh-anchor.conf").read_text(
 DWM3000_RADIO = (
     ROOT / "app" / "src" / "dwm3000_driver_radio.inc"
 ).read_text(encoding="utf-8")
+APP_BOARD = (ROOT / "app" / "src" / "app_board.c").read_text(
+    encoding="utf-8"
+)
+APP_BOARD_HEADER = (ROOT / "app" / "src" / "app_board.h").read_text(
+    encoding="utf-8"
+)
 
 
 def function_body(source: str, name: str) -> str:
@@ -83,6 +92,37 @@ def braced_block_after(source: str, marker: str) -> str:
 
 
 class MeshRfRetrySourceInvariantTests(unittest.TestCase):
+    def test_valid_wake_claim_flashes_both_anchor_leds_green(self):
+        pulse = function_body(
+            APP_BOARD, "status_debug_anchor_wake_claim_rx_pulse"
+        )
+        decode = function_body(
+            REPORT_RX, "mesh_decode_channel5_wake_claim"
+        )
+
+        self.assertIn(
+            "void status_debug_anchor_wake_claim_rx_pulse(void)",
+            APP_BOARD_HEADER,
+        )
+        self.assertIn("DEVICE_ROLE != ROLE_ANCHOR", pulse)
+        self.assertIn("CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER", pulse)
+        self.assertIn("status_led0_set(false, true, false)", pulse)
+        self.assertIn("status_led1_set(false, true, false)", pulse)
+        self.assertIn("status_wake_claim_rx_pulse_active", pulse)
+        self.assertIn("status0_debug_pulse_restore_work", pulse)
+        self.assertIn("status1_debug_pulse_restore_work", pulse)
+        valid = decode.index("if (ret != PROTO_OK)")
+        diagnostic = decode.index(
+            "status_debug_anchor_wake_claim_rx_pulse()", valid
+        )
+        self.assertLess(valid, diagnostic)
+        self.assertGreaterEqual(
+            ANCHOR_RADIO.count(
+                "status_debug_anchor_wake_claim_rx_pulse();"
+            ),
+            4,
+        )
+
     def test_late_click_priority_rebinds_empty_report_custody(self):
         consider = function_body(
             ANCHOR_RADIO, "anchor_consider_active_click_claim"

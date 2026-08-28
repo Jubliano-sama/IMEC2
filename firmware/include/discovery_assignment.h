@@ -76,6 +76,9 @@ extern "C" {
      (MESH_ENUMERATION_RELAY_COPY_COUNT * \
       OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
      MESH_ENUMERATION_RELAY_COPY_TAIL_MS)
+#define DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS \
+    (MESH_RADIO_WAKE_TRAIN_MS + \
+     DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS 150u
 #define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS 2000u
 #define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS \
@@ -382,6 +385,8 @@ uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
                                                uint32_t random_value);
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count);
 uint32_t discovery_assignment_control_propagation_hold_ms(
+    uint8_t max_hop_count);
+uint32_t discovery_assignment_activation_propagation_hold_ms(
     uint8_t max_hop_count);
 /* One-based RF depth learned from the selected gateway route. Zero uses the
  * maximum depth so a missing route cannot shorten the receive window. */

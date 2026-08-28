@@ -2725,11 +2725,12 @@ static int mesh_send_c5_flood_now_until(
             PROTOCOL_RX_OPERATION_ENUMERATION,
             enumeration_epoch,
             enumeration_now_ms);
-        /* The gateway's activation train already placed direct and forced-hop
-         * anchors in the gateway-control listener. Relays send only their
-         * bounded control copies; another wake train would add latency and
-         * violate the single activation-owner contract. */
-        send_wake_train = false;
+        /* The gateway's activation train reaches only its RF-visible anchors.
+         * The first forwarding anchor for this generation must therefore
+         * repeat an ordinary wake train before its control copies, allowing
+         * the activation wave to advance one real RF hop at a time. The
+         * activation owner suppresses duplicate trains for later copies. */
+        send_wake_train = send_wake_train && enumeration_needs_wake;
     }
     if (compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR) {
         /* START and PLAN share enumeration's one activation owner: the

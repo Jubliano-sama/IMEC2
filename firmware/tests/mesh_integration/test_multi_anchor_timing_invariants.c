@@ -483,6 +483,21 @@ static void test_depth_aware_survey_control_schedule(void)
 {
     uint32_t previous_ms = 0u;
 
+    CHECK(discovery_assignment_activation_propagation_hold_ms(1u) ==
+              DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                  DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+          "direct enumeration activation lost its relay wake budget");
+    CHECK(discovery_assignment_activation_propagation_hold_ms(2u) ==
+              DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                  2u * DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+          "two-hop enumeration activation lost one relay wake budget");
+    CHECK(discovery_assignment_activation_propagation_hold_ms(
+              UWB_ENUM_MAX_HOPS) ==
+              DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                  UWB_ENUM_MAX_HOPS *
+                      DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+          "maximum-depth enumeration activation is not fail-safe");
+
     CHECK(survey_control_delivery_delay_ms(0u) == 0u,
           "invalid survey depth must not produce a schedule");
     CHECK(survey_control_delivery_delay_ms(UWB_ENUM_MAX_HOPS + 1u) == 0u,

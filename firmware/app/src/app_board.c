@@ -25,6 +25,7 @@
 LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
 
 #define DEBUG_LED_PULSE_MS 250u
+#define DEBUG_WAKE_CLAIM_RX_PULSE_MS 250u
 #define DEBUG_CH5_RX_PULSE_MS 1000u
 #define DEBUG_CH5_TX_PULSE_MS 400u
 #define DEBUG_TX_BOOT_TEST_MS 600u
@@ -72,6 +73,7 @@ static struct k_work_delayable status0_debug_pulse_restore_work;
 static bool status1_debug_pulse_work_ready;
 static bool status0_debug_pulse_work_ready;
 static bool status0_debug_pulse_active;
+static bool status_wake_claim_rx_pulse_active;
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
 static struct k_work_delayable status0_power_blink_work;
 static bool status0_power_blink_work_ready;
@@ -381,6 +383,7 @@ static void status0_debug_pulse_restore_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
+    status_wake_claim_rx_pulse_active = false;
     status0_debug_pulse_active = false;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         status_power_indicator_enabled) {
@@ -661,6 +664,35 @@ void status_debug_uwb_rx_channel_pulse(uint8_t uwb_channel)
 void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
 {
     status_debug_uwb_rx_channel_pulse(uwb_channel);
+}
+
+void status_debug_anchor_wake_claim_rx_pulse(void)
+{
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ||
+        !status0_debug_pulse_work_ready ||
+        !status1_debug_pulse_work_ready ||
+        status_wake_claim_rx_pulse_active) {
+        return;
+    }
+
+    /* A valid claim is stronger evidence than generic Channel-5 activity.
+     * Drive both production LEDs directly so this diagnostic remains visible
+     * even when ordinary route activity LEDs are disabled. Rate-limit the
+     * repeated claims inside one train so LED work cannot perturb RF timing. */
+    status_wake_claim_rx_pulse_active = true;
+    status0_debug_pulse_active = true;
+    status0_ch5_rx_hold_until_ms =
+        k_uptime_get_32() + DEBUG_WAKE_CLAIM_RX_PULSE_MS;
+    status_led0_set(false, true, false);
+    status_led1_set(false, true, false);
+    (void)k_work_reschedule(&status0_debug_pulse_restore_work,
+                            K_MSEC(DEBUG_WAKE_CLAIM_RX_PULSE_MS));
+    (void)k_work_reschedule(&status1_debug_pulse_restore_work,
+                            K_MSEC(DEBUG_WAKE_CLAIM_RX_PULSE_MS));
+    debug_rtt_write("DBG_WAKE_CLAIM_RX_LED\n");
+#endif
 }
 
 void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel)

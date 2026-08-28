@@ -786,7 +786,7 @@ static uint32_t gateway_discovery_assignment_propagation_hold_ms_locked(void)
             .response_lane_max_hop_count;
     }
     hop_count = CLAMP(hop_count, 1u, UWB_ENUM_MAX_HOPS);
-    return discovery_assignment_control_propagation_hold_ms(hop_count);
+    return discovery_assignment_activation_propagation_hold_ms(hop_count);
 }
 
 static uint8_t gateway_discovery_assignment_adaptive_slot_count_locked(void)
