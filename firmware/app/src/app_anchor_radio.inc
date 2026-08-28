@@ -2892,9 +2892,11 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool uwb_radio_busy = false;
     bool control_followup_boost_active = false;
     bool enumeration_continuous_rx = false;
+    bool survey_continuous_rx = false;
+    bool protocol_continuous_rx = false;
     bool compact_enumeration_window = false;
     bool local_protocol_response_active = false;
-    bool enumeration_owned_work_due = false;
+    bool protocol_owned_work_due = false;
     bool protocol_flood_pending = false;
     bool post_ch9_recovery_scan = false;
     bool ch9_receive_prepare_pending = false;
@@ -2937,6 +2939,9 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     control_followup_boost_active =
         anchor_relay_control_followup_boost_active();
     enumeration_continuous_rx = anchor_enumeration_rx_active();
+    survey_continuous_rx = app_survey_anchor_rx_continuous();
+    protocol_continuous_rx = enumeration_continuous_rx ||
+                             survey_continuous_rx;
     local_protocol_response_active =
         mesh_report_local_protocol_response_active();
     protocol_flood_pending = mesh_c5_protocol_flood_work_pending();
@@ -2950,12 +2955,11 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
          * Channel-9 retry boundary.
          */
         scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS;
-    } else if (enumeration_continuous_rx) {
+    } else if (protocol_continuous_rx) {
         /*
-         * Enumeration's later TABLE/END/ABORT controls are extended-PHR
-         * frames sent once by the gateway. Keep one protocol-max acquisition
-         * slice so host-side status polling and diagnostics do not create a
-         * 20 ms off/rearm cadence while the operation owns Channel 5.
+         * Later operation controls are sent while the accepted protocol owns
+         * Channel 5. Keep one protocol-max acquisition slice so workqueue
+         * activity does not recreate a low-duty gap between those controls.
          */
         scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS;
     } else if (post_ch9_recovery_scan) {
@@ -3000,7 +3004,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                       mesh_anchor_low_duty_scan_should_defer(&ch9_retry_ms);
     ch9_receive_prepare_pending =
         IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-        (enumeration_continuous_rx || post_ch9_recovery_scan) &&
+        (protocol_continuous_rx || post_ch9_recovery_scan) &&
         mesh_report_next_channel9_activity_prepare_delay_ms(
             k_uptime_get_32(), &ch9_receive_prepare_delay_ms);
     if (ch9_receive_prepare_pending) {
@@ -3016,11 +3020,11 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
             scan_rx_ms =
                 ch9_receive_prepare_delay_ms - scan_reserve_ms;
             status_debug_printf(
-                "DBG_CH5_SCAN_CAP next=%u reserve=%u win=%u enum=%u recovery=%u\n",
+                "DBG_CH5_SCAN_CAP next=%u reserve=%u win=%u protocol=%u recovery=%u\n",
                 ch9_receive_prepare_delay_ms,
                 scan_reserve_ms,
                 scan_rx_ms,
-                enumeration_continuous_rx ? 1u : 0u,
+                protocol_continuous_rx ? 1u : 0u,
                 post_ch9_recovery_scan ? 1u : 0u);
         }
     }
@@ -3128,15 +3132,19 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         goto scan_complete;
     }
 
-    ret = enumeration_continuous_rx ?
+    ret = protocol_continuous_rx ?
         dwm3000_driver_configure_wake_mesh_control_mode() :
         dwm3000_driver_configure_wake_mode();
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && ret != 0) {
         status_debug_printf("DBG_ANCHOR_CH5_SCAN_CONFIG_FAIL ret=%d\n", ret);
     }
     if (ret == 0) {
-enumeration_rx_window:
-        if (anchor_enumeration_rx_active()) {
+protocol_rx_window:
+        enumeration_continuous_rx = anchor_enumeration_rx_active();
+        survey_continuous_rx = app_survey_anchor_rx_continuous();
+        protocol_continuous_rx = enumeration_continuous_rx ||
+                                 survey_continuous_rx;
+        if (enumeration_continuous_rx) {
             uint64_t enumeration_now_ms = (uint64_t)k_uptime_get();
 
             /*
@@ -3189,7 +3197,11 @@ enumeration_rx_window:
         }
         scan_rx_elapsed_us = u32_saturating_add(scan_rx_elapsed_us,
                                                 scan_rx_attempt_elapsed_us);
-        if (anchor_enumeration_rx_active()) {
+        enumeration_continuous_rx = anchor_enumeration_rx_active();
+        survey_continuous_rx = app_survey_anchor_rx_continuous();
+        protocol_continuous_rx = enumeration_continuous_rx ||
+                                 survey_continuous_rx;
+        if (protocol_continuous_rx) {
             uint32_t receive_prepare_delay_ms = 0u;
             const uint32_t scan_reserve_ms =
                 ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS +
@@ -3199,7 +3211,7 @@ enumeration_rx_window:
                     k_uptime_get_32(), &receive_prepare_delay_ms) &&
                 receive_prepare_delay_ms <= scan_reserve_ms;
 
-            enumeration_owned_work_due =
+            protocol_owned_work_due =
                 mesh_relay_tx_active(&mesh_runtime) ||
                 mesh_c5_protocol_flood_work_pending() ||
                 mesh_rx_pending_count() > 0u ||
@@ -3209,16 +3221,17 @@ enumeration_rx_window:
                 receive_prepare_due;
             if (receive_prepare_due) {
                 status_debug_printf(
-                    "DBG_ENUM_CH5_YIELD_CH9 next=%u reserve=%u\n",
+                    "DBG_PROTOCOL_CH5_YIELD_CH9 next=%u reserve=%u\n",
                     receive_prepare_delay_ms,
                     scan_reserve_ms);
             }
 
-            if (ret == -ETIMEDOUT && !enumeration_owned_work_due) {
-                if (anchor_compact_enumeration_window(
-                        (uint64_t)k_uptime_get(), NULL, NULL) ||
-                    anchor_compact_enumeration_prepare_window(
-                        (uint64_t)k_uptime_get())) {
+            if (ret == -ETIMEDOUT && !protocol_owned_work_due) {
+                if (enumeration_continuous_rx &&
+                    (anchor_compact_enumeration_window(
+                         (uint64_t)k_uptime_get(), NULL, NULL) ||
+                     anchor_compact_enumeration_prepare_window(
+                         (uint64_t)k_uptime_get()))) {
                     next_scan_delay_ms = 0u;
                     goto scan_complete;
                 }
@@ -3229,7 +3242,7 @@ enumeration_rx_window:
                  * operation-owned listener exists to remove.
                  */
                 app_watchdog_note_radio_progress();
-                goto enumeration_rx_window;
+                goto protocol_rx_window;
             }
         }
     }
@@ -3268,15 +3281,16 @@ scan_frame_ready:
         }
         if (decode_ret == PROTO_OK) {
             status_debug_anchor_wake_claim_rx_pulse();
-            if (anchor_enumeration_rx_active() &&
+            if ((anchor_enumeration_rx_active() ||
+                 app_survey_anchor_rx_continuous()) &&
                 app_mesh_c5_wake_claim_requires_anchor_handoff(
                     claim.flags, true)) {
                 status_debug_printf(
-                    "DBG_ENUM_RX_CLICK_DEFER src=0x%llx event=%u\n",
+                    "DBG_PROTOCOL_RX_CLICK_DEFER src=0x%llx event=%u\n",
                     (unsigned long long)claim.clicker_id,
                     claim.click_event_id);
                 app_watchdog_note_radio_progress();
-                goto enumeration_rx_window;
+                goto protocol_rx_window;
             }
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                 !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
@@ -3408,7 +3422,11 @@ scan_frame_ready:
                 anchor_uwb_session.diagnostics.frame_timeouts,
                 anchor_uwb_session.diagnostics.crc_failures);
     }
-    if (anchor_enumeration_rx_active() && !enumeration_owned_work_due) {
+    enumeration_continuous_rx = anchor_enumeration_rx_active();
+    survey_continuous_rx = app_survey_anchor_rx_continuous();
+    protocol_continuous_rx = enumeration_continuous_rx ||
+                             survey_continuous_rx;
+    if (protocol_continuous_rx && !protocol_owned_work_due) {
         if (ret == -ECANCELED) {
             goto scan_complete;
         }
@@ -3418,18 +3436,23 @@ scan_frame_ready:
                 dwm3000_driver_configure_wake_mesh_control_mode();
             bool recovered = recovery_ret >= 0 && reconfigure_ret >= 0;
             enum protocol_rx_recovery_result recovery_result =
-                anchor_enumeration_rx_note_recovery(
-                    recovered,
-                    recovered ? "rx-recovered" : "rx-recovery-failed");
+                enumeration_continuous_rx ?
+                    anchor_enumeration_rx_note_recovery(
+                        recovered,
+                        recovered ? "rx-recovered" :
+                                    "rx-recovery-failed") :
+                    app_survey_anchor_rx_note_recovery(recovered);
 
             if (recovery_result == PROTOCOL_RX_RECOVERY_REARMED) {
                 status_debug_printf(
-                    "DBG_ENUM_RX_RECOVERED ret=%d failure=%u\n",
+                    "DBG_PROTOCOL_RX_RECOVERED owner=%s ret=%d failure=%u\n",
+                    enumeration_continuous_rx ? "enumeration" : "survey",
                     ret,
                     (unsigned int)rx_failure);
-                goto enumeration_rx_window;
+                goto protocol_rx_window;
             }
-            LOG_ERR("enumeration RX recovery failed: ret=%d failure=%u recovery_ret=%d reconfigure_ret=%d",
+            LOG_ERR("protocol RX recovery failed: owner=%s ret=%d failure=%u recovery_ret=%d reconfigure_ret=%d",
+                    enumeration_continuous_rx ? "enumeration" : "survey",
                     ret,
                     (unsigned int)rx_failure,
                     recovery_ret,
@@ -3441,7 +3464,7 @@ scan_frame_ready:
          * not create protocol-owned relay/ACK work. Keep the configured PHY
          * and guard lease and immediately restore the operation listener.
          */
-        goto enumeration_rx_window;
+        goto protocol_rx_window;
     }
 
 scan_complete:
@@ -3451,8 +3474,11 @@ scan_complete:
     release_ret = radio_guard_uwb_release_begin(&radio_lease);
     if (release_ret == 0) {
         enumeration_continuous_rx = anchor_enumeration_rx_active();
+        survey_continuous_rx = app_survey_anchor_rx_continuous();
+        protocol_continuous_rx = enumeration_continuous_rx ||
+                                 survey_continuous_rx;
         low_power_ret = anchor_enter_low_power(
-            enumeration_continuous_rx ? APP_RADIO_LOW_POWER_IDLE :
+            protocol_continuous_rx ? APP_RADIO_LOW_POWER_IDLE :
                 app_radio_low_power_mode_for_connection(
                     mesh_anchor_connected_radio_active()),
             "low-duty-scan-release");
@@ -3535,7 +3561,8 @@ scan_complete:
     if (protocol_flood_pending) {
         next_scan_delay_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
     } else if (anchor_relay_control_followup_boost_active() ||
-               anchor_enumeration_rx_active()) {
+               anchor_enumeration_rx_active() ||
+               app_survey_anchor_rx_continuous()) {
         next_scan_delay_ms = 0u;
     }
     LOG_DBG("anchor UWB diagnostics: last_ret=%d last_rx_failure=%s last_preamble=%u scans=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u claims=%u collisions=%u wins=%u losses=%u replies=%u schedules=%u ds_ok=%u ds_fail=%u timing_rejections=%u mesh_packets=%u sample_order=%u scan_startup_us=%u scan_pll_us=%u scan_rx_us=%u awake_us=%u false_cooldowns=%u",

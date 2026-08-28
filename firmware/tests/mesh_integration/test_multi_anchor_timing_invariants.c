@@ -507,7 +507,7 @@ static void test_depth_aware_survey_control_schedule(void)
          hop_count <= UWB_ENUM_MAX_HOPS;
          hop_count++) {
         uint32_t propagation_ms =
-            discovery_assignment_control_propagation_hold_ms(hop_count);
+            discovery_assignment_activation_propagation_hold_ms(hop_count);
         uint32_t schedule_ms =
             survey_control_delivery_delay_ms(hop_count);
         uint32_t required_ms =
@@ -523,8 +523,8 @@ static void test_depth_aware_survey_control_schedule(void)
               "survey schedule must retain explicit post-delivery margin");
         if (previous_ms != 0u) {
             CHECK(schedule_ms - previous_ms ==
-                      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
-                  "each survey depth must add exactly one compact relay bound");
+                      DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+                  "each survey depth must add one activated compact relay bound");
         }
         previous_ms = schedule_ms;
     }

@@ -2612,6 +2612,18 @@ static bool mesh_c5_compact_scheduled_control(
                                                         out->payload_len);
 }
 
+static bool mesh_c5_compact_scheduled_activation(
+    const struct mesh_outbound *out)
+{
+    enum command_id command_id;
+
+    return mesh_c5_compact_scheduled_control(out) &&
+           gateway_command_extract_id(out->payload,
+                                      out->payload_len,
+                                      &command_id) == PROTO_OK &&
+           command_id == CMD_SURVEY_START;
+}
+
 static int mesh_send_c5_flood_now_until(
     const struct mesh_outbound *out,
     uint8_t purpose,
@@ -2652,12 +2664,14 @@ static int mesh_send_c5_flood_now_until(
     uint32_t enumeration_now_ms = 0u;
     bool enumeration_control;
     bool compact_scheduled_control;
+    bool compact_scheduled_activation;
     bool compact_primary_control;
     bool atomic_gateway_control;
     bool enumeration_needs_wake = false;
     bool enumeration_burst_owned = false;
     bool gateway_enumeration_quick_copies;
     bool gateway_enumeration_claim;
+    bool long_gateway_activation;
     uint16_t attempt_count;
     int ret = 0;
 
@@ -2686,6 +2700,8 @@ static int mesh_send_c5_flood_now_until(
         &enumeration_epoch,
         &enumeration_operation_budget_ms);
     compact_scheduled_control = mesh_c5_compact_scheduled_control(&tx);
+    compact_scheduled_activation =
+        mesh_c5_compact_scheduled_activation(&tx);
     compact_primary_control = enumeration_control ||
                               compact_scheduled_control;
     if ((gateway_enumeration_quick_copies || compact_primary_control) &&
@@ -2732,14 +2748,15 @@ static int mesh_send_c5_flood_now_until(
          * activation owner suppresses duplicate trains for later copies. */
         send_wake_train = send_wake_train && enumeration_needs_wake;
     }
-    if (compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR) {
-        /* START and PLAN share enumeration's one activation owner: the
-         * gateway wakes the complete route, then relays only the compact
-         * control burst while every anchor is already listening. */
+    if (compact_scheduled_control && !compact_scheduled_activation) {
+        /* START establishes survey-owned continuous Channel-5 RX at every
+         * accepting hop. PLAN therefore uses only its compact copies. */
         send_wake_train = false;
     }
     gateway_enumeration_claim =
         mesh_c5_gateway_enumeration_claim(&tx);
+    long_gateway_activation = gateway_enumeration_claim ||
+        (compact_scheduled_activation && DEVICE_ROLE == ROLE_GATEWAY);
 
     if (compact_primary_control || gateway_enumeration_quick_copies) {
         mesh_c5_enumeration_relay_burst_begin(&tx);
@@ -2754,11 +2771,15 @@ static int mesh_send_c5_flood_now_until(
     for (uint16_t attempt = 0u; attempt < attempt_count; attempt++) {
         struct app_mesh_flood_result attempt_result = {0};
         struct app_mesh_flood_progress attempt_progress = {0};
-        uint32_t wake_train_ms = send_wake_train ?
-            (gateway_enumeration_claim || compact_scheduled_control) ?
-                (attempt == 0u ?
-                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS : 0u) :
-                WAKE_ADV_MS : 0u;
+        bool one_activation_per_burst =
+            gateway_enumeration_claim || compact_scheduled_control ||
+            tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV;
+        uint32_t wake_train_ms =
+            send_wake_train && (!one_activation_per_burst || attempt == 0u) ?
+                (long_gateway_activation ?
+                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS :
+                    WAKE_ADV_MS) :
+                0u;
         uint32_t first_tx_ms = tx.earliest_tx_valid ? tx.earliest_tx_ms :
                                k_uptime_get_32();
         uint32_t wake_start_ms = wake_train_ms != 0u ?
@@ -3089,9 +3110,14 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     out->flood_retry_count = view->flood_retry_count;
     out->queued_at_valid = view->queued_at_valid;
     out->earliest_tx_valid = view->earliest_tx_valid;
+    if (mesh_c5_compact_scheduled_control(out) &&
+        !mesh_c5_compact_scheduled_activation(out)) {
+        send_wake_train = false;
+    }
     if (send_wake_train &&
         (mesh_c5_gateway_enumeration_claim(out) ||
-         mesh_c5_compact_scheduled_control(out))) {
+         (mesh_c5_compact_scheduled_activation(out) &&
+          DEVICE_ROLE == ROLE_GATEWAY))) {
         wake_train_ms =
             MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS;
     }

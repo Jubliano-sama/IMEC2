@@ -4,11 +4,15 @@
 #include "app_mesh_flood.h"
 #include "app_mesh_rx_policy.h"
 #include "discovery_assignment.h"
+#include "mesh_radio_timing.h"
 #include "gateway_command.h"
 #include "mesh_relay.h"
 #include "mesh_sim.h"
 #include "protocol.h"
+#include "protocol_rx_lifecycle.h"
 #include "serial_frame.h"
+#include "uwb.h"
+#include "uwb_session.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -22,6 +26,17 @@
 #define ROUTE_EPOCH 17u
 #define ROUTE_ADV_SEQ UINT32_C(0x48494101)
 #define RADIO_GUARD_US UINT64_C(500)
+#define RF_HIDDEN_NETWORK_ID UINT32_C(0x494d4543)
+#define RF_HIDDEN_RELAY_WAKE_START_US UINT64_C(100000)
+#define RF_HIDDEN_RELAY_WAKE_US \
+    (UINT64_C(1000) * MESH_RADIO_WAKE_TRAIN_MS)
+#define RF_HIDDEN_POST_WAKE_CLAIM_MS 500u
+#define RF_HIDDEN_CONTROL_LISTEN_US UINT64_C(200000)
+#define RF_HIDDEN_SURVEY_LISTEN_US UINT64_C(800000)
+#define RF_HIDDEN_SURVEY_GENERATION UINT64_C(0x5355525645590001)
+
+_Static_assert(MESH_RADIO_WAKE_TRAIN_MS == 500u,
+               "RF-hidden relay regressions require the ordinary 500 ms wake");
 
 static int failures;
 
@@ -131,6 +146,176 @@ static int schedule_phy_only_outbound(struct mesh_sim_world *world,
                                     MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
                                     frame, frame_len, false,
                                     transmission_index);
+}
+
+static bool schedule_relay_activation_train(struct mesh_sim_world *world,
+                                            uint8_t sender_index,
+                                            uint64_t sender_id,
+                                            uint64_t start_us,
+                                            uint64_t *last_end_us)
+{
+    struct uwb_clicker_session session;
+    const struct uwb_clicker_config config = {
+        .network_id = RF_HIDDEN_NETWORK_ID,
+        .clicker_id = sender_id,
+        .click_event_id = ROUTE_ADV_SEQ,
+        .nonce = UINT64_C(0x48494157414b4501),
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .max_attempts = 1u,
+        .samples_per_anchor = 1u,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .flags = FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                 FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+    };
+    const uint64_t close_us = start_us + RF_HIDDEN_RELAY_WAKE_US;
+    uint64_t at_us = start_us;
+
+    if (world == NULL || last_end_us == NULL ||
+        uwb_clicker_session_start(&session, &config) != PROTO_OK) {
+        return false;
+    }
+    *last_end_us = 0u;
+    while (at_us < close_us) {
+        struct uwb_wake_claim_frame claim;
+        uint8_t frame[UWB_WAKE_CLAIM_LEN];
+        uint64_t remaining_us = close_us - at_us;
+        uint16_t remaining_ms =
+            (uint16_t)((remaining_us + UINT64_C(999)) / UINT64_C(1000));
+        uint16_t claimed_ms =
+            (uint16_t)(remaining_ms + RF_HIDDEN_POST_WAKE_CLAIM_MS);
+        uint16_t tx_index;
+        size_t frame_len = 0u;
+        uint32_t jitter_us;
+
+        if (uwb_clicker_build_wake_claim(&session,
+                                         sender_id,
+                                         remaining_ms,
+                                         remaining_ms,
+                                         claimed_ms,
+                                         &claim) != PROTO_OK ||
+            uwb_encode_wake_claim(&claim,
+                                  frame,
+                                  sizeof(frame),
+                                  &frame_len) != PROTO_OK ||
+            mesh_sim_schedule_raw_tx(world,
+                                     sender_index,
+                                     at_us,
+                                     UWB_CHANNEL_WAKE_CONTACT,
+                                     MESH_SIM_PHY_CHANNEL5_WAKE,
+                                     frame,
+                                     frame_len,
+                                     false,
+                                     &tx_index) != MESH_SIM_OK) {
+            return false;
+        }
+        *last_end_us = world->transmissions[tx_index].end_us;
+        uwb_clicker_note_wake_claim_tx(&session, 1u);
+        jitter_us = mesh_sim_random(world) %
+                    (UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US + 1u);
+        at_us = *last_end_us + jitter_us;
+    }
+    return *last_end_us > start_us;
+}
+
+static size_t count_rf_receptions(const struct mesh_sim_world *world,
+                                  uint64_t source_id,
+                                  uint64_t receiver_id,
+                                  enum mesh_sim_phy phy)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *rx = &world->receptions[i];
+
+        if (rx->source_id == source_id && rx->receiver_id == receiver_id &&
+            rx->phy == phy && rx->outcome == MESH_SIM_RX_DECODED) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static bool relay_activation_delivers_to_low_duty_child(
+    struct mesh_sim_world *world,
+    uint8_t relay_index,
+    uint8_t child_index,
+    uint64_t relay_id,
+    uint64_t child_id,
+    const struct mesh_outbound *outbound,
+    uint64_t control_listen_us,
+    uint16_t *listener_index)
+{
+    uint16_t tx_index;
+    uint64_t wake_last_end_us;
+    uint64_t listener_start_us;
+    uint64_t adv_start_us;
+    uint64_t listener_end_us;
+    size_t control_receptions;
+
+    if (world == NULL || outbound == NULL || control_listen_us == 0u) {
+        return false;
+    }
+    control_receptions = count_rf_receptions(
+        world, relay_id, child_id, MESH_SIM_PHY_CHANNEL5_MESH_CONTROL);
+
+    /* The bare relay copy falls in the child's production low-duty gap. */
+    if (schedule_phy_only_outbound(world,
+                                   relay_index,
+                                   UINT64_C(50000),
+                                   outbound,
+                                   &tx_index) != MESH_SIM_OK ||
+        mesh_sim_run_until(world,
+                           world->transmissions[tx_index].end_us + 1u) !=
+            MESH_SIM_OK ||
+        count_rf_receptions(world,
+                            relay_id,
+                            child_id,
+                            MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) !=
+            control_receptions ||
+        !schedule_relay_activation_train(world,
+                                         relay_index,
+                                         relay_id,
+                                         RF_HIDDEN_RELAY_WAKE_START_US,
+                                         &wake_last_end_us) ||
+        mesh_sim_run_until(world, wake_last_end_us + 1u) != MESH_SIM_OK ||
+        count_rf_receptions(world,
+                            relay_id,
+                            child_id,
+                            MESH_SIM_PHY_CHANNEL5_WAKE) == 0u ||
+        world->roles[child_index].anchor_session.diagnostics.claims == 0u) {
+        return false;
+    }
+
+    /* Low-duty acquisition is physical. This broad follow-up slice models
+     * production's decoded-claim handoff to the extended-PHR listener. */
+    listener_start_us = world->now_us +
+        (uint64_t)MESH_RADIO_EVENT_RETUNE_GUARD_MS * 1000u;
+    adv_start_us = listener_start_us + RADIO_GUARD_US;
+    listener_end_us = listener_start_us + control_listen_us;
+    if (mesh_sim_schedule_rx(world,
+                             child_index,
+                             listener_start_us,
+                             listener_end_us,
+                             UWB_CHANNEL_WAKE_CONTACT,
+                             MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                             listener_index) != MESH_SIM_OK ||
+        schedule_phy_only_outbound(world,
+                                   relay_index,
+                                   adv_start_us,
+                                   outbound,
+                                   &tx_index) != MESH_SIM_OK ||
+        mesh_sim_run_until(world,
+                           world->transmissions[tx_index].end_us + 1u) !=
+            MESH_SIM_OK) {
+        return false;
+    }
+    return count_rf_receptions(world,
+                               relay_id,
+                               child_id,
+                               MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) ==
+           control_receptions + 1u;
 }
 
 static void test_here_i_am_direct_scale_matrix(void)
@@ -338,6 +523,458 @@ static void test_here_i_am_20_direct_50_mixed_hop_radio_scale(void)
                               receiver - DIRECT_ANCHORS - SECOND_HOP_ANCHORS;
         }
         CHECK(rx->source_id == expected_source);
+    }
+}
+
+static void test_here_i_am_relay_wakes_rf_hidden_low_duty_child(void)
+{
+    static struct mesh_sim_world world;
+    const uint64_t relay_id = ANCHOR_BASE + 300u;
+    const uint64_t child_id = ANCHOR_BASE + 301u;
+    const struct uwb_anchor_config child_config = {
+        .network_id = RF_HIDDEN_NETWORK_ID,
+        .anchor_id = child_id,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+    };
+    struct mesh_outbound gateway_adv;
+    struct mesh_relay_result relay_result;
+    struct mesh_relay_result child_result;
+    uint8_t gateway_index;
+    uint8_t relay_index;
+    uint8_t child_index;
+
+    mesh_sim_init(&world, UINT32_C(0x48494131));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+              GATEWAY_ID, ROUTE_EPOCH, &gateway_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, relay_id,
+              GATEWAY_ID, ROUTE_EPOCH, &relay_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, child_id,
+              GATEWAY_ID, ROUTE_EPOCH, &child_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, gateway_index, relay_index, 100u, 0u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, relay_index, child_index, 100u, 0u) ==
+          MESH_SIM_OK);
+    CHECK(!world.reachable[gateway_index][child_index]);
+    CHECK(mesh_sim_init_anchor_session(&world, child_index, &child_config) ==
+          PROTO_OK);
+    CHECK(mesh_sim_start_anchor_low_duty(&world, child_index, 0u) ==
+          MESH_SIM_OK);
+
+    CHECK(mesh_relay_build_gateway_route_adv(
+              &world.roles[gateway_index].relay,
+              ROUTE_ADV_SEQ,
+              10u,
+              &gateway_adv) == PROTO_OK);
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[relay_index].relay,
+              &gateway_adv.packet,
+              gateway_adv.payload,
+              gateway_adv.payload_len,
+              GATEWAY_ID,
+              100u,
+              11u,
+              UINT32_C(0x48494152),
+              &relay_result) == PROTO_OK);
+    CHECK(relay_result.status == PROTO_OK);
+    CHECK(has_action(&relay_result,
+                     MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    CHECK(route_selected(&world.roles[child_index].relay.upstream) == NULL);
+    CHECK(relay_activation_delivers_to_low_duty_child(
+              &world,
+              relay_index,
+              child_index,
+              relay_id,
+              child_id,
+              &relay_result.gateway_route_adv,
+              RF_HIDDEN_CONTROL_LISTEN_US,
+              NULL));
+
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[child_index].relay,
+              &relay_result.gateway_route_adv.packet,
+              relay_result.gateway_route_adv.payload,
+              relay_result.gateway_route_adv.payload_len,
+              relay_id,
+              100u,
+              (uint32_t)(world.now_us / 1000u),
+              UINT32_C(0x48494143),
+              &child_result) == PROTO_OK);
+    CHECK(child_result.status == PROTO_OK);
+    CHECK(route_selected(&world.roles[child_index].relay.upstream) != NULL);
+    CHECK(route_selected(&world.roles[child_index].relay.upstream)->next_hop_id ==
+          relay_id);
+}
+
+static void test_compact_survey_relay_wakes_rf_hidden_low_duty_child(void)
+{
+    static const enum command_id command_ids[] = {
+        CMD_SURVEY_START,
+        CMD_SURVEY_PLAN,
+    };
+    static struct mesh_sim_world world;
+    const uint64_t relay_id = ANCHOR_BASE + 320u;
+    const uint64_t child_id = ANCHOR_BASE + 330u;
+    const struct uwb_anchor_config child_config = {
+        .network_id = RF_HIDDEN_NETWORK_ID,
+        .anchor_id = child_id,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+    };
+    struct proto_packet commands[2];
+    struct mesh_relay_result relay_results[2];
+    struct mesh_relay_result child_result;
+    struct protocol_rx_lifecycle lifecycle;
+    uint8_t payloads[2][64];
+    size_t payload_lengths[2] = {0u};
+    size_t wake_receptions;
+    size_t control_receptions;
+    uint64_t control_tx_us;
+    uint16_t control_window_index;
+    uint16_t tx_index;
+    uint8_t gateway_index;
+    uint8_t relay_index;
+    uint8_t child_index;
+
+    for (size_t i = 0u; i < sizeof(command_ids) / sizeof(command_ids[0]); i++) {
+        commands[i] = (struct proto_packet) {
+            .msg_type = MSG_COMMAND,
+            .src_id = GATEWAY_ID,
+            .dst_id = MESH_BROADCAST_ID,
+            .session_id = 7200u + (uint32_t)i,
+            .seq = (uint16_t)(40u + i),
+            .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+        };
+        CHECK(mesh_append_command_id(payloads[i],
+                                     sizeof(payloads[i]),
+                                     &payload_lengths[i],
+                                     command_ids[i]) == PROTO_OK);
+        CHECK(tlv_append_u8(payloads[i],
+                            sizeof(payloads[i]),
+                            &payload_lengths[i],
+                            TLV_COMMAND_SCOPE,
+                            CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+        CHECK(tlv_append_u8(payloads[i],
+                            sizeof(payloads[i]),
+                            &payload_lengths[i],
+                            TLV_COMMAND_RESPONSE_MODE,
+                            CMD_RESPONSE_NONE) == PROTO_OK);
+        CHECK(tlv_append_u32(payloads[i],
+                             sizeof(payloads[i]),
+                             &payload_lengths[i],
+                             TLV_COMMAND_SEQ,
+                             commands[i].session_id) == PROTO_OK);
+        CHECK(tlv_append_u32(payloads[i],
+                             sizeof(payloads[i]),
+                             &payload_lengths[i],
+                             TLV_FLOOD_EPOCH_ID,
+                             8200u + (uint32_t)i) == PROTO_OK);
+        commands[i].payload_len = (uint16_t)payload_lengths[i];
+        CHECK(gateway_command_uses_compact_scheduled_flood(
+                  payloads[i], payload_lengths[i]));
+    }
+
+    mesh_sim_init(&world, UINT32_C(0x53555230));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+              GATEWAY_ID, ROUTE_EPOCH, &gateway_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, relay_id,
+              GATEWAY_ID, ROUTE_EPOCH, &relay_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, child_id,
+              GATEWAY_ID, ROUTE_EPOCH, &child_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, gateway_index, relay_index,
+                            100u, 0u) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, relay_index, child_index,
+                            100u, 0u) == MESH_SIM_OK);
+    CHECK(!world.reachable[gateway_index][child_index]);
+    CHECK(mesh_sim_init_anchor_session(&world,
+                                       child_index,
+                                       &child_config) == PROTO_OK);
+    CHECK(mesh_sim_start_anchor_low_duty(&world, child_index, 0u) ==
+          MESH_SIM_OK);
+    protocol_rx_lifecycle_init(&lifecycle);
+
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[relay_index].relay,
+              &commands[0],
+              payloads[0],
+              payload_lengths[0],
+              GATEWAY_ID,
+              100u,
+              11u,
+              UINT32_C(0x53555252),
+              &relay_results[0]) == PROTO_OK);
+    CHECK(relay_results[0].status == PROTO_OK);
+    CHECK(has_action(&relay_results[0], MESH_RELAY_ACTION_FORWARD));
+    CHECK(relay_results[0].forward.flood_retry_count ==
+          MESH_ENUMERATION_RELAY_COPY_COUNT - 1u);
+    CHECK(relay_activation_delivers_to_low_duty_child(
+              &world,
+              relay_index,
+              child_index,
+              relay_id,
+              child_id,
+              &relay_results[0].forward,
+              RF_HIDDEN_SURVEY_LISTEN_US,
+              &control_window_index));
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[child_index].relay,
+              &relay_results[0].forward.packet,
+              relay_results[0].forward.payload,
+              relay_results[0].forward.payload_len,
+              relay_id,
+              100u,
+              (uint32_t)(world.now_us / 1000u),
+              UINT32_C(0x53555243),
+              &child_result) == PROTO_OK);
+    CHECK(child_result.status == PROTO_OK);
+    CHECK(has_action(&child_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    CHECK(protocol_rx_lifecycle_begin(
+              &lifecycle,
+              PROTOCOL_RX_OPERATION_SURVEY,
+              RF_HIDDEN_SURVEY_GENERATION,
+              (uint32_t)(world.now_us / 1000u),
+              (uint32_t)(world.now_us / 1000u) + 5000u) ==
+          PROTOCOL_RX_BEGIN_ACCEPTED);
+    CHECK(lifecycle.mode == PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5);
+
+    wake_receptions = count_rf_receptions(
+        &world, relay_id, child_id, MESH_SIM_PHY_CHANNEL5_WAKE);
+    control_receptions = count_rf_receptions(
+        &world, relay_id, child_id, MESH_SIM_PHY_CHANNEL5_MESH_CONTROL);
+    CHECK(wake_receptions > 0u);
+    CHECK(world.rx_windows[control_window_index].continuous_operation);
+
+    /* The initial START activation owns all three copies. Once the first
+     * copy starts the survey listener, its two redrives are bare. */
+    for (uint8_t redrive = 0u;
+         redrive < MESH_ENUMERATION_RELAY_COPY_COUNT - 1u;
+         redrive++) {
+        control_tx_us = world.now_us + UINT64_C(100000);
+        CHECK(schedule_phy_only_outbound(&world,
+                                         relay_index,
+                                         control_tx_us,
+                                         &relay_results[0].forward,
+                                         &tx_index) == MESH_SIM_OK);
+        CHECK(world.transmissions[tx_index].end_us <
+              world.rx_windows[control_window_index].end_us);
+        CHECK(mesh_sim_run_until(
+                  &world,
+                  world.transmissions[tx_index].end_us + 1u) == MESH_SIM_OK);
+        CHECK(count_rf_receptions(
+                  &world,
+                  relay_id,
+                  child_id,
+                  MESH_SIM_PHY_CHANNEL5_WAKE) == wake_receptions);
+        control_receptions++;
+        CHECK(count_rf_receptions(
+                  &world,
+                  relay_id,
+                  child_id,
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) ==
+              control_receptions);
+    }
+
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[relay_index].relay,
+              &commands[1],
+              payloads[1],
+              payload_lengths[1],
+              GATEWAY_ID,
+              100u,
+              (uint32_t)(world.now_us / 1000u),
+              UINT32_C(0x53555253),
+              &relay_results[1]) == PROTO_OK);
+    CHECK(relay_results[1].status == PROTO_OK);
+    CHECK(has_action(&relay_results[1], MESH_RELAY_ACTION_FORWARD));
+    CHECK(relay_results[1].forward.flood_retry_count ==
+          MESH_ENUMERATION_RELAY_COPY_COUNT - 1u);
+    control_tx_us = world.now_us + UINT64_C(100000);
+    CHECK(schedule_phy_only_outbound(&world,
+                                     relay_index,
+                                     control_tx_us,
+                                     &relay_results[1].forward,
+                                     &tx_index) == MESH_SIM_OK);
+    CHECK(world.transmissions[tx_index].end_us <
+          world.rx_windows[control_window_index].end_us);
+    CHECK(mesh_sim_run_until(
+              &world,
+              world.transmissions[tx_index].end_us + 1u) == MESH_SIM_OK);
+    CHECK(count_rf_receptions(
+              &world,
+              relay_id,
+              child_id,
+              MESH_SIM_PHY_CHANNEL5_WAKE) == wake_receptions);
+    control_receptions++;
+    CHECK(count_rf_receptions(
+              &world,
+              relay_id,
+              child_id,
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) == control_receptions);
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[child_index].relay,
+              &relay_results[1].forward.packet,
+              relay_results[1].forward.payload,
+              relay_results[1].forward.payload_len,
+              relay_id,
+              100u,
+              (uint32_t)(world.now_us / 1000u),
+              UINT32_C(0x53555244),
+              &child_result) == PROTO_OK);
+    CHECK(child_result.status == PROTO_OK);
+    CHECK(has_action(&child_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    CHECK(has_action(&child_result, MESH_RELAY_ACTION_FORWARD));
+    CHECK(protocol_rx_lifecycle_set_deadline(
+              &lifecycle,
+              PROTOCOL_RX_OPERATION_SURVEY,
+              RF_HIDDEN_SURVEY_GENERATION,
+              (uint32_t)(world.now_us / 1000u),
+              (uint32_t)(world.now_us / 1000u) + 5000u));
+    CHECK(lifecycle.mode == PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5);
+}
+
+static void test_survey_rx_termination_returns_to_low_duty(void)
+{
+    enum survey_termination {
+        SURVEY_TERMINATION_COMPLETE,
+        SURVEY_TERMINATION_CANCEL,
+        SURVEY_TERMINATION_EXPIRE,
+        SURVEY_TERMINATION_COUNT,
+    };
+    static struct mesh_sim_world world;
+
+    for (enum survey_termination termination = SURVEY_TERMINATION_COMPLETE;
+         termination < SURVEY_TERMINATION_COUNT;
+         termination++) {
+        const uint64_t relay_id = ANCHOR_BASE + 340u + termination;
+        const uint64_t child_id = ANCHOR_BASE + 350u + termination;
+        const uint64_t generation = RF_HIDDEN_SURVEY_GENERATION + termination;
+        const uint64_t terminal_us = UINT64_C(100000);
+        struct protocol_rx_lifecycle lifecycle;
+        struct mesh_outbound plan = {
+            .packet = {
+                .msg_type = MSG_COMMAND,
+                .src_id = GATEWAY_ID,
+                .dst_id = MESH_BROADCAST_ID,
+                .session_id = 7300u + (uint32_t)termination,
+                .seq = (uint16_t)(50u + termination),
+                .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+            },
+            .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+        };
+        size_t payload_len = 0u;
+        size_t control_receptions;
+        uint64_t low_duty_gap_tx_us;
+        uint16_t continuous_window;
+        uint16_t low_duty_window;
+        uint16_t tx_index;
+        uint8_t relay_index;
+        uint8_t child_index;
+
+        CHECK(mesh_append_command_id(plan.payload,
+                                     sizeof(plan.payload),
+                                     &payload_len,
+                                     CMD_SURVEY_PLAN) == PROTO_OK);
+        CHECK(tlv_append_u8(plan.payload,
+                            sizeof(plan.payload),
+                            &payload_len,
+                            TLV_COMMAND_SCOPE,
+                            CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+        CHECK(tlv_append_u8(plan.payload,
+                            sizeof(plan.payload),
+                            &payload_len,
+                            TLV_COMMAND_RESPONSE_MODE,
+                            CMD_RESPONSE_NONE) == PROTO_OK);
+        CHECK(tlv_append_u32(plan.payload,
+                             sizeof(plan.payload),
+                             &payload_len,
+                             TLV_COMMAND_SEQ,
+                             plan.packet.session_id) == PROTO_OK);
+        CHECK(tlv_append_u32(plan.payload,
+                             sizeof(plan.payload),
+                             &payload_len,
+                             TLV_FLOOD_EPOCH_ID,
+                             8300u + (uint32_t)termination) == PROTO_OK);
+        plan.payload_len = (uint16_t)payload_len;
+        plan.packet.payload_len = (uint16_t)payload_len;
+
+        mesh_sim_init(&world, UINT32_C(0x53555260) + termination);
+        CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, relay_id,
+                  GATEWAY_ID, ROUTE_EPOCH, &relay_index) == MESH_SIM_OK);
+        CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, child_id,
+                  GATEWAY_ID, ROUTE_EPOCH, &child_index) == MESH_SIM_OK);
+        CHECK(mesh_sim_set_link(&world, relay_index, child_index,
+                                100u, 0u) == MESH_SIM_OK);
+        protocol_rx_lifecycle_init(&lifecycle);
+        CHECK(protocol_rx_lifecycle_begin(
+                  &lifecycle,
+                  PROTOCOL_RX_OPERATION_SURVEY,
+                  generation,
+                  0u,
+                  (uint32_t)(terminal_us / 1000u)) ==
+              PROTOCOL_RX_BEGIN_ACCEPTED);
+        CHECK(mesh_sim_schedule_rx(&world,
+                                   child_index,
+                                   0u,
+                                   terminal_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   &continuous_window) == MESH_SIM_OK);
+        CHECK(world.rx_windows[continuous_window].continuous_operation);
+        CHECK(schedule_phy_only_outbound(&world,
+                                         relay_index,
+                                         UINT64_C(50000),
+                                         &plan,
+                                         &tx_index) == MESH_SIM_OK);
+        CHECK(mesh_sim_run_until(&world, terminal_us) == MESH_SIM_OK);
+        CHECK(count_rf_receptions(
+                  &world,
+                  relay_id,
+                  child_id,
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) == 1u);
+
+        if (termination == SURVEY_TERMINATION_EXPIRE) {
+            CHECK(protocol_rx_lifecycle_expire(
+                      &lifecycle, (uint32_t)(terminal_us / 1000u)));
+        } else {
+            CHECK(protocol_rx_lifecycle_terminate(
+                      &lifecycle,
+                      PROTOCOL_RX_OPERATION_SURVEY,
+                      generation));
+        }
+        CHECK(lifecycle.operation == PROTOCOL_RX_OPERATION_NONE);
+        CHECK(lifecycle.mode == PROTOCOL_RX_MODE_LOW_DUTY);
+
+        CHECK(mesh_sim_start_anchor_low_duty(
+                  &world, child_index, world.now_us) == MESH_SIM_OK);
+        CHECK(mesh_sim_run_until(&world, world.now_us) == MESH_SIM_OK);
+        CHECK(world.rx_window_count >= 2u);
+        low_duty_window = (uint16_t)(world.rx_window_count - 1u);
+        CHECK(world.rx_windows[low_duty_window].periodic_low_duty);
+        CHECK(world.rx_windows[low_duty_window].phy ==
+              MESH_SIM_PHY_CHANNEL5_WAKE);
+        CHECK(mesh_sim_run_until(
+                  &world,
+                  world.rx_windows[low_duty_window].end_us + 1u) ==
+              MESH_SIM_OK);
+        CHECK(world.transition_kind_counts[
+                  MESH_SIM_TRANSITION_LOW_DUTY_RESCHEDULED] > 0u);
+
+        control_receptions = count_rf_receptions(
+            &world, relay_id, child_id, MESH_SIM_PHY_CHANNEL5_MESH_CONTROL);
+        low_duty_gap_tx_us = world.now_us + UINT64_C(50000);
+        CHECK(schedule_phy_only_outbound(&world,
+                                         relay_index,
+                                         low_duty_gap_tx_us,
+                                         &plan,
+                                         &tx_index) == MESH_SIM_OK);
+        CHECK(mesh_sim_run_until(
+                  &world,
+                  world.transmissions[tx_index].end_us + 1u) == MESH_SIM_OK);
+        CHECK(count_rf_receptions(
+                  &world,
+                  relay_id,
+                  child_id,
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) == control_receptions);
     }
 }
 
@@ -1008,6 +1645,9 @@ int main(void)
     test_here_i_am_production_helper_composition();
     test_here_i_am_direct_scale_matrix();
     test_here_i_am_20_direct_50_mixed_hop_radio_scale();
+    test_here_i_am_relay_wakes_rf_hidden_low_duty_child();
+    test_compact_survey_relay_wakes_rf_hidden_low_duty_child();
+    test_survey_rx_termination_returns_to_low_duty();
     test_here_i_am_ttl_and_epoch_fail_closed();
     test_gateway_control_click_and_busy_deferral();
     test_gateway_control_rx_handoff_stress_sweep();
@@ -1015,7 +1655,7 @@ int main(void)
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {
-        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/ttl8/radio handoff=512 due-gate=4096");
+        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/rf-hidden-wake/ttl8 compact-survey=initial-wake/continuous-redrive-plan/low-duty-termination radio-handoff=512 due-gate=4096");
     }
     return failures == 0 ? 0 : 1;
 }

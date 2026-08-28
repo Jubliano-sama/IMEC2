@@ -3,6 +3,7 @@
 
 #include "discovery_assignment.h"
 #include "protocol.h"
+#include "protocol_rx_lifecycle.h"
 #include "survey_protocol.h"
 #include "survey_response_lane.h"
 
@@ -63,5 +64,8 @@ void app_survey_anchor_clear_ram_roster(void);
 int app_survey_anchor_apply_control(const struct proto_packet *packet,
                                     const struct survey_control *control);
 bool app_survey_anchor_active(void);
+bool app_survey_anchor_rx_continuous(void);
+enum protocol_rx_recovery_result app_survey_anchor_rx_note_recovery(
+    bool recovered);
 
 #endif
