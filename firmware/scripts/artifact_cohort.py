@@ -76,26 +76,6 @@ class CohortError(RuntimeError):
     """A cohort or artifact identity could not be established exactly."""
 
 
-def _repository_venv_executable(
-    repo_root: Path,
-    name: str,
-    *,
-    platform_name: str = os.name,
-) -> str:
-    if platform_name == "nt":
-        candidates = (
-            repo_root / ".venv" / "Scripts" / f"{name}.exe",
-            repo_root / ".venv" / "Scripts" / name,
-            repo_root / ".venv" / "bin" / name,
-        )
-    else:
-        candidates = (
-            repo_root / ".venv" / "bin" / name,
-            repo_root / ".venv" / "Scripts" / f"{name}.exe",
-        )
-    return str(next((path for path in candidates if path.is_file()), name))
-
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -108,18 +88,6 @@ def _canonical(value: object) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
     ).encode("ascii")
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        # CPython cannot open Windows directories for fsync. File contents are
-        # flushed before linking; NTFS journals the subsequent metadata update.
-        return
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _content_id(value: object) -> str:
@@ -322,7 +290,8 @@ def _dependency_records(
 def _west_project_records(repo_root: Path) -> list[dict[str, object]]:
     if not (repo_root / ".west" / "config").is_file():
         return []
-    executable = _repository_venv_executable(repo_root, "west")
+    repository_west = repo_root / ".venv" / "bin" / "west"
+    executable = str(repository_west) if repository_west.is_file() else "west"
     try:
         result = subprocess.run(
             [
@@ -561,29 +530,28 @@ def _persist_content_addressed(
         f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
     )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    temporary_mode = 0o600 if os.name == "nt" else 0o444
-    destination_created = False
     try:
-        descriptor = os.open(temporary, flags, temporary_mode)
+        descriptor = os.open(temporary, flags, 0o444)
         with os.fdopen(descriptor, "wb") as output:
             output.write(encoded)
             output.flush()
             os.fsync(output.fileno())
         try:
             os.link(temporary, destination)
-            destination_created = True
         except FileExistsError:
             if destination.read_bytes() != encoded:
                 raise CohortError(
                     "content-addressed cohort path contains different data"
                 )
-        _fsync_directory(output_directory)
+        directory = os.open(
+            output_directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
-        if os.name == "nt" and temporary.exists():
-            os.chmod(temporary, 0o600)
         temporary.unlink(missing_ok=True)
-    if os.name == "nt" and destination_created:
-        os.chmod(destination, 0o444)
     return destination
 
 

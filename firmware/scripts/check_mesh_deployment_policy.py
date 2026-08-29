@@ -64,7 +64,7 @@ def _verify_flasher_source(repo_root: Path) -> list[str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     required = (
         "FLASH_FREQUENCY_HZ = 4_000_000",
-        "WEST_EXECUTABLE = _venv_executable(\"west\")",
+        "WEST_EXECUTABLE = REPO_ROOT / \".venv\" / \"bin\" / \"west\"",
         "--frequency",
         "--stage-only",
         "--hardware-manifest",
@@ -79,7 +79,7 @@ def _verify_flasher_source(repo_root: Path) -> list[str]:
 def check_repository(repo_root: Path = REPO_ROOT) -> list[str]:
     issues = _verify_flasher_source(repo_root)
     for path in _supported_files(repo_root):
-        relative = path.relative_to(repo_root).as_posix()
+        relative = path.relative_to(repo_root)
         for line_number, line in enumerate(_command_lines(path.read_text(encoding="utf-8", errors="replace")), start=1):
             if not DIRECT_FLASH.search(line):
                 continue

@@ -25,25 +25,18 @@ readback without claiming production promotion.
 from __future__ import annotations
 
 import argparse
-import errno
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
-import stat
 import subprocess
 import sys
-import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
 
 from intelhex import IntelHex
 
@@ -52,31 +45,8 @@ import verify_stack_evidence as verifier
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLASH_FREQUENCY_HZ = 4_000_000
-
-
-def _venv_executable(
-    name: str,
-    *,
-    repo_root: Path = REPO_ROOT,
-    platform_name: str = os.name,
-) -> Path:
-    """Return a repository-venv tool path for POSIX or Windows."""
-    if platform_name == "nt":
-        candidates = (
-            repo_root / ".venv" / "Scripts" / f"{name}.exe",
-            repo_root / ".venv" / "Scripts" / name,
-            repo_root / ".venv" / "bin" / name,
-        )
-    else:
-        candidates = (
-            repo_root / ".venv" / "bin" / name,
-            repo_root / ".venv" / "Scripts" / f"{name}.exe",
-        )
-    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
-
-
-WEST_EXECUTABLE = _venv_executable("west")
-PYOCD_EXECUTABLE = _venv_executable("pyocd")
+WEST_EXECUTABLE = REPO_ROOT / ".venv" / "bin" / "west"
+PYOCD_EXECUTABLE = REPO_ROOT / ".venv" / "bin" / "pyocd"
 CAPTURE_LEDGER = REPO_ROOT / "logs" / "stack-evidence" / "verified-capture-ledger.jsonl"
 TRANSACTION_DIRECTORY = REPO_ROOT / "logs" / "stack-evidence" / "flash-transactions"
 COHORT_DIRECTORY = REPO_ROOT / "logs" / "stack-evidence" / "cohorts"
@@ -158,11 +128,6 @@ def _live_durable_preset(target_backup: Path) -> str | None:
 
 
 def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        # CPython cannot open a directory handle suitable for fsync on Windows.
-        # Every file is flushed before its metadata operation; NTFS journals the
-        # subsequent rename/unlink, which is the strongest stdlib-only boundary.
-        return
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(descriptor)
@@ -230,26 +195,9 @@ def _durable_unlink(path: Path) -> None:
         _fsync_directory(path.parent)
 
 
-def _fsync_file(path: Path) -> None:
-    if os.name != "nt":
-        with path.open("rb") as source:
-            os.fsync(source.fileno())
-        return
-
-    original_mode = stat.S_IMODE(path.stat().st_mode)
-    restore_read_only = not bool(original_mode & stat.S_IWRITE)
-    if restore_read_only:
-        os.chmod(path, original_mode | stat.S_IWRITE)
-    try:
-        with path.open("r+b") as source:
-            os.fsync(source.fileno())
-    finally:
-        if restore_read_only:
-            os.chmod(path, original_mode)
-
-
 def _durable_sync(path: Path) -> None:
-    _fsync_file(path)
+    with path.open("rb") as source:
+        os.fsync(source.fileno())
     _fsync_directory(path.parent)
 
 
@@ -258,36 +206,12 @@ def _ledger_lock(path: Path | None = None):
     path = path or CAPTURE_LEDGER
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as lock:
-        if os.name == "nt":
-            lock.seek(0, os.SEEK_END)
-            if lock.tell() == 0:
-                lock.write(b"\0")
-                lock.flush()
-                os.fsync(lock.fileno())
-            while True:
-                lock.seek(0)
-                try:
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if exc.errno not in {
-                        errno.EACCES,
-                        errno.EAGAIN,
-                        errno.EDEADLK,
-                    }:
-                        raise
-                    time.sleep(0.1)
-        else:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            if os.name == "nt":
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _ledger_records(path: Path | None = None) -> list[dict[str, object]]:
@@ -350,7 +274,7 @@ def _run(command: list[str], *, capture_output: bool = False) -> subprocess.Comp
     if command and Path(command[0]).resolve() == WEST_EXECUTABLE.resolve():
         resolved_west = WEST_EXECUTABLE.resolve()
         if (
-            resolved_west.parent.name.lower() in {"bin", "scripts"}
+            resolved_west.parent.name == "bin"
             and resolved_west.parent.parent.name == ".venv"
         ):
             working_directory = resolved_west.parents[2]
@@ -431,7 +355,7 @@ def _read_target_flash(
     destination.unlink(missing_ok=True)
     save = (
         f"savemem 0x{TARGET_FLASH_ADDRESS:x} 0x{TARGET_FLASH_SIZE:x} "
-        f"{shlex.quote(destination.resolve().as_posix())}"
+        f"{shlex.quote(str(destination))}"
     )
     if resume_after:
         # pyOCD commander connects in halt mode. Keep resume separate so a
@@ -458,7 +382,8 @@ def _verified_readback_sha256(destination: Path) -> str:
             f"target flash readback has {actual} bytes, expected {TARGET_FLASH_SIZE}"
         )
     os.chmod(destination, 0o600)
-    _fsync_file(destination)
+    with destination.open("rb") as backup:
+        os.fsync(backup.fileno())
     _fsync_directory(destination.parent)
     return _sha256(destination)
 
@@ -673,7 +598,8 @@ def _sync_capture_artifacts(manifest: Path) -> None:
     if not transcript.is_file():
         raise TransactionError("trusted capture transcript is missing before promotion")
     for path in (transcript, manifest):
-        _fsync_file(path)
+        with path.open("rb") as source:
+            os.fsync(source.fileno())
         _fsync_directory(path.parent)
 
 
