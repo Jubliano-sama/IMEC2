@@ -3,15 +3,40 @@
 from __future__ import annotations
 
 from collections import Counter, OrderedDict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 from typing import Protocol
 
-from .anchor_geometry import AnchorLayoutResult, AnchorPairDistance, solve_anchor_layout
-from .anchor_geometry_visibility import solve_visibility_branching_tuned
+from .anchor_geometry import (
+    AnchorLayoutResult,
+    AnchorPairDistance,
+    refine_anchor_layout_from_seed,
+    solve_anchor_layout,
+)
+from .anchor_geometry_connectivity import (
+    CONNECTIVITY_INTERVAL_ALGORITHM,
+    DEFAULT_NEIGHBOR_MAX_M,
+    DEFAULT_NONNEIGHBOR_MIN_M,
+    solve_connectivity_interval_layout,
+)
+from .anchor_geometry_visibility import (
+    VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
+    VISIBILITY_BRANCHING_TUNED_ALGORITHM,
+    solve_visibility_branching_neighbor_aware_tuned,
+    solve_visibility_branching_tuned,
+)
+from .anchor_geometry_seeds import (
+    SEED_AUTO,
+    SEED_CURRENT,
+    SEED_GRAPH_MDS,
+    SEED_SPRING,
+    SEED_VISIBILITY,
+    graph_mds_seed,
+)
 from .localization import LocalizationReading, LocalizationResult, solve_position
 from .command_telemetry import (
     GatewayCommandEvent, GATEWAY_COMMAND_REASON_NAMES,
@@ -168,6 +193,7 @@ class ClickLocationModel:
     def __init__(self) -> None:
         self.geometry_generation = 0
         self.positions_m: dict[str, tuple[float, float]] = {}
+        self.range_scale = 1.0
         self.current_key: tuple[int, int, int] | None = None
         self.ranges_m: dict[str, float] = {}
         self._ranges_by_key: OrderedDict[
@@ -177,14 +203,42 @@ class ClickLocationModel:
     def reset(self) -> None:
         self.geometry_generation = 0
         self.positions_m.clear()
+        self.range_scale = 1.0
         self.current_key = None
         self.ranges_m.clear()
         self._ranges_by_key.clear()
         self.state = ClickDiagnosticState("no_geometry", "No solved anchor geometry.", None, 0)
 
-    def set_geometry(self, positions: dict[str, tuple[float, float]], generation: int) -> ClickDiagnosticState:
+    def set_geometry(
+        self,
+        positions: dict[str, tuple[float, float]],
+        generation: int,
+        *,
+        range_scale: float = 1.0,
+    ) -> ClickDiagnosticState:
+        if not math.isfinite(range_scale) or range_scale <= 0.0:
+            raise ValueError("range scale must be finite and greater than zero")
+        preserve_click = bool(
+            self.positions_m
+            and positions
+            and generation == self.geometry_generation
+            and set(positions) == set(self.positions_m)
+        )
+        previous_scale = self.range_scale
         self.positions_m = dict(positions)
+        self.range_scale = range_scale
         self.geometry_generation = generation
+        if preserve_click:
+            scale_ratio = range_scale / previous_scale
+            if scale_ratio != 1.0:
+                for ranges_m in self._ranges_by_key.values():
+                    for anchor_id in ranges_m:
+                        ranges_m[anchor_id] *= scale_ratio
+            if self.current_key is not None:
+                current_ranges = self._ranges_by_key.get(self.current_key)
+                if current_ranges is not None:
+                    self.ranges_m = current_ranges
+                    return self._solve_current_ranges(self.state.wake)
         self.current_key = None
         self.ranges_m.clear()
         self._ranges_by_key.clear()
@@ -231,7 +285,44 @@ class ClickLocationModel:
         ):
             self.state = ClickDiagnosticState("invalid", f"Invalid range from {anchor_id}.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
             return self.state
-        self.ranges_m[anchor_id] = distance_mm / 1000.0
+        self.ranges_m[anchor_id] = distance_mm / 1000.0 * self.range_scale
+        return self._solve_current_ranges(wake)
+
+    def _solve_current_ranges(
+        self,
+        wake: WakeDiagnostic | None,
+    ) -> ClickDiagnosticState:
+        key = self.current_key
+        if key is None:
+            self.state = ClickDiagnosticState(
+                "stale",
+                "Waiting for a new click event.",
+                None,
+                self.geometry_generation,
+                wake=wake,
+            )
+            return self.state
+        if not self.positions_m:
+            self.state = ClickDiagnosticState(
+                "invalid",
+                "No solved anchor geometry.",
+                key,
+                self.geometry_generation,
+                dict(self.ranges_m),
+                wake=wake,
+            )
+            return self.state
+        absent = sorted(set(self.ranges_m) - set(self.positions_m))
+        if absent:
+            self.state = ClickDiagnosticState(
+                "invalid",
+                f"Anchor {absent[0]} is absent from current geometry.",
+                key,
+                self.geometry_generation,
+                dict(self.ranges_m),
+                wake=wake,
+            )
+            return self.state
         if len(self.ranges_m) < 3:
             self.state = ClickDiagnosticState("pending", f"Waiting for ranges ({len(self.ranges_m)}/3).", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
             return self.state
@@ -581,18 +672,117 @@ def command_step_sentence(event: GatewayCommandEvent) -> str:
     return GATEWAY_COMMAND_STAGE_NAMES[event.stage]
 
 
+def select_nearest_anchor_ranges(
+    pairs: tuple[AnchorPairDistance, ...],
+    nearest_per_anchor: int,
+) -> tuple[AnchorPairDistance, ...]:
+    """Keep the union of every anchor's N shortest measured links.
+
+    The union keeps every anchor represented even when another endpoint has
+    already filled its own nearest-link quota. Zero intentionally means that
+    no distance filtering is requested.
+    """
+
+    if isinstance(nearest_per_anchor, bool) or nearest_per_anchor < 0:
+        raise ValueError("Closest ranges per anchor must be zero or greater.")
+    if nearest_per_anchor == 0:
+        return pairs
+    by_anchor: dict[str, list[tuple[float, str, int]]] = {}
+    for index, pair in enumerate(pairs):
+        by_anchor.setdefault(pair.anchor_a_id, []).append(
+            (pair.distance_m, pair.anchor_b_id, index)
+        )
+        by_anchor.setdefault(pair.anchor_b_id, []).append(
+            (pair.distance_m, pair.anchor_a_id, index)
+        )
+    selected: set[int] = set()
+    for candidates in by_anchor.values():
+        candidates.sort()
+        selected.update(
+            index for _distance, _other, index in candidates[:nearest_per_anchor]
+        )
+    return tuple(pair for index, pair in enumerate(pairs) if index in selected)
+
+
 def solve_geometry(
     pairs: tuple[AnchorPairDistance, ...],
     *,
     solver: str,
-    missing_pairs: frozenset[tuple[str, str]] = frozenset(),
+    seed: str = "Auto (best of all)",
+    neighbor_pairs: frozenset[tuple[str, str]] = frozenset(),
+    nonneighbor_pairs: frozenset[tuple[str, str]] = frozenset(),
+    current_positions_m: dict[str, tuple[float, float]] | None = None,
+    nonneighbor_min_m: float = DEFAULT_NONNEIGHBOR_MIN_M,
+    neighbor_max_m: float = DEFAULT_NEIGHBOR_MAX_M,
 ) -> AnchorLayoutResult:
     """Run the retained standalone geometry solver selected by the caller."""
-    if solver == "Visibility branching tuned":
+    if solver == CONNECTIVITY_INTERVAL_ALGORITHM:
+        return solve_connectivity_interval_layout(
+            pairs,
+            neighbor_pairs=neighbor_pairs,
+            nonneighbor_pairs=nonneighbor_pairs,
+            seed=seed,
+            current_positions_m=current_positions_m,
+            nonneighbor_min_m=nonneighbor_min_m,
+            neighbor_max_m=neighbor_max_m,
+        )
+    if solver == VISIBILITY_BRANCHING_TUNED_ALGORITHM:
         return solve_visibility_branching_tuned(
             pairs,
-            missing_pairs=missing_pairs,
+            missing_pairs=nonneighbor_pairs,
+            neighbor_pairs=neighbor_pairs,
+            seed=seed,
+            current_positions_m=current_positions_m,
+            nonneighbor_min_m=nonneighbor_min_m,
+            neighbor_max_m=neighbor_max_m,
+        )
+    if solver == VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM:
+        return solve_visibility_branching_neighbor_aware_tuned(
+            pairs,
+            missing_pairs=nonneighbor_pairs,
+            neighbor_pairs=neighbor_pairs,
+            seed=seed,
+            current_positions_m=current_positions_m,
+            nonneighbor_min_m=nonneighbor_min_m,
+            neighbor_max_m=neighbor_max_m,
         )
     if solver == "Spring energy":
-        return solve_anchor_layout(pairs)
+        if seed in (SEED_AUTO, SEED_SPRING):
+            return solve_anchor_layout(pairs)
+        anchor_ids = sorted({
+            anchor_id
+            for pair in pairs
+            for anchor_id in (pair.anchor_a_id, pair.anchor_b_id)
+        })
+        if seed == SEED_CURRENT:
+            if current_positions_m is None:
+                raise ValueError("No current solved layout is available as a seed.")
+            if set(current_positions_m) != set(anchor_ids):
+                raise ValueError("Current layout seed does not match the anchor graph.")
+            seed_positions = current_positions_m
+        elif seed == SEED_GRAPH_MDS:
+            seed_positions = graph_mds_seed(list(pairs), anchor_ids)
+        elif seed == SEED_VISIBILITY:
+            seed_positions = solve_visibility_branching_tuned(
+                pairs,
+                missing_pairs=nonneighbor_pairs,
+                neighbor_pairs=neighbor_pairs,
+                seed=SEED_VISIBILITY,
+                current_positions_m=current_positions_m,
+                nonneighbor_min_m=nonneighbor_min_m,
+                neighbor_max_m=neighbor_max_m,
+            ).positions_m
+        else:
+            raise ValueError(f"Unknown geometry seed: {seed}")
+        result = refine_anchor_layout_from_seed(pairs, seed_positions)
+        return replace(result, algorithm=f"Spring energy; seed {seed}")
     raise ValueError(f"Unknown geometry solver: {solver}")
+
+
+def refine_geometry(
+    pairs: tuple[AnchorPairDistance, ...],
+    positions_m: dict[str, tuple[float, float]],
+) -> AnchorLayoutResult:
+    """Run one measured-distance-only pass from the selected solved layout."""
+
+    return refine_anchor_layout_from_seed(pairs, positions_m)

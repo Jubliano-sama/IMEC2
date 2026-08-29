@@ -25,7 +25,7 @@ class MeshDeploymentPolicyTests(unittest.TestCase):
         flasher.parent.mkdir(parents=True)
         flasher.write_text(
             "FLASH_FREQUENCY_HZ = 4_000_000\n"
-            "WEST_EXECUTABLE = REPO_ROOT / \".venv\" / \"bin\" / \"west\"\n"
+            "WEST_EXECUTABLE = _venv_executable(\"west\")\n"
             "verify_flash(\n--frequency\n--stage-only\n--hardware-manifest\n"
             "awaiting_qualification\n_code_sectors_match\n_record_consumed_capture\n",
             encoding="utf-8",

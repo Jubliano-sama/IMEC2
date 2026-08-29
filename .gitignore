@@ -4,6 +4,7 @@
 .zephyr/
 .venv/
 .uv-cache/
+.toolchains/
 bootloader/
 modules/
 nrf/

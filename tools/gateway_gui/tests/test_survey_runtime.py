@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 import unittest
 
+from tools.gateway_gui.anchor_geometry import AnchorLayoutResult
 from tools.gateway_gui.command_telemetry import GatewayCommandEvent
-from tools.gateway_gui.diagnostic_models import solve_geometry
+from tools.gateway_gui.diagnostic_models import anchor_label, solve_geometry
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
@@ -22,6 +23,9 @@ from tools.gateway_gui.protocol import (
     SurveyRangeResult,
 )
 from tools.gateway_gui.survey_runtime import (
+    SURVEY_PASS_ADDITIONAL_MERGE,
+    SURVEY_PASS_ADDITIONAL_ONLY,
+    SURVEY_PASS_CLOSEST_ONLY,
     StaleSurveyEvent,
     SurveyCommandOwner,
     SurveyEventNotReady,
@@ -31,6 +35,7 @@ from tools.gateway_gui.survey_runtime import (
 
 
 ANCHORS = (0xA1, 0xB2, 0xC3)
+SIX_ANCHORS = (0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6)
 
 
 def command_event(
@@ -134,6 +139,13 @@ def result_event(*, terminal: bool, generation: int = 9) -> SurveyEvent:
 
 
 def enumerate_three(model: SurveyOperationModel) -> None:
+    enumerate_roster(model, ANCHORS)
+
+
+def enumerate_roster(
+    model: SurveyOperationModel,
+    anchors: tuple[int, ...],
+) -> None:
     model.observe_command_event(
         command_event(
             kind=3,
@@ -142,7 +154,7 @@ def enumerate_three(model: SurveyOperationModel) -> None:
             terminal=True,
         )
     )
-    for slot, anchor_id in enumerate(ANCHORS):
+    for slot, anchor_id in enumerate(anchors):
         model.observe_command_event(
             command_event(
                 kind=1,
@@ -150,9 +162,9 @@ def enumerate_three(model: SurveyOperationModel) -> None:
                 command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
                 anchor_id=anchor_id,
                 slot=slot,
-                hop=slot + 1,
+                hop=(slot % 3) + 1,
                 progress=slot + 1,
-                total=3,
+                total=len(anchors),
             )
         )
     model.observe_command_event(
@@ -160,11 +172,79 @@ def enumerate_three(model: SurveyOperationModel) -> None:
             kind=1,
             stage=12,
             command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
-            progress=3,
-            total=3,
+            progress=len(anchors),
+            total=len(anchors),
             terminal=True,
         )
     )
+
+
+def complete_neighbor_event_for(
+    count: int,
+    *,
+    generation: int = 10,
+) -> SurveyEvent:
+    slots = frozenset(range(count))
+    return SurveyEvent(
+        kind=SURVEY_EVENT_NEIGHBOR_GRAPH,
+        status=SURVEY_TERMINAL_COMPLETE,
+        generation=generation,
+        assignment=assignment(),
+        partial_reasons=0,
+        occupied_slots=slots,
+        neighbor_reports=tuple(
+            SurveyNeighborReport(slot, slots - {slot})
+            for slot in sorted(slots)
+        ),
+    )
+
+
+def terminal_six_anchor_model() -> SurveyOperationModel:
+    model = SurveyOperationModel()
+    model.active = False
+    model.phase = "terminal"
+    model.pass_index = 1
+    model.generation = 9
+    model.assignment = assignment()
+    model.slot_to_anchor = dict(enumerate(SIX_ANCHORS))
+    model.slot_hops = {slot: (slot % 3) + 1 for slot in range(6)}
+    model.neighbor_reports = complete_neighbor_event_for(6).neighbor_reports
+    raw_pairs = (
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (0, 4),
+        (1, 2),
+        (1, 3),
+        (1, 5),
+        (2, 4),
+        (3, 5),
+    )
+    model.plan_pairs = tuple(
+        SurveyPlanPair(first, second, index % 3)
+        for index, (first, second) in enumerate(raw_pairs)
+    )
+    model.results = {
+        index: SurveyRangeResult(index, 5, second, 3000 + 100 * index)
+        for index, (_first, second) in enumerate(raw_pairs)
+    }
+    positions = {
+        anchor_label(anchor_id): (float(slot % 3), float(slot // 3))
+        for slot, anchor_id in enumerate(SIX_ANCHORS)
+    }
+    model.layout = AnchorLayoutResult(
+        algorithm="test layout",
+        energy=0.0,
+        rmse_m=0.0,
+        max_residual_m=0.0,
+        positions_m=positions,
+        processed_pairs=(),
+        residuals_m={},
+        warnings=(),
+        seed_count=1,
+        basin_hop_count=0,
+    )
+    return model
 
 
 class SurveyCommandOwnerTests(unittest.TestCase):
@@ -189,6 +269,155 @@ class SurveyCommandOwnerTests(unittest.TestCase):
 
 
 class SurveyOperationModelTests(unittest.TestCase):
+    def test_merged_pass_retains_positive_but_not_negative_neighbor_evidence(self) -> None:
+        model = terminal_six_anchor_model()
+        model.begin(pass_mode=SURVEY_PASS_ADDITIONAL_MERGE)
+        enumerate_roster(model, SIX_ANCHORS)
+        model.neighbor_reports = tuple(
+            SurveyNeighborReport(slot, frozenset()) for slot in range(6)
+        )
+
+        self.assertEqual(len(model.neighbor_pairs), 15)
+        self.assertEqual(model.nonneighbor_pairs, frozenset())
+
+        isolated = terminal_six_anchor_model()
+        isolated.begin(pass_mode=SURVEY_PASS_ADDITIONAL_ONLY)
+        enumerate_roster(isolated, SIX_ANCHORS)
+        isolated.neighbor_reports = tuple(
+            SurveyNeighborReport(slot, frozenset()) for slot in range(6)
+        )
+        self.assertEqual(isolated.neighbor_pairs, frozenset())
+        self.assertEqual(len(isolated.nonneighbor_pairs), 15)
+
+    def test_additional_pass_can_merge_or_use_only_new_ranges(self) -> None:
+        for pass_mode, expected_count in (
+            (SURVEY_PASS_ADDITIONAL_MERGE, 15),
+            (SURVEY_PASS_ADDITIONAL_ONLY, 6),
+        ):
+            with self.subTest(pass_mode=pass_mode):
+                model = terminal_six_anchor_model()
+                old_keys = {
+                    tuple(sorted((pair.anchor_a_id, pair.anchor_b_id)))
+                    for pair in model.current_geometry_pairs
+                }
+                model.begin(expected_anchor_count=10, pass_mode=pass_mode)
+                enumerate_roster(model, tuple(reversed(SIX_ANCHORS)))
+                event = complete_neighbor_event_for(6)
+                selected = model.select_plan_pairs(event)
+                new_keys = {
+                    tuple(sorted((
+                        anchor_label(model.slot_to_anchor[first]),
+                        anchor_label(model.slot_to_anchor[second]),
+                    )))
+                    for first, second in selected
+                }
+
+                self.assertEqual(model.phase, "waiting-start")
+                self.assertEqual(model.steps["enumeration"].state, "warning")
+                self.assertTrue(selected)
+                self.assertTrue(old_keys.isdisjoint(new_keys))
+                model.plan_pairs = tuple(
+                    SurveyPlanPair(first, second, index % 3)
+                    for index, (first, second) in enumerate(selected)
+                )
+                model.results = {
+                    index: SurveyRangeResult(index, 5, second, 5000 + index)
+                    for index, (_first, second) in enumerate(selected)
+                }
+                self.assertEqual(len(model.geometry_pairs), expected_count)
+                self.assertTrue(model.geometry_solve_ready)
+
+    def test_exhausted_followup_retains_last_solvable_dataset(self) -> None:
+        model = terminal_six_anchor_model()
+        retained = model.geometry_pairs
+        model.begin(pass_mode=SURVEY_PASS_ADDITIONAL_ONLY)
+        enumerate_roster(model, SIX_ANCHORS)
+        model.neighbor_reports = complete_neighbor_event_for(6).neighbor_reports
+        model.plan_accepted = True
+        model.requested_pairs = ()
+        model.plan_pairs = ()
+        model.phase = "terminal"
+        model.active = False
+
+        self.assertTrue(model.geometry_uses_retained_fallback)
+        self.assertEqual(model.geometry_pairs, retained)
+        self.assertTrue(model.geometry_solve_ready)
+        self.assertIn("retained", model.headline)
+
+        model.begin(pass_mode=SURVEY_PASS_ADDITIONAL_MERGE)
+        self.assertTrue(model.active)
+
+    def test_closest_iteration_uses_layout_seed_and_only_current_ranges(self) -> None:
+        model = terminal_six_anchor_model()
+        old_keys = {
+            tuple(sorted((pair.anchor_a_id, pair.anchor_b_id)))
+            for pair in model.current_geometry_pairs
+        }
+        model.begin(pass_mode=SURVEY_PASS_CLOSEST_ONLY)
+        enumerate_roster(model, SIX_ANCHORS)
+        selected = model.select_plan_pairs(complete_neighbor_event_for(6))
+        degree = {slot: 0 for slot in range(6)}
+        for first, second in selected:
+            degree[first] += 1
+            degree[second] += 1
+        self.assertLessEqual(max(degree.values()), 4)
+        self.assertTrue(selected)
+
+        model.plan_pairs = tuple(
+            SurveyPlanPair(first, second, index % 3)
+            for index, (first, second) in enumerate(selected)
+        )
+        model.results = {
+            index: SurveyRangeResult(index, 5, second, 6000 + index)
+            for index, (_first, second) in enumerate(selected)
+        }
+        current_keys = {
+            tuple(sorted((pair.anchor_a_id, pair.anchor_b_id)))
+            for pair in model.geometry_pairs
+        }
+        self.assertEqual(current_keys, {
+            tuple(sorted((
+                anchor_label(model.slot_to_anchor[first]),
+                anchor_label(model.slot_to_anchor[second]),
+            )))
+            for first, second in selected
+        })
+        self.assertNotEqual(current_keys, old_keys)
+
+    def test_followup_refuses_changed_anchor_roster(self) -> None:
+        model = terminal_six_anchor_model()
+        model.begin(pass_mode=SURVEY_PASS_ADDITIONAL_MERGE)
+
+        enumerate_roster(model, SIX_ANCHORS[:-1])
+
+        self.assertFalse(model.active)
+        self.assertEqual(model.phase, "failed")
+        self.assertIn("roster changed", model.error or "")
+
+    def test_neighbor_constraints_use_union_and_require_both_negative_reports(self) -> None:
+        model = SurveyOperationModel()
+        model.slot_to_anchor = {
+            0: 0xA1,
+            1: 0xB2,
+            2: 0xC3,
+            3: 0xD4,
+        }
+        model.neighbor_reports = (
+            SurveyNeighborReport(0, frozenset((1,))),
+            SurveyNeighborReport(1, frozenset()),
+            SurveyNeighborReport(2, frozenset((3,))),
+        )
+
+        labels = {slot: anchor_label(anchor) for slot, anchor in model.slot_to_anchor.items()}
+        self.assertEqual(
+            model.neighbor_pairs,
+            frozenset({(labels[0], labels[1]), (labels[2], labels[3])}),
+        )
+        self.assertEqual(
+            model.nonneighbor_pairs,
+            frozenset({(labels[0], labels[2]), (labels[1], labels[2])}),
+        )
+
     def model_after_enumeration(self) -> SurveyOperationModel:
         model = SurveyOperationModel()
         model.begin(expected_anchor_count=3)
@@ -224,6 +453,10 @@ class SurveyOperationModelTests(unittest.TestCase):
         self.assertEqual(set(layout.positions_m), {anchor_label for pair in model.geometry_pairs for anchor_label in (pair.anchor_a_id, pair.anchor_b_id)})
         self.assertEqual(model.steps["geometry"].state, "done")
         self.assertFalse(model.geometry_solve_pending)
+
+        resolved = replace(layout, algorithm="Explicit same-revision re-solve")
+        self.assertTrue(model.apply_layout(revision, resolved))
+        self.assertIs(model.layout, resolved)
 
         # A terminal event may repeat results after the asynchronous solver
         # has already completed. It must not put the solved revision back into
@@ -280,7 +513,7 @@ class SurveyOperationModelTests(unittest.TestCase):
                 self.assertEqual(model.phase, "waiting-start")
                 self.assertEqual(model.expected_anchor_count, 3)
                 self.assertEqual(model.steps["enumeration"].state, "warning")
-                self.assertIn("configured count", model.steps["enumeration"].detail)
+                self.assertIn("optional count hint", model.steps["enumeration"].detail)
                 self.assertNotIn("failed", model.headline.lower())
 
     def test_new_run_rejects_an_already_seen_identity(self) -> None:

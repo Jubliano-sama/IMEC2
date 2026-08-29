@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import math
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from .operation_policy import (
     OperationPolicyProfile,
@@ -1096,22 +1096,40 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
     )
 
 
-def select_survey_pairs(
-    event: SurveyEvent, *, degree_cap: int = SURVEY_MAX_DEGREE
-) -> tuple[tuple[int, int], ...]:
+def _mutual_survey_edges(
+    event: SurveyEvent,
+    excluded_pairs: Iterable[tuple[int, int]] = (),
+) -> set[tuple[int, int]]:
     if event.kind != 1:
         raise ValueError("pair selection requires a neighbor graph event")
-    if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
-        raise ValueError("survey degree cap must be in 1..4")
     heard = {report.own_slot: report.heard_slots for report in event.neighbor_reports}
-    candidates = {
+    excluded = {
+        (min(first, second), max(first, second))
+        for first, second in excluded_pairs
+        if first != second
+    }
+    return {
         (first, second)
         for first in sorted(event.occupied_slots)
         for second in sorted(event.occupied_slots)
         if first < second
         and second in heard.get(first, frozenset())
         and first in heard.get(second, frozenset())
+        and (first, second) not in excluded
     }
+
+
+def select_degree_balanced_survey_pairs(
+    event: SurveyEvent,
+    *,
+    degree_cap: int = SURVEY_MAX_DEGREE,
+    excluded_pairs: Iterable[tuple[int, int]] = (),
+) -> tuple[tuple[int, int], ...]:
+    """Retained legacy deterministic degree-balanced selector."""
+
+    if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
+        raise ValueError("survey degree cap must be in 1..4")
+    candidates = _mutual_survey_edges(event, excluded_pairs)
     degree = {slot: 0 for slot in event.occupied_slots}
     selected: list[tuple[int, int]] = []
     while candidates:
@@ -1136,6 +1154,388 @@ def select_survey_pairs(
         degree[edge[1]] += 1
         candidates.remove(edge)
     return tuple(selected)
+
+
+_RIGIDITY_PRIME = 2_147_483_647
+
+
+def _generic_coordinate(value: int) -> tuple[int, int]:
+    """Return deterministic pseudo-random coordinates in a prime field."""
+
+    def mix(seed: int) -> int:
+        seed = (seed + 0x9E3779B9) & 0xFFFFFFFF
+        seed = ((seed ^ (seed >> 16)) * 0x85EBCA6B) & 0xFFFFFFFF
+        seed = ((seed ^ (seed >> 13)) * 0xC2B2AE35) & 0xFFFFFFFF
+        return (seed ^ (seed >> 16)) % _RIGIDITY_PRIME
+
+    return mix(2 * value + 1), mix(2 * value + 2)
+
+
+def _rigidity_row(
+    edge: tuple[int, int],
+    slot_index: dict[int, int],
+) -> list[int]:
+    first, second = edge
+    first_x, first_y = _generic_coordinate(first)
+    second_x, second_y = _generic_coordinate(second)
+    delta_x = (first_x - second_x) % _RIGIDITY_PRIME
+    delta_y = (first_y - second_y) % _RIGIDITY_PRIME
+    row = [0] * (2 * len(slot_index))
+    first_index = 2 * slot_index[first]
+    second_index = 2 * slot_index[second]
+    row[first_index] = delta_x
+    row[first_index + 1] = delta_y
+    row[second_index] = (-delta_x) % _RIGIDITY_PRIME
+    row[second_index + 1] = (-delta_y) % _RIGIDITY_PRIME
+    return row
+
+
+def _basis_with_row(
+    basis: dict[int, list[int]],
+    row: list[int],
+) -> tuple[dict[int, list[int]], bool]:
+    reduced = list(row)
+    for pivot in sorted(basis):
+        factor = reduced[pivot]
+        if factor == 0:
+            continue
+        source = basis[pivot]
+        reduced = [
+            (value - factor * source_value) % _RIGIDITY_PRIME
+            for value, source_value in zip(reduced, source)
+        ]
+    pivot = next((index for index, value in enumerate(reduced) if value), None)
+    if pivot is None:
+        return basis, False
+    inverse = pow(reduced[pivot], -1, _RIGIDITY_PRIME)
+    normalized = [(value * inverse) % _RIGIDITY_PRIME for value in reduced]
+    updated: dict[int, list[int]] = {}
+    for existing_pivot, existing_row in basis.items():
+        factor = existing_row[pivot]
+        if factor == 0:
+            updated[existing_pivot] = existing_row
+            continue
+        updated[existing_pivot] = [
+            (value - factor * new_value) % _RIGIDITY_PRIME
+            for value, new_value in zip(existing_row, normalized)
+        ]
+    updated[pivot] = normalized
+    return updated, True
+
+
+def survey_pair_rigidity_rank(
+    pairs: Iterable[tuple[int, int]],
+    occupied_slots: Iterable[int],
+) -> int:
+    """Return deterministic generic 2D rigidity-matroid rank."""
+
+    slots = sorted(set(occupied_slots))
+    slot_index = {slot: index for index, slot in enumerate(slots)}
+    basis: dict[int, list[int]] = {}
+    for edge in pairs:
+        first, second = min(edge), max(edge)
+        if first == second or first not in slot_index or second not in slot_index:
+            raise ValueError("rigidity pair must name two occupied slots")
+        basis, _added = _basis_with_row(
+            basis,
+            _rigidity_row((first, second), slot_index),
+        )
+    return len(basis)
+
+
+def _selected_neighbors(
+    selected: Iterable[tuple[int, int]],
+    slots: Iterable[int],
+) -> dict[int, set[int]]:
+    neighbors = {slot: set() for slot in slots}
+    for first, second in selected:
+        neighbors[first].add(second)
+        neighbors[second].add(first)
+    return neighbors
+
+
+def _shortest_selected_path(
+    first: int,
+    second: int,
+    neighbors: dict[int, set[int]],
+) -> int:
+    frontier = [(first, 0)]
+    seen = {first}
+    while frontier:
+        current, depth = frontier.pop(0)
+        if current == second:
+            return depth
+        for neighbor in sorted(neighbors[current] - seen):
+            seen.add(neighbor)
+            frontier.append((neighbor, depth + 1))
+    return len(neighbors) + 1
+
+
+def select_rigidity_aware_survey_pairs(
+    event: SurveyEvent,
+    *,
+    degree_cap: int = SURVEY_MAX_DEGREE,
+    excluded_pairs: Iterable[tuple[int, int]] = (),
+) -> tuple[tuple[int, int], ...]:
+    """Select a connectivity- and rigidity-first degree-capped mutual-edge plan."""
+
+    if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
+        raise ValueError("survey degree cap must be in 1..4")
+    slots = sorted(event.occupied_slots)
+    candidates = _mutual_survey_edges(event, excluded_pairs)
+    candidate_degree = {
+        slot: sum(slot in edge for edge in candidates)
+        for slot in slots
+    }
+    degree = {slot: 0 for slot in slots}
+    selected: list[tuple[int, int]] = []
+    remaining = set(candidates)
+    parent = {slot: slot for slot in slots}
+
+    def find(slot: int) -> int:
+        root = slot
+        while parent[root] != root:
+            root = parent[root]
+        while parent[slot] != slot:
+            next_slot = parent[slot]
+            parent[slot] = root
+            slot = next_slot
+        return root
+
+    def union(first: int, second: int) -> None:
+        first_root = find(first)
+        second_root = find(second)
+        if first_root != second_root:
+            parent[second_root] = first_root
+
+    while True:
+        eligible = [
+            edge
+            for edge in remaining
+            if find(edge[0]) != find(edge[1])
+            and degree[edge[0]] < degree_cap
+            and degree[edge[1]] < degree_cap
+        ]
+        if not eligible:
+            break
+        edge = min(
+            eligible,
+            key=lambda item: (
+                min(candidate_degree[item[0]], candidate_degree[item[1]]),
+                max(degree[item[0]], degree[item[1]]),
+                degree[item[0]] + degree[item[1]],
+                item,
+            ),
+        )
+        selected.append(edge)
+        remaining.remove(edge)
+        degree[edge[0]] += 1
+        degree[edge[1]] += 1
+        union(*edge)
+
+    slot_index = {slot: index for index, slot in enumerate(slots)}
+    basis: dict[int, list[int]] = {}
+    for edge in selected:
+        basis, _added = _basis_with_row(basis, _rigidity_row(edge, slot_index))
+    target_rank = max(0, 2 * len(slots) - 3)
+    while len(basis) < target_rank:
+        neighbors = _selected_neighbors(selected, slots)
+        options: list[tuple[tuple[object, ...], tuple[int, int], dict[int, list[int]]]] = []
+        for edge in remaining:
+            first, second = edge
+            if degree[first] >= degree_cap or degree[second] >= degree_cap:
+                continue
+            candidate_basis, increases_rank = _basis_with_row(
+                basis,
+                _rigidity_row(edge, slot_index),
+            )
+            if not increases_rank:
+                continue
+            common_neighbors = len(neighbors[first] & neighbors[second])
+            needs_degree = int(degree[first] < 2) + int(degree[second] < 2)
+            score: tuple[object, ...] = (
+                -needs_degree,
+                -common_neighbors,
+                max(degree[first], degree[second]),
+                degree[first] + degree[second],
+                min(candidate_degree[first], candidate_degree[second]),
+                edge,
+            )
+            options.append((score, edge, candidate_basis))
+        if not options:
+            break
+        _score, edge, basis = min(options, key=lambda item: item[0])
+        selected.append(edge)
+        remaining.remove(edge)
+        degree[edge[0]] += 1
+        degree[edge[1]] += 1
+
+    while True:
+        neighbors = _selected_neighbors(selected, slots)
+        eligible = [
+            edge
+            for edge in remaining
+            if degree[edge[0]] < degree_cap and degree[edge[1]] < degree_cap
+        ]
+        if not eligible:
+            break
+        edge = min(
+            eligible,
+            key=lambda item: (
+                -_shortest_selected_path(item[0], item[1], neighbors),
+                max(degree[item[0]], degree[item[1]]),
+                degree[item[0]] + degree[item[1]],
+                item,
+            ),
+        )
+        selected.append(edge)
+        remaining.remove(edge)
+        degree[edge[0]] += 1
+        degree[edge[1]] += 1
+    return tuple(selected)
+
+
+def select_closest_survey_pairs(
+    event: SurveyEvent,
+    positions_m_by_slot: dict[int, tuple[float, float]],
+    *,
+    degree_cap: int = SURVEY_MAX_DEGREE,
+) -> tuple[tuple[int, int], ...]:
+    """Select a short, connected, rigidity-aware pass from solved positions."""
+
+    if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
+        raise ValueError("survey degree cap must be in 1..4")
+    slots = sorted(event.occupied_slots)
+    if set(positions_m_by_slot) != set(slots):
+        raise ValueError("closest-pair seed must cover every occupied survey slot")
+    if not all(
+        math.isfinite(value)
+        for position in positions_m_by_slot.values()
+        for value in position
+    ):
+        raise ValueError("closest-pair seed coordinates must be finite")
+    candidates = _mutual_survey_edges(event)
+    distances = {
+        edge: math.dist(
+            positions_m_by_slot[edge[0]],
+            positions_m_by_slot[edge[1]],
+        )
+        for edge in candidates
+    }
+    neighbor_rank: dict[int, dict[int, int]] = {slot: {} for slot in slots}
+    for slot in slots:
+        neighbors = sorted(
+            (
+                (distances[edge], edge[1] if edge[0] == slot else edge[0])
+                for edge in candidates
+                if slot in edge
+            ),
+            key=lambda item: (item[0], item[1]),
+        )
+        neighbor_rank[slot] = {
+            neighbor: rank
+            for rank, (_distance, neighbor) in enumerate(neighbors)
+        }
+
+    def proximity_score(edge: tuple[int, int]) -> tuple[object, ...]:
+        first, second = edge
+        first_rank = neighbor_rank[first][second]
+        second_rank = neighbor_rank[second][first]
+        return (
+            max(first_rank, second_rank),
+            first_rank + second_rank,
+            distances[edge],
+            edge,
+        )
+
+    degree = {slot: 0 for slot in slots}
+    selected: list[tuple[int, int]] = []
+    remaining = set(candidates)
+    parent = {slot: slot for slot in slots}
+
+    def find(slot: int) -> int:
+        root = slot
+        while parent[root] != root:
+            root = parent[root]
+        while parent[slot] != slot:
+            next_slot = parent[slot]
+            parent[slot] = root
+            slot = next_slot
+        return root
+
+    def union(first: int, second: int) -> None:
+        first_root = find(first)
+        second_root = find(second)
+        if first_root != second_root:
+            parent[second_root] = first_root
+
+    for edge in sorted(remaining, key=proximity_score):
+        first, second = edge
+        if (
+            find(first) == find(second)
+            or degree[first] >= degree_cap
+            or degree[second] >= degree_cap
+        ):
+            continue
+        selected.append(edge)
+        remaining.remove(edge)
+        degree[first] += 1
+        degree[second] += 1
+        union(first, second)
+
+    slot_index = {slot: index for index, slot in enumerate(slots)}
+    basis: dict[int, list[int]] = {}
+    for edge in selected:
+        basis, _added = _basis_with_row(basis, _rigidity_row(edge, slot_index))
+    target_rank = max(0, 2 * len(slots) - 3)
+    for edge in sorted(remaining, key=proximity_score):
+        if len(basis) >= target_rank:
+            break
+        first, second = edge
+        if degree[first] >= degree_cap or degree[second] >= degree_cap:
+            continue
+        candidate_basis, increases_rank = _basis_with_row(
+            basis,
+            _rigidity_row(edge, slot_index),
+        )
+        if not increases_rank:
+            continue
+        selected.append(edge)
+        remaining.remove(edge)
+        degree[first] += 1
+        degree[second] += 1
+        basis = candidate_basis
+
+    for edge in sorted(remaining, key=proximity_score):
+        first, second = edge
+        if degree[first] >= degree_cap or degree[second] >= degree_cap:
+            continue
+        selected.append(edge)
+        degree[first] += 1
+        degree[second] += 1
+    return tuple(selected)
+
+
+def select_survey_pairs(
+    event: SurveyEvent,
+    *,
+    degree_cap: int = SURVEY_MAX_DEGREE,
+    strategy: str = "rigidity",
+    excluded_pairs: Iterable[tuple[int, int]] = (),
+) -> tuple[tuple[int, int], ...]:
+    if strategy == "rigidity":
+        return select_rigidity_aware_survey_pairs(
+            event,
+            degree_cap=degree_cap,
+            excluded_pairs=excluded_pairs,
+        )
+    if strategy == "degree-balanced":
+        return select_degree_balanced_survey_pairs(
+            event,
+            degree_cap=degree_cap,
+            excluded_pairs=excluded_pairs,
+        )
+    raise ValueError(f"unknown survey pair strategy: {strategy}")
 
 
 def bit_names(value: int, names: dict[int, str]) -> list[str]:

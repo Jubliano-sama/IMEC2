@@ -32,9 +32,15 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    completed BLE write is shown as transport completion only, not command
    success.
 4. Use `Run Survey` for the complete current workflow. The GUI runs a fresh
-   RAM-only enumeration, binds its exact slot map to the new survey generation,
-   submits the mutual-pair plan, shows every command and pair transition live,
-   and solves the usable distances without blocking the Tk event loop.
+   RAM-only, unknown-roster enumeration, binds its exact returned slot map to
+   the new survey generation, submits the mutual-pair plan, shows every command
+   and pair transition live, and solves the usable distances without blocking
+   the Tk event loop. After a terminal pass, use `Add Other Neighbors` to merge
+   new edges with retained ranges, `Other Neighbors Only` to solve from only the
+   new edges, or `Iterate Closest-4` to re-range a layout-seeded closest plan and
+   solve from only that pass. `Survey All Neighbors` automates a fresh pass plus
+   consecutive merge passes until every mutually reported neighbor pair has
+   been attempted.
 
 For every ordinary command, the GUI freezes the command and its runtime policy,
 sends a separately correlated Here-I-Am, waits for its typed successful
@@ -155,6 +161,11 @@ acknowledgement or NVS-backed journal.
   `REASON`.
 - **Run Survey** chains the current `CMD_SURVEY_START = 0x0105` and
   `CMD_SURVEY_PLAN = 0x0106` controls behind a fresh RAM-only enumeration. Each
+  survey enumeration transmits an unknown expected count and trusts the exact
+  returned roster; during this chain the count box is only a progress/warning
+  hint and a mismatch does not control firmware. Follow-up passes require
+  exactly the same stable anchor IDs, even if their discovery slots change, so
+  measurements from different physical rosters cannot be merged. Each
   control owns one exact host session/sequence until its reliable result or
   timeout. The gateway internally retries retryable `COMMAND_BUSY` pressure;
   the GUI does not mistake that backoff for a finished survey. An explicit
@@ -212,12 +223,95 @@ insufficient pairs remain visible, but they never become invented coordinates.
 The solver runs on one background worker and stale completions are discarded by
 GUI-run serial plus geometry revision, so packet and command progress stays live.
 
-The default solver is the exact `visibility_branching_tuned` profile adapted
-from the user-owned AnchorGeometrySolver commit
-`01c3edb470bcd868403e04a6cded754360decdf0`. This is a RAM-only relative 2D
-diagnostic, because the survey exports pair distances without anchor heights or
-workplace-frame registration. It does not claim the unresolved production 3D
-self-setup result.
+The ranging plan is selected from mutual radio-neighbor reports; it is not a
+closest-four rule because no distance exists yet at planning time. The default
+planner first preserves connectivity, then chooses edges that increase generic
+2D rigidity rank toward `2N - 3`, and finally spends remaining degree-four
+capacity on long-cycle redundancy. Selection is deterministic, and the earlier
+degree-balanced planner remains separately callable for regression comparison.
+One generation can contain at most `floor(4N / 2)` undirected pairs, so ten
+anchors can produce no more than 20 ranges and mutual-neighbor feasibility can
+reduce that to 19. `Survey All Neighbors` works around that firmware plan cap in
+the GUI by starting more generations, excluding every already-attempted stable
+anchor pair, and merging their usable ranges until the graph is exhausted.
+An additional-neighbor pass excludes every stable anchor pair attempted in
+earlier passes before running that planner again. A closest-4 iteration uses the
+current solved coordinates as its seed, prioritizes short mutual-neighbor edges
+while retaining connectivity and rigidity where the degree cap permits, and
+uses only the new measurements in its next solve.
+An exhausted follow-up is a successful no-op: the GUI retains the last merged
+solvable distance and neighbor dataset, so solve, re-solve, and another survey
+pass remain available.
+
+The default `Neighbor intervals` solver combines the uncapped neighbor
+report graph with the degree-capped measured range plan. Measured distances are
+the strongest residuals; a pair heard in either direction receives the selected
+neighbor-maximum upper hinge, which defaults to 15 m and may be set in the GUI.
+A pair absent from both complete endpoint reports receives the selected radio
+minimum lower hinge, which defaults to 7 m and is independently adjustable. The
+GUI requires `0 < minimum <= maximum`; a missing endpoint report creates no
+negative evidence. The solver runs
+deterministic multi-start optimization and can seed from the current layout,
+tuned visibility branching, measured-distance spring solving, graph MDS, or all
+seed families. The visibility solver now accepts the same seed selector and
+radio minimum/maximum interval as the neighbor-interval solver. Its branching
+and constrained polishing retain the original `visibility_branching_tuned`
+profile from AnchorGeometrySolver commit
+`01c3edb470bcd868403e04a6cded754360decdf0`; the original named solver and the
+spring solver remain selectable for comparison.
+
+`Visibility branching neighbor-aware tuned` is the capped-ranging-specific
+visibility variant. If an unranged pair appears in the measured neighbor graph,
+that positive evidence takes precedence and the solver never pushes the pair
+apart with the radio-minimum penalty merely because the ranging plan omitted
+it; the selected neighbor maximum can still constrain it from above. Only a
+confirmed negative pair receives the minimum-distance hinge, while incomplete
+endpoint reports remain unknown.
+
+`Closest ranges / anchor` optionally limits measured-distance residuals to the
+union of each anchor's N shortest measured links. Zero uses every range. The
+union keeps every anchor represented even when it is selected by an endpoint
+whose own quota is already full; if the selected links are disconnected, the
+solver reports that explicitly rather than inventing a bridge. Radio-neighbor
+and confirmed-non-neighbor interval evidence remains uncapped.
+
+`Refine measured distances only` starts from the current solved layout and runs
+one additional least-residual pass without radio-radius, missing-edge, or graph
+constraints. Every solve stays RAM-only and remains relative 2D because the
+survey has no anchor heights or workplace-frame registration.
+
+Measured survey edges are colored by their absolute residual relative to the
+worst measured edge in that layout: zero is green, the current worst is red,
+and intermediate residuals pass through yellow. This is deliberately relative,
+with the worst residual value shown in the canvas legend rather than hidden
+behind a fixed quality threshold.
+
+The survey and click-location tabs both expose the same button-only frame
+controls: 0.25 m X/Y nudges, 5% uniform scale steps, and reset. Their viewport is
+fixed to the solver frame so each nudge is visible. One uniform factor scales
+both coordinate axes and incoming click ranges, preserving the geometry's
+similarity transform; the controls do not rewrite survey measurements or solver
+residuals. Changing that frame re-solves the retained click in place, so scale
+or translation does not erase the current marker. Both graphs open synchronized
+fullscreen visualizations with their frame controls. Hold WASD to translate the
+frame continuously; Escape, F11, or the on-screen exit button returns to the
+console. The survey fullscreen toolbar also mirrors the solver, seed, radio
+minimum, neighbor maximum, distance-only refinement, closest-range filter, and
+orientation controls from the embedded view.
+
+Drag any anchor in the embedded or fullscreen survey graph to keep a manual
+RAM-only layout; its measured-edge residuals are recalculated without moving
+the other anchors. `Re-solve dragged` explicitly optimizes from that edited
+layout with the currently selected solver, while an ordinary solve can still
+use any selected seed.
+
+The click-location canvas draws the retained radio-neighbor graph as faint
+dotted lines behind anchors, range circles, and the solved click marker.
+
+`Clear Survey Data` removes retained survey passes, measured ranges, geometry,
+and click localization from GUI RAM. It deliberately leaves packet/activity
+history, gateway RAM, and the BLE connection alone; the separate host-memory
+and reboot action remains available for that broader reset.
 
 `Click Location` groups ranges by protocol session, event sequence, and clicker
 ID and solves against the current geometry generation. Duplicate, stale,

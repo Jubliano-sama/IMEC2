@@ -22,7 +22,7 @@ ASSIGNMENT_RESPONSE_SPREAD_MIN_MS = 20
 ASSIGNMENT_RESPONSE_SPREAD_MAX_MS = 10_000
 
 ASSIGNMENT_CONTROL_PHASE_COUNT = 2
-ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS = 10_000
+ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS = 50_000
 ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS = 100_000
 ASSIGNMENT_RESPONSE_BASE_MS = 100
 ASSIGNMENT_RESPONSE_PRIOR_HOP_CUSTODY_MAX_MS = 420_000
@@ -30,11 +30,12 @@ ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES = 2
 ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS = 598
 ASSIGNMENT_ACK_FAST_HANDLE_RETRIES = 3
 ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS = 1_397
-ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS = 10_000
-ASSIGNMENT_RESPONSE_ACK_SETTLE_MS = 3_000
+ASSIGNMENT_RESPONSE_ACK_SETTLE_MS = 450
+ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS = 640
 ASSIGNMENT_TERMINAL_POLL_MS = 5
 ASSIGNMENT_TERMINAL_GUARD_MS = 1
-ASSIGNMENT_RESPONSE_SLOT_MS = 2_270
+ASSIGNMENT_FIRST_CONTACT_DIRECT_SLOT_MS = 450
+ASSIGNMENT_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS = 640
 
 ASSIGNMENT_DEFAULT_BUDGET_MS = 1_800_000
 ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS = 1_000
@@ -63,19 +64,39 @@ def assignment_required_budget_ms(
         0,
         EXPECTED_ANCHOR_COUNT_MAX,
     )
-    # The assignment request intentionally carries N, not a topology claim.
-    # Before CLAIM evidence exists the safe rectangular-chain bound is D=N
-    # (capped by the protocol's eight-hop TTL), exactly as in firmware.
-    effective_hop_count = min(expected_anchor_count or 8, 8)
+    # Roster size is not RF depth. Every new enumeration starts without hop
+    # evidence and therefore budgets the eight-hop protocol maximum. Firmware
+    # may shorten the live window only after this run measures the full roster.
+    effective_hop_count = 8
     slot_count = expected_anchor_count or EXPECTED_ANCHOR_COUNT_MAX
     prior_hop_count = effective_hop_count - 1
     response_custody_ms = 30_000 + prior_hop_count * 10_000
-    claim_ack_settle_ms = 3_000 + prior_hop_count * 1_000
-    jitter_cap_ms = min(response_spread_ms, ASSIGNMENT_RESPONSE_SLOT_MS)
+    claim_ack_settle_ms = (
+        ASSIGNMENT_RESPONSE_ACK_SETTLE_MS
+        + prior_hop_count
+        * ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS
+    )
+    jitter_cap_ms = min(
+        response_spread_ms, ASSIGNMENT_FIRST_CONTACT_DIRECT_SLOT_MS
+    )
+    depth_cells_before_target_ms = sum(
+        slot_count
+        * (
+            ASSIGNMENT_FIRST_CONTACT_DIRECT_SLOT_MS
+            + (depth - 1)
+            * ASSIGNMENT_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS
+        )
+        for depth in range(1, effective_hop_count)
+    )
+    target_depth_cell_ms = (
+        ASSIGNMENT_FIRST_CONTACT_DIRECT_SLOT_MS
+        + prior_hop_count
+        * ASSIGNMENT_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS
+    )
     max_initial_delay_ms = (
         ASSIGNMENT_RESPONSE_BASE_MS
-        + (effective_hop_count * slot_count - 1)
-        * ASSIGNMENT_RESPONSE_SLOT_MS
+        + depth_cells_before_target_ms
+        + (slot_count - 1) * target_depth_cell_ms
         + jitter_cap_ms
         - 1
     )

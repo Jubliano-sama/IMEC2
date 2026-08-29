@@ -17,12 +17,17 @@ from tools.gateway_gui.protocol import (
     DecodeError,
     Packet,
     SurveyAssignmentIdentity,
+    SurveyEvent,
+    SurveyNeighborReport,
     build_survey_cancel_command,
     build_survey_get_status_command,
     build_survey_plan_command,
     build_survey_start_command,
     decode_survey_event,
+    select_closest_survey_pairs,
+    select_degree_balanced_survey_pairs,
     select_survey_pairs,
+    survey_pair_rigidity_rank,
 )
 from tools.gateway_gui.delivery_dedup import (
     GatewayPacketDeduplicator,
@@ -90,6 +95,22 @@ def packet(
     )
 
 
+def complete_neighbor_event(count: int = 6) -> SurveyEvent:
+    slots = frozenset(range(count))
+    return SurveyEvent(
+        kind=1,
+        status=1,
+        generation=9,
+        assignment=assignment(),
+        partial_reasons=0,
+        occupied_slots=slots,
+        neighbor_reports=tuple(
+            SurveyNeighborReport(slot, slots - {slot})
+            for slot in sorted(slots)
+        ),
+    )
+
+
 class SurveyCommandTests(unittest.TestCase):
     def test_start_cancel_and_get_status_are_gateway_local_commands(self) -> None:
         start = build_survey_start_command(
@@ -132,6 +153,20 @@ class SurveyCommandTests(unittest.TestCase):
         )
         self.assertEqual(command.packet.raw_value(TLV_SURVEY_PLAN), bytes((5, 6, 0, 1, 2, 3)))
 
+    def test_empty_followup_plan_is_a_valid_explicit_plan(self) -> None:
+        command = build_survey_plan_command(
+            host_id=HOST_ID,
+            gateway_id=GATEWAY_ID,
+            session_id=5,
+            seq=5,
+            generation=9,
+            assignment=assignment(),
+            pairs=(),
+        )
+
+        self.assertEqual(command.command_id, CMD_SURVEY_PLAN)
+        self.assertIsNone(command.packet.raw_value(TLV_SURVEY_PLAN))
+
 
 class SurveyEventTests(unittest.TestCase):
     def test_reliable_event_is_validated_cached_and_deduplicated(self) -> None:
@@ -156,7 +191,7 @@ class SurveyEventTests(unittest.TestCase):
             PacketDisposition.CONFLICT,
         )
 
-    def test_neighbor_graph_decodes_and_degree_balanced_selector_is_deterministic(self) -> None:
+    def test_neighbor_graph_decodes_and_rigidity_selector_is_deterministic(self) -> None:
         reports = {
             0: {1, 2, 3, 4, 5},
             1: {0, 2, 3},
@@ -193,6 +228,122 @@ class SurveyEventTests(unittest.TestCase):
             degree[second] += 1
         self.assertLessEqual(max(degree.values()), 4)
         self.assertIn((0, 1), selected)
+
+    def test_rigidity_selector_reaches_full_rank_where_degree_balance_does_not(self) -> None:
+        reports = {
+            0: {1, 2, 3},
+            1: {0, 2, 3},
+            2: {0, 1, 3, 5},
+            3: {0, 1, 2, 4, 5},
+            4: {3, 5},
+            5: {2, 3, 4},
+        }
+        body = bytearray()
+        for own_slot, heard in reports.items():
+            bitmap = bytearray(7)
+            for slot in heard:
+                bitmap[slot // 8] |= 1 << (slot % 8)
+            body.extend((own_slot,))
+            body.extend(bitmap)
+        event = decode_survey_event(
+            event_payload(
+                kind=1,
+                body=bytes(body),
+                graph_count=6,
+                occupied_mask=0x3F,
+                received_mask=0x3F,
+            )
+        )
+
+        legacy = select_degree_balanced_survey_pairs(event)
+        selected = select_survey_pairs(event)
+
+        self.assertEqual(survey_pair_rigidity_rank(legacy, range(6)), 8)
+        self.assertEqual(survey_pair_rigidity_rank(selected, range(6)), 9)
+        self.assertEqual(selected, select_survey_pairs(event))
+        selected_neighbors = {slot: set() for slot in range(6)}
+        for first, second in selected:
+            self.assertIn(second, reports[first])
+            self.assertIn(first, reports[second])
+            selected_neighbors[first].add(second)
+            selected_neighbors[second].add(first)
+        self.assertLessEqual(max(map(len, selected_neighbors.values())), 4)
+        # The explicit walk avoids accepting a full-rank but disconnected plan.
+        reached = {0}
+        frontier = [0]
+        while frontier:
+            slot = frontier.pop()
+            new_slots = selected_neighbors[slot] - reached
+            reached.update(new_slots)
+            frontier.extend(new_slots)
+        self.assertEqual(reached, set(range(6)))
+
+    def test_additional_selector_excludes_every_previously_attempted_edge(self) -> None:
+        event = complete_neighbor_event()
+        excluded = ((0, 1), (0, 2), (1, 2), (4, 5))
+
+        selected = select_survey_pairs(event, excluded_pairs=excluded)
+
+        self.assertTrue(selected)
+        self.assertTrue(set(selected).isdisjoint(excluded))
+        degree = {slot: 0 for slot in event.occupied_slots}
+        for first, second in selected:
+            degree[first] += 1
+            degree[second] += 1
+        self.assertLessEqual(max(degree.values()), 4)
+
+    def test_repeated_ten_anchor_plans_exhaust_all_mutual_pairs(self) -> None:
+        event = complete_neighbor_event(10)
+        attempted: set[tuple[int, int]] = set()
+        pass_sizes: list[int] = []
+
+        while True:
+            selected = select_survey_pairs(
+                event,
+                excluded_pairs=tuple(sorted(attempted)),
+            )
+            if not selected:
+                break
+            self.assertTrue(set(selected).isdisjoint(attempted))
+            degree = {slot: 0 for slot in event.occupied_slots}
+            for first, second in selected:
+                degree[first] += 1
+                degree[second] += 1
+            self.assertLessEqual(max(degree.values()), 4)
+            attempted.update(selected)
+            pass_sizes.append(len(selected))
+
+        self.assertEqual(len(attempted), 45)
+        self.assertGreater(len(pass_sizes), 1)
+        self.assertLessEqual(max(pass_sizes), 20)
+
+    def test_closest_selector_is_deterministic_connected_and_degree_four(self) -> None:
+        event = complete_neighbor_event()
+        positions = {
+            0: (0.0, 0.0),
+            1: (1.0, 0.0),
+            2: (2.0, 0.0),
+            3: (0.0, 1.0),
+            4: (1.0, 1.0),
+            5: (2.0, 1.0),
+        }
+
+        selected = select_closest_survey_pairs(event, positions)
+
+        self.assertEqual(selected, select_closest_survey_pairs(event, positions))
+        self.assertEqual(survey_pair_rigidity_rank(selected, range(6)), 9)
+        neighbors = {slot: set() for slot in event.occupied_slots}
+        for first, second in selected:
+            neighbors[first].add(second)
+            neighbors[second].add(first)
+        self.assertLessEqual(max(map(len, neighbors.values())), 4)
+        reached = {0}
+        frontier = [0]
+        while frontier:
+            new_slots = neighbors[frontier.pop()] - reached
+            reached.update(new_slots)
+            frontier.extend(new_slots)
+        self.assertEqual(reached, set(event.occupied_slots))
 
     def test_one_way_neighbor_is_retained_but_never_selected(self) -> None:
         body = bytes((0, 0b10, 0, 0, 0, 0, 0, 0)) + bytes((1, 0, 0, 0, 0, 0, 0, 0))

@@ -5,6 +5,9 @@ from typing import cast
 from unittest.mock import Mock, patch
 
 from tools.gateway_gui.app import GatewayGui
+from tools.gateway_gui.anchor_geometry_connectivity import (
+    CONNECTIVITY_INTERVAL_ALGORITHM,
+)
 from tools.gateway_gui.command_orchestration import GatewayCommandDispatch
 from tools.gateway_gui.delivery_dedup import GatewayPacketDeduplicator
 from tools.gateway_gui.protocol import (
@@ -23,6 +26,7 @@ from tools.gateway_gui.protocol import (
     parse_cobs_packet,
 )
 from tools.gateway_gui.survey_runtime import SurveyCommandOwner, SurveyOperationModel
+from tools.gateway_gui.survey_runtime import SURVEY_PASS_ADDITIONAL_MERGE
 
 
 GATEWAY_ID = 0x1111222233334444
@@ -172,6 +176,50 @@ def gui_model() -> GatewayGui:
 
 
 class SurveyAppIntegrationTests(unittest.TestCase):
+    def test_all_neighbor_action_starts_fresh_and_continues_with_merge(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui._survey_auto_all = False
+        gui._run_survey = Mock()  # type: ignore[method-assign]
+
+        gui._run_all_neighbor_surveys()
+
+        self.assertTrue(gui._survey_auto_all)
+        cast(Mock, gui._run_survey).assert_called_once_with(
+            "fresh",
+            continue_all_neighbors=True,
+        )
+
+        cast(Mock, gui._run_survey).reset_mock()
+        gui._survey_phase = "continuing-all-neighbors"
+        gui.survey_model = Mock(phase="terminal")
+        gui._continue_all_neighbor_surveys()
+        cast(Mock, gui._run_survey).assert_called_once_with(
+            SURVEY_PASS_ADDITIONAL_MERGE,
+            continue_all_neighbors=True,
+        )
+
+    def test_geometry_worker_receives_selected_radio_interval(self) -> None:
+        gui = gui_model()
+        future = Mock()
+        gui._geometry_executor = Mock()
+        gui._geometry_executor.submit.return_value = future
+        gui._geometry_future = None
+
+        gui._submit_geometry_solve(
+            CONNECTIVITY_INTERVAL_ALGORITHM,
+            "Auto (best of all)",
+            5.5,
+            22.5,
+            gui.survey_model.geometry_revision,
+            gui.survey_model.run_serial,
+        )
+
+        call = gui._geometry_executor.submit.call_args
+        self.assertEqual(call.kwargs["nonneighbor_min_m"], 5.5)
+        self.assertEqual(call.kwargs["neighbor_max_m"], 22.5)
+        future.add_done_callback.assert_called_once()
+        self.assertIn("Solving with", gui.status_text.get())
+
     def test_survey_result_requires_exact_command_identity(self) -> None:
         gui = gui_model()
         start = dispatch(CMD_SURVEY_START, 100, 7)
@@ -260,6 +308,64 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         self.assertTrue(handled)
         self.assertFalse(gui._geometry_resolve_pending)
         cast(Mock, gui._schedule_survey_geometry_solve).assert_called_once()
+
+    def test_same_revision_resolve_completion_is_applied_and_reported(self) -> None:
+        gui = gui_model()
+        layout = Mock(
+            algorithm="Visibility branching neighbor-aware tuned",
+            rmse_m=0.123,
+            max_residual_m=0.456,
+        )
+        gui.survey_model = Mock(
+            run_serial=8,
+            geometry_revision=11,
+            layout=Mock(),
+        )  # type: ignore[assignment]
+        gui.survey_model.apply_layout.return_value = True
+        gui._geometry_future = Mock()
+        gui._geometry_resolve_pending = False
+        gui.survey_geometry_view = Mock()  # type: ignore[assignment]
+        gui._apply_survey_geometry_positions = Mock()  # type: ignore[method-assign]
+        gui.log_text = Mock()  # type: ignore[assignment]
+        gui._append_log = Mock()  # type: ignore[method-assign]
+
+        handled = gui._handle_diagnostic_event(
+            {
+                "kind": "survey_geometry_solved",
+                "run_serial": 8,
+                "revision": 11,
+                "layout": layout,
+            }
+        )
+
+        self.assertTrue(handled)
+        gui.survey_model.apply_layout.assert_called_once_with(11, layout)
+        gui._apply_survey_geometry_positions.assert_called_once_with(
+            gui.survey_geometry_view.registration
+        )
+        self.assertIn("re-solve complete", gui.status_text.get())
+        self.assertIn("0.123", gui.status_text.get())
+
+    def test_discarded_solve_cannot_clear_a_newer_geometry_job(self) -> None:
+        gui = gui_model()
+        current_future = Mock()
+        gui._geometry_future = current_future
+        gui._geometry_job_serial = 4
+        gui.survey_geometry_view = Mock()  # type: ignore[assignment]
+
+        handled = gui._handle_diagnostic_event(
+            {
+                "kind": "survey_geometry_solved",
+                "job_serial": 3,
+                "run_serial": gui.survey_model.run_serial,
+                "revision": gui.survey_model.geometry_revision,
+                "layout": Mock(),
+            }
+        )
+
+        self.assertTrue(handled)
+        self.assertIs(gui._geometry_future, current_future)
+        gui.survey_geometry_view.set_geometry_job_pending.assert_not_called()
 
     def test_early_reliable_events_wait_for_start_and_plan_acceptance(self) -> None:
         gui = gui_model()

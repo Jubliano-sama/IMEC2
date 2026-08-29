@@ -58,6 +58,84 @@ def event(
 
 
 class ClickLocationTests(unittest.TestCase):
+    def test_uniform_geometry_scale_also_scales_click_ranges(self):
+        scale = 2.5
+        offset = (7.0, -3.0)
+        coordinates = {1: (0, 0), 2: (5, 0), 3: (0, 4)}
+        positions = {
+            f"0x{anchor:016x}": (
+                scale * point[0] + offset[0],
+                scale * point[1] + offset[1],
+            )
+            for anchor, point in coordinates.items()
+        }
+        target = (2.0, 1.5)
+        model = ClickLocationModel()
+        model.set_geometry(positions, 1, range_scale=scale)
+
+        for sequence, (anchor, point) in enumerate(coordinates.items(), 1):
+            state = model.observe(
+                click(anchor, math.dist(target, point), sequence=sequence)
+            )
+
+        self.assertEqual(state.status, "solved")
+        self.assertAlmostEqual(state.result.x_m, scale * target[0] + offset[0], places=2)
+        self.assertAlmostEqual(state.result.y_m, scale * target[1] + offset[1], places=2)
+        self.assertAlmostEqual(state.ranges_m["0x0000000000000001"], 6.25)
+
+    def test_same_generation_frame_change_reprojects_the_retained_click(self):
+        coordinates = {1: (0.0, 0.0), 2: (5.0, 0.0), 3: (0.0, 4.0)}
+        positions = {
+            f"0x{anchor:016x}": point
+            for anchor, point in coordinates.items()
+        }
+        target = (2.0, 1.5)
+        model = ClickLocationModel()
+        model.set_geometry(positions, 7)
+        for sequence, (anchor, point) in enumerate(coordinates.items(), 1):
+            state = model.observe(
+                click(anchor, math.dist(target, point), sequence=sequence)
+            )
+        self.assertEqual(state.status, "solved")
+        identity = state.identity
+
+        scale = 2.0
+        offset = (8.0, -3.0)
+        transformed = {
+            anchor_id: (
+                scale * point[0] + offset[0],
+                scale * point[1] + offset[1],
+            )
+            for anchor_id, point in positions.items()
+        }
+        state = model.set_geometry(transformed, 7, range_scale=scale)
+
+        self.assertEqual(state.status, "solved")
+        self.assertEqual(state.identity, identity)
+        self.assertAlmostEqual(state.result.x_m, 12.0, places=2)
+        self.assertAlmostEqual(state.result.y_m, 0.0, places=2)
+        self.assertAlmostEqual(
+            state.ranges_m["0x0000000000000001"],
+            2.0 * math.dist(target, coordinates[1]),
+            places=3,
+        )
+
+    def test_new_geometry_generation_discards_the_retained_click(self):
+        positions = {
+            "0x0000000000000001": (0.0, 0.0),
+            "0x0000000000000002": (5.0, 0.0),
+            "0x0000000000000003": (0.0, 4.0),
+        }
+        model = ClickLocationModel()
+        model.set_geometry(positions, 1)
+        model.observe(click(1, 2.5))
+
+        state = model.set_geometry(positions, 2)
+
+        self.assertEqual(state.status, "stale")
+        self.assertIsNone(state.identity)
+        self.assertEqual(state.ranges_m, {})
+
     def test_exact_noisy_rapid_and_degenerate_clicks(self):
         coordinates = {1: (0, 0), 2: (5, 0), 3: (0, 4), 4: (5, 4)}
         positions = {

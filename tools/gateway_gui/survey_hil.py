@@ -147,7 +147,7 @@ def _emit(kind: str, **fields: object) -> None:
 def _configure_expected_anchors(
     gui: SurveyHilGui, expected_anchors: int
 ) -> None:
-    """Apply the asserted roster size to the production enumeration input."""
+    """Show the qualification roster assertion as the GUI's warning hint."""
     gui.assignment_expected_anchors_text.set(str(expected_anchors))
 
 

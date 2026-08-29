@@ -16,6 +16,8 @@ from typing import Iterable, TypedDict
 
 
 ANCHOR_LAYOUT_ALGORITHM = "Spring energy basin hopping (multi-seed LM)"
+DISTANCE_ONLY_REFINEMENT_ALGORITHM = "Seeded measured-distance least squares"
+MANUALLY_EDITED_LAYOUT_ALGORITHM = "Manually edited layout"
 
 
 class _PairAggregate(TypedDict):
@@ -165,6 +167,62 @@ def solve_anchor_layout(
     )
 
 
+def refine_anchor_layout_from_seed(
+    pairs: Iterable[AnchorPairDistance],
+    seed_positions_m: dict[str, tuple[float, float]],
+    *,
+    max_iterations: int = 200,
+) -> AnchorLayoutResult:
+    """Refine one solved layout against measured pair distances only.
+
+    The seed fixes the selected layout basin. No missing-edge, radio-radius,
+    graph-shortest, or other visibility constraint enters this pass.
+    """
+
+    processed = _preprocess_pairs(
+        pairs,
+        min_sigma_m=0.02,
+        min_distance_m=0.05,
+    )
+    anchor_ids = _anchor_ids(processed)
+    _validate_connected(anchor_ids, processed)
+    if set(seed_positions_m) != set(anchor_ids):
+        raise ValueError("Seed layout does not match the measured anchor set.")
+    seed = rotate_layout_to_level(
+        seed_positions_m,
+        anchor_ids[0],
+        anchor_ids[1],
+    )
+    parameterization = _Parameterization(anchor_ids)
+    params, energy = _local_minimize(
+        _positions_to_params(parameterization, seed),
+        parameterization,
+        processed,
+        max_iterations=max_iterations,
+    )
+    positions = rotate_layout_to_level(
+        parameterization.to_positions(params),
+        anchor_ids[0],
+        anchor_ids[1],
+    )
+    positions = _clean_positions(positions)
+    residuals = pair_residuals(positions, processed)
+    rmse = _rmse(residuals.values())
+    max_residual = max((abs(value) for value in residuals.values()), default=0.0)
+    return AnchorLayoutResult(
+        algorithm=DISTANCE_ONLY_REFINEMENT_ALGORITHM,
+        energy=energy,
+        rmse_m=rmse,
+        max_residual_m=max_residual,
+        positions_m=positions,
+        processed_pairs=tuple(processed),
+        residuals_m=residuals,
+        warnings=tuple(_layout_warnings(anchor_ids, processed, rmse, max_residual)),
+        seed_count=1,
+        basin_hop_count=0,
+    )
+
+
 def pair_residuals(
     positions_m: dict[str, tuple[float, float]],
     pairs: Iterable[ProcessedAnchorPair | AnchorPairDistance],
@@ -182,6 +240,63 @@ def pair_residuals(
             model_distance - float(pair.distance_m)
         )
     return residuals
+
+
+def evaluate_anchor_layout(
+    pairs: Iterable[AnchorPairDistance],
+    positions_m: dict[str, tuple[float, float]],
+    *,
+    algorithm: str = MANUALLY_EDITED_LAYOUT_ALGORITHM,
+) -> AnchorLayoutResult:
+    """Evaluate fixed user-supplied coordinates without moving any anchor."""
+
+    processed = _preprocess_pairs(
+        pairs,
+        min_sigma_m=0.02,
+        min_distance_m=0.05,
+    )
+    anchor_ids = _anchor_ids(processed)
+    _validate_connected(anchor_ids, processed)
+    if set(positions_m) != set(anchor_ids):
+        raise ValueError("Edited layout does not match the measured anchor graph.")
+    positions: dict[str, tuple[float, float]] = {}
+    for anchor_id in anchor_ids:
+        raw_x, raw_y = positions_m[anchor_id]
+        x_m = float(raw_x)
+        y_m = float(raw_y)
+        if not math.isfinite(x_m) or not math.isfinite(y_m):
+            raise ValueError("Edited anchor coordinates must be finite.")
+        positions[anchor_id] = (x_m, y_m)
+    positions = _clean_positions(positions)
+    residuals = pair_residuals(positions, processed)
+    rmse = _rmse(residuals.values())
+    max_residual = max(
+        (abs(value) for value in residuals.values()),
+        default=0.0,
+    )
+    energy = sum(
+        processed_pair.weight
+        * residuals[_pair_label(
+            processed_pair.anchor_a_id,
+            processed_pair.anchor_b_id,
+        )]
+        ** 2
+        for processed_pair in processed
+    )
+    return AnchorLayoutResult(
+        algorithm=algorithm,
+        energy=energy,
+        rmse_m=rmse,
+        max_residual_m=max_residual,
+        positions_m=positions,
+        processed_pairs=tuple(processed),
+        residuals_m=residuals,
+        warnings=tuple(
+            _layout_warnings(anchor_ids, processed, rmse, max_residual)
+        ),
+        seed_count=1,
+        basin_hop_count=0,
+    )
 
 
 def rotate_layout_to_level(

@@ -9,7 +9,7 @@ unconstrained.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import itertools
 import math
 from typing import Any, Iterable
@@ -31,6 +31,16 @@ from .anchor_geometry import (
     _validate_connected,
     pair_residuals,
     rotate_layout_to_level,
+    solve_anchor_layout,
+)
+from .anchor_geometry_seeds import (
+    GEOMETRY_SEEDS,
+    SEED_AUTO,
+    SEED_CURRENT,
+    SEED_GRAPH_MDS,
+    SEED_SPRING,
+    SEED_VISIBILITY,
+    graph_mds_seed,
 )
 
 
@@ -38,6 +48,9 @@ INF = 1e12
 PairKey = tuple[str, str]
 
 VISIBILITY_BRANCHING_TUNED_ALGORITHM = "Visibility branching tuned"
+VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM = (
+    "Visibility branching neighbor-aware tuned"
+)
 VISIBILITY_BRANCHING_TUNED_PARAMETERS: dict[str, Any] = {
     "iterations": 45,
     "beam_width": 32,
@@ -99,6 +112,27 @@ def _normalized_missing_pairs(
         if key in known:
             raise ValueError(f"Pair {anchor_a}-{anchor_b} cannot be both known and missing.")
         normalized.add(key)
+    return frozenset(normalized)
+
+
+def _normalized_neighbor_pairs(
+    neighbor_pairs: Iterable[tuple[str, str]],
+    anchor_ids: Iterable[str],
+) -> frozenset[PairKey]:
+    valid_ids = set(anchor_ids)
+    normalized: set[PairKey] = set()
+    for raw_pair in neighbor_pairs:
+        if len(raw_pair) != 2:
+            raise ValueError("Each neighbor constraint must contain two anchor IDs.")
+        anchor_a = str(raw_pair[0]).strip()
+        anchor_b = str(raw_pair[1]).strip()
+        if not anchor_a or not anchor_b or anchor_a == anchor_b:
+            raise ValueError("Neighbor constraints require two different anchor IDs.")
+        if anchor_a not in valid_ids or anchor_b not in valid_ids:
+            raise ValueError(
+                f"Neighbor constraint {anchor_a}-{anchor_b} references an unknown anchor."
+            )
+        normalized.add(pair_key(anchor_a, anchor_b))
     return frozenset(normalized)
 
 
@@ -382,7 +416,9 @@ def _visibility_score(
     graph: RangeGraph,
     *,
     missing_pairs: frozenset[PairKey],
+    neighbor_pairs: frozenset[PairKey],
     radio_radius_m: float,
+    neighbor_max_m: float,
     missing_margin_m: float,
     missing_sigma_m: float,
     missing_weight: float,
@@ -403,6 +439,9 @@ def _visibility_score(
         if distance < lower_bound:
             residual = (lower_bound - distance) / max(missing_sigma_m, 1e-6)
             score += missing_weight * residual * residual
+    if key in neighbor_pairs and distance > neighbor_max_m:
+        residual = (distance - neighbor_max_m) / max(graph_upper_sigma_m, 1e-6)
+        score += missing_weight * residual * residual
     i = graph.index[anchor_a]
     j = graph.index[anchor_b]
     shortest = graph.shortest_m[i, j]
@@ -440,8 +479,10 @@ def visibility_branching_seed_layouts(
     known_pairs: list[AnchorPairDistance],
     *,
     missing_pairs: Iterable[tuple[str, str]] = (),
+    neighbor_pairs: Iterable[tuple[str, str]] = (),
     beam_width: int = 32,
     radio_radius_m: float = 8.0,
+    neighbor_max_m: float = math.inf,
     missing_margin_m: float = 0.0,
     missing_sigma_m: float = 0.75,
     missing_weight: float = 1.0,
@@ -458,13 +499,21 @@ def visibility_branching_seed_layouts(
         graph.anchor_ids,
         graph.distances,
     )
+    normalized_neighbors = _normalized_neighbor_pairs(
+        neighbor_pairs,
+        graph.anchor_ids,
+    )
+    if normalized_missing & normalized_neighbors:
+        raise ValueError("A pair cannot be both a neighbor and a non-neighbor.")
     triangle = _starting_triangle(graph)
     if triangle is None:
         return [_classical_mds_seed(known_pairs)]
     partials = [PartialLayout(_triangle_positions(triangle, graph), 0.0)]
     score_params: dict[str, Any] = {
         "missing_pairs": normalized_missing,
+        "neighbor_pairs": normalized_neighbors,
         "radio_radius_m": radio_radius_m,
+        "neighbor_max_m": neighbor_max_m,
         "missing_margin_m": missing_margin_m,
         "missing_sigma_m": missing_sigma_m,
         "missing_weight": missing_weight,
@@ -503,7 +552,9 @@ def visibility_score_all(
     known_pairs: list[AnchorPairDistance],
     *,
     missing_pairs: Iterable[tuple[str, str]] = (),
+    neighbor_pairs: Iterable[tuple[str, str]] = (),
     radio_radius_m: float = 8.0,
+    neighbor_max_m: float = math.inf,
     missing_margin_m: float = 0.0,
     missing_sigma_m: float = 0.75,
     missing_weight: float = 1.0,
@@ -518,9 +569,17 @@ def visibility_score_all(
         graph.anchor_ids,
         graph.distances,
     )
+    normalized_neighbors = _normalized_neighbor_pairs(
+        neighbor_pairs,
+        graph.anchor_ids,
+    )
+    if normalized_missing & normalized_neighbors:
+        raise ValueError("A pair cannot be both a neighbor and a non-neighbor.")
     score_params = {
         "missing_pairs": normalized_missing,
+        "neighbor_pairs": normalized_neighbors,
         "radio_radius_m": radio_radius_m,
+        "neighbor_max_m": neighbor_max_m,
         "missing_margin_m": missing_margin_m,
         "missing_sigma_m": missing_sigma_m,
         "missing_weight": missing_weight,
@@ -540,6 +599,8 @@ def visibility_score_all(
             score += _visibility_score(
                 anchor_a, positions[anchor_a], anchor_b, positions[anchor_b], graph,
                 missing_pairs=normalized_missing, radio_radius_m=radio_radius_m,
+                neighbor_pairs=normalized_neighbors,
+                neighbor_max_m=neighbor_max_m,
                 missing_margin_m=missing_margin_m, missing_sigma_m=missing_sigma_m,
                 missing_weight=missing_weight, graph_upper_factor=graph_upper_factor,
                 graph_upper_slack_m=graph_upper_slack_m,
@@ -554,10 +615,12 @@ def visibility_branching_solve(
     known_pairs: list[AnchorPairDistance],
     *,
     missing_pairs: Iterable[tuple[str, str]] = (),
+    neighbor_pairs: Iterable[tuple[str, str]] = (),
     beam_width: int = 32,
     optimizer_seeds: int = 32,
     iterations: int = 45,
     radio_radius_m: float = 8.0,
+    neighbor_max_m: float = math.inf,
     final_visibility_weight: float = 1.0,
     constrained_polish: bool = False,
     constrained_iterations: int | None = None,
@@ -566,7 +629,9 @@ def visibility_branching_solve(
 ) -> dict[str, tuple[float, float]]:
     seed_params = {
         "radio_radius_m": radio_radius_m,
+        "neighbor_max_m": neighbor_max_m,
         "missing_pairs": missing_pairs,
+        "neighbor_pairs": neighbor_pairs,
         **visibility_params,
     }
     seeds = visibility_branching_seed_layouts(known_pairs, beam_width=beam_width, **seed_params)
@@ -591,8 +656,10 @@ def visibility_branching_solve(
                     known_pairs,
                     max_iterations=constrained_iterations or iterations,
                     radio_radius_m=radio_radius_m,
+                    neighbor_max_m=neighbor_max_m,
                     known_weight=constrained_known_weight,
                     missing_pairs=missing_pairs,
+                    neighbor_pairs=neighbor_pairs,
                     **score_params,
                 )
             else:
@@ -605,7 +672,9 @@ def visibility_branching_solve(
             positions,
             known_pairs,
             radio_radius_m=radio_radius_m,
+            neighbor_max_m=neighbor_max_m,
             missing_pairs=missing_pairs,
+            neighbor_pairs=neighbor_pairs,
             **score_params,
         )
         score = known_rmse * known_rmse + final_visibility_weight * visibility
@@ -639,7 +708,9 @@ def visibility_constrained_solve_from_seed(
     *,
     max_iterations: int,
     missing_pairs: Iterable[tuple[str, str]] = (),
+    neighbor_pairs: Iterable[tuple[str, str]] = (),
     radio_radius_m: float = 8.0,
+    neighbor_max_m: float = math.inf,
     missing_margin_m: float = 0.0,
     missing_sigma_m: float = 0.75,
     missing_weight: float = 1.0,
@@ -660,6 +731,12 @@ def visibility_constrained_solve_from_seed(
         graph.anchor_ids,
         graph.distances,
     )
+    normalized_neighbors = _normalized_neighbor_pairs(
+        neighbor_pairs,
+        graph.anchor_ids,
+    )
+    if normalized_missing & normalized_neighbors:
+        raise ValueError("A pair cannot be both a neighbor and a non-neighbor.")
     processed = _preprocess_pairs(known_pairs, min_sigma_m=0.02, min_distance_m=0.05)
     anchor_ids = graph.anchor_ids
     parameterization = _Parameterization(list(anchor_ids))
@@ -695,6 +772,16 @@ def visibility_constrained_solve_from_seed(
                         values.append(sqrt_missing * violation / max(missing_sigma_m, 1e-6))
                     else:
                         values.append(0.0)
+                if key in normalized_neighbors and sqrt_missing > 0.0:
+                    violation = distance - neighbor_max_m
+                    if violation > 0.0:
+                        values.append(
+                            sqrt_missing
+                            * violation
+                            / max(missing_sigma_m, 1e-6)
+                        )
+                    else:
+                        values.append(0.0)
                 shortest = graph.shortest_m[i, j]
                 if shortest < INF * 0.5 and graph.hops[i, j] >= 2 and sqrt_graph > 0.0:
                     upper_bound = shortest * graph_upper_factor + graph_upper_slack_m
@@ -724,15 +811,25 @@ def solve_visibility_branching_tuned(
     pairs: Iterable[AnchorPairDistance],
     *,
     missing_pairs: Iterable[tuple[str, str]] = (),
+    neighbor_pairs: Iterable[tuple[str, str]] = (),
+    seed: str = SEED_AUTO,
+    current_positions_m: dict[str, tuple[float, float]] | None = None,
+    nonneighbor_min_m: float = 7.0,
+    neighbor_max_m: float = 15.0,
     random_seed: int = 1337,
+    neighbor_evidence_precedence: bool = False,
 ) -> AnchorLayoutResult:
-    """Solve with the pinned upstream tuned visibility-branching profile.
+    """Solve with tuned visibility branching from the selected seed family.
 
     ``random_seed`` is part of the stable solver interface. The upstream tuned
     branching path is deterministic and does not consume randomness.
     """
 
     del random_seed
+    if seed not in GEOMETRY_SEEDS:
+        raise ValueError(f"Unknown geometry seed: {seed}")
+    if not 0.0 < nonneighbor_min_m <= neighbor_max_m:
+        raise ValueError("Radio interval must satisfy 0 < minimum <= maximum.")
     known_pairs = list(pairs)
     processed = _preprocess_pairs(known_pairs, min_sigma_m=0.02, min_distance_m=0.05)
     anchor_ids = _anchor_ids(processed)
@@ -743,11 +840,136 @@ def solve_visibility_branching_tuned(
         graph.anchor_ids,
         graph.distances,
     )
-    positions = visibility_branching_solve(
-        known_pairs,
-        missing_pairs=normalized_missing,
-        **VISIBILITY_BRANCHING_TUNED_PARAMETERS,
+    normalized_neighbors = _normalized_neighbor_pairs(
+        neighbor_pairs,
+        graph.anchor_ids,
     )
+    overlap = normalized_missing & normalized_neighbors
+    if overlap:
+        if neighbor_evidence_precedence:
+            normalized_missing = frozenset(normalized_missing - overlap)
+        else:
+            raise ValueError("A pair cannot be both a neighbor and a non-neighbor.")
+
+    parameters = dict(VISIBILITY_BRANCHING_TUNED_PARAMETERS)
+    parameters["radio_radius_m"] = nonneighbor_min_m
+    parameters["missing_margin_m"] = 0.0
+    base_seeds: list[tuple[str, dict[str, tuple[float, float]]]] = []
+    if seed in (SEED_AUTO, SEED_CURRENT):
+        if current_positions_m is not None:
+            if set(current_positions_m) != set(anchor_ids):
+                raise ValueError("Current layout seed does not match the anchor graph.")
+            base_seeds.append((SEED_CURRENT, dict(current_positions_m)))
+        elif seed == SEED_CURRENT:
+            raise ValueError("No current solved layout is available as a seed.")
+
+    requested = (
+        (SEED_VISIBILITY, SEED_SPRING, SEED_GRAPH_MDS)
+        if seed == SEED_AUTO
+        else (seed,)
+    )
+    for seed_name in requested:
+        try:
+            if seed_name == SEED_VISIBILITY:
+                native = visibility_branching_seed_layouts(
+                    known_pairs,
+                    missing_pairs=normalized_missing,
+                    neighbor_pairs=normalized_neighbors,
+                    beam_width=int(parameters["beam_width"]),
+                    radio_radius_m=nonneighbor_min_m,
+                    neighbor_max_m=neighbor_max_m,
+                    missing_margin_m=0.0,
+                    missing_sigma_m=float(parameters["missing_sigma_m"]),
+                    missing_weight=float(parameters["missing_weight"]),
+                    graph_upper_factor=float(parameters["graph_upper_factor"]),
+                    graph_upper_slack_m=float(parameters["graph_upper_slack_m"]),
+                    graph_upper_sigma_m=float(parameters["graph_upper_sigma_m"]),
+                    graph_upper_weight=float(parameters["graph_upper_weight"]),
+                )
+                base_seeds.extend(
+                    (SEED_VISIBILITY, positions)
+                    for positions in native[
+                        : max(1, int(parameters["optimizer_seeds"]))
+                    ]
+                )
+            elif seed_name == SEED_SPRING:
+                base_seeds.append(
+                    (SEED_SPRING, solve_anchor_layout(known_pairs).positions_m)
+                )
+            elif seed_name == SEED_GRAPH_MDS:
+                base_seeds.append(
+                    (SEED_GRAPH_MDS, graph_mds_seed(known_pairs, anchor_ids))
+                )
+            elif seed_name != SEED_CURRENT:
+                raise ValueError(f"Unknown geometry seed: {seed_name}")
+        except Exception:
+            if seed != SEED_AUTO:
+                raise
+    if not base_seeds:
+        raise ValueError("No geometry seed could be produced.")
+
+    candidates: list[
+        tuple[float, str, dict[str, tuple[float, float]]]
+    ] = []
+    optimizer_errors: list[Exception] = []
+    for seed_name, base_positions in base_seeds:
+        try:
+            if bool(parameters["constrained_polish"]):
+                candidate = visibility_constrained_solve_from_seed(
+                    base_positions,
+                    known_pairs,
+                    max_iterations=int(parameters["constrained_iterations"]),
+                    missing_pairs=normalized_missing,
+                    neighbor_pairs=normalized_neighbors,
+                    radio_radius_m=nonneighbor_min_m,
+                    neighbor_max_m=neighbor_max_m,
+                    missing_margin_m=0.0,
+                    missing_sigma_m=float(parameters["missing_sigma_m"]),
+                    missing_weight=float(parameters["missing_weight"]),
+                    graph_upper_factor=float(parameters["graph_upper_factor"]),
+                    graph_upper_slack_m=float(parameters["graph_upper_slack_m"]),
+                    graph_upper_sigma_m=float(parameters["graph_upper_sigma_m"]),
+                    graph_upper_weight=float(parameters["graph_upper_weight"]),
+                    known_weight=float(parameters["constrained_known_weight"]),
+                )
+            else:
+                candidate = _solve_from_seed(
+                    base_positions,
+                    known_pairs,
+                    max_iterations=int(parameters["iterations"]),
+                )
+            known_rmse, _known_max = _pair_metrics(candidate, known_pairs)
+            visibility = visibility_score_all(
+                candidate,
+                known_pairs,
+                missing_pairs=normalized_missing,
+                neighbor_pairs=normalized_neighbors,
+                radio_radius_m=nonneighbor_min_m,
+                neighbor_max_m=neighbor_max_m,
+                missing_margin_m=0.0,
+                missing_sigma_m=float(parameters["missing_sigma_m"]),
+                missing_weight=float(parameters["missing_weight"]),
+                graph_upper_factor=float(parameters["graph_upper_factor"]),
+                graph_upper_slack_m=float(parameters["graph_upper_slack_m"]),
+                graph_upper_sigma_m=float(parameters["graph_upper_sigma_m"]),
+                graph_upper_weight=float(parameters["graph_upper_weight"]),
+            )
+            score = (
+                known_rmse * known_rmse
+                + float(parameters["final_visibility_weight"]) * visibility
+            )
+            candidates.append((score, seed_name, candidate))
+        except Exception as exc:
+            optimizer_errors.append(exc)
+    if not candidates:
+        detail = (
+            str(optimizer_errors[-1])
+            if optimizer_errors
+            else "no candidate layout was produced"
+        )
+        raise RuntimeError(f"Visibility branching tuned failed: {detail}")
+
+    _score, selected_seed, positions = min(candidates, key=lambda item: item[0])
     positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
     positions = _clean_positions(positions)
     residuals = pair_residuals(positions, processed)
@@ -759,9 +981,30 @@ def solve_visibility_branching_tuned(
         parameterization,
         processed,
     )
-    warnings = _layout_warnings(anchor_ids, processed, rmse, max_residual)
+    warnings = list(_layout_warnings(anchor_ids, processed, rmse, max_residual))
+    neighbor_violations = sum(
+        math.dist(positions[first], positions[second]) > neighbor_max_m + 1e-6
+        for first, second in normalized_neighbors
+    )
+    nonneighbor_violations = sum(
+        math.dist(positions[first], positions[second]) < nonneighbor_min_m - 1e-6
+        for first, second in normalized_missing
+    )
+    if neighbor_violations:
+        warnings.append(
+            f"{neighbor_violations} neighbor interval(s) exceed {neighbor_max_m:.1f} m"
+        )
+    if nonneighbor_violations:
+        warnings.append(
+            f"{nonneighbor_violations} non-neighbor interval(s) are below "
+            f"{nonneighbor_min_m:.1f} m"
+        )
     return AnchorLayoutResult(
-        algorithm=VISIBILITY_BRANCHING_TUNED_ALGORITHM,
+        algorithm=(
+            f"{VISIBILITY_BRANCHING_TUNED_ALGORITHM} "
+            f"({nonneighbor_min_m:g}-{neighbor_max_m:g} m); "
+            f"seed {selected_seed}"
+        ),
         energy=energy,
         rmse_m=rmse,
         max_residual_m=max_residual,
@@ -769,6 +1012,45 @@ def solve_visibility_branching_tuned(
         processed_pairs=tuple(processed),
         residuals_m=residuals,
         warnings=tuple(warnings),
-        seed_count=int(VISIBILITY_BRANCHING_TUNED_PARAMETERS["optimizer_seeds"]),
+        seed_count=len(candidates),
         basin_hop_count=0,
+    )
+
+
+def solve_visibility_branching_neighbor_aware_tuned(
+    pairs: Iterable[AnchorPairDistance],
+    *,
+    missing_pairs: Iterable[tuple[str, str]] = (),
+    neighbor_pairs: Iterable[tuple[str, str]] = (),
+    seed: str = SEED_AUTO,
+    current_positions_m: dict[str, tuple[float, float]] | None = None,
+    nonneighbor_min_m: float = 7.0,
+    neighbor_max_m: float = 15.0,
+    random_seed: int = 1337,
+) -> AnchorLayoutResult:
+    """Visibility tuning where surveyed-neighbor evidence protects an edge.
+
+    A pair present in the measured neighbor graph is never given a lower-bound
+    missing-edge penalty merely because the degree-capped ranging plan omitted
+    it. Positive neighbor evidence may still apply the configured upper bound.
+    """
+
+    result = solve_visibility_branching_tuned(
+        pairs,
+        missing_pairs=missing_pairs,
+        neighbor_pairs=neighbor_pairs,
+        seed=seed,
+        current_positions_m=current_positions_m,
+        nonneighbor_min_m=nonneighbor_min_m,
+        neighbor_max_m=neighbor_max_m,
+        random_seed=random_seed,
+        neighbor_evidence_precedence=True,
+    )
+    return replace(
+        result,
+        algorithm=result.algorithm.replace(
+            VISIBILITY_BRANCHING_TUNED_ALGORITHM,
+            VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
+            1,
+        ),
     )

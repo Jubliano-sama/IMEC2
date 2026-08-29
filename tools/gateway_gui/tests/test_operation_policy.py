@@ -64,8 +64,9 @@ class OperationPolicyTests(unittest.TestCase):
 
     def test_assignment_budget_uses_safe_preclaim_roster_bound(self) -> None:
         self.assertEqual(1_800_000, assignment_required_budget_ms(1_000))
-        self.assertEqual(418_524, assignment_required_budget_ms(1_000, 3))
-        self.assertEqual(421_064, assignment_required_budget_ms(10_000, 3))
+        self.assertEqual(927_744, assignment_required_budget_ms(1_000, 3))
+        self.assertEqual(927_744, assignment_required_budget_ms(10_000, 3))
+        self.assertEqual(1_229_024, assignment_required_budget_ms(1_000, 10))
         self.assertEqual(1_800_000, assignment_required_budget_ms(1_000, 50))
 
 

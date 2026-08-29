@@ -307,10 +307,7 @@ class AppModelTests(unittest.TestCase):
         )
         self.assertEqual(gui._topology_deepest_hop, 0)
         policy = gui._operation_policy_profile()
-        self.assertEqual(
-            policy.assignment.expected_anchor_count,
-            int(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT),
-        )
+        self.assertEqual(policy.assignment.expected_anchor_count, 0)
     def test_packet_identity_contradiction_invalidates_connected_identity(self) -> None:
         gui = self.identity_gui_model()
         gui.connected = True
@@ -893,10 +890,10 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(
             plan.target.status_text,
             "Enumerating an unknown anchor roster across the full 8-hop "
-            "horizon; set Expected anchors for fast completion...",
+            "horizon; set the anchor count hint for fast completion...",
         )
 
-    def test_survey_enumeration_is_explicitly_ram_only(self) -> None:
+    def test_survey_enumeration_is_ram_only_and_roster_driven(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = True
         gui.gateway_id = 0xAABBCCDDEEFF0011
@@ -908,7 +905,10 @@ class AppModelTests(unittest.TestCase):
         gui.__dict__["_show_error"] = Mock()
 
         self.assertTrue(
-            gui._send_assign_discovery_slots(ram_only_iteration=True)
+            gui._send_assign_discovery_slots(
+                ram_only_iteration=True,
+                expected_anchor_count_override=0,
+            )
         )
 
         plan = gui._submit_gateway_command.call_args.args[0]
@@ -919,6 +919,8 @@ class AppModelTests(unittest.TestCase):
         )
         self.assertEqual(len(policies), 1)
         self.assertTrue(policies[0]["ram_only_iteration"])
+        self.assertEqual(policies[0]["expected_anchor_count"], 0)
+        self.assertIn("unknown anchor roster", plan.target.status_text)
 
     def test_manual_here_i_am_carries_the_current_full_policy(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
@@ -1052,6 +1054,60 @@ class AppModelTests(unittest.TestCase):
         self.assertIn("when connected", controls_source)
         self.assertIn("reboots the gateway board", controls_source)
 
+    def test_clear_survey_data_is_gui_only_and_preserves_packet_history(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.command_request_tracker = Mock(pending=None)  # type: ignore[assignment]
+        gui.command_orchestrator = Mock(active=False)  # type: ignore[assignment]
+        gui.survey_command_owner = Mock(pending=None)  # type: ignore[assignment]
+        gui.survey_model = Mock(active=False)  # type: ignore[assignment]
+        gui.click_location_model = Mock()  # type: ignore[assignment]
+        gui.click_diagnostics_view = Mock()  # type: ignore[assignment]
+        gui._survey_event_buffer = [(Mock(), None)]
+        gui._survey_phase = "idle"
+        gui._survey_generation = 9
+        gui._survey_assignment = Mock()
+        gui._survey_pairs = ((1, 2),)
+        gui._survey_results = {0: Mock()}
+        gui._survey_pending_dispatch = Mock()
+        gui._survey_deferred_dispatch = Mock()
+        gui._geometry_resolve_pending = True
+        gui._survey_chain_pending = True
+        gui._survey_auto_all = True
+        gui._clear_packets = Mock()  # type: ignore[method-assign]
+        gui._refresh_survey_view = Mock()  # type: ignore[method-assign]
+        gui._update_command_state = Mock()  # type: ignore[method-assign]
+        gui._append_log = Mock()  # type: ignore[method-assign]
+        gui._show_error = Mock()  # type: ignore[method-assign]
+        gui.status_text = FakeVariable("Ready")  # type: ignore[assignment]
+
+        gui._clear_survey_data()
+
+        gui.survey_command_owner.reset.assert_called_once()
+        gui.survey_model.clear.assert_called_once()
+        gui.click_location_model.reset.assert_called_once()
+        gui.click_diagnostics_view.show_connections.assert_called_once_with(
+            frozenset()
+        )
+        gui._clear_packets.assert_not_called()
+        self.assertEqual(gui._survey_event_buffer, [])
+        self.assertIsNone(gui._survey_generation)
+        self.assertFalse(gui._geometry_resolve_pending)
+        self.assertIn("packet history", gui.status_text.get())
+
+    def test_clear_survey_data_blocks_an_active_survey(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.command_request_tracker = Mock(pending=None)  # type: ignore[assignment]
+        gui.command_orchestrator = Mock(active=False)  # type: ignore[assignment]
+        gui.survey_command_owner = Mock(pending=None)  # type: ignore[assignment]
+        gui.survey_model = Mock(active=True)  # type: ignore[assignment]
+        gui._survey_phase = "ranging"
+        gui._show_error = Mock()  # type: ignore[method-assign]
+
+        gui._clear_survey_data()
+
+        gui._show_error.assert_called_once()
+        gui.survey_model.clear.assert_not_called()
+
     def test_clear_memory_handler_blocks_active_or_transition_state(self) -> None:
         cases = (
             ("active tracker", "connected", True, False),
@@ -1159,8 +1215,8 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(label, "Reboot gateway board")
         self.assertIn("reboot command to gateway board", gui.status_text.get())
 
-    def test_expected_anchors_default_is_three(self) -> None:
-        self.assertEqual(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT, "3")
+    def test_anchor_count_hint_defaults_to_unknown(self) -> None:
+        self.assertEqual(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT, "")
 
     def test_active_command_state_shows_deadline_countdown(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)

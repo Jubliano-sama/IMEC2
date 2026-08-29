@@ -28,7 +28,21 @@ from .protocol import (
     SurveyNeighborReport,
     SurveyPlanPair,
     SurveyRangeResult,
+    select_closest_survey_pairs,
+    select_survey_pairs,
 )
+
+
+SURVEY_PASS_FRESH = "fresh"
+SURVEY_PASS_ADDITIONAL_MERGE = "additional-merge"
+SURVEY_PASS_ADDITIONAL_ONLY = "additional-only"
+SURVEY_PASS_CLOSEST_ONLY = "closest-only"
+SURVEY_PASS_MODES = frozenset((
+    SURVEY_PASS_FRESH,
+    SURVEY_PASS_ADDITIONAL_MERGE,
+    SURVEY_PASS_ADDITIONAL_ONLY,
+    SURVEY_PASS_CLOSEST_ONLY,
+))
 
 
 class SurveyStateError(ValueError):
@@ -179,6 +193,16 @@ class SurveyOperationModel:
     def clear(self) -> None:
         self.run_serial += 1
         self._seen_identities.clear()
+        self._retained_geometry_pairs: dict[
+            tuple[str, str], AnchorPairDistance
+        ] = {}
+        self._retained_neighbor_pairs: set[tuple[str, str]] = set()
+        self._surveyed_anchor_pairs: set[tuple[int, int]] = set()
+        self._solve_base_pairs: dict[tuple[str, str], AnchorPairDistance] = {}
+        self._solve_base_neighbor_pairs: set[tuple[str, str]] = set()
+        self._followup_roster: frozenset[int] | None = None
+        self.pass_mode = SURVEY_PASS_FRESH
+        self.pass_index = 0
         self._clear_run()
 
     def _clear_run(self) -> None:
@@ -207,17 +231,94 @@ class SurveyOperationModel:
             for key, title in self._STEP_DEFINITIONS
         }
 
-    def begin(self, *, expected_anchor_count: int = 0) -> None:
+    def begin(
+        self,
+        *,
+        expected_anchor_count: int = 0,
+        pass_mode: str = SURVEY_PASS_FRESH,
+    ) -> None:
+        if pass_mode not in SURVEY_PASS_MODES:
+            raise SurveyStateError(f"unknown survey pass mode {pass_mode}")
+        seed_layout: AnchorLayoutResult | None = None
+        followup_roster: frozenset[int] | None = None
+        next_pass_index = 1
+        if pass_mode == SURVEY_PASS_FRESH:
+            self._retained_geometry_pairs.clear()
+            self._retained_neighbor_pairs.clear()
+            self._surveyed_anchor_pairs.clear()
+            self._solve_base_pairs.clear()
+            self._solve_base_neighbor_pairs.clear()
+        else:
+            self._validate_followup(pass_mode)
+            self._record_current_pass()
+            followup_roster = frozenset(self.slot_to_anchor.values())
+            seed_layout = self.layout
+            next_pass_index = self.pass_index + 1
+            self._solve_base_pairs = (
+                dict(self._retained_geometry_pairs)
+                if pass_mode == SURVEY_PASS_ADDITIONAL_MERGE
+                else {}
+            )
+            self._solve_base_neighbor_pairs = (
+                set(self._retained_neighbor_pairs)
+                if pass_mode == SURVEY_PASS_ADDITIONAL_MERGE
+                else set()
+            )
         self.run_serial += 1
         self._clear_run()
         self.active = True
         self.phase = "routes"
+        self.pass_mode = pass_mode
+        self.pass_index = next_pass_index
+        self._followup_roster = followup_roster
+        self.layout = seed_layout
         self.expected_anchor_count = max(0, int(expected_anchor_count))
         self._set_step(
             "routes",
             "running",
             "Waiting for the gateway route-refresh terminal",
         )
+
+    def _validate_followup(self, pass_mode: str) -> None:
+        if self.active or self.phase != "terminal":
+            raise SurveyStateError(
+                "A follow-up pass requires one terminal survey first."
+            )
+        if not self.slot_to_anchor:
+            raise SurveyStateError(
+                "The previous survey has no anchor roster to follow."
+            )
+        if pass_mode == SURVEY_PASS_CLOSEST_ONLY:
+            expected_labels = {
+                anchor_label(anchor_id) for anchor_id in self.slot_to_anchor.values()
+            }
+            if (
+                self.layout is None
+                or set(self.layout.positions_m) != expected_labels
+            ):
+                raise SurveyStateError(
+                    "Closest-4 iteration requires a solved layout covering every anchor."
+                )
+
+    @staticmethod
+    def _anchor_key(first: str, second: str) -> tuple[str, str]:
+        return (first, second) if first < second else (second, first)
+
+    @classmethod
+    def _distance_key(cls, pair: AnchorPairDistance) -> tuple[str, str]:
+        return cls._anchor_key(pair.anchor_a_id, pair.anchor_b_id)
+
+    def _record_current_pass(self) -> None:
+        for pair in self.current_geometry_pairs:
+            self._retained_geometry_pairs[self._distance_key(pair)] = pair
+        self._retained_neighbor_pairs.update(self.current_neighbor_pairs)
+        for plan in self.plan_pairs:
+            first = self.slot_to_anchor.get(plan.initiator_slot)
+            second = self.slot_to_anchor.get(plan.responder_slot)
+            if first is not None and second is not None and first != second:
+                self._surveyed_anchor_pairs.add(
+                    (min(first, second), max(first, second))
+                )
 
     def observe_command_event(self, event: GatewayCommandEvent) -> bool:
         if not self.active or event.command_kind not in (1, 3):
@@ -313,6 +414,7 @@ class SurveyOperationModel:
         if not event.terminal:
             return True
 
+        configured_hint = self.expected_anchor_count
         mapped_count = len(self.slot_to_anchor)
         exact_mapping = (
             mapped_count > 0
@@ -331,19 +433,31 @@ class SurveyOperationModel:
             and mapped_count == event.total_count
             and exact_mapping
         )
+        roster = frozenset(self.slot_to_anchor.values())
+        if self._followup_roster is not None and roster != self._followup_roster:
+            self.fail(
+                "enumeration",
+                "Follow-up survey roster changed; refusing to mix distances "
+                "from different anchor sets",
+            )
+            return True
         if not complete and not count_mismatch:
             self.fail(
                 "enumeration",
                 "Enumeration ended without one exact slot and hop for every anchor",
             )
             return True
+        hint_mismatch = configured_hint not in (0, mapped_count)
         self.expected_anchor_count = mapped_count
         self._set_step(
             "enumeration",
-            "warning" if count_mismatch else "done",
+            "warning" if count_mismatch or hint_mismatch else "done",
             (
                 f"{mapped_count} anchors mapped to exact discovery slots; "
-                f"configured count was {event.total_count}"
+                f"optional count hint was {configured_hint}"
+                if hint_mismatch
+                else f"{mapped_count} anchors mapped to exact discovery slots; "
+                f"firmware expected count was {event.total_count}"
                 if count_mismatch
                 else f"{mapped_count} anchors mapped to exact discovery slots"
             ),
@@ -424,6 +538,34 @@ class SurveyOperationModel:
             "plan", "running", f"Submitting {len(normalized)} mutual pairs"
         )
 
+    def select_plan_pairs(self, event: SurveyEvent) -> tuple[tuple[int, int], ...]:
+        """Select the current pass plan from retained pass intent."""
+
+        if self.pass_mode in (
+            SURVEY_PASS_ADDITIONAL_MERGE,
+            SURVEY_PASS_ADDITIONAL_ONLY,
+        ):
+            slot_by_anchor = {
+                anchor_id: slot for slot, anchor_id in self.slot_to_anchor.items()
+            }
+            excluded = tuple(
+                (slot_by_anchor[first], slot_by_anchor[second])
+                for first, second in sorted(self._surveyed_anchor_pairs)
+                if first in slot_by_anchor and second in slot_by_anchor
+            )
+            return select_survey_pairs(event, excluded_pairs=excluded)
+        if self.pass_mode == SURVEY_PASS_CLOSEST_ONLY:
+            if self.layout is None:
+                raise SurveyStateError(
+                    "Closest-4 iteration lost its solved-layout seed."
+                )
+            positions = {
+                slot: self.layout.positions_m[anchor_label(anchor_id)]
+                for slot, anchor_id in self.slot_to_anchor.items()
+            }
+            return select_closest_survey_pairs(event, positions)
+        return select_survey_pairs(event)
+
     def observe_survey_event(
         self,
         event: SurveyEvent,
@@ -482,7 +624,7 @@ class SurveyOperationModel:
         occupied = set(event.occupied_slots)
         if occupied != set(self.slot_to_anchor):
             raise StaleSurveyEvent(
-                "survey occupied slots do not match the fresh enumeration"
+                "survey occupied slots do not match the current roster enumeration"
             )
         if not occupied:
             raise SurveyStateError("survey neighbor graph has no enumerated anchors")
@@ -517,13 +659,25 @@ class SurveyOperationModel:
             total=expected,
         )
         self.phase = "planning"
-        self._set_step("plan", "running", "Selecting mutual degree-balanced pairs")
+        detail = {
+            SURVEY_PASS_FRESH: "Selecting rigidity-aware mutual pairs",
+            SURVEY_PASS_ADDITIONAL_MERGE: (
+                "Selecting mutual pairs not attempted in earlier passes"
+            ),
+            SURVEY_PASS_ADDITIONAL_ONLY: (
+                "Selecting mutual pairs not attempted in earlier passes"
+            ),
+            SURVEY_PASS_CLOSEST_ONLY: (
+                "Selecting closest degree-4 pairs from the solved layout"
+            ),
+        }[self.pass_mode]
+        self._set_step("plan", "running", detail)
 
     def _observe_plan(self, event: SurveyEvent) -> None:
         if not self.neighbor_reports:
             raise SurveyStateError("survey plan arrived before the neighbor graph")
-        if not self.requested_pairs:
-            raise SurveyStateError("survey plan arrived without a host pair request")
+        if not self.requested_pairs and event.plan_pairs:
+            raise SurveyStateError("gateway added pairs to an empty host request")
         if not self.plan_accepted:
             raise SurveyEventNotReady(
                 "survey plan event is waiting for the exact PLAN command result"
@@ -647,7 +801,7 @@ class SurveyOperationModel:
             )
 
     @property
-    def geometry_pairs(self) -> tuple[AnchorPairDistance, ...]:
+    def current_geometry_pairs(self) -> tuple[AnchorPairDistance, ...]:
         pairs: list[AnchorPairDistance] = []
         for pair_index, result in sorted(self.results.items()):
             if not result.usable or result.median_mm is None:
@@ -669,8 +823,106 @@ class SurveyOperationModel:
         return tuple(pairs)
 
     @property
+    def geometry_pairs(self) -> tuple[AnchorPairDistance, ...]:
+        combined = dict(self._solve_base_pairs)
+        for pair in self.current_geometry_pairs:
+            combined[self._distance_key(pair)] = pair
+        if not combined and self.geometry_uses_retained_fallback:
+            combined.update(self._retained_geometry_pairs)
+        return tuple(combined[key] for key in sorted(combined))
+
+    @property
+    def geometry_uses_retained_fallback(self) -> bool:
+        """Keep an exhausted follow-up from erasing a solvable dataset."""
+
+        return bool(
+            self.pass_mode != SURVEY_PASS_FRESH
+            and self._retained_geometry_pairs
+            and not self.current_geometry_pairs
+            and (
+                self.phase == "terminal"
+                or (self.plan_accepted and not self.plan_pairs)
+            )
+        )
+
+    @property
+    def current_neighbor_pairs(self) -> frozenset[tuple[str, str]]:
+        """Return radio-neighbor edges observed in either direction."""
+
+        heard = {
+            report.own_slot: report.heard_slots
+            for report in self.neighbor_reports
+        }
+        slots = sorted(self.slot_to_anchor)
+        pairs: set[tuple[str, str]] = set()
+        for index, first in enumerate(slots):
+            for second in slots[index + 1:]:
+                if (
+                    second in heard.get(first, frozenset())
+                    or first in heard.get(second, frozenset())
+                ):
+                    pairs.add(self._anchor_key(
+                        anchor_label(self.slot_to_anchor[first]),
+                        anchor_label(self.slot_to_anchor[second]),
+                    ))
+        return frozenset(pairs)
+
+    @property
+    def neighbor_pairs(self) -> frozenset[tuple[str, str]]:
+        retained = (
+            self._retained_neighbor_pairs
+            if self.geometry_uses_retained_fallback
+            else set()
+        )
+        return frozenset(
+            retained
+            | self._solve_base_neighbor_pairs
+            | set(self.current_neighbor_pairs)
+        )
+
+    @property
+    def nonneighbor_pairs(self) -> frozenset[tuple[str, str]]:
+        """Return confirmed negative edges only when both reports exist."""
+
+        heard = {
+            report.own_slot: report.heard_slots
+            for report in self.neighbor_reports
+        }
+        reported = set(heard)
+        slots = sorted(self.slot_to_anchor)
+        pairs: set[tuple[str, str]] = set()
+        for index, first in enumerate(slots):
+            for second in slots[index + 1:]:
+                if first not in reported or second not in reported:
+                    continue
+                if (
+                    second not in heard[first]
+                    and first not in heard[second]
+                ):
+                    pairs.add(self._anchor_key(
+                        anchor_label(self.slot_to_anchor[first]),
+                        anchor_label(self.slot_to_anchor[second]),
+                    ))
+        measured = {
+            self._distance_key(pair)
+            for pair in self.geometry_pairs
+        }
+        positive = set(self.neighbor_pairs)
+        return frozenset(
+            pair
+            for pair in pairs
+            if pair not in measured and pair not in positive
+        )
+
+    @property
     def geometry_solve_ready(self) -> bool:
         pairs = self.geometry_pairs
+        if (
+            self.pass_mode != SURVEY_PASS_FRESH
+            and not self.current_geometry_pairs
+            and not self.geometry_uses_retained_fallback
+        ):
+            return False
         expected_anchors = {
             anchor_label(anchor_id) for anchor_id in self.slot_to_anchor.values()
         }
@@ -679,10 +931,15 @@ class SurveyOperationModel:
             for pair in pairs
             for anchor in (pair.anchor_a_id, pair.anchor_b_id)
         }
+        minimum_pairs = (
+            2 * len(expected_anchors) - 3
+            if self.pass_mode == SURVEY_PASS_FRESH or self.layout is None
+            else len(expected_anchors) - 1
+        )
         if (
             len(expected_anchors) < 3
             or anchors != expected_anchors
-            or len(pairs) < 2 * len(expected_anchors) - 3
+            or len(pairs) < minimum_pairs
         ):
             return False
         adjacency: dict[str, set[str]] = {anchor: set() for anchor in anchors}
@@ -727,11 +984,21 @@ class SurveyOperationModel:
                 f"Need usable ranges covering all anchors; {len(missing)} "
                 f"of {len(expected_anchors)} are still unconnected"
             )
-        required = 2 * len(expected_anchors) - 3
+        required = (
+            2 * len(expected_anchors) - 3
+            if self.pass_mode == SURVEY_PASS_FRESH or self.layout is None
+            else len(expected_anchors) - 1
+        )
         if len(pairs) < required:
             return (
                 f"Need at least {required} usable constraints for "
                 f"{len(expected_anchors)} anchors"
+                + (
+                    " in this layout-seeded follow-up"
+                    if self.pass_mode != SURVEY_PASS_FRESH
+                    and self.layout is not None
+                    else ""
+                )
             )
         return "Usable ranges do not form one connected geometry graph"
 
@@ -781,8 +1048,15 @@ class SurveyOperationModel:
             return "Run a survey to enumerate anchors, range pairs, and solve geometry."
         if self.phase == "terminal":
             usable = sum(result.usable for result in self.results.values())
+            if self.geometry_uses_retained_fallback:
+                return (
+                    f"Survey pass {self.pass_index}, generation "
+                    f"{self.generation} found no new pair ranges; retained "
+                    f"{len(self.geometry_pairs)} earlier ranges for re-solving."
+                )
             return (
-                f"Survey generation {self.generation} finished with "
+                f"Survey pass {self.pass_index}, generation {self.generation} "
+                "finished with "
                 f"{usable}/{len(self.plan_pairs)} usable pair ranges."
             )
         if self.phase == "failed":

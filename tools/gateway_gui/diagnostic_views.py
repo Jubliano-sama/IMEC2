@@ -13,6 +13,12 @@ from .diagnostic_models import (
 )
 from .command_telemetry import GatewayCommandEvent
 from .command_telemetry import GATEWAY_COMMAND_KIND_NAMES, GATEWAY_COMMAND_REASON_NAMES, GATEWAY_COMMAND_STAGE_NAMES
+from .survey_view import (
+    HELD_TRANSLATION_INTERVAL_MS,
+    LayoutRegistration,
+    LayoutRegistrationControls,
+    held_translation_delta,
+)
 
 
 ACCENT = "#126b5b"
@@ -23,10 +29,28 @@ BLUE = "#315c9b"
 
 
 class ClickDiagnosticsView(ttk.Frame):
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        on_translate: Callable[[float, float], None] = lambda _x, _y: None,
+        on_scale: Callable[[float], None] = lambda _factor: None,
+        on_reset: Callable[[], None] = lambda: None,
+    ) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
+        self._on_translate = on_translate
+        self._on_scale = on_scale
+        self._on_reset = on_reset
+        self._fullscreen_window: tk.Toplevel | None = None
+        self._fullscreen_canvas: tk.Canvas | None = None
+        self._fullscreen_registration_controls: LayoutRegistrationControls | None = None
+        self._held_move_keys: set[str] = set()
+        self._held_move_after_id: str | None = None
+        self._registration_scale = 1.0
+        self._registration_translate_x_m = 0.0
+        self._registration_translate_y_m = 0.0
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        self.rowconfigure(2, weight=1)
         bar = ttk.Frame(self, style="Panel.TFrame")
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         bar.columnconfigure(1, weight=1)
@@ -34,19 +58,36 @@ class ClickDiagnosticsView(ttk.Frame):
         self.fit_var = tk.StringVar(value="Waiting for solved geometry")
         self.wake_var = tk.StringVar(value="[?] Detection attempt unavailable")
         ttk.Label(bar, textvariable=self.identity_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(bar, textvariable=self.fit_var, style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
+        ttk.Button(
+            bar,
+            text="Fullscreen",
+            command=self._open_fullscreen,
+        ).grid(row=0, column=2, sticky="e")
+        ttk.Label(bar, textvariable=self.fit_var, style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
         ttk.Label(bar, textvariable=self.wake_var, wraplength=650, justify="left").grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(3, 0)
+            row=2, column=0, columnspan=3, sticky="w", pady=(3, 0)
         )
+        self.registration_controls = LayoutRegistrationControls(
+            self,
+            on_translate=on_translate,
+            on_scale=on_scale,
+            on_reset=on_reset,
+        )
+        self.registration_controls.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=1, highlightbackground="#d5dbdd")
-        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.canvas.grid(row=2, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", lambda _event: self.redraw())
         self.diagnostic_state: ClickDiagnosticState | None = None
         self.positions: dict[str, tuple[float, float]] = {}
+        self.reference_positions: dict[str, tuple[float, float]] = {}
+        self.connections: frozenset[tuple[str, str]] = frozenset()
 
     def show(self, state: ClickDiagnosticState, positions: dict[str, tuple[float, float]]) -> None:
         self.diagnostic_state = state
         self.positions = dict(positions)
+        self.registration_controls.set_enabled(bool(positions))
+        if self._fullscreen_registration_controls is not None:
+            self._fullscreen_registration_controls.set_enabled(bool(positions))
         if state.identity:
             self.identity_var.set(f"Session {state.identity[0]}  •  Event {state.identity[1]}  •  Clicker {anchor_label(state.identity[2])}")
         else:
@@ -67,33 +108,212 @@ class ClickDiagnosticsView(ttk.Frame):
             )
         self.redraw()
 
+    def show_registration(self, registration: LayoutRegistration) -> None:
+        self.reference_positions = dict(registration.reference_positions_m)
+        self._registration_scale = registration.scale
+        self._registration_translate_x_m = registration.translate_x_m
+        self._registration_translate_y_m = registration.translate_y_m
+        self.registration_controls.show_registration(
+            registration.scale,
+            registration.translate_x_m,
+            registration.translate_y_m,
+        )
+        if self._fullscreen_registration_controls is not None:
+            self._fullscreen_registration_controls.show_registration(
+                registration.scale,
+                registration.translate_x_m,
+                registration.translate_y_m,
+            )
+        self.redraw()
+
+    def show_connections(self, connections: frozenset[tuple[str, str]]) -> None:
+        self.connections = connections
+        self.redraw()
+
     def redraw(self) -> None:
-        self.canvas.delete("all")
+        self._draw_click_graph(self.canvas)
+        window = self._fullscreen_window
+        canvas = self._fullscreen_canvas
+        if (
+            window is not None
+            and canvas is not None
+            and window.winfo_exists()
+        ):
+            self._draw_click_graph(canvas)
+
+    def _draw_click_graph(self, canvas: tk.Canvas) -> None:
+        canvas.delete("all")
         if not self.positions:
-            self.canvas.create_text(max(self.canvas.winfo_width(), 400) / 2, max(self.canvas.winfo_height(), 260) / 2, text="No solved geometry", fill=MUTED)
+            canvas.create_text(max(canvas.winfo_width(), 400) / 2, max(canvas.winfo_height(), 260) / 2, text="No solved geometry", fill=MUTED)
             return
-        points = list(self.positions.values())
-        if self.diagnostic_state and self.diagnostic_state.result:
-            points.append((self.diagnostic_state.result.x_m, self.diagnostic_state.result.y_m))
-        project = _projector(points, self.canvas.winfo_width(), self.canvas.winfo_height())
+        points = list((self.reference_positions or self.positions).values())
+        points.append((0.0, 0.0))
+        project = _projector(points, canvas.winfo_width(), canvas.winfo_height())
+        origin_x, origin_y = project(0.0, 0.0)
+        canvas.create_line(
+            0,
+            origin_y,
+            canvas.winfo_width(),
+            origin_y,
+            fill="#e3e7e9",
+            dash=(3, 4),
+        )
+        canvas.create_line(
+            origin_x,
+            0,
+            origin_x,
+            canvas.winfo_height(),
+            fill="#e3e7e9",
+            dash=(3, 4),
+        )
         state = self.diagnostic_state
+        for anchor_a, anchor_b in sorted(self.connections):
+            if anchor_a not in self.positions or anchor_b not in self.positions:
+                continue
+            ax, ay = project(*self.positions[anchor_a])
+            bx, by = project(*self.positions[anchor_b])
+            canvas.create_line(
+                ax,
+                ay,
+                bx,
+                by,
+                fill="#c5ced1",
+                width=1,
+                dash=(2, 5),
+            )
         if state:
             for anchor_id, radius in state.ranges_m.items():
                 if anchor_id not in self.positions:
                     continue
                 x, y = project(*self.positions[anchor_id])
                 scale = project.scale
-                self.canvas.create_oval(x - radius * scale, y - radius * scale, x + radius * scale, y + radius * scale, outline="#7aa7a0", dash=(4, 4))
+                canvas.create_oval(x - radius * scale, y - radius * scale, x + radius * scale, y + radius * scale, outline="#7aa7a0", dash=(4, 4))
         for anchor_id, point in sorted(self.positions.items()):
             x, y = project(*point)
-            self.canvas.create_oval(x - 6, y - 6, x + 6, y + 6, fill=BLUE, outline="")
-            self.canvas.create_text(x + 9, y - 7, text=anchor_id, anchor="sw", fill="#20262b")
+            canvas.create_oval(x - 6, y - 6, x + 6, y + 6, fill=BLUE, outline="")
+            canvas.create_text(x + 9, y - 7, text=anchor_id, anchor="sw", fill="#20262b")
         if state and state.result:
             x, y = project(state.result.x_m, state.result.y_m)
             classification = state.wake.classification if state.wake else "unknown"
             color, marker = {WAKE_NORMAL: (ACCENT, "OK"), WAKE_LATE: (ERROR, "!"), WAKE_COLLISION: (AMBER, "C")}.get(classification, (MUTED, "?"))
-            self.canvas.create_oval(x - 11, y - 11, x + 11, y + 11, fill=color, outline="#20262b")
-            self.canvas.create_text(x, y, text=marker, fill="#ffffff", font=("TkDefaultFont", 8, "bold"))
+            canvas.create_oval(x - 11, y - 11, x + 11, y + 11, fill=color, outline="#20262b")
+            canvas.create_text(x, y, text=marker, fill="#ffffff", font=("TkDefaultFont", 8, "bold"))
+
+    def _open_fullscreen(self) -> None:
+        window = self._fullscreen_window
+        if window is not None and window.winfo_exists():
+            window.lift()
+            window.focus_force()
+            return
+        window = tk.Toplevel(self)
+        self._fullscreen_window = window
+        window.title("IMEC2 Click Location — Fullscreen")
+        window.configure(background="#ffffff")
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(2, weight=1)
+
+        header = ttk.Frame(window, style="Panel.TFrame", padding=(8, 6))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(
+            header,
+            textvariable=self.identity_var,
+            style="Section.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            header,
+            textvariable=self.fit_var,
+            style="PanelMuted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        ttk.Label(
+            header,
+            text="Hold WASD to move · Esc or F11 exits",
+            style="PanelMuted.TLabel",
+        ).grid(row=0, column=1, rowspan=2, padx=(8, 8))
+        ttk.Button(
+            header,
+            text="Exit fullscreen",
+            command=self._close_fullscreen,
+        ).grid(row=0, column=2, rowspan=2)
+
+        self._fullscreen_registration_controls = LayoutRegistrationControls(
+            window,
+            on_translate=self._on_translate,
+            on_scale=self._on_scale,
+            on_reset=self._on_reset,
+        )
+        self._fullscreen_registration_controls.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=8,
+            pady=(2, 4),
+        )
+        self._fullscreen_registration_controls.set_enabled(bool(self.positions))
+        self._fullscreen_registration_controls.show_registration(
+            self._registration_scale,
+            self._registration_translate_x_m,
+            self._registration_translate_y_m,
+        )
+        canvas = tk.Canvas(window, background="#ffffff", highlightthickness=0)
+        self._fullscreen_canvas = canvas
+        canvas.grid(row=2, column=0, sticky="nsew")
+        canvas.bind("<Configure>", lambda _event: self.redraw())
+        window.bind("<KeyPress>", self._fullscreen_key_pressed)
+        window.bind("<KeyRelease>", self._fullscreen_key_released)
+        window.bind("<Escape>", lambda _event: self._close_fullscreen())
+        window.bind("<F11>", lambda _event: self._close_fullscreen())
+        window.protocol("WM_DELETE_WINDOW", self._close_fullscreen)
+        try:
+            window.attributes("-fullscreen", True)
+        except tk.TclError:
+            window.state("zoomed")
+        window.focus_force()
+        self.redraw()
+
+    def _fullscreen_key_pressed(self, event: tk.Event[tk.Misc]) -> str | None:
+        key = event.keysym.lower()
+        if key not in {"w", "a", "s", "d"}:
+            return None
+        self._held_move_keys.add(key)
+        if self._held_move_after_id is None:
+            self._run_held_movement()
+        return "break"
+
+    def _fullscreen_key_released(self, event: tk.Event[tk.Misc]) -> str | None:
+        key = event.keysym.lower()
+        if key not in {"w", "a", "s", "d"}:
+            return None
+        self._held_move_keys.discard(key)
+        return "break"
+
+    def _run_held_movement(self) -> None:
+        self._held_move_after_id = None
+        window = self._fullscreen_window
+        if window is None or not window.winfo_exists():
+            self._held_move_keys.clear()
+            return
+        delta_x_m, delta_y_m = held_translation_delta(self._held_move_keys)
+        if delta_x_m or delta_y_m:
+            self._on_translate(delta_x_m, delta_y_m)
+        if self._held_move_keys:
+            self._held_move_after_id = window.after(
+                HELD_TRANSLATION_INTERVAL_MS,
+                self._run_held_movement,
+            )
+
+    def _close_fullscreen(self) -> None:
+        window = self._fullscreen_window
+        after_id = self._held_move_after_id
+        self._held_move_after_id = None
+        self._held_move_keys.clear()
+        if window is not None and after_id is not None and window.winfo_exists():
+            window.after_cancel(after_id)
+        self._fullscreen_window = None
+        self._fullscreen_canvas = None
+        self._fullscreen_registration_controls = None
+        if window is not None and window.winfo_exists():
+            window.destroy()
 
 
 class MeshDiagnosticsView(ttk.Frame):
