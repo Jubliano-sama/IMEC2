@@ -388,7 +388,8 @@ BUILD_ASSERT(FINAL_RX_TIMEOUT_MS >=
              "responder final wait timeout must cover delayed RX");
 BUILD_ASSERT(REPORT_RX_TIMEOUT_MS >= DS_TWR_UUS_TO_MS_CEIL(REPORT_RX_TIMEOUT_UUS),
              "initiator report wait timeout must cover report RX timeout");
-BUILD_ASSERT((UWB_MESH_MAX_FRAME_LEN + UWB_PHY_FCS_LEN) <= UWB_PHY_EXTENDED_FRAME_MAX_LEN,
+BUILD_ASSERT((UWB_RF_SCOPE_WIRE_LEN + UWB_MESH_MAX_FRAME_LEN +
+              UWB_PHY_FCS_LEN) <= UWB_PHY_EXTENDED_FRAME_MAX_LEN,
              "channel-9 mesh frames must fit the DW3000 extended PHR frame limit");
 BUILD_ASSERT(DWM3000_STANDARD_FRAME_MAX_LEN <= TX_FCTRL_TXFLEN_BIT_MASK,
              "standard PHR frame limit must fit the DW3000 TX length field");
@@ -493,6 +494,26 @@ static uint32_t last_rx_finfo_register;
 static uint32_t last_rx_host_uptime_ms;
 static bool last_rx_host_uptime_valid;
 static struct dwm3000_driver_stats driver_stats;
+
+static int dwm3000_local_rf_scope(struct uwb_rf_scope *scope)
+{
+    enum uwb_rf_scope_role role;
+    uint8_t forced_relay_hops = 0u;
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+    role = UWB_RF_SCOPE_ROLE_GATEWAY;
+#elif DEVICE_ROLE == ROLE_ANCHOR
+    role = UWB_RF_SCOPE_ROLE_ANCHOR;
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+    forced_relay_hops =
+        CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS;
+#endif
+#else
+    role = UWB_RF_SCOPE_ROLE_CLICKER;
+#endif
+
+    return uwb_rf_scope_build(role, forced_relay_hops, scope);
+}
 
 
 /* Implementation is split by responsibility but remains one translation unit. */

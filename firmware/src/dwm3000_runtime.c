@@ -1,5 +1,7 @@
 #include "dwm3000_runtime.h"
 
+#include "uwb_rf_scope.h"
+
 #include <limits.h>
 #include <string.h>
 
@@ -78,6 +80,45 @@ static int run_spi_operation(struct dwm3000_runtime *runtime,
     }
     runtime->spi_busy_until_us = now_us + duration_us;
     note_interval(runtime, operation, now_us, now_us + duration_us, interval);
+    return DWM3000_RUNTIME_OK;
+}
+
+static int run_scoped_frame_spi_operation(
+    struct dwm3000_runtime *runtime,
+    enum dwm3000_runtime_operation operation,
+    size_t frame_bytes_without_fcs,
+    uint64_t now_us,
+    bool require_idle_radio,
+    struct dwm3000_runtime_interval *interval)
+{
+    struct dwm3000_runtime_interval local_interval;
+    struct dwm3000_runtime_interval *result_interval =
+        interval == NULL ? &local_interval : interval;
+    uint64_t extended_end_us;
+    int ret;
+
+    /* The production driver reads/writes the scope and protocol bytes as two
+     * SPI transactions. Model both register headers and the second handoff. */
+    ret = run_spi_operation(
+        runtime,
+        DWM3000_RUNTIME_SPI_FAST,
+        operation,
+        frame_bytes_without_fcs + UWB_RF_SCOPE_WIRE_LEN +
+            (2u * DWM3000_RUNTIME_FRAME_IO_HEADER_BYTES),
+        now_us,
+        require_idle_radio,
+        result_interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    extended_end_us = result_interval->end_us +
+                      DWM3000_RUNTIME_SPI_TRANSACTION_OVERHEAD_US + 1u;
+    if (extended_end_us < result_interval->end_us) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_OVERFLOW);
+    }
+    runtime->spi_busy_until_us = extended_end_us;
+    runtime->cpu_busy_until_us = extended_end_us;
+    result_interval->end_us = extended_end_us;
     return DWM3000_RUNTIME_OK;
 }
 
@@ -461,17 +502,17 @@ int dwm3000_runtime_write_frame(struct dwm3000_runtime *runtime,
     profile = dwm3000_timing_phy_profile(runtime->configured_phy);
     if (!runtime->awake || !runtime->configured || !runtime->pll_locked ||
         profile == NULL || frame_bytes_without_fcs == 0u ||
-        frame_bytes_without_fcs > profile->max_frame_bytes_without_fcs) {
+        frame_bytes_without_fcs >
+            profile->max_frame_bytes_without_fcs - UWB_RF_SCOPE_WIRE_LEN) {
         return runtime_fail(runtime, DWM3000_RUNTIME_ERR_NOT_READY);
     }
-    ret = run_spi_operation(runtime,
-                            DWM3000_RUNTIME_SPI_FAST,
-                            DWM3000_RUNTIME_OP_TX_FRAME_WRITE,
-                            frame_bytes_without_fcs +
-                                DWM3000_RUNTIME_FRAME_IO_HEADER_BYTES,
-                            now_us,
-                            true,
-                            interval);
+    ret = run_scoped_frame_spi_operation(
+        runtime,
+        DWM3000_RUNTIME_OP_TX_FRAME_WRITE,
+        frame_bytes_without_fcs,
+        now_us,
+        true,
+        interval);
     if (ret == DWM3000_RUNTIME_OK) {
         runtime->frame_written = true;
     }
@@ -614,14 +655,12 @@ int dwm3000_runtime_read_frame(struct dwm3000_runtime *runtime,
     if (runtime == NULL || frame_bytes_without_fcs == 0u) {
         return DWM3000_RUNTIME_ERR_ARG;
     }
-    return run_spi_operation(runtime,
-                             DWM3000_RUNTIME_SPI_FAST,
-                             DWM3000_RUNTIME_OP_FRAME_READ,
-                             frame_bytes_without_fcs +
-                                 DWM3000_RUNTIME_FRAME_IO_HEADER_BYTES,
-                             now_us,
-                             true,
-                             interval);
+    return run_scoped_frame_spi_operation(runtime,
+                                          DWM3000_RUNTIME_OP_FRAME_READ,
+                                          frame_bytes_without_fcs,
+                                          now_us,
+                                          true,
+                                          interval);
 }
 
 int dwm3000_runtime_read_cir(struct dwm3000_runtime *runtime,

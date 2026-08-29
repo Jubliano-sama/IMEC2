@@ -1670,18 +1670,23 @@ static int read_rx_frame(uint8_t *buffer,
                          size_t buffer_len,
                          size_t *frame_len_out)
 {
+    struct uwb_rf_scope local_scope;
+    struct uwb_rf_scope remote_scope;
     uint32_t rx_finfo = dwt_read32bitreg(RX_FINFO_ID);
+    uint32_t raw_frame_len;
     uint32_t frame_len;
+    uint8_t scope_wire = 0u;
+    int ret;
 
     if (buffer == NULL || frame_len_out == NULL) {
         return -EINVAL;
     }
     *frame_len_out = 0u;
     last_rx_finfo_register = rx_finfo;
-    frame_len = rx_finfo & RX_FINFO_RXFLEN_BIT_MASK;
+    raw_frame_len = rx_finfo & RX_FINFO_RXFLEN_BIT_MASK;
 
     {
-        int ret = take_port_error("read-rx-frame-length");
+        ret = take_port_error("read-rx-frame-length");
 
         if (ret < 0) {
             return ret;
@@ -1691,13 +1696,44 @@ static int read_rx_frame(uint8_t *buffer,
             return ret;
         }
     }
-    if (frame_len == 0u || frame_len > buffer_len) {
+    if (raw_frame_len <= UWB_RF_SCOPE_WIRE_LEN + FCS_LEN) {
+        return -EBADMSG;
+    }
+    dwt_readrxdata(&scope_wire, UWB_RF_SCOPE_WIRE_LEN, 0u);
+    ret = take_port_error("read-rx-frame-scope");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = check_device_fatal_status("read-rx-frame-scope");
+    if (ret < 0) {
+        return ret;
+    }
+    if (dwm3000_local_rf_scope(&local_scope) < 0 ||
+        uwb_rf_scope_decode(scope_wire, &remote_scope) < 0) {
+        return -EBADMSG;
+    }
+    if (!uwb_rf_scope_visible(&local_scope, &remote_scope)) {
+        driver_stats.rx_scope_drops++;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf(
+                "DBG_DWM_RF_SCOPE_DROP local=%u remote=%u remote_clicker=%u\n",
+                local_scope.layer,
+                remote_scope.layer,
+                remote_scope.clicker ? 1u : 0u);
+        }
+        return -EHOSTUNREACH;
+    }
+
+    frame_len = raw_frame_len - UWB_RF_SCOPE_WIRE_LEN;
+    if (frame_len > buffer_len) {
         return -EMSGSIZE;
     }
 
-    dwt_readrxdata(buffer, (uint16_t)frame_len, 0);
+    dwt_readrxdata(buffer,
+                   (uint16_t)frame_len,
+                   UWB_RF_SCOPE_WIRE_LEN);
     {
-        int ret = take_port_error("read-rx-frame-data");
+        ret = take_port_error("read-rx-frame-data");
 
         if (ret < 0) {
             return ret;
@@ -1825,8 +1861,10 @@ static int decode_anchor_diag_fragment_frame(
 
 static int write_tx_frame(const uint8_t *frame, size_t frame_len)
 {
+    struct uwb_rf_scope local_scope;
     const dwt_config_t *config;
     size_t max_frame_len;
+    uint8_t scope_wire;
     int ret;
 
     if (frame == NULL || frame_len == 0u) {
@@ -1836,16 +1874,30 @@ static int write_tx_frame(const uint8_t *frame, size_t frame_len)
     max_frame_len = config->phrMode == DWT_PHRMODE_EXT ?
                     UWB_PHY_EXTENDED_FRAME_MAX_LEN :
                     DWM3000_STANDARD_FRAME_MAX_LEN;
-    if (frame_len > max_frame_len - FCS_LEN) {
+    if (frame_len > max_frame_len - FCS_LEN - UWB_RF_SCOPE_WIRE_LEN ||
+        dwm3000_local_rf_scope(&local_scope) < 0 ||
+        uwb_rf_scope_encode(&local_scope, &scope_wire) < 0) {
         return -EMSGSIZE;
     }
 
-    if (dwt_writetxdata((uint16_t)frame_len, (uint8_t *)frame, 0) != DWT_SUCCESS) {
+    if (dwt_writetxdata(UWB_RF_SCOPE_WIRE_LEN, &scope_wire, 0u) !=
+        DWT_SUCCESS) {
+        ret = take_port_error("tx-frame-scope");
+        return ret < 0 ? ret : -EIO;
+    }
+    ret = take_port_error("tx-frame-scope");
+    if (ret < 0) {
+        return ret;
+    }
+    if (dwt_writetxdata((uint16_t)frame_len,
+                        (uint8_t *)frame,
+                        UWB_RF_SCOPE_WIRE_LEN) != DWT_SUCCESS) {
         ret = take_port_error("tx-frame-data");
         return ret < 0 ? ret : -EIO;
     }
 
-    dwt_writetxfctrl((uint16_t)(frame_len + FCS_LEN), 0, 1);
+    dwt_writetxfctrl(
+        (uint16_t)(UWB_RF_SCOPE_WIRE_LEN + frame_len + FCS_LEN), 0, 1);
     return take_port_error("tx-frame-control");
 }
 
@@ -1856,12 +1908,14 @@ static int patch_tx_frame(const uint8_t *bytes,
     if (bytes == NULL || length == 0u || length > UINT16_MAX) {
         return -EINVAL;
     }
-    if ((size_t)offset + length > UWB_PHY_EXTENDED_FRAME_MAX_LEN) {
+    if ((size_t)offset + length + UWB_RF_SCOPE_WIRE_LEN >
+        UWB_PHY_EXTENDED_FRAME_MAX_LEN) {
         return -EMSGSIZE;
     }
     if (dwt_writetxdata((uint16_t)length,
                         (uint8_t *)bytes,
-                        offset) != DWT_SUCCESS) {
+                        (uint16_t)(offset + UWB_RF_SCOPE_WIRE_LEN)) !=
+        DWT_SUCCESS) {
         return -EIO;
     }
     return take_port_error("tx-frame-patch");

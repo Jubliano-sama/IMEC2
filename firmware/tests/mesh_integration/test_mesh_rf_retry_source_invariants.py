@@ -3072,7 +3072,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             response_branch,
         )
         long_branch = scan.index(
-            "else if (enumeration_continuous_rx)", response_window
+            "else if (protocol_continuous_rx)", response_window
         )
         long_slice = scan.index(
             "scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS",

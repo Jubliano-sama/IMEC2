@@ -313,6 +313,19 @@ static int start_immediate_rx(void)
     }
 }
 
+static int rearm_after_rf_scope_drop(const char *operation)
+{
+    int ret;
+
+    last_rx_host_uptime_valid = false;
+    ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK, operation);
+    if (ret < 0) {
+        dwt_forcetrxoff();
+        return ret;
+    }
+    return start_immediate_rx();
+}
+
 static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          uint8_t *buffer, size_t buffer_len, size_t *frame_len,
                          uint64_t *rx_timestamp, uint8_t *quality,
@@ -324,6 +337,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          uint64_t *ipatov_rx_timestamp,
                          bool capture_rsl)
 {
+    int64_t deadline_ms;
     uint64_t observed_at_ms = 0u;
     int ret;
 
@@ -332,90 +346,105 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     }
     *frame_len = 0u;
     driver_stats.rx_starts++;
+    deadline_ms = k_uptime_get() + timeout_ms;
+
+    while (true) {
+        uint32_t remaining_ms = remaining_timeout_ms(deadline_ms);
+
+        if (remaining_ms == 0u) {
+            *status = 0u;
+            driver_stats.rx_timeouts++;
+            dwt_forcetrxoff();
+            return -ETIMEDOUT;
+        }
         ret = wait_status_internal(SYS_STATUS_RXFCG_BIT_MASK |
                                SYS_STATUS_ALL_RX_TO |
                                DWM3000_RX_ERROR_STATUS_MASK,
-                               timeout_ms,
+                               remaining_ms,
                                status,
                                true,
                                &observed_at_ms);
-    if (ret < 0) {
-        if (ret == -ETIMEDOUT) {
-            driver_stats.rx_timeouts++;
-        } else if (ret != -ECANCELED) {
-            driver_stats.rx_failures++;
-        }
-        if (!radio_state_unknown) {
-            dwt_forcetrxoff();
-        }
-        return ret;
-    }
-
-    if ((*status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
-        if ((*status & (SYS_STATUS_RXFCE_BIT_MASK |
-                        SYS_STATUS_RXPHE_BIT_MASK |
-                        SYS_STATUS_RXFSL_BIT_MASK)) != 0u) {
-            driver_stats.rx_crc_failures++;
-        } else {
-            driver_stats.rx_failures++;
-        }
-        dwt_forcetrxoff();
-        ret = clear_status_checked(SYS_STATUS_ALL_RX_TO |
-                                       DWM3000_RX_ERROR_STATUS_MASK,
-                                   "rx-error-clear");
-                return ret < 0 ? ret : -EIO;
-    }
-
-    /*
-     * Capture host time at the first software observation of RXFCG, before
-     * diagnostics, SPI frame extraction, logging, or a scheduler preemption
-     * can move protocol eligibility across its deadline.
-     */
-    last_rx_host_uptime_ms = (uint32_t)observed_at_ms;
-    last_rx_host_uptime_valid = true;
-    if (rx_timestamp != NULL) {
-        *rx_timestamp = read_rx_timestamp_u64();
-        ret = take_port_error("rx-timestamp");
         if (ret < 0) {
+            if (ret == -ETIMEDOUT) {
+                driver_stats.rx_timeouts++;
+            } else if (ret != -ECANCELED) {
+                driver_stats.rx_failures++;
+            }
+            if (!radio_state_unknown) {
+                dwt_forcetrxoff();
+            }
             return ret;
         }
-    }
-    if (quality != NULL) {
-        *quality = 100u;
-    }
-    if (capture_rsl) {
-        if (!read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
-                                 clock_offset_raw, clock_offset_sampled,
-                                 carrier_integrator,
-                                 carrier_integrator_sampled,
-                                 ipatov_rx_timestamp)) {
-            dwt_forcetrxoff();
-            return -EIO;
-        }
-    }
 
-    ret = read_rx_frame(buffer, buffer_len, frame_len);
-    if (ret < 0 && ret != -EMSGSIZE) {
-        driver_stats.rx_failures++;
-        return ret;
-    }
-    {
-        int clear_ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,
-                                             "rx-complete-clear");
-
-        if (clear_ret < 0) {
+        if ((*status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
+            if ((*status & (SYS_STATUS_RXFCE_BIT_MASK |
+                            SYS_STATUS_RXPHE_BIT_MASK |
+                            SYS_STATUS_RXFSL_BIT_MASK)) != 0u) {
+                driver_stats.rx_crc_failures++;
+            } else {
+                driver_stats.rx_failures++;
+            }
             dwt_forcetrxoff();
-            return clear_ret;
+            ret = clear_status_checked(SYS_STATUS_ALL_RX_TO |
+                                           DWM3000_RX_ERROR_STATUS_MASK,
+                                       "rx-error-clear");
+            return ret < 0 ? ret : -EIO;
         }
-    }
-    if (ret < 0) {
-        driver_stats.rx_failures++;
-        dwt_forcetrxoff();
+
+        ret = read_rx_frame(buffer, buffer_len, frame_len);
+        if (ret == -EHOSTUNREACH) {
+            *frame_len = 0u;
+            ret = rearm_after_rf_scope_drop("rx-scope-drop-clear");
+            if (ret < 0) {
+                driver_stats.rx_failures++;
                 return ret;
-    }
+            }
+            continue;
+        }
+        if (ret < 0) {
+            int clear_ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,
+                                                 "rx-invalid-clear");
 
-    driver_stats.rx_dones++;
+            driver_stats.rx_failures++;
+            dwt_forcetrxoff();
+            return clear_ret < 0 ? clear_ret : ret;
+        }
+
+        /* Use the first software observation of this accepted RXFCG for
+         * protocol deadlines; scope-filtered frames never become activity. */
+        last_rx_host_uptime_ms = (uint32_t)observed_at_ms;
+        last_rx_host_uptime_valid = true;
+        if (rx_timestamp != NULL) {
+            *rx_timestamp = read_rx_timestamp_u64();
+            ret = take_port_error("rx-timestamp");
+            if (ret < 0) {
+                dwt_forcetrxoff();
+                return ret;
+            }
+        }
+        if (quality != NULL) {
+            *quality = 100u;
+        }
+        if (capture_rsl) {
+            if (!read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
+                                     clock_offset_raw, clock_offset_sampled,
+                                     carrier_integrator,
+                                     carrier_integrator_sampled,
+                                     ipatov_rx_timestamp)) {
+                dwt_forcetrxoff();
+                return -EIO;
+            }
+        }
+        ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,
+                                   "rx-complete-clear");
+        if (ret < 0) {
+            dwt_forcetrxoff();
+            return ret;
+        }
+
+        driver_stats.rx_dones++;
         return 0;
+    }
 }
 
 static int receive_response(const struct dwm3000_range_request *request,
@@ -429,58 +458,37 @@ static int receive_response(const struct dwm3000_range_request *request,
     size_t frame_len;
     int ret;
 
-    ret = wait_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO |
-                      DWM3000_RX_ERROR_STATUS_MASK,
-                      request->timeout_ms == 0u ? RESP_RX_TIMEOUT_MS : request->timeout_ms,
-                      &status);
+    ret = receive_frame(request->timeout_ms == 0u ?
+                            RESP_RX_TIMEOUT_MS : request->timeout_ms,
+                        &status,
+                        rx_buffer,
+                        sizeof(rx_buffer),
+                        &frame_len,
+                        resp_rx_ts,
+                        quality,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        false);
     if (ret < 0) {
-        dwt_forcetrxoff();
-        *status_out = ret == -ETIMEDOUT ?
-                      RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+        enum range_status rx_status = status_to_range_status(status);
+
+        *status_out = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT :
+                      ret == -EMSGSIZE ? RANGE_BAD_FRAME :
+                      rx_status == RANGE_INTERNAL_ERROR ? RANGE_RX_ERROR :
+                      rx_status;
         return ret;
     }
-
-    if ((status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
-        *status_out = status_to_range_status(status);
-        dwt_forcetrxoff();
-        ret = clear_status_checked(SYS_STATUS_ALL_RX_TO |
-                                       DWM3000_RX_ERROR_STATUS_MASK,
-                                   "response-error-clear");
-        if (ret < 0) {
-            *status_out = RANGE_RX_ERROR;
-            return ret;
-        }
-        return -EIO;
-    }
-
-    *resp_rx_ts = read_rx_timestamp_u64();
-    ret = take_port_error("response-rx-timestamp");
+    ret = clear_status_checked(SYS_STATUS_TXFRS_BIT_MASK,
+                               "response-tx-complete-clear");
     if (ret < 0) {
+        dwt_forcetrxoff();
         *status_out = RANGE_RX_ERROR;
-        return ret;
-    }
-    if (quality != NULL) {
-        *quality = 100u;
-    }
-    ret = read_rx_frame(rx_buffer, sizeof(rx_buffer), &frame_len);
-    if (ret < 0 && ret != -EMSGSIZE) {
-        *status_out = RANGE_RX_ERROR;
-        return ret;
-    }
-    {
-        int clear_ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK |
-                                                 SYS_STATUS_TXFRS_BIT_MASK,
-                                             "response-complete-clear");
-
-        if (clear_ret < 0) {
-            dwt_forcetrxoff();
-            *status_out = RANGE_RX_ERROR;
-            return clear_ret;
-        }
-    }
-    if (ret < 0) {
-        dwt_forcetrxoff();
-        *status_out = RANGE_BAD_FRAME;
         return ret;
     }
 

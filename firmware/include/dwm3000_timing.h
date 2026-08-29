@@ -77,8 +77,10 @@ uint64_t dwm3000_timing_shr_rctu(enum dwm3000_timing_phy phy);
 uint64_t dwm3000_timing_preamble_rctu(enum dwm3000_timing_phy phy);
 uint64_t dwm3000_timing_sfd_rctu(enum dwm3000_timing_phy phy);
 uint64_t dwm3000_timing_pac_rctu(enum dwm3000_timing_phy phy);
+/* frame_bytes_without_fcs is the protocol frame length. The mandatory RF
+ * scope prefix and hardware FCS are added by this model. */
 uint64_t dwm3000_timing_airtime_rctu(enum dwm3000_timing_phy phy,
-                                    size_t frame_bytes_without_fcs);
+                                     size_t frame_bytes_without_fcs);
 uint64_t dwm3000_timing_airtime_us_ceil(enum dwm3000_timing_phy phy,
                                        size_t frame_bytes_without_fcs);
 uint64_t dwm3000_timing_rctu_to_us_floor(uint64_t rctu);

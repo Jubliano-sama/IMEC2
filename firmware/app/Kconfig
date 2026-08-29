@@ -209,8 +209,10 @@ config IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS
     help
       Bench-only exact route-depth policy. Route discovery accepts a gateway
       route only when the authenticated route reply reports this many relay
-      anchors, and gateway controls must have crossed the same number of
-      relays. Normal mesh role presets leave this policy disabled.
+      anchors. It also places the anchor at RF layer N+1, so every UWB frame
+      from the gateway or another anchor must cross each intervening forced
+      layer in either direction. Clicker traffic remains directly visible.
+      Normal mesh role presets leave this policy disabled.
 
 config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     int "Synthetic mesh-test packet interval in milliseconds"
@@ -233,7 +235,7 @@ config IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES
     int "Synthetic mesh-test target payload size"
     depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
     default 0
-    range 0 958
+    range 0 957
     help
       Target TLV payload length for synthetic MSG_MESH_DATA packets. Values
       above the metadata payload size are filled with TLV_MESH_TEST_PADDING

@@ -29,6 +29,7 @@ add_library(core
     src/gateway_membership.c
     src/gateway_command.c
     src/uwb.c
+    src/uwb_rf_scope.c
     src/uwb_ble_courtesy.c
     src/uwb_session.c
     src/mesh.c
@@ -123,6 +124,22 @@ target_link_libraries(test_protocol_rx_lifecycle PRIVATE core)
 add_test(NAME protocol_rx_lifecycle COMMAND test_protocol_rx_lifecycle)
 set_tests_properties(protocol_rx_lifecycle PROPERTIES
     LABELS "mesh_integration;hardware_models;protocol;state;radio")
+
+add_executable(test_uwb_rf_scope tests/test_uwb_rf_scope.c)
+target_link_libraries(test_uwb_rf_scope PRIVATE core)
+add_test(NAME uwb_rf_scope COMMAND test_uwb_rf_scope)
+set_tests_properties(uwb_rf_scope PROPERTIES
+    LABELS "mesh_integration;hardware_models;radio;forcedhop;protocol")
+add_test(NAME uwb_rf_scope_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_uwb_rf_scope_source_invariants.py)
+set_tests_properties(uwb_rf_scope_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;radio;forcedhop;protocol;static_analysis")
+add_test(NAME enumeration_slot_sim_self_test
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/sim/enumeration_slot_sim.py --self-test)
+set_tests_properties(enumeration_slot_sim_self_test PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;timing;channel5")
 
 add_test(NAME enumeration_rx_lifecycle_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -1287,6 +1304,16 @@ target_link_libraries(test_mesh_wake_scenarios PRIVATE mesh_sim)
 add_test(NAME mesh_wake_scenarios COMMAND test_mesh_wake_scenarios)
 set_tests_properties(mesh_wake_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;wake")
+
+add_executable(test_mesh_forcedhop_enumeration_wake_scenarios
+    tests/mesh_integration/test_mesh_forcedhop_enumeration_wake_scenarios.c
+)
+target_link_libraries(test_mesh_forcedhop_enumeration_wake_scenarios
+    PRIVATE mesh_sim)
+add_test(NAME mesh_forcedhop_enumeration_wake_scenarios
+    COMMAND test_mesh_forcedhop_enumeration_wake_scenarios)
+set_tests_properties(mesh_forcedhop_enumeration_wake_scenarios PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;wake;enumeration;forcedhop")
 
 add_executable(test_mesh_discovery_scenarios
     tests/mesh_integration/test_mesh_discovery_scenarios.c

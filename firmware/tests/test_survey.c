@@ -35,11 +35,11 @@ static void test_timing_contract(void)
     assert(node_comm_bounded_control_apply_budget_ms(1u) == 20000u);
     assert(node_comm_bounded_control_apply_budget_ms(5u) == 60000u);
     assert(survey_control_delivery_delay_ms(0u) == 0u);
-    assert(survey_control_delivery_delay_ms(1u) == 13750u);
-    assert(survey_control_delivery_delay_ms(2u) == 14290u);
-    assert(survey_control_delivery_delay_ms(3u) == 14830u);
-    assert(survey_control_delivery_delay_ms(4u) == 15370u);
-    assert(survey_control_delivery_delay_ms(5u) == 15910u);
+    assert(survey_control_delivery_delay_ms(1u) == 14310u);
+    assert(survey_control_delivery_delay_ms(2u) == 15410u);
+    assert(survey_control_delivery_delay_ms(3u) == 16510u);
+    assert(survey_control_delivery_delay_ms(4u) == 17610u);
+    assert(survey_control_delivery_delay_ms(5u) == 18710u);
     assert(survey_slot_span_include(0u, 0u) == 1u);
     assert(survey_slot_span_include(1u, 2u) == 3u);
     assert(survey_slot_span_include(3u, 1u) == 3u);

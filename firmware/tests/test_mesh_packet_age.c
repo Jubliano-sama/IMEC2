@@ -92,7 +92,7 @@ static void test_production_phy_airtime_is_accounted_in_full(void)
     const uint32_t age_ms = mesh_packet_age_at_air_arrival(
         41u, 500u, true, 529u, airtime_us);
 
-    assert(airtime_us == UINT64_C(10188));
+    assert(airtime_us == UINT64_C(10196));
     assert(age_ms == 41u + 29u + 11u);
 }
 

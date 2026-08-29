@@ -146,6 +146,7 @@ struct dwm3000_driver_stats {
     uint32_t rx_timeouts;
     uint32_t rx_crc_failures;
     uint32_t rx_failures;
+    uint32_t rx_scope_drops;
     uint32_t tx_starts;
     uint32_t tx_dones;
     uint32_t tx_failures;

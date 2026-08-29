@@ -53,7 +53,8 @@ _Static_assert(UWB_PHY_FCS_LEN == DWM3000_TIMING_FCS_BYTES,
 _Static_assert(UWB_PHY_EXTENDED_FRAME_MAX_LEN ==
                    DWM3000_TIMING_EXTENDED_PSDU_MAX_BYTES,
                "airtime extended PSDU limit must match UWB framing");
-_Static_assert(UWB_MESH_MAX_FRAME_LEN + UWB_PHY_FCS_LEN ==
+_Static_assert(UWB_RF_SCOPE_WIRE_LEN + UWB_MESH_MAX_FRAME_LEN +
+                   UWB_PHY_FCS_LEN ==
                    DWM3000_TIMING_EXTENDED_PSDU_MAX_BYTES,
                "maximum mesh frame must consume the modeled extended PSDU");
 _Static_assert(PACKET_EXT_MAX_LEN <= UWB_MESH_MAX_PACKET_LEN,
@@ -141,6 +142,7 @@ uint64_t dwm3000_timing_airtime_rctu(enum dwm3000_timing_phy phy,
                                     size_t frame_bytes_without_fcs)
 {
     const struct dwm3000_phy_timing *profile = dwm3000_timing_phy_profile(phy);
+    size_t physical_frame_bytes_without_fcs;
     uint64_t data_bits;
     uint64_t rs_blocks;
     uint64_t coded_bits;
@@ -150,11 +152,14 @@ uint64_t dwm3000_timing_airtime_rctu(enum dwm3000_timing_phy phy,
     uint64_t total_chips;
 
     if (profile == NULL || frame_bytes_without_fcs == 0u ||
-        frame_bytes_without_fcs > profile->max_frame_bytes_without_fcs) {
+        frame_bytes_without_fcs >
+            profile->max_frame_bytes_without_fcs - UWB_RF_SCOPE_WIRE_LEN) {
         return 0u;
     }
 
-    data_bits = ((uint64_t)frame_bytes_without_fcs +
+    physical_frame_bytes_without_fcs =
+        frame_bytes_without_fcs + UWB_RF_SCOPE_WIRE_LEN;
+    data_bits = ((uint64_t)physical_frame_bytes_without_fcs +
                  DWM3000_TIMING_FCS_BYTES) * 8u;
     rs_blocks = (data_bits + DWM3000_TIMING_RS_DATA_BITS_PER_BLOCK - 1u) /
                 DWM3000_TIMING_RS_DATA_BITS_PER_BLOCK;

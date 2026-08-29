@@ -48,7 +48,8 @@ RCTU_PER_SECOND = 63_897_600_000
 RS_DATA_BITS_PER_BLOCK = 330
 RS_PARITY_BITS_PER_BLOCK = 48
 FCS_BYTES = 2
-STANDARD_FRAME_MAX_BYTES_WITHOUT_FCS = 125
+RF_SCOPE_BYTES = 1
+STANDARD_PROTOCOL_FRAME_MAX_BYTES_WITHOUT_FCS = 124
 
 RESPONSE_ENVELOPE_BYTES = 31
 RECORD_BYTES = 9
@@ -63,9 +64,9 @@ Coord = tuple[int, int]
 def ch5_airtime_us(frame_bytes_without_fcs: int) -> int:
     """Return production Channel-5 standard-PHR airtime, rounded up."""
 
-    if not 1 <= frame_bytes_without_fcs <= STANDARD_FRAME_MAX_BYTES_WITHOUT_FCS:
-        raise ValueError("standard-PHR frame length must be in [1, 125]")
-    data_bits = (frame_bytes_without_fcs + FCS_BYTES) * 8
+    if not 1 <= frame_bytes_without_fcs <= STANDARD_PROTOCOL_FRAME_MAX_BYTES_WITHOUT_FCS:
+        raise ValueError("standard-PHR protocol frame length must be in [1, 124]")
+    data_bits = (frame_bytes_without_fcs + RF_SCOPE_BYTES + FCS_BYTES) * 8
     rs_blocks = math.ceil(data_bits / RS_DATA_BITS_PER_BLOCK)
     coded_bits = data_bits + rs_blocks * RS_PARITY_BITS_PER_BLOCK
     total_chips = (
@@ -102,7 +103,7 @@ class SimConfig:
         if self.records_per_bundle < 1:
             raise ValueError("records_per_bundle must be positive")
         response_bytes = RESPONSE_ENVELOPE_BYTES + self.records_per_bundle * RECORD_BYTES
-        if response_bytes > STANDARD_FRAME_MAX_BYTES_WITHOUT_FCS:
+        if response_bytes > STANDARD_PROTOCOL_FRAME_MAX_BYTES_WITHOUT_FCS:
             raise ValueError("response bundle does not fit standard PHR")
         min_cell_us = (
             ch5_airtime_us(response_bytes)
@@ -537,11 +538,11 @@ def self_test() -> None:
     assert diamond_count(3) == 24
     assert diamond_count(4) == 40
     assert len(shell(5)) == 20
-    assert ch5_airtime_us(125) == 5445
-    assert MAX_RESPONSE_AIRTIME_US == 5363
-    assert ACK_AIRTIME_US == 4518
-    assert MIN_CELL_US == 19_881
-    assert CELL_MARGIN_US == 5_119
+    assert ch5_airtime_us(124) == 5445
+    assert MAX_RESPONSE_AIRTIME_US == 5421
+    assert ACK_AIRTIME_US == 4527
+    assert MIN_CELL_US == 19_948
+    assert CELL_MARGIN_US == 5_052
 
     rng = random.Random(7)
     topology = make_topology(5, 50, rng)

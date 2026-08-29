@@ -907,7 +907,9 @@ static void test_pool_boundary_preserves_retained_click_custody(void)
     assert(gateway_ble_stream_enqueue_packet(&state,
                                              &click,
                                              payload,
-                                             677u,
+                                             GATEWAY_BLE_STREAM_RECORD_POOL_BYTES + 1u -
+                                                 (3u * GATEWAY_BLE_STREAM_RECORD_HEADER_LEN) -
+                                                 PACKET_EXT_MAX_PAYLOAD_LEN - 2u,
                                              0u,
                                              20u,
                                              true) == 1);

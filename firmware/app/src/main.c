@@ -194,7 +194,8 @@ BUILD_ASSERT(MAX_SCHEDULED_ANCHORS > 0u &&
              MAX_SCHEDULED_ANCHORS <= UWB_DISCOVERY_SLOT_COUNT &&
              MAX_SCHEDULED_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
              "normal-click anchor count must fit discovery and schedule capacity");
-BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= 127u,
+BUILD_ASSERT(UWB_RF_SCOPE_WIRE_LEN + UWB_RANGE_SCHEDULE_MAX_LEN +
+                 UWB_PHY_FCS_LEN <= 127u,
              "range schedule must fit one standard UWB frame");
 BUILD_ASSERT((UWB_RANGE_SCHEDULE_MAX_ANCHORS +
               UWB_RANGING_REQUESTS_MAX_PER_ANCHOR - 1u) <= UINT8_MAX,

@@ -549,6 +549,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     size_t payload_len;
     uint8_t rx_quality = 0u;
     int8_t rx_rsl_dbm = 0;
+    int64_t acquire_deadline_ms;
     int64_t completion_deadline_ms = 0;
     uint32_t remaining_ms;
     uint32_t rearm_count = 0u;
@@ -582,6 +583,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
         return ret;
     }
     hunt_started_ms = k_uptime_get_32();
+    acquire_deadline_ms = k_uptime_get() + acquire_timeout_ms;
 
     driver_stats.rx_starts++;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -650,9 +652,84 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
 
     while (true) {
         if ((status & SYS_STATUS_RXFCG_BIT_MASK) != 0u) {
+            payload_len = 0u;
+            ret = read_rx_frame(rx_buffer, sizeof(rx_buffer), &raw_len);
+            if (ret == -EHOSTUNREACH) {
+                activity_seen = false;
+                completion_active = false;
+                last_failure = DWM3000_RX_FAILURE_NONE;
+                remaining_ms = remaining_timeout_ms(acquire_deadline_ms);
+                if (remaining_ms == 0u) {
+                    ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,
+                                               "continuous-rx-scope-expired-clear");
+                    if (ret < 0) {
+                        dwt_forcetrxoff();
+                        return finish_abortible_continuous_receive(ret);
+                    }
+                    last_failure = DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
+                    break;
+                }
+
+                ret = rearm_after_rf_scope_drop(
+                    "continuous-rx-scope-drop-clear");
+                if (ret < 0) {
+                    driver_stats.rx_failures++;
+                    return finish_abortible_continuous_receive(ret);
+                }
+                rearm_count++;
+                status = 0u;
+                ret = wait_status_internal(
+                    RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
+                    remaining_ms,
+                    &status,
+                    true,
+                    &observed_at_ms);
+                last_status = status;
+                if (ret == -ECANCELED) {
+                    dwt_forcetrxoff();
+                    return finish_abortible_continuous_receive(-ECANCELED);
+                }
+                if (ret < 0 && ret != -ETIMEDOUT) {
+                    driver_stats.rx_failures++;
+                    return finish_abortible_continuous_receive(ret);
+                }
+                if (ret < 0 && !rx_status_has_activity(status)) {
+                    last_failure = DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
+                    break;
+                }
+                if (ret < 0 || (status & RX_ACTIVITY_STATUS_MASK) != 0u ||
+                    ((status & RX_TERMINAL_STATUS_MASK) != 0u &&
+                     (status & SYS_STATUS_RXFCG_BIT_MASK) == 0u)) {
+                    activity_seen = rx_status_has_activity(status);
+                }
+                if (activity_seen) {
+                    completion_active = true;
+                    completion_deadline_ms =
+                        k_uptime_get() + completion_timeout_ms;
+                }
+                continue;
+            }
+            if (ret < 0) {
+                int clear_ret = clear_status_checked(
+                    SYS_STATUS_RXFCG_BIT_MASK,
+                    "continuous-rx-invalid-clear");
+
+                driver_stats.rx_failures++;
+                dwt_forcetrxoff();
+                if (failure != NULL) {
+                    *failure = DWM3000_RX_FAILURE_BAD_FRAME;
+                }
+                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_BAD status=0x%08x rearm=%u\n",
+                                        status,
+                                        rearm_count);
+                }
+                return finish_abortible_continuous_receive(
+                    clear_ret < 0 ? clear_ret : ret);
+            }
+
             last_rx_host_uptime_ms = (uint32_t)observed_at_ms;
             last_rx_host_uptime_valid = true;
-            payload_len = 0u;
             if (rsl_dbm != NULL) {
                 if (!read_rx_diagnostics(&rx_rsl_dbm,
                                          NULL,
@@ -669,32 +746,10 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             if (quality != NULL) {
                 rx_quality = 100u;
             }
-            ret = read_rx_frame(rx_buffer, sizeof(rx_buffer), &raw_len);
-            if (ret < 0 && ret != -EMSGSIZE) {
-                driver_stats.rx_failures++;
-                return finish_abortible_continuous_receive(ret);
-            }
-            {
-                int clear_ret = clear_status_checked(
-                    SYS_STATUS_RXFCG_BIT_MASK,
-                    "continuous-rx-complete-clear");
-
-                if (clear_ret < 0) {
-                    dwt_forcetrxoff();
-                    return finish_abortible_continuous_receive(clear_ret);
-                }
-            }
+            ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,
+                                       "continuous-rx-complete-clear");
             if (ret < 0) {
-                driver_stats.rx_failures++;
                 dwt_forcetrxoff();
-                if (failure != NULL) {
-                    *failure = DWM3000_RX_FAILURE_BAD_FRAME;
-                }
-                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                    status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_BAD status=0x%08x rearm=%u\n",
-                                        status,
-                                        rearm_count);
-                }
                 return finish_abortible_continuous_receive(ret);
             }
 

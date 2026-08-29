@@ -483,6 +483,21 @@ static void test_depth_aware_survey_control_schedule(void)
 {
     uint32_t previous_ms = 0u;
 
+    CHECK(discovery_assignment_activation_propagation_hold_ms(1u) ==
+              DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                  DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+          "direct enumeration activation lost its relay wake budget");
+    CHECK(discovery_assignment_activation_propagation_hold_ms(2u) ==
+              DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                  2u * DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+          "two-hop enumeration activation lost one relay wake budget");
+    CHECK(discovery_assignment_activation_propagation_hold_ms(
+              UWB_ENUM_MAX_HOPS) ==
+              DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                  UWB_ENUM_MAX_HOPS *
+                      DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+          "maximum-depth enumeration activation is not fail-safe");
+
     CHECK(survey_control_delivery_delay_ms(0u) == 0u,
           "invalid survey depth must not produce a schedule");
     CHECK(survey_control_delivery_delay_ms(UWB_ENUM_MAX_HOPS + 1u) == 0u,
@@ -492,7 +507,7 @@ static void test_depth_aware_survey_control_schedule(void)
          hop_count <= UWB_ENUM_MAX_HOPS;
          hop_count++) {
         uint32_t propagation_ms =
-            discovery_assignment_control_propagation_hold_ms(hop_count);
+            discovery_assignment_activation_propagation_hold_ms(hop_count);
         uint32_t schedule_ms =
             survey_control_delivery_delay_ms(hop_count);
         uint32_t required_ms =
@@ -508,8 +523,8 @@ static void test_depth_aware_survey_control_schedule(void)
               "survey schedule must retain explicit post-delivery margin");
         if (previous_ms != 0u) {
             CHECK(schedule_ms - previous_ms ==
-                      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
-                  "each survey depth must add exactly one compact relay bound");
+                      DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
+                  "each survey depth must add one activated compact relay bound");
         }
         previous_ms = schedule_ms;
     }

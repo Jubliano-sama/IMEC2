@@ -1871,8 +1871,10 @@ static void test_uwb_mesh_frame_max_extended_packet(void)
         .message_age_ms = 0x10203040u,
     };
 
-    assert(PACKET_EXT_MAX_LEN == UWB_MESH_MAX_PACKET_LEN);
-    assert((UWB_MESH_MAX_FRAME_LEN + UWB_PHY_FCS_LEN) == UWB_PHY_EXTENDED_FRAME_MAX_LEN);
+    assert(sizeof(payload) + PACKET_EXT_HEADER_LEN + PACKET_CRC_LEN ==
+           UWB_MESH_MAX_PACKET_LEN);
+    assert((UWB_RF_SCOPE_WIRE_LEN + UWB_MESH_MAX_FRAME_LEN +
+            UWB_PHY_FCS_LEN) == UWB_PHY_EXTENDED_FRAME_MAX_LEN);
     assert(uwb_mesh_frame_encode(0xAA55u,
                                  0x10u,
                                  0x20u,
@@ -1882,7 +1884,7 @@ static void test_uwb_mesh_frame_max_extended_packet(void)
                                  sizeof(frame),
                                  &written) == PROTO_OK);
     assert(written == UWB_MESH_MAX_FRAME_LEN);
-    assert(proto_get_u16_le(&frame[23]) == PACKET_EXT_MAX_LEN);
+    assert(proto_get_u16_le(&frame[23]) == UWB_MESH_MAX_PACKET_LEN);
     assert(uwb_mesh_frame_decode(frame,
                                  written,
                                  0xAA55u,

@@ -360,11 +360,11 @@ static void build_expected_records(void)
                      RANGE_REPORT_CIR_REMAINDER_RAW_BYTES,
                      true);
 
-    CHECK(RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES == 881u,
-          "production first CIR raw chunk changed: actual=%u expected=881",
+    CHECK(RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES == 880u,
+          "production first CIR raw chunk changed: actual=%u expected=880",
           RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES);
-    CHECK(RANGE_REPORT_CIR_REMAINDER_RAW_BYTES == 271u,
-          "production CIR remainder changed: actual=%u expected=271",
+    CHECK(RANGE_REPORT_CIR_REMAINDER_RAW_BYTES == 272u,
+          "production CIR remainder changed: actual=%u expected=272",
           RANGE_REPORT_CIR_REMAINDER_RAW_BYTES);
     CHECK(expected_records[TEST_RECORD_CIR_FIRST].payload_len ==
               PACKET_EXT_MAX_PAYLOAD_LEN,

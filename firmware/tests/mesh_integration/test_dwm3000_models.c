@@ -56,19 +56,19 @@ static void test_airtime_golden_vectors(void)
 {
     static const struct airtime_vector vectors[] = {
         {"channel-5-control", DWM3000_TIMING_PHY_CH5_MESH_CONTROL,
-         34u, UINT64_C(290775040), 4551u},
+         34u, UINT64_C(291299328), 4559u},
         {"channel-9-ack", DWM3000_TIMING_PHY_CH9_MESH,
-         49u, UINT64_C(101511168), 1589u},
+         49u, UINT64_C(102035456), 1597u},
         {"channel-9-81", DWM3000_TIMING_PHY_CH9_MESH,
-         81u, UINT64_C(121434112), 1901u},
+         81u, UINT64_C(121958400), 1909u},
         {"channel-9-965", DWM3000_TIMING_PHY_CH9_MESH,
-         965u, UINT64_C(650964992), 10188u},
+         965u, UINT64_C(651489280), 10196u},
         {"channel-9-974", DWM3000_TIMING_PHY_CH9_MESH,
-         974u, UINT64_C(655683584), 10262u},
+         974u, UINT64_C(656207872), 10270u},
         {"channel-5-standard-max", DWM3000_TIMING_PHY_CH5_WAKE,
-         125u, UINT64_C(347922432), 5445u},
+         124u, UINT64_C(347922432), 5445u},
         {"channel-9-extended-max", DWM3000_TIMING_PHY_CH9_MESH,
-         1021u, UINT64_C(683470848), 10697u},
+         1020u, UINT64_C(683470848), 10697u},
     };
 
     for (size_t i = 0u; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
@@ -98,9 +98,9 @@ static void test_airtime_golden_vectors(void)
               UINT64_C(67104768));
     CHECK_U64(dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH5_WAKE, 0u),
               0u);
-    CHECK_U64(dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH5_WAKE, 126u),
+    CHECK_U64(dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH5_WAKE, 125u),
               0u);
-    CHECK_U64(dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH9_MESH, 1022u),
+    CHECK_U64(dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH9_MESH, 1021u),
               0u);
     CHECK_U64(dwm3000_timing_airtime_rctu((enum dwm3000_timing_phy)99, 34u),
               0u);
@@ -124,9 +124,9 @@ static void test_delayed_tx_and_rounding(void)
               PROTO_OK);
     CHECK_U64(interval.rmarker_rctu, UINT64_C(1000208038));
     CHECK_U64(interval.start_rctu, UINT64_C(933103270));
-    CHECK_U64(interval.end_rctu, UINT64_C(1054537382));
+    CHECK_U64(interval.end_rctu, UINT64_C(1055061670));
     CHECK_U64(interval.end_rctu - interval.start_rctu,
-              UINT64_C(121434112));
+              UINT64_C(121958400));
 
     CHECK_U64(dwm3000_timing_us_to_rctu_floor(1u), 63897u);
     CHECK_U64(dwm3000_timing_us_to_rctu_ceil(1u), 63898u);
@@ -220,16 +220,16 @@ static void test_runtime_legal_sequence_and_delays(void)
               DWM3000_RUNTIME_OK);
     CHECK_INT(dwm3000_runtime_read_frame(&runtime, 81u, 10236u, &interval),
               DWM3000_RUNTIME_OK);
-    CHECK_U64(interval.end_us, 10260u);
-    CHECK_INT(dwm3000_runtime_read_cir(&runtime, 1152u, 10260u, &interval),
+    CHECK_U64(interval.end_us, 10264u);
+    CHECK_INT(dwm3000_runtime_read_cir(&runtime, 1152u, 10264u, &interval),
               DWM3000_RUNTIME_OK);
-    CHECK_U64(interval.end_us, 10552u);
-    CHECK_INT(dwm3000_runtime_write_frame(&runtime, 81u, 10552u, &interval),
+    CHECK_U64(interval.end_us, 10556u);
+    CHECK_INT(dwm3000_runtime_write_frame(&runtime, 81u, 10556u, &interval),
               DWM3000_RUNTIME_OK);
-    CHECK_U64(interval.end_us, 10576u);
-    CHECK_INT(dwm3000_runtime_start_tx(&runtime, 10576u, 12000u, &interval),
+    CHECK_U64(interval.end_us, 10584u);
+    CHECK_INT(dwm3000_runtime_start_tx(&runtime, 10584u, 12000u, &interval),
               DWM3000_RUNTIME_OK);
-    CHECK_U64(interval.start_us, 10580u);
+    CHECK_U64(interval.start_us, 10588u);
     CHECK_U64(interval.end_us, 12000u);
     CHECK_INT(dwm3000_runtime_status_poll(&runtime, 10600u, &interval),
               DWM3000_RUNTIME_OK);

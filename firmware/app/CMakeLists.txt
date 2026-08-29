@@ -20,7 +20,7 @@ if(DEFINED SYSBUILD_CACHE AND EXISTS "${SYSBUILD_CACHE}")
             string(REGEX REPLACE "^[^=]*=" "" IMEC_FORCED_GATEWAY_RELAY_HOPS
                    "${imec_sysbuild_hops_line}")
             set(IMEC_FORCED_GATEWAY_RELAY_HOPS "${IMEC_FORCED_GATEWAY_RELAY_HOPS}" CACHE STRING
-                "Exact gateway relay depth for mesh_anchor_forcedhop (1-8)" FORCE)
+                "Exact gateway relay depth and RF layer for mesh_anchor_forcedhop (1-8)" FORCE)
         endif()
     endif()
 endif()
@@ -87,7 +87,7 @@ set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
 set(IMEC_ML_ANCHOR_SLOT "" CACHE STRING "Override deterministic ML anchor discovery slot")
 set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "" CACHE STRING "BLE device name for mesh-route test builds")
 set(IMEC_FORCED_GATEWAY_RELAY_HOPS "1" CACHE STRING
-    "Exact gateway relay depth for mesh_anchor_forcedhop (1-8)")
+    "Exact gateway relay depth and RF layer for mesh_anchor_forcedhop (1-8)")
 
 set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway")
 set_property(CACHE FIRMWARE_ROLE PROPERTY STRINGS clicker tag anchor gateway)
@@ -490,6 +490,7 @@ target_sources(app PRIVATE
     ../src/firmware_state_radio.c
     ../src/gateway_membership.c
     ../src/uwb.c
+    ../src/uwb_rf_scope.c
     ../src/uwb_ble_courtesy.c
     ../src/uwb_session.c
     ../src/mesh.c

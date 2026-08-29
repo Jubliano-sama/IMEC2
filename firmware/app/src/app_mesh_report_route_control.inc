@@ -14,8 +14,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     struct app_mesh_flood_result result = {0};
     enum fw_c5_tx_intent c5_tx_intent =
         mesh_c5_forwarded_control_intent(out);
-    bool send_wake_train =
-        out != NULL && out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV;
+    bool send_wake_train = out != NULL;
     enum discovery_assignment_phase enumeration_phase;
     uint32_t enumeration_epoch;
     uint32_t enumeration_operation_budget_ms;

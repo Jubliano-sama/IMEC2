@@ -8,6 +8,7 @@ enum protocol_rx_operation {
     PROTOCOL_RX_OPERATION_NONE = 0,
     PROTOCOL_RX_OPERATION_HERE_I_AM,
     PROTOCOL_RX_OPERATION_ENUMERATION,
+    PROTOCOL_RX_OPERATION_SURVEY,
 };
 
 enum protocol_rx_mode {
@@ -51,6 +52,16 @@ struct protocol_rx_downstream_activation {
 void protocol_rx_lifecycle_init(struct protocol_rx_lifecycle *lifecycle);
 
 enum protocol_rx_begin_result protocol_rx_lifecycle_begin(
+    struct protocol_rx_lifecycle *lifecycle,
+    enum protocol_rx_operation operation,
+    uint64_t generation,
+    uint32_t now_ms,
+    uint32_t deadline_ms);
+
+/* Replaces the immutable deadline only when a validated later phase of the
+ * same operation supplies its own absolute stop. Duplicate begin calls still
+ * cannot extend an operation accidentally. */
+bool protocol_rx_lifecycle_set_deadline(
     struct protocol_rx_lifecycle *lifecycle,
     enum protocol_rx_operation operation,
     uint64_t generation,

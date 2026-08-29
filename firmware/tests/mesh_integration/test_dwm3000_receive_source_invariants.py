@@ -111,7 +111,13 @@ assert_order(
     "dwt_read32bitreg(RX_FINFO_ID)",
     'take_port_error("read-rx-frame-length")',
     'check_device_fatal_status("read-rx-frame-length")',
-    "if (frame_len == 0u || frame_len > buffer_len)",
+    "if (raw_frame_len <= UWB_RF_SCOPE_WIRE_LEN + FCS_LEN)",
+    "dwt_readrxdata(&scope_wire",
+    "uwb_rf_scope_decode(",
+    "uwb_rf_scope_visible(",
+    "return -EHOSTUNREACH",
+    "frame_len = raw_frame_len - UWB_RF_SCOPE_WIRE_LEN",
+    "if (frame_len > buffer_len)",
     "dwt_readrxdata(",
     'take_port_error("read-rx-frame-data")',
     'check_device_fatal_status("read-rx-frame-data")',
@@ -122,24 +128,17 @@ assert "dwt_read32bitreg(RX_FINFO_ID)" not in receive
 assert "ret == 0 ? last_rx_finfo_register : 0u" in receive
 assert "unbounded diagnostic SPI transaction" in receive
 
-for frame_consumer in (
-    receive_range_frame,
-    receive_response,
-    continuous_activity,
-):
+for frame_consumer in (receive_range_frame, continuous_activity):
     frame_read = frame_consumer.index("ret = read_rx_frame(")
-    hardware_failure = frame_consumer.index(
-        "if (ret < 0 && ret != -EMSGSIZE)", frame_read
+    scope_drop = frame_consumer.index("if (ret == -EHOSTUNREACH)", frame_read)
+    scope_continue = frame_consumer.index("continue;", scope_drop)
+    malformed_failure = frame_consumer.index("if (ret < 0)", scope_continue)
+    assert frame_read < scope_drop < scope_continue < malformed_failure, (
+        "RF-hidden frames must be discarded before malformed-frame handling"
     )
-    malformed_failure = frame_consumer.index("if (ret < 0)", hardware_failure)
-    propagated_return = (
-        "return finish_abortible_continuous_receive(ret)"
-        if frame_consumer is continuous_activity
-        else "return ret"
-    )
-    assert propagated_return in frame_consumer[
-        hardware_failure:malformed_failure
-    ], "RX frame SPI faults must propagate before malformed-frame handling"
+
+assert "ret = receive_frame(" in receive_response
+assert "ret = read_rx_frame(" not in receive_response
 
 poll_receive = responder.index("ret = receive_frame(")
 poll_failure = responder.index("if (ret < 0)", poll_receive)
@@ -317,8 +316,9 @@ continuous_waits = [
         r"ret\s*=\s*wait_status_internal\s*\(", continuous_abort_scope
     )
 ]
-assert len(continuous_waits) == 3, (
-    "continuous RX must cover acquisition, rearm, and completion waits"
+assert len(continuous_waits) == 4, (
+    "continuous RX must cover acquisition, scope-drop rearm, error rearm, "
+    "and completion waits"
 )
 for wait_index, next_wait_index in zip(
     continuous_waits,
@@ -384,18 +384,20 @@ assert_order(
     receive_range_frame,
     "ret = wait_status_internal(",
     "&observed_at_ms",
+    "ret = read_rx_frame(",
+    "if (ret == -EHOSTUNREACH)",
     "last_rx_host_uptime_ms = (uint32_t)observed_at_ms",
     "read_rx_timestamp_u64()",
     "read_rx_diagnostics(",
-    "read_rx_frame(",
 )
 assert_order(
     continuous_activity,
     "ret = wait_status_internal(",
     "&observed_at_ms",
+    "ret = read_rx_frame(",
+    "if (ret == -EHOSTUNREACH)",
     "last_rx_host_uptime_ms = (uint32_t)observed_at_ms",
     "read_rx_diagnostics(",
-    "read_rx_frame(",
 )
 assert "&result.tx_completed_at_ms" in send_frame_tracked_until
 assert "completed_at_ms" in wait_tx_complete
@@ -495,7 +497,7 @@ assert "DWM3000_STANDARD_FRAME_MAX_LEN" in write_tx_frame
 assert_order(
     write_tx_frame,
     "max_frame_len = config->phrMode == DWT_PHRMODE_EXT",
-    "if (frame_len > max_frame_len - FCS_LEN)",
+    "if (frame_len > max_frame_len - FCS_LEN - UWB_RF_SCOPE_WIRE_LEN",
     "dwt_writetxdata(",
 )
 assert 'take_port_error("tx-frame-control")' in write_tx_frame, (

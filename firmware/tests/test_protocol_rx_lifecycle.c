@@ -159,6 +159,33 @@ static void test_ambiguous_deadline_is_rejected(void)
     assert(anchor.mode == PROTOCOL_RX_MODE_LOW_DUTY);
 }
 
+static void test_survey_plan_replaces_only_its_live_operation_deadline(void)
+{
+    struct protocol_rx_lifecycle anchor;
+
+    protocol_rx_lifecycle_init(&anchor);
+    assert(protocol_rx_lifecycle_begin(
+               &anchor, PROTOCOL_RX_OPERATION_SURVEY,
+               UINT64_C(0x808), 100u, 1000u) ==
+           PROTOCOL_RX_BEGIN_ACCEPTED);
+    assert(!protocol_rx_lifecycle_set_deadline(
+        &anchor, PROTOCOL_RX_OPERATION_ENUMERATION,
+        UINT64_C(0x808), 200u, 2000u));
+    assert(!protocol_rx_lifecycle_set_deadline(
+        &anchor, PROTOCOL_RX_OPERATION_SURVEY,
+        UINT64_C(0x809), 200u, 2000u));
+    assert(!protocol_rx_lifecycle_set_deadline(
+        &anchor, PROTOCOL_RX_OPERATION_SURVEY,
+        UINT64_C(0x808), 200u, 200u));
+    assert(protocol_rx_lifecycle_set_deadline(
+        &anchor, PROTOCOL_RX_OPERATION_SURVEY,
+        UINT64_C(0x808), 200u, 2000u));
+    assert(anchor.deadline_ms == 2000u);
+    assert(!protocol_rx_lifecycle_expire(&anchor, 1999u));
+    assert(protocol_rx_lifecycle_expire(&anchor, 2000u));
+    assert(anchor.mode == PROTOCOL_RX_MODE_LOW_DUTY);
+}
+
 static void test_forced_hop_downstream_wakes_once_per_generation(void)
 {
     struct protocol_rx_downstream_activation activation;
@@ -203,6 +230,7 @@ int main(void)
     test_terminal_failure_during_owned_rf_returns_low_duty();
     test_unexpected_receive_error_recovery_is_fail_closed();
     test_ambiguous_deadline_is_rejected();
+    test_survey_plan_replaces_only_its_live_operation_deadline();
     test_forced_hop_downstream_wakes_once_per_generation();
     return 0;
 }

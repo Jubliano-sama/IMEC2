@@ -11,9 +11,10 @@
 struct k_work_delayable;
 
 /* Two relay waves carry the gateway's root transmission through hop one and
- * hop two to hop three.  Relays actively yield the background receiver, then
- * use the shared fast advertisement profile above; one final guard covers the
- * gateway/host handoff after the last possible physical copy. */
+ * hop two to hop three. Each relay actively yields the background receiver,
+ * sends one activation train, then uses the shared fast advertisement profile;
+ * one final guard covers the gateway/host handoff after the last possible
+ * physical copy. */
 #define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS 2u
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS \
     MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
@@ -22,7 +23,7 @@ struct k_work_delayable;
      APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS + \
      FLOOD_POST_ROOT_GUARD_MS)
 
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 1476u,
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 2676u,
                "Here-I-Am settle must cover two fast relay waves");
 
 typedef int (*app_node_comm_route_refresh_build_fn)(
