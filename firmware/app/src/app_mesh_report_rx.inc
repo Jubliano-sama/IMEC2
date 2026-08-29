@@ -1104,7 +1104,6 @@ static bool mesh_decode_channel5_wake_claim(
     if (ret != PROTO_OK) {
         return false;
     }
-    status_debug_anchor_wake_claim_rx_pulse();
     if (embedded_route_frame_out != NULL) {
         *embedded_route_frame_out = embedded_route_frame;
     }

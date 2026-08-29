@@ -1232,21 +1232,6 @@ uint32_t discovery_assignment_control_propagation_hold_ms(
                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
 }
 
-uint32_t discovery_assignment_activation_propagation_hold_ms(
-    uint8_t max_hop_count)
-{
-    uint8_t hop_count = max_hop_count;
-
-    if (hop_count == 0u) {
-        hop_count = 1u;
-    } else if (hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS) {
-        hop_count = DISCOVERY_ASSIGNMENT_MAX_HOPS;
-    }
-    return DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
-           (uint32_t)hop_count *
-               DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS;
-}
-
 uint32_t discovery_assignment_control_listener_duration_ms(
     uint8_t gateway_hop_count)
 {

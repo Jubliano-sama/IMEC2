@@ -21,7 +21,6 @@ REPORT_ROUTE_CONTROL = (
 REPORT_RX = (ROOT / "app/src/app_mesh_report_rx.inc").read_text()
 APP_NODE_COMM = (ROOT / "app/src/app_node_comm.c").read_text()
 APP_MESH_FLOOD = (ROOT / "app/src/app_mesh_flood.c").read_text()
-APP_SURVEY = (ROOT / "app/src/app_survey.c").read_text()
 DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 LIFECYCLE = (ROOT / "src/protocol_rx_lifecycle.c").read_text()
@@ -127,9 +126,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         send = function_body(
             REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
         )
-        activation = function_body(
-            REPORT_TRANSPORT, "mesh_c5_compact_scheduled_activation"
-        )
         gateway = function_body(
             GATEWAY_CONTROL, "gateway_survey_send_control"
         )
@@ -138,8 +134,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("command_id == CMD_SURVEY_START", classify)
         self.assertIn("command_id == CMD_SURVEY_PLAN", classify)
         self.assertNotIn("CMD_SURVEY_CANCEL", classify)
-        self.assertIn("command_id == CMD_SURVEY_START", activation)
-        self.assertNotIn("CMD_SURVEY_PLAN", activation)
         self.assertIn(
             "gateway_command_uses_compact_scheduled_flood", relay
         )
@@ -163,78 +157,16 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "compact_primary_control = enumeration_control ||", send
         )
         self.assertIn(
-            "compact_scheduled_activation =\n"
-            "        mesh_c5_compact_scheduled_activation(&tx)",
-            send,
-        )
-        plan_bare = send.index(
-            "compact_scheduled_control && !compact_scheduled_activation"
-        )
-        plan_suppression = send.index("send_wake_train = false", plan_bare)
-        self.assertEqual(
-            unsigned_define(MESH, "MESH_ENUMERATION_RELAY_COPY_COUNT"), 3
-        )
-        attempts = send.index(
-            "attempt_count = 1u + tx.flood_retry_count"
-        )
-        attempt_loop = send.index(
-            "for (uint16_t attempt = 0u; attempt < attempt_count; attempt++)",
-            attempts,
-        )
-        self.assertIn(
             "(single_opportunity || compact_primary_control)", send
         )
-        long_activation = send.index(
-            "long_gateway_activation = gateway_enumeration_claim"
+        self.assertIn(
+            "gateway_enumeration_claim || compact_scheduled_control", send
         )
-        gateway_only = send.index(
-            "compact_scheduled_activation && DEVICE_ROLE == ROLE_GATEWAY",
-            long_activation,
+        self.assertIn("attempt == 0u", send)
+        self.assertIn(
+            "compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR", send
         )
-        one_activation = send.index(
-            "bool one_activation_per_burst", attempt_loop
-        )
-        compact_once = send.index(
-            "gateway_enumeration_claim || compact_scheduled_control",
-            one_activation,
-        )
-        first_attempt = send.index(
-            "send_wake_train && (!one_activation_per_burst || attempt == 0u)",
-            compact_once,
-        )
-        long_select = send.index("long_gateway_activation ?", first_attempt)
-        long_duration = send.index(
-            "MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS", long_select
-        )
-        ordinary_relay_duration = send.index("WAKE_ADV_MS", long_duration)
-        wake_send = send.index(
-            "mesh_send_route_wake_train_with_duration(",
-            ordinary_relay_duration,
-        )
-        three_copy_send = send.index(
-            "app_mesh_flood_send_opportunity(&tx", wake_send
-        )
-        self.assertLess(attempts, attempt_loop)
-        self.assertLess(plan_bare, plan_suppression)
-        self.assertLess(plan_suppression, long_activation)
-        self.assertLess(long_activation, gateway_only)
-        self.assertLess(gateway_only, attempt_loop)
-        self.assertLess(attempt_loop, one_activation)
-        self.assertLess(one_activation, compact_once)
-        self.assertLess(compact_once, first_attempt)
-        self.assertLess(first_attempt, long_select)
-        self.assertLess(long_select, long_duration)
-        self.assertLess(long_duration, ordinary_relay_duration)
-        self.assertLess(ordinary_relay_duration, wake_send)
-        self.assertLess(wake_send, three_copy_send)
-        compact_policy = send[
-            send.index("compact_scheduled_control =") : long_activation
-        ]
-        self.assertNotIn(
-            "compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR",
-            compact_policy,
-        )
-        self.assertEqual(compact_policy.count("send_wake_train = false"), 1)
+        self.assertIn("send_wake_train = false", send)
 
         self.assertIn(
             "outbound.flood_retry_count = "
@@ -246,70 +178,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("SURVEY_CONTROL_ACTIVATION_BUDGET_MS", schedule)
         self.assertIn("SURVEY_CONTROL_PER_HOP_BUDGET_MS", schedule)
         self.assertIn("SURVEY_CONTROL_REDUNDANCY_MS", schedule)
-
-    def test_survey_rx_lifecycle_covers_start_plan_and_every_terminal(self) -> None:
-        apply = function_body(APP_SURVEY, "app_survey_anchor_apply_control")
-        work = function_body(APP_SURVEY, "anchor_work_handler")
-        terminate = function_body(APP_SURVEY, "anchor_rx_terminate_locked")
-        expire = function_body(APP_SURVEY, "anchor_rx_expire_locked")
-        active = function_body(APP_SURVEY, "app_survey_anchor_active")
-        continuous = function_body(
-            APP_SURVEY, "app_survey_anchor_rx_continuous"
-        )
-        recovery = function_body(
-            APP_SURVEY, "app_survey_anchor_rx_note_recovery"
-        )
-        start = apply[
-            apply.index("control->phase == SURVEY_PHASE_NEIGHBOR_START") :
-            apply.index("} else if (!anchor_state.active")
-        ]
-        plan = apply[
-            apply.index("control->phase == SURVEY_PHASE_PLAN") :
-            apply.index("control->phase == SURVEY_PHASE_ABORT")
-        ]
-        abort = apply[apply.index("control->phase == SURVEY_PHASE_ABORT") :]
-
-        start_begin = start.index("protocol_rx_lifecycle_begin(")
-        start_active = start.index("anchor_state.active = true", start_begin)
-        start_schedule = start.index("anchor_work_reschedule(", start_active)
-        start_rollback = start.index(
-            "anchor_rx_terminate_locked(false)", start_schedule
-        )
-        self.assertLess(start_begin, start_active)
-        self.assertLess(start_active, start_schedule)
-        self.assertLess(start_schedule, start_rollback)
-        self.assertIn("PROTOCOL_RX_OPERATION_SURVEY", start)
-
-        plan_deadline = plan.index("protocol_rx_lifecycle_set_deadline(")
-        plan_commit = plan.index("anchor_state.plan = control->plan")
-        self.assertLess(plan_deadline, plan_commit)
-        self.assertIn("PROTOCOL_RX_OPERATION_SURVEY", plan)
-
-        rf_begin = work.index("protocol_rx_lifecycle_rf_begin(")
-        neighbor_work = work.index("anchor_neighbor_sequence(", rf_begin)
-        rf_end = work.index("protocol_rx_lifecycle_rf_end(", neighbor_work)
-        plan_work = work.index("anchor_execute_plan(", rf_end)
-        complete = work.index("anchor_rx_terminate_locked(", plan_work)
-        expiry_work = work.index(
-            "anchor_rx_terminate_locked(false)", complete
-        )
-        self.assertLess(rf_begin, neighbor_work)
-        self.assertLess(neighbor_work, rf_end)
-        self.assertLess(rf_end, plan_work)
-        self.assertLess(plan_work, complete)
-        self.assertLess(complete, expiry_work)
-        self.assertIn("anchor_rx_terminate_locked(true)", abort)
-        self.assertIn("protocol_rx_lifecycle_terminate(", terminate)
-        self.assertIn("anchor_state.active = false", terminate)
-        self.assertIn("anchor_rx_terminate_locked(false)", expire)
-        self.assertIn("anchor_rx_expire_locked", active)
-
-        self.assertIn("anchor_rx_expire_locked", continuous)
-        self.assertIn("PROTOCOL_RX_OPERATION_SURVEY", continuous)
-        self.assertIn("PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5", continuous)
-        self.assertIn("protocol_rx_lifecycle_note_rx_recovery(", recovery)
-        self.assertIn("PROTOCOL_RX_RECOVERY_TERMINATED", recovery)
-        self.assertIn("anchor_rx_terminate_locked(true)", recovery)
 
     def test_relayed_claim_cannot_replace_here_i_am_gateway_parent(self) -> None:
         apply = function_body(
@@ -532,14 +400,14 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
     def test_continuous_windows_rearm_without_parking_or_reconfigure(self) -> None:
         scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
-        rearm_start = scan.index("protocol_rx_window:")
+        rearm_start = scan.index("enumeration_rx_window:")
         rearm = scan[
             rearm_start : scan.index("preamble_detected =", rearm_start)
         ]
 
         self.assertIn("dwm3000_driver_receive_frame_continuous_extend_on_activity", rearm)
-        self.assertIn("goto protocol_rx_window", rearm)
-        self.assertGreaterEqual(scan.count("goto protocol_rx_window"), 3)
+        self.assertIn("goto enumeration_rx_window", rearm)
+        self.assertGreaterEqual(scan.count("goto enumeration_rx_window"), 3)
         self.assertIn(
             "scan_rx_elapsed_us = u32_saturating_add(scan_rx_elapsed_us,",
             scan,
@@ -547,21 +415,16 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertNotIn("dwm3000_driver_configure", rearm)
         self.assertNotIn("anchor_enter_low_power", rearm)
         self.assertIn(
-            "protocol_continuous_rx ? APP_RADIO_LOW_POWER_IDLE", scan
+            "enumeration_continuous_rx ? APP_RADIO_LOW_POWER_IDLE", scan
         )
-        self.assertIn(
-            "survey_continuous_rx = app_survey_anchor_rx_continuous()", scan
-        )
-        self.assertIn(
-            "protocol_continuous_rx = enumeration_continuous_rx ||", scan
-        )
+        self.assertIn("anchor_enumeration_rx_active()) {", scan)
         self.assertIn("next_scan_delay_ms = 0u", scan)
 
     def test_every_generic_enumeration_reentry_rechecks_compact_prepare(
         self,
     ) -> None:
         scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
-        reentry = scan.index("protocol_rx_window:")
+        reentry = scan.index("enumeration_rx_window:")
         generic_rx = scan.index(
             "dwm3000_driver_receive_frame_continuous_extend_on_activity(",
             reentry,
@@ -587,7 +450,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "scan_rx_ms = compact_lane_start_wait_ms", current_start_distance
         )
 
-        self.assertIn("if (enumeration_continuous_rx)", gate)
+        self.assertIn("if (anchor_enumeration_rx_active())", gate)
         self.assertIn("enumeration_now_ms, NULL, NULL", gate)
         self.assertIn("(\n                    enumeration_now_ms);", gate)
         self.assertLess(current_clock, compact_check)
@@ -595,7 +458,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(prepare_check, compact_switch)
         self.assertLess(compact_switch, current_start_distance)
         self.assertLess(current_start_distance, receive_cap)
-        self.assertGreaterEqual(scan.count("goto protocol_rx_window"), 3)
+        self.assertGreaterEqual(scan.count("goto enumeration_rx_window"), 3)
 
     def test_anchor_compact_lane_prearms_rx_without_early_tx(self) -> None:
         prepare = function_body(
@@ -662,16 +525,12 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "enumeration_continuous_rx = anchor_enumeration_rx_active()"
         )
         select = scan[
-            scan.index(
-                "if (enumeration_continuous_rx && "
-                "local_protocol_response_active)",
-                selection_start,
-            ) :
+            scan.index("if (enumeration_continuous_rx)", selection_start) :
             scan.index("route_waiting_active =", selection_start)
         ]
         configure = scan[
-            scan.index("ret = protocol_continuous_rx ?") :
-            scan.index("if (ret == 0)", scan.index("ret = protocol_continuous_rx ?"))
+            scan.index("ret = enumeration_continuous_rx ?") :
+            scan.index("if (ret == 0)", scan.index("ret = enumeration_continuous_rx ?"))
         ]
         recovery = scan[
             scan.index("dwm3000_driver_force_recovery()") :
@@ -1138,7 +997,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("memset(outbound, 0, sizeof(*outbound))", gateway_origin)
         self.assertNotIn("flood_retry_count", gateway_origin)
         self.assertIn(
-            "discovery_assignment_activation_propagation_hold_ms(hop_count)",
+            "discovery_assignment_control_propagation_hold_ms(hop_count)",
             gateway_hold,
         )
         self.assertRegex(
@@ -1996,8 +1855,8 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "receive_prepare_delay_ms <= scan_reserve_ms", rearm_query
         )
         timeout = scan.index("if (ret == -ETIMEDOUT", rearm_due)
-        rearm = scan.index("goto protocol_rx_window", timeout)
-        self.assertIn("!protocol_owned_work_due", scan[timeout:rearm])
+        rearm = scan.index("goto enumeration_rx_window", timeout)
+        self.assertIn("!enumeration_owned_work_due", scan[timeout:rearm])
         self.assertLess(rearm_query, rearm_due)
         self.assertLess(rearm_due, timeout)
         self.assertLess(timeout, rearm)
@@ -2013,19 +1872,20 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         prepare_due = scan.index(
             "receive_prepare_delay_ms <= scan_reserve_ms", prepare_query
         )
-        owned = scan.index("protocol_owned_work_due =", prepare_due)
+        owned = scan.index("enumeration_owned_work_due =", prepare_due)
         owned_end = scan.index(";", owned)
         first_guard = scan.index(
-            "if (ret == -ETIMEDOUT && !protocol_owned_work_due)",
+            "if (ret == -ETIMEDOUT && !enumeration_owned_work_due)",
             owned_end,
         )
-        first_rearm = scan.index("goto protocol_rx_window", first_guard)
+        first_rearm = scan.index("goto enumeration_rx_window", first_guard)
         second_guard = scan.index(
-            "if (protocol_continuous_rx && !protocol_owned_work_due)",
+            "if (anchor_enumeration_rx_active() && "
+            "!enumeration_owned_work_due)",
             first_rearm,
         )
-        second_rearm = scan.index("goto protocol_rx_window", second_guard)
-        final_rearm = scan.index("goto protocol_rx_window", second_rearm + 1)
+        second_rearm = scan.index("goto enumeration_rx_window", second_guard)
+        final_rearm = scan.index("goto enumeration_rx_window", second_rearm + 1)
         scan_complete = scan.index("scan_complete:", final_rearm)
 
         # One shared ownership bit survives the first timeout branch and gates
@@ -2034,7 +1894,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("receive_prepare_due", scan[owned:owned_end])
         # One declaration plus one assignment; no later overwrite can discard
         # the prepare-due bit before the second guard.
-        self.assertEqual(scan.count("protocol_owned_work_due ="), 2)
+        self.assertEqual(scan.count("enumeration_owned_work_due ="), 2)
         self.assertLess(prepare_query, prepare_due)
         self.assertLess(prepare_due, owned)
         self.assertLess(owned_end, first_guard)
@@ -2044,10 +1904,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(second_rearm, final_rearm)
         self.assertLess(final_rearm, scan_complete)
         self.assertIn(
-            "!protocol_owned_work_due", scan[first_guard:first_rearm]
+            "!enumeration_owned_work_due", scan[first_guard:first_rearm]
         )
         self.assertIn(
-            "!protocol_owned_work_due", scan[second_guard:second_rearm]
+            "!enumeration_owned_work_due", scan[second_guard:second_rearm]
         )
 
     def test_local_response_scan_is_one_window_capped_before_retry(self) -> None:
@@ -2117,16 +1977,16 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         receive = scan.index(
             "dwm3000_driver_receive_frame_continuous_extend_on_activity("
         )
-        owned_due = scan.index("protocol_owned_work_due =", receive)
+        owned_due = scan.index("enumeration_owned_work_due =", receive)
         live_pending = scan.index(
             "mesh_c5_protocol_flood_work_pending()", owned_due
         )
         timeout_rearm = scan.index(
-            "if (ret == -ETIMEDOUT && !protocol_owned_work_due)",
+            "if (ret == -ETIMEDOUT && !enumeration_owned_work_due)",
             live_pending,
         )
         same_lease_rearm = scan.index(
-            "goto protocol_rx_window", timeout_rearm
+            "goto enumeration_rx_window", timeout_rearm
         )
         scan_complete = scan.index("scan_complete:", same_lease_rearm)
         completion_snapshot = scan.index(
@@ -2149,7 +2009,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(owned_due, live_pending)
         self.assertLess(live_pending, timeout_rearm)
         self.assertLess(timeout_rearm, same_lease_rearm)
-        self.assertIn("!protocol_owned_work_due", scan[timeout_rearm:same_lease_rearm])
+        self.assertIn("!enumeration_owned_work_due", scan[timeout_rearm:same_lease_rearm])
         self.assertLess(scan_complete, completion_snapshot)
         self.assertLess(completion_snapshot, retry)
         self.assertLess(retry, zero_gap)
@@ -2218,7 +2078,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             store.count("dwm3000_driver_request_receive_abort("), 1
         )
 
-    def test_deferred_route_adv_retry_wakes_once_and_is_not_starved(
+    def test_deferred_route_adv_retry_stays_no_wake_and_is_not_starved(
         self,
     ) -> None:
         response = function_body(
@@ -2230,9 +2090,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         worker = function_body(
             REPORT_DELIVERY, "mesh_c5_flood_work_handler"
         )
-        send = function_body(
-            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
-        )
 
         initial_policy = response.index("bool send_wake_train")
         initial_send = response.index(
@@ -2242,11 +2099,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "mesh_c5_flood_store_deferred(", initial_send
         )
         self.assertIn(
-            "bool send_wake_train = out != NULL;",
-            response[initial_policy:initial_send],
-        )
-        self.assertNotIn(
-            "MSG_GATEWAY_ROUTE_ADV",
+            "out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV",
             response[initial_policy:initial_send],
         )
         self.assertIn(
@@ -2264,37 +2117,12 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         retry_end = worker.index(");", retry_send)
         retry_setup = worker[load:retry_send]
         retry_call = worker[retry_send:retry_end]
-        self.assertIn("send_wake_train = true;", retry_setup)
-        self.assertNotIn("MSG_GATEWAY_ROUTE_ADV", retry_setup)
+        self.assertRegex(
+            retry_setup,
+            r"send_wake_train\s*=\s*"
+            r"outbound\.packet\.msg_type\s*!=\s*MSG_GATEWAY_ROUTE_ADV",
+        )
         self.assertIn("send_wake_train", retry_call)
-
-        attempt_loop = send.index(
-            "for (uint16_t attempt = 0u; attempt < attempt_count; attempt++)"
-        )
-        one_activation = send.index(
-            "bool one_activation_per_burst", attempt_loop
-        )
-        route_adv = send.index(
-            "tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV", one_activation
-        )
-        first_attempt_gate = send.index(
-            "send_wake_train && (!one_activation_per_burst || attempt == 0u)",
-            route_adv,
-        )
-        wake_call = send.index(
-            "mesh_send_route_wake_train_with_duration(", first_attempt_gate
-        )
-        physical_copies = send.index(
-            "app_mesh_flood_send_opportunity(&tx", wake_call
-        )
-        self.assertLess(attempt_loop, one_activation)
-        self.assertLess(one_activation, route_adv)
-        self.assertLess(route_adv, first_attempt_gate)
-        self.assertLess(first_attempt_gate, wake_call)
-        self.assertLess(wake_call, physical_copies)
-        self.assertEqual(
-            send.count("mesh_send_route_wake_train_with_duration("), 1
-        )
 
         local_defer = worker.index(
             "if (current_generation && local_deferral", retry_end
@@ -2319,23 +2147,18 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "dwm3000_driver_configure_wake_mesh_control_mode()", recovery
         )
         terminal = scan.index(
-            "enum protocol_rx_recovery_result recovery_result =",
+            'recovered ? "rx-recovered" : "rx-recovery-failed"',
             reconfigure,
         )
-        survey_recovery = scan.index(
-            "app_survey_anchor_rx_note_recovery(recovered)", terminal
-        )
-        recovered_rearm = scan.index("goto protocol_rx_window", terminal)
+        recovered_rearm = scan.index("goto enumeration_rx_window", terminal)
         release = scan.index("scan_complete:", terminal)
 
         self.assertLess(unexpected, recovery)
         self.assertLess(recovery, reconfigure)
         self.assertLess(reconfigure, terminal)
-        self.assertLess(terminal, survey_recovery)
-        self.assertLess(survey_recovery, recovered_rearm)
         self.assertLess(terminal, recovered_rearm)
         self.assertLess(terminal, release)
-        self.assertIn("protocol_owned_work_due", scan)
+        self.assertIn("enumeration_owned_work_due", scan)
 
     def test_protocol_response_aborts_and_releases_continuous_anchor_rx(self) -> None:
         send = function_body(
@@ -2373,10 +2196,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         receive = scan.index(
             "dwm3000_driver_receive_frame_continuous_extend_on_activity"
         )
-        owned = scan.index("protocol_owned_work_due =", receive)
+        owned = scan.index("enumeration_owned_work_due =", receive)
         timeout_rearm = scan.index("ret == -ETIMEDOUT", owned)
         recovery_guard = scan.index(
-            "protocol_continuous_rx && !protocol_owned_work_due",
+            "anchor_enumeration_rx_active() && !enumeration_owned_work_due",
             timeout_rearm,
         )
         cancelled_release = scan.index("if (ret == -ECANCELED)", recovery_guard)
@@ -2416,13 +2239,9 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         stale = send.index("return -ESTALE;")
         replace = send.index("protocol_rx_downstream_activation_clear", stale)
         needs_wake = send.index("protocol_rx_downstream_activation_needs_wake")
-        relay_wake = send.index(
-            "send_wake_train = send_wake_train && enumeration_needs_wake",
-            needs_wake,
-        )
         self.assertLess(stale, replace)
         self.assertLess(replace, needs_wake)
-        self.assertLess(needs_wake, relay_wake)
+        self.assertIn("send_wake_train = false", send)
         self.assertIn("aggregate_result.sent_count > 0u", send)
         end_clear = send[
             send.index("enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END") :
@@ -2442,15 +2261,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM", identity)
         self.assertIn("gateway_enumeration_claim", send)
         self.assertIn("attempt == 0u", send)
-        wake_select = send.index("uint32_t wake_train_ms")
-        enumeration_duration = send.index(
-            "MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS", wake_select
+        self.assertIn(
+            "MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS", send
         )
-        ordinary_duration = send.index("WAKE_ADV_MS", enumeration_duration)
-        no_wake = send.index("0u;", ordinary_duration)
-        self.assertLess(wake_select, enumeration_duration)
-        self.assertLess(enumeration_duration, ordinary_duration)
-        self.assertLess(ordinary_duration, no_wake)
+        self.assertIn("WAKE_ADV_MS : 0u", send)
         self.assertIn("if (wake_train_ms != 0u)", send)
         self.assertIn("mesh_send_route_wake_train_with_duration", send)
 

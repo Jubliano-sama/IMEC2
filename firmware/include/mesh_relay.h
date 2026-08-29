@@ -3,7 +3,6 @@
 
 #include "mesh.h"
 #include "mesh_capacity.h"
-#include "mesh_radio_timing.h"
 #include "mesh_route_path.h"
 #include "operation_policy.h"
 #include "protocol.h"
@@ -81,10 +80,10 @@ extern "C" {
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 4200u
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
-/* Here-I-Am is a short route refresh, not a general discovery wave.  Each
- * relay yields the background receiver, sends one ordinary activation train,
- * then sends three closely spaced advertisement copies.  Every participant
- * and the gateway settle calculation use this one bounded timing profile. */
+/* Here-I-Am is a short route refresh, not a general discovery wave.  Its
+ * relays yield the background receiver and send three closely spaced copies,
+ * so every participant and the gateway settle calculation use this one
+ * bounded timing profile. */
 #define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS 1u
 #define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS 0u
 #define MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS 1u
@@ -97,7 +96,6 @@ extern "C" {
       MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS))
 #define MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS \
     (MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS + \
-     MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
      MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS + \
      MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS)
 #define MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN \

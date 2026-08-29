@@ -5,7 +5,7 @@
 static bool operation_valid(enum protocol_rx_operation operation)
 {
     return operation >= PROTOCOL_RX_OPERATION_HERE_I_AM &&
-           operation <= PROTOCOL_RX_OPERATION_SURVEY;
+           operation <= PROTOCOL_RX_OPERATION_ENUMERATION;
 }
 
 static bool identity_matches(const struct protocol_rx_lifecycle *lifecycle,
@@ -58,21 +58,6 @@ enum protocol_rx_begin_result protocol_rx_lifecycle_begin(
     lifecycle->generation = generation;
     lifecycle->deadline_ms = deadline_ms;
     return PROTOCOL_RX_BEGIN_ACCEPTED;
-}
-
-bool protocol_rx_lifecycle_set_deadline(
-    struct protocol_rx_lifecycle *lifecycle,
-    enum protocol_rx_operation operation,
-    uint64_t generation,
-    uint32_t now_ms,
-    uint32_t deadline_ms)
-{
-    if (!identity_matches(lifecycle, operation, generation) ||
-        !deadline_is_bounded_future(now_ms, deadline_ms)) {
-        return false;
-    }
-    lifecycle->deadline_ms = deadline_ms;
-    return true;
 }
 
 bool protocol_rx_lifecycle_rf_begin(

@@ -34,8 +34,8 @@ _Static_assert(
         SURVEY_RESULT_PREPARE_MS + ENUMERATION_RESPONSE_LANE_MS <
             SURVEY_INITIAL_SELF_EXPIRY_MS,
     "worst-case control and neighbor-result timing must fit self-expiry");
-_Static_assert(SURVEY_CONTROL_PER_HOP_BUDGET_MS == 1100u,
-               "survey START requires wake plus the compact relay bound");
+_Static_assert(SURVEY_CONTROL_PER_HOP_BUDGET_MS == 540u,
+               "survey controls require the proven compact relay bound");
 
 static bool slot_valid(uint8_t slot)
 {
@@ -183,8 +183,8 @@ uint32_t survey_control_delivery_delay_ms(uint8_t max_hop_count)
     }
     /* The origin is submitted asynchronously, so keep its complete custody
      * budget plus the activation train of a wave admitted at that deadline.
-     * The shared START/PLAN barrier retains START's per-hop activation bound;
-     * PLAN itself is wake-free once START owns continuous Channel-5 RX. */
+     * START and PLAN then use the proven enumeration relay schedule and its
+     * exact per-hop worst-case bound. */
     return SURVEY_CONTROL_ORIGIN_BUDGET_MS +
            SURVEY_CONTROL_ACTIVATION_BUDGET_MS +
            SURVEY_CONTROL_PROPAGATION_MARGIN_MS +

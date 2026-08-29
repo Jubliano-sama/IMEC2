@@ -40,8 +40,6 @@ _Static_assert(
         APP_SURVEY_RANGE_TIMEOUT_MS + SURVEY_RADIO_GUARD_MS <=
             SURVEY_RANGE_WAVE_MS,
     "the last range timeout and radio guard must fit inside its wave");
-_Static_assert(SURVEY_HARD_CAP_MS < INT32_MAX,
-               "survey RX ownership must fit a wrap-safe uptime deadline");
 
 enum app_survey_gateway_stage {
     APP_SURVEY_GATEWAY_IDLE = 0,
@@ -109,7 +107,6 @@ struct app_survey_anchor_state {
 static struct app_survey_ops survey_ops;
 static struct app_survey_gateway_state gateway_state;
 static struct app_survey_anchor_state anchor_state;
-static struct protocol_rx_lifecycle anchor_rx_lifecycle;
 static struct k_work_delayable gateway_work;
 static struct k_work_delayable anchor_work;
 K_MUTEX_DEFINE(survey_lock);
@@ -126,30 +123,6 @@ static bool close_u64(uint64_t left, uint64_t right, uint32_t slop_ms)
     uint64_t delta = left > right ? left - right : right - left;
 
     return delta <= slop_ms;
-}
-
-static void anchor_rx_terminate_locked(bool aborted)
-{
-    if (anchor_state.identity.generation != 0u) {
-        (void)protocol_rx_lifecycle_terminate(
-            &anchor_rx_lifecycle,
-            PROTOCOL_RX_OPERATION_SURVEY,
-            anchor_state.identity.generation);
-    } else {
-        protocol_rx_lifecycle_init(&anchor_rx_lifecycle);
-    }
-    anchor_state.active = false;
-    anchor_state.aborted = aborted;
-    anchor_state.action = APP_SURVEY_ANCHOR_ACTION_NONE;
-}
-
-static bool anchor_rx_expire_locked(uint64_t now_ms)
-{
-    if (!anchor_state.active || now_ms < anchor_state.self_stop_ms) {
-        return false;
-    }
-    anchor_rx_terminate_locked(false);
-    return true;
 }
 
 static bool response_bit_get(const uint64_t bits[2], uint8_t index)
@@ -184,9 +157,9 @@ static bool anchor_generation_live(uint32_t generation)
     bool live;
 
     k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
     live = anchor_state.active && !anchor_state.aborted &&
-           anchor_state.identity.generation == generation;
+           anchor_state.identity.generation == generation &&
+           (uint64_t)k_uptime_get() < anchor_state.self_stop_ms;
     k_mutex_unlock(&survey_lock);
     return live;
 }
@@ -808,20 +781,9 @@ static void anchor_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
     k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
     snapshot = anchor_state;
     action = anchor_state.action;
     anchor_state.action = APP_SURVEY_ANCHOR_ACTION_NONE;
-    if (snapshot.active && !snapshot.aborted &&
-        (action == APP_SURVEY_ANCHOR_ACTION_NEIGHBORS ||
-         action == APP_SURVEY_ANCHOR_ACTION_EXECUTE) &&
-        !protocol_rx_lifecycle_rf_begin(
-            &anchor_rx_lifecycle,
-            PROTOCOL_RX_OPERATION_SURVEY,
-            snapshot.identity.generation)) {
-        anchor_rx_terminate_locked(true);
-        snapshot.active = false;
-    }
     k_mutex_unlock(&survey_lock);
 
     if (!snapshot.active || snapshot.aborted) {
@@ -832,30 +794,23 @@ static void anchor_work_handler(struct k_work *work)
         k_mutex_lock(&survey_lock, K_FOREVER);
         if (anchor_state.active &&
             anchor_state.identity.generation == snapshot.identity.generation) {
-            if (protocol_rx_lifecycle_rf_end(
-                    &anchor_rx_lifecycle,
-                    PROTOCOL_RX_OPERATION_SURVEY,
-                    snapshot.identity.generation)) {
-                anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXPIRE;
-                (void)anchor_work_reschedule(anchor_state.self_stop_ms);
-            } else {
-                anchor_rx_terminate_locked(true);
-            }
+            anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXPIRE;
+            (void)anchor_work_reschedule(anchor_state.self_stop_ms);
         }
         k_mutex_unlock(&survey_lock);
     } else if (action == APP_SURVEY_ANCHOR_ACTION_EXECUTE) {
         ret = anchor_execute_plan(&snapshot);
         k_mutex_lock(&survey_lock, K_FOREVER);
-        if (anchor_state.active &&
-            anchor_state.identity.generation == snapshot.identity.generation) {
-            anchor_rx_terminate_locked(ret < 0 && ret != -ECANCELED);
+        if (anchor_state.identity.generation == snapshot.identity.generation) {
+            anchor_state.active = false;
+            anchor_state.action = APP_SURVEY_ANCHOR_ACTION_NONE;
         }
         k_mutex_unlock(&survey_lock);
     } else if (action == APP_SURVEY_ANCHOR_ACTION_EXPIRE) {
         k_mutex_lock(&survey_lock, K_FOREVER);
         if (anchor_state.identity.generation == snapshot.identity.generation &&
             (uint64_t)k_uptime_get() >= anchor_state.self_stop_ms) {
-            anchor_rx_terminate_locked(false);
+            anchor_state.active = false;
         }
         k_mutex_unlock(&survey_lock);
     }
@@ -1055,7 +1010,6 @@ int app_survey_init(const struct app_survey_ops *ops)
 #elif DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     memset(&anchor_state, 0, sizeof(anchor_state));
-    protocol_rx_lifecycle_init(&anchor_rx_lifecycle);
 #endif
     k_mutex_unlock(&survey_lock);
 #if DEVICE_ROLE == ROLE_GATEWAY
@@ -1552,7 +1506,6 @@ int app_survey_anchor_note_ram_roster(
         return -EBUSY;
     }
     memset(&anchor_state, 0, sizeof(anchor_state));
-    protocol_rx_lifecycle_init(&anchor_rx_lifecycle);
     anchor_state.roster_assignment_epoch = assignment_epoch;
     anchor_state.roster_table_command_seq = table_command_seq;
     anchor_state.roster_table_commitment = *table_commitment;
@@ -1563,7 +1516,6 @@ int app_survey_anchor_note_ram_roster(
             entries[i].slot >= table_slot_count ||
             anchor_state.node_ids_by_slot[entries[i].slot] != 0u) {
             memset(&anchor_state, 0, sizeof(anchor_state));
-            protocol_rx_lifecycle_init(&anchor_rx_lifecycle);
             k_mutex_unlock(&survey_lock);
             return -EINVAL;
         }
@@ -1571,7 +1523,6 @@ int app_survey_anchor_note_ram_roster(
             anchor_state.slot_span, entries[i].slot);
         if (occupied_slot_span == 0u) {
             memset(&anchor_state, 0, sizeof(anchor_state));
-            protocol_rx_lifecycle_init(&anchor_rx_lifecycle);
             k_mutex_unlock(&survey_lock);
             return -EINVAL;
         }
@@ -1593,7 +1544,6 @@ void app_survey_anchor_clear_ram_roster(void)
     k_mutex_lock(&survey_lock, K_FOREVER);
     if (!anchor_state.active) {
         memset(&anchor_state, 0, sizeof(anchor_state));
-        protocol_rx_lifecycle_init(&anchor_rx_lifecycle);
     }
     k_mutex_unlock(&survey_lock);
 }
@@ -1620,7 +1570,6 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
         return -EINVAL;
     }
     k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked(now_ms);
     if (!anchor_identity_matches_roster(&control->identity.assignment)) {
         k_mutex_unlock(&survey_lock);
         return -ESTALE;
@@ -1665,15 +1614,6 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
                             APP_SURVEY_START_EDGE_SLOP_MS) ? 0 : -EBUSY;
             goto out;
         }
-        if (protocol_rx_lifecycle_begin(
-                &anchor_rx_lifecycle,
-                PROTOCOL_RX_OPERATION_SURVEY,
-                control->identity.generation,
-                (uint32_t)now_ms,
-                (uint32_t)stop_ms) != PROTOCOL_RX_BEGIN_ACCEPTED) {
-            ret = -EBUSY;
-            goto out;
-        }
         anchor_state.identity = control->identity;
         anchor_state.neighbor_start_ms = start_ms;
         anchor_state.self_stop_ms = stop_ms;
@@ -1693,9 +1633,6 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
             (long long)starts_in_ms);
         ret = anchor_work_reschedule(start_ms > APP_SURVEY_ANCHOR_PREPARE_MS ?
             start_ms - APP_SURVEY_ANCHOR_PREPARE_MS : start_ms);
-        if (ret < 0) {
-            anchor_rx_terminate_locked(false);
-        }
     } else if (!anchor_state.active ||
                !survey_identity_equal(&anchor_state.identity,
                                       &control->identity)) {
@@ -1742,15 +1679,6 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
             ret = -EHOSTUNREACH;
             goto out;
         }
-        if (!protocol_rx_lifecycle_set_deadline(
-                &anchor_rx_lifecycle,
-                PROTOCOL_RX_OPERATION_SURVEY,
-                control->identity.generation,
-                (uint32_t)now_ms,
-                (uint32_t)stop_ms)) {
-            ret = -ESTALE;
-            goto out;
-        }
         anchor_state.plan = control->plan;
         anchor_state.execution_start_ms = start_ms;
         anchor_state.self_stop_ms = stop_ms;
@@ -1770,11 +1698,10 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
         ret = anchor_work_reschedule(
             start_ms > APP_SURVEY_ANCHOR_PREPARE_MS ?
                 start_ms - APP_SURVEY_ANCHOR_PREPARE_MS : start_ms);
-        if (ret < 0) {
-            anchor_rx_terminate_locked(true);
-        }
     } else if (control->phase == SURVEY_PHASE_ABORT) {
-        anchor_rx_terminate_locked(true);
+        anchor_state.aborted = true;
+        anchor_state.active = false;
+        anchor_state.action = APP_SURVEY_ANCHOR_ACTION_NONE;
         (void)k_work_cancel_delayable(&anchor_work);
         dwm3000_driver_request_receive_abort(
             DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
@@ -1791,53 +1718,8 @@ bool app_survey_anchor_active(void)
     bool active;
 
     k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
-    active = anchor_state.active && !anchor_state.aborted;
+    active = anchor_state.active && !anchor_state.aborted &&
+             (uint64_t)k_uptime_get() < anchor_state.self_stop_ms;
     k_mutex_unlock(&survey_lock);
     return active;
-}
-
-bool app_survey_anchor_rx_continuous(void)
-{
-    bool continuous;
-
-    if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return false;
-    }
-    k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
-    continuous = anchor_state.active && !anchor_state.aborted &&
-                 anchor_rx_lifecycle.operation ==
-                     PROTOCOL_RX_OPERATION_SURVEY &&
-                 anchor_rx_lifecycle.generation ==
-                     anchor_state.identity.generation &&
-                 anchor_rx_lifecycle.mode ==
-                     PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5;
-    k_mutex_unlock(&survey_lock);
-    return continuous;
-}
-
-enum protocol_rx_recovery_result app_survey_anchor_rx_note_recovery(
-    bool recovered)
-{
-    enum protocol_rx_recovery_result result = PROTOCOL_RX_RECOVERY_INVALID;
-
-    if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return result;
-    }
-    k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
-    if (anchor_state.active && !anchor_state.aborted) {
-        result = protocol_rx_lifecycle_note_rx_recovery(
-            &anchor_rx_lifecycle,
-            PROTOCOL_RX_OPERATION_SURVEY,
-            anchor_state.identity.generation,
-            recovered);
-        if (result == PROTOCOL_RX_RECOVERY_TERMINATED) {
-            anchor_rx_terminate_locked(true);
-            (void)k_work_cancel_delayable(&anchor_work);
-        }
-    }
-    k_mutex_unlock(&survey_lock);
-    return result;
 }

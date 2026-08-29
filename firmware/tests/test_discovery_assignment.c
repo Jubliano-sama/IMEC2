@@ -700,10 +700,6 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
                    OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS +
                MESH_ENUMERATION_RELAY_COPY_TAIL_MS);
     assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS == 540u);
-    assert(DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS ==
-           MESH_RADIO_CONTROL_RELAY_WAKE_ENVELOPE_MS +
-               DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS);
-    assert(DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS == 1100u);
     assert(discovery_assignment_control_propagation_hold_ms(0u) ==
            DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS);
@@ -723,11 +719,6 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
     assert(discovery_assignment_control_propagation_hold_ms(2u) == 1230u);
     assert(discovery_assignment_control_propagation_hold_ms(UINT8_MAX) ==
            4470u);
-    assert(discovery_assignment_activation_propagation_hold_ms(0u) == 1250u);
-    assert(discovery_assignment_activation_propagation_hold_ms(1u) == 1250u);
-    assert(discovery_assignment_activation_propagation_hold_ms(2u) == 2350u);
-    assert(discovery_assignment_activation_propagation_hold_ms(UINT8_MAX) ==
-           8950u);
     assert(discovery_assignment_control_listener_duration_ms(1u) == 3750u);
     assert(discovery_assignment_control_listener_duration_ms(2u) == 4290u);
     assert(discovery_assignment_control_listener_duration_ms(3u) == 4830u);
