@@ -6,12 +6,12 @@
 
 _Static_assert(MESH_CONNECTED_MAX_ANCHORS == 50u,
                "the qualified lane carries exactly fifty anchors");
-_Static_assert(UWB_ENUM_MAX_HOPS == 5u,
-               "the qualified lane carries exactly five hop depths");
+_Static_assert(UWB_ENUM_MAX_HOPS == 8u,
+               "the qualified lane covers every production mesh hop depth");
 _Static_assert(ENUMERATION_RESPONSE_DEPTH_MS == 1500u,
                "one-hop source responses must occupy 1500 ms");
-_Static_assert(ENUMERATION_RESPONSE_LANE_MS == 10000u,
-               "five response depths plus ordered relay tails occupy 10 s");
+_Static_assert(ENUMERATION_RESPONSE_LANE_MS == 19000u,
+               "eight response depths plus ordered relay tails occupy 19 s");
 _Static_assert(sizeof(struct enumeration_response_lane) == 456u,
                "the persistent response lane must remain compact");
 
@@ -27,7 +27,7 @@ static uint8_t packed_hop_get(const struct enumeration_response_lane *lane,
     if (shift > 5u) {
         bits |= (uint16_t)lane->record_hops_packed[byte_offset + 1u] << 8u;
     }
-    return (uint8_t)((bits >> shift) & 0x07u);
+    return (uint8_t)(((bits >> shift) & 0x07u) + 1u);
 }
 
 static void packed_hop_set(struct enumeration_response_lane *lane,
@@ -46,7 +46,7 @@ static void packed_hop_set(struct enumeration_response_lane *lane,
     }
     mask = (uint16_t)0x07u << shift;
     bits = (uint16_t)((bits & ~mask) |
-                      (((uint16_t)hop_count << shift) & mask));
+                      (((uint16_t)(hop_count - 1u) << shift) & mask));
     lane->record_hops_packed[byte_offset] = (uint8_t)bits;
     if (shift > 5u) {
         lane->record_hops_packed[byte_offset + 1u] = (uint8_t)(bits >> 8u);
@@ -169,7 +169,7 @@ bool enumeration_response_timing_at_depth(
     within_depth_ms = (uint32_t)elapsed_ms - depth_start_offset_ms;
     /* Start at the gateway and expand one hop at a time. This lets the
      * gateway close the lane after one complete, empty next-depth band
-     * instead of always paying for the five-hop ceiling. Lower-hop parents
+     * instead of always paying for the eight-hop ceiling. Lower-hop parents
      * remain active in later bands so newly received child records can keep
      * moving toward the gateway. */
     timing->depth = depth;

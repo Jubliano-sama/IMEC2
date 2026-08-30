@@ -9,10 +9,166 @@
      DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS)
 BUILD_ASSERT(GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS == 4700u,
              "TABLE collection must cover one lost-response retry turn");
+BUILD_ASSERT(DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS >=
+                 APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS + 5000u,
+             "enumeration epoch reservation must outlive HIA preflight");
 
 /* Exact active delivery whose physical RF-start edge was already published. */
 static uint32_t gateway_discovery_assignment_rf_event_handle;
 static uint8_t gateway_discovery_assignment_adaptive_observed_hop_count;
+
+/* While the assignment owner is inactive, its otherwise-unused identity,
+ * policy, and deadline fields retain the exact HIA-to-CLAIM reservation. A
+ * zero CLAIM identity distinguishes this prearm state from every completed
+ * assignment, so no second static owner or ambiguous side flag is needed. */
+static bool gateway_enumeration_prearm_valid_locked(void)
+{
+    return !gateway_discovery_assignment_state.active &&
+           gateway_discovery_assignment_state.epoch != 0u &&
+           gateway_discovery_assignment_state.claim_command_seq == 0u &&
+           gateway_discovery_assignment_state.operation_deadline_ms != 0u;
+}
+
+static void gateway_enumeration_prearm_reset_locked(void)
+{
+    gateway_discovery_assignment_state.epoch = 0u;
+    gateway_discovery_assignment_state.claim_command_seq = 0u;
+    gateway_discovery_assignment_state.operation_deadline_ms = 0u;
+    gateway_discovery_assignment_state.command_budget_ms = 0u;
+    gateway_discovery_assignment_state.response_spread_ms = 0u;
+    gateway_discovery_assignment_state.expected_claim_count = 0u;
+    gateway_discovery_assignment_state.ram_only_iteration = false;
+    gateway_discovery_assignment_state.end_propagation_pending = false;
+}
+
+static bool gateway_enumeration_prearm_policy_equal_locked(
+    const struct operation_policy_assignment *assignment)
+{
+    return assignment != NULL &&
+           assignment->expected_anchor_count ==
+               gateway_discovery_assignment_state.expected_claim_count &&
+           assignment->operation_budget_ms ==
+               gateway_discovery_assignment_state.command_budget_ms &&
+           assignment->response_spread_ms ==
+               gateway_discovery_assignment_state.response_spread_ms &&
+           assignment->ram_only_iteration ==
+               gateway_discovery_assignment_state.ram_only_iteration;
+}
+
+static void gateway_enumeration_prearm_expire_locked(uint32_t now_ms)
+{
+    if (gateway_enumeration_prearm_valid_locked() &&
+        (int32_t)(
+            now_ms -
+            (uint32_t)gateway_discovery_assignment_state
+                .operation_deadline_ms) >= 0) {
+        gateway_enumeration_prearm_reset_locked();
+    }
+}
+
+static int gateway_enumeration_prearm_prepare(
+    const struct operation_policy_assignment *assignment,
+    bool survey_follows)
+{
+    uint32_t epoch;
+
+    if (assignment == NULL) {
+        return -EINVAL;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    gateway_enumeration_prearm_expire_locked(k_uptime_get_32());
+    if (gateway_discovery_assignment_state.active ||
+        gateway_enumeration_prearm_valid_locked()) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return -EBUSY;
+    }
+    epoch = gateway_next_broadcast_command_seq();
+    if (epoch == 0u) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return -EIO;
+    }
+    gateway_enumeration_prearm_reset_locked();
+    gateway_discovery_assignment_state.expected_claim_count =
+        assignment->expected_anchor_count;
+    gateway_discovery_assignment_state.command_budget_ms =
+        assignment->operation_budget_ms;
+    gateway_discovery_assignment_state.response_spread_ms =
+        assignment->response_spread_ms;
+    gateway_discovery_assignment_state.ram_only_iteration =
+        assignment->ram_only_iteration;
+    gateway_discovery_assignment_state.epoch = epoch;
+    gateway_discovery_assignment_state.operation_deadline_ms =
+        (uint64_t)k_uptime_get_32() +
+        DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS;
+    gateway_discovery_assignment_state.end_propagation_pending =
+        survey_follows;
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return 0;
+}
+
+static void gateway_enumeration_prearm_clear(void)
+{
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    if (gateway_enumeration_prearm_valid_locked()) {
+        gateway_enumeration_prearm_reset_locked();
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+}
+
+static bool gateway_route_refresh_prearm_snapshot(uint32_t *epoch,
+                                                   uint32_t *hold_ms,
+                                                   struct operation_policy_set *policy,
+                                                   bool *survey_follows)
+{
+    bool present = false;
+
+    if (epoch == NULL || hold_ms == NULL || policy == NULL ||
+        survey_follows == NULL) {
+        return false;
+    }
+    *epoch = 0u;
+    *hold_ms = 0u;
+    *survey_follows = false;
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    gateway_enumeration_prearm_expire_locked(k_uptime_get_32());
+    if (gateway_enumeration_prearm_valid_locked()) {
+        *epoch = gateway_discovery_assignment_state.epoch;
+        *hold_ms = DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
+        policy->assignment = (struct operation_policy_assignment) {
+            .expected_anchor_count =
+                gateway_discovery_assignment_state.expected_claim_count,
+            .operation_budget_ms =
+                gateway_discovery_assignment_state.command_budget_ms,
+            .response_spread_ms =
+                gateway_discovery_assignment_state.response_spread_ms,
+            .ram_only_iteration =
+                gateway_discovery_assignment_state.ram_only_iteration,
+        };
+        policy->assignment_present = true;
+        *survey_follows =
+            gateway_discovery_assignment_state.end_propagation_pending;
+        present = true;
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return present;
+}
+
+static bool gateway_enumeration_prearm_take_locked(
+    const struct operation_policy_assignment *assignment,
+    uint32_t *epoch)
+{
+    gateway_enumeration_prearm_expire_locked(k_uptime_get_32());
+    if (epoch == NULL || !gateway_enumeration_prearm_valid_locked() ||
+        !gateway_enumeration_prearm_policy_equal_locked(assignment)) {
+        if (gateway_enumeration_prearm_valid_locked()) {
+            gateway_enumeration_prearm_reset_locked();
+        }
+        return false;
+    }
+    *epoch = gateway_discovery_assignment_state.epoch;
+    gateway_enumeration_prearm_reset_locked();
+    return true;
+}
 
 static uint32_t gateway_discovery_assignment_next_generation(void)
 {
@@ -1619,8 +1775,12 @@ static int gateway_start_discovery_assignment(
                                          (uint8_t)(-ret));
         GATEWAY_ASSIGNMENT_START_RETURN(mesh_errno_from_proto(ret));
     }
-    claim_command_seq = gateway_next_broadcast_command_seq();
-    if (claim_command_seq == 0u) {
+    if (!gateway_enumeration_prearm_take_locked(
+            &policy_candidate.resolved.assignment,
+            &reserved_epoch)) {
+        reserved_epoch = gateway_next_broadcast_command_seq();
+    }
+    if (reserved_epoch == 0u) {
         gateway_emit_host_command_result(host_command,
                                          CMD_ASSIGN_DISCOVERY_SLOTS,
                                          COMMAND_INTERNAL_ERROR,
@@ -1632,7 +1792,7 @@ static int gateway_start_discovery_assignment(
      * durable command identity as its RFC 1982 epoch prevents an independent
      * RAM cursor from rolling an anchor back after a gateway reboot.
      */
-    reserved_epoch = claim_command_seq;
+    claim_command_seq = reserved_epoch;
     app_operation_policy_commit_prepared(&policy_candidate);
     memset(&gateway_discovery_assignment_state,
            0,
@@ -3367,6 +3527,32 @@ int gateway_resume_pending_assignment_publication(void)
     return gateway_replay_pending_assignment_publication();
 }
 #else
+static int gateway_enumeration_prearm_prepare(
+    const struct operation_policy_assignment *assignment,
+    bool survey_follows)
+{
+    ARG_UNUSED(assignment);
+    ARG_UNUSED(survey_follows);
+    return -ENOTSUP;
+}
+
+static void gateway_enumeration_prearm_clear(void)
+{
+}
+
+static bool gateway_route_refresh_prearm_snapshot(
+    uint32_t *epoch,
+    uint32_t *hold_ms,
+    struct operation_policy_set *policy,
+    bool *survey_follows)
+{
+    ARG_UNUSED(epoch);
+    ARG_UNUSED(hold_ms);
+    ARG_UNUSED(policy);
+    ARG_UNUSED(survey_follows);
+    return false;
+}
+
 static int gateway_start_discovery_assignment(
     const struct proto_packet *host_command,
     const uint8_t *payload,
@@ -3814,6 +4000,36 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
     }
 }
 
+static int gateway_command_extract_route_adv_mode(
+    const uint8_t *payload,
+    size_t payload_len,
+    enum gateway_route_adv_mode *mode)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || mode == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    *mode = GATEWAY_ROUTE_ADV_MODE_ORDINARY;
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_GATEWAY_ROUTE_ADV_MODE,
+                          &value,
+                          &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK || value_len != sizeof(uint8_t) ||
+        (value[0] != GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM &&
+         value[0] != GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *mode = (enum gateway_route_adv_mode)value[0];
+    return PROTO_OK;
+}
+
 #if DEVICE_ROLE == ROLE_GATEWAY
 
 #endif
@@ -4036,6 +4252,24 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
             uint32_t command_budget_ms;
             uint32_t result_reservation_token;
             bool budget_explicit;
+            enum gateway_route_adv_mode route_adv_mode;
+            bool prearm_prepared = false;
+
+            ret = gateway_command_extract_route_adv_mode(
+                payload, payload_len, &route_adv_mode);
+            if (ret != PROTO_OK) {
+                gateway_emit_host_command_result(
+                    packet,
+                    command_id,
+                    COMMAND_MALFORMED_PAYLOAD,
+                    (uint8_t)(-ret));
+                gateway_observe_host_terminal(
+                    packet,
+                    command_id,
+                    COMMAND_MALFORMED_PAYLOAD,
+                    GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST);
+                return mesh_errno_from_proto(ret);
+            }
 
             ret = gateway_command_extract_budget_ms(
                 payload,
@@ -4074,6 +4308,32 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                     GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST);
                 return ret;
             }
+            if (route_adv_mode != GATEWAY_ROUTE_ADV_MODE_ORDINARY) {
+                ret = gateway_enumeration_prearm_prepare(
+                    &policy_candidate.resolved.assignment,
+                    route_adv_mode ==
+                        GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM);
+                if (ret < 0) {
+                    gateway_emit_host_command_result(
+                        packet,
+                        command_id,
+                        ret == -EBUSY ? COMMAND_BUSY :
+                                        COMMAND_INTERNAL_ERROR,
+                        (uint8_t)(-ret));
+                    gateway_observe_host_terminal(
+                        packet,
+                        command_id,
+                        ret == -EBUSY ? COMMAND_BUSY :
+                                        COMMAND_INTERNAL_ERROR,
+                        ret == -EBUSY ?
+                            GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+                    return ret;
+                }
+                prearm_prepared = true;
+            } else {
+                gateway_enumeration_prearm_clear();
+            }
             result_reservation_token =
                 gateway_command_result_get_dispatch_token();
             if (result_reservation_token == 0u) {
@@ -4098,6 +4358,9 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                         result_reservation_token) {
                     gateway_route_refresh_result_token = 0u;
                 }
+            }
+            if (ret < 0 && prearm_prepared) {
+                gateway_enumeration_prearm_clear();
             }
             if (ret == 0) {
                 app_operation_policy_commit_prepared(&policy_candidate);
@@ -5130,6 +5393,9 @@ static void gateway_route_refresh_observe(
         break;
     case APP_NODE_COMM_ROUTE_REFRESH_COMPLETE:
         stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE;
+        if (refresh->result < 0) {
+            gateway_enumeration_prearm_clear();
+        }
         break;
     default:
         return;

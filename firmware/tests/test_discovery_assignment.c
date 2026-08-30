@@ -736,6 +736,8 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
            7530u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS == 3750u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MAX_MS == 7530u);
+    assert(DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS >=
+           DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S * 1000u + 5000u);
     assert(DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS == 850u);
     assert(jitter_cap_ms == 450u);
 

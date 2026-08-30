@@ -502,16 +502,30 @@ class DurableStateSourceInvariants(unittest.TestCase):
         self.assertNotIn("refresh_sequence_increment", next_sequence)
 
     def test_assignment_epoch_is_the_exact_durable_claim_identity(self) -> None:
+        prearm = function_body(
+            GATEWAY_CONTROL, "gateway_enumeration_prearm_prepare"
+        )
+        reserve = prearm.index(
+            "epoch = gateway_next_broadcast_command_seq()"
+        )
+        reserve_guard = prearm.index("if (epoch == 0u)", reserve)
+        prearm_publish = prearm.index(".epoch = epoch", reserve_guard)
+        self.assertLess(reserve, reserve_guard)
+        self.assertLess(reserve_guard, prearm_publish)
+
         start = function_body(
             GATEWAY_CONTROL, "gateway_start_discovery_assignment"
         )
-        claim = start.index(
-            "claim_command_seq = gateway_next_broadcast_command_seq()"
+        consume = start.index(
+            "gateway_enumeration_prearm_take_locked("
         )
-        zero_guard = start.index("if (claim_command_seq == 0u)", claim)
-        epoch = start.index("reserved_epoch = claim_command_seq", zero_guard)
+        fallback = start.index(
+            "reserved_epoch = gateway_next_broadcast_command_seq()", consume
+        )
+        zero_guard = start.index("if (reserved_epoch == 0u)", fallback)
+        claim = start.index("claim_command_seq = reserved_epoch", zero_guard)
         commit = start.index(
-            "app_operation_policy_commit_prepared(&policy_candidate)", epoch
+            "app_operation_policy_commit_prepared(&policy_candidate)", claim
         )
         publish = start.index(
             "gateway_discovery_assignment_state.epoch = reserved_epoch",
@@ -525,9 +539,10 @@ class DurableStateSourceInvariants(unittest.TestCase):
             "gateway_discovery_assignment_state.active = true",
             claim_publish,
         )
-        self.assertLess(claim, zero_guard)
-        self.assertLess(zero_guard, epoch)
-        self.assertLess(epoch, commit)
+        self.assertLess(consume, fallback)
+        self.assertLess(fallback, zero_guard)
+        self.assertLess(zero_guard, claim)
+        self.assertLess(claim, commit)
         self.assertLess(commit, publish)
         self.assertLess(publish, claim_publish)
         self.assertLess(claim_publish, activate)

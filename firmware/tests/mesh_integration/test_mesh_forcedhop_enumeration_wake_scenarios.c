@@ -4,6 +4,7 @@
 #include "mesh_radio_timing.h"
 #include "mesh_sim.h"
 #include "protocol.h"
+#include "survey_protocol.h"
 #include "uwb.h"
 
 #include <stdbool.h>
@@ -88,6 +89,33 @@ static bool setup_fixture(struct fixture *fixture)
           "forced low-duty scanner setup failed");
     CHECK(mesh_sim_run_until(&fixture->world, 0u) == MESH_SIM_OK,
           "low-duty scanners did not arm");
+    return true;
+}
+
+static bool setup_retained_handoff_fixture(struct fixture *fixture)
+{
+    memset(fixture, 0, sizeof(*fixture));
+    mesh_sim_init(&fixture->world, UINT32_C(0x5a7e0001));
+    CHECK(mesh_sim_add_role(&fixture->world, MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &fixture->gateway) == MESH_SIM_OK,
+          "handoff gateway setup failed");
+    CHECK(mesh_sim_add_role(&fixture->world, MESH_SIM_ROLE_ANCHOR,
+                            RELAY_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &fixture->relay) == MESH_SIM_OK,
+          "handoff relay setup failed");
+    CHECK(mesh_sim_add_role(&fixture->world, MESH_SIM_ROLE_ANCHOR,
+                            FORCED_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &fixture->forced) == MESH_SIM_OK,
+          "handoff forced-anchor setup failed");
+    CHECK(mesh_sim_set_link(&fixture->world, fixture->gateway,
+                            fixture->relay, 100u, 0u) == MESH_SIM_OK,
+          "handoff gateway-relay link setup failed");
+    CHECK(mesh_sim_set_link(&fixture->world, fixture->relay,
+                            fixture->forced, 100u, 0u) == MESH_SIM_OK,
+          "handoff relay-forced link setup failed");
+    CHECK(!fixture->world.reachable[fixture->gateway][fixture->forced],
+          "handoff gateway can directly reach the forced anchor");
     return true;
 }
 
@@ -185,6 +213,50 @@ static bool build_enumeration_claim(uint8_t *frame,
             DISCOVERY_ASSIGNMENT_PHASE_CLAIM, ENUMERATION_EPOCH);
     }
     if (ret != PROTO_OK) {
+        return false;
+    }
+    packet.payload_len = (uint16_t)payload_len;
+    return proto_packet_encode(&packet, payload,
+                               frame, frame_cap, frame_len) == PROTO_OK;
+}
+
+static bool build_survey_start(uint8_t *frame,
+                               size_t frame_cap,
+                               size_t *frame_len)
+{
+    struct survey_control control = {
+        .phase = SURVEY_PHASE_NEIGHBOR_START,
+        .identity = {
+            .generation = UINT32_C(0x5a7e0001),
+            .assignment = {
+                .assignment_epoch = ENUMERATION_EPOCH,
+                .table_command_seq = UINT32_C(0xe0010002),
+                .slot_span = 2u,
+                .max_hop_count = 2u,
+            },
+        },
+        .start_delay_ms = 15000u,
+        .self_stop_delay_ms = SURVEY_INITIAL_SELF_EXPIRY_MS,
+        .start_delay_present = true,
+        .self_stop_delay_present = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = GATEWAY_ID,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = UINT32_C(0x5a7e0001),
+        .seq = 2u,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+    };
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    memset(control.identity.assignment.table_commitment.bytes,
+           0xa5,
+           sizeof(control.identity.assignment.table_commitment.bytes));
+    if (survey_control_append_tlvs(payload, sizeof(payload), &payload_len,
+                                   &control) != PROTO_OK) {
         return false;
     }
     packet.payload_len = (uint16_t)payload_len;
@@ -350,21 +422,109 @@ static bool enumeration_reaches_forced_anchor(bool relay_wake)
                            first_reception) > 0u;
 }
 
+static bool survey_start_reuses_retained_enumeration_handoff(void)
+{
+    static struct fixture fixture;
+    uint8_t command_frame[PACKET_EXT_MAX_LEN];
+    const uint64_t handoff_start_us = UINT64_C(1000);
+    const uint64_t handoff_end_us = handoff_start_us +
+        (uint64_t)SURVEY_ENUMERATION_HANDOFF_HOLD_MS * 1000u;
+    const uint64_t gateway_control_start_us = handoff_end_us -
+        UINT64_C(1000000);
+    uint64_t relay_control_start_us;
+    uint16_t gateway_tx_index = UINT16_MAX;
+    uint16_t relay_tx_index = UINT16_MAX;
+    size_t command_len = 0u;
+    size_t first_reception;
+
+    CHECK(setup_retained_handoff_fixture(&fixture),
+          "retained-handoff fixture setup failed");
+    CHECK(build_survey_start(command_frame, sizeof(command_frame),
+                             &command_len),
+          "survey START frame build failed");
+    CHECK(mesh_sim_schedule_raw_tx(
+              &fixture.world, fixture.gateway, gateway_control_start_us,
+              UWB_CHANNEL_WAKE_CONTACT,
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+              command_frame, command_len, false,
+              &gateway_tx_index) == MESH_SIM_OK,
+          "wake-free gateway survey START schedule failed");
+    CHECK(mesh_sim_schedule_rx(
+              &fixture.world, fixture.relay,
+              handoff_start_us,
+              fixture.world.transmissions[gateway_tx_index].end_us +
+                  RX_GUARD_US,
+              UWB_CHANNEL_WAKE_CONTACT,
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+              NULL) == MESH_SIM_OK,
+          "relay retained enumeration listener schedule failed");
+    CHECK(mesh_sim_schedule_rx(
+              &fixture.world, fixture.forced,
+              handoff_start_us,
+              handoff_end_us,
+              UWB_CHANNEL_WAKE_CONTACT,
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+              NULL) == MESH_SIM_OK,
+          "forced-anchor retained enumeration listener schedule failed");
+    CHECK(run_until_ok(
+              &fixture.world,
+              fixture.world.transmissions[gateway_tx_index].end_us +
+                  RX_GUARD_US + 1u,
+              "wake-free-gateway-survey-start"),
+          "gateway survey START simulation failed");
+    CHECK(decoded_from_to(&fixture.world, GATEWAY_ID, RELAY_ID, 0u) > 0u,
+          "relay did not decode wake-free survey START near handoff expiry");
+
+    relay_control_start_us = fixture.world.now_us +
+        (uint64_t)DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS * 1000u;
+    CHECK(relay_control_start_us < handoff_end_us,
+          "relay control bound exceeds enumeration handoff");
+    first_reception = fixture.world.reception_count;
+    CHECK(mesh_sim_schedule_raw_tx(
+              &fixture.world, fixture.relay, relay_control_start_us,
+              UWB_CHANNEL_WAKE_CONTACT,
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+              command_frame, command_len, false,
+              &relay_tx_index) == MESH_SIM_OK,
+          "wake-free relayed survey START schedule failed");
+    CHECK(run_until_ok(
+              &fixture.world,
+              fixture.world.transmissions[relay_tx_index].end_us +
+                  RX_GUARD_US + 1u,
+              "wake-free-relayed-survey-start"),
+          "relayed survey START simulation failed");
+    CHECK(decoded_from_to(&fixture.world, RELAY_ID, FORCED_ID,
+                          first_reception) > 0u,
+          "forced anchor did not decode wake-free relayed survey START");
+    CHECK(fixture.world.roles[fixture.relay]
+                  .anchor_session.diagnostics.claims == 0u &&
+              fixture.world.roles[fixture.forced]
+                  .anchor_session.diagnostics.claims == 0u,
+          "survey START unexpectedly used a wake claim");
+    return true;
+}
+
 int main(void)
 {
     bool without_relay_wake = enumeration_reaches_forced_anchor(false);
     bool with_relay_wake = enumeration_reaches_forced_anchor(true);
+    bool survey_without_wake =
+        survey_start_reuses_retained_enumeration_handoff();
 
-    printf("TRACE forced-hop enumeration without_relay_wake=%u with_relay_wake=%u\n",
+    printf("TRACE forced-hop enumeration without_relay_wake=%u "
+           "with_relay_wake=%u survey_without_wake=%u\n",
            without_relay_wake ? 1u : 0u,
-           with_relay_wake ? 1u : 0u);
-    if (without_relay_wake || !with_relay_wake) {
+           with_relay_wake ? 1u : 0u,
+           survey_without_wake ? 1u : 0u);
+    if (without_relay_wake || !with_relay_wake || !survey_without_wake) {
         fprintf(stderr,
-                "RESULT forced-hop enumeration wake without_relay=%u with_relay=%u\n",
+                "RESULT forced-hop enumeration/survey wake without_relay=%u "
+                "with_relay=%u survey_without_wake=%u\n",
                 without_relay_wake ? 1u : 0u,
-                with_relay_wake ? 1u : 0u);
+                with_relay_wake ? 1u : 0u,
+                survey_without_wake ? 1u : 0u);
         return 1;
     }
-    puts("PASS forced-hop enumeration requires a relayed wake before CLAIM");
+    puts("PASS forced-hop enumeration wake is retained for wake-free survey START");
     return 0;
 }

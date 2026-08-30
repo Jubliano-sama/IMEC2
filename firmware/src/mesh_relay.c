@@ -180,6 +180,8 @@ struct gateway_route_adv_fields {
     uint32_t flood_epoch_id;
     uint32_t slot_seed;
     uint32_t random_backoff_max_ms;
+    uint32_t enumeration_prearm_epoch;
+    uint32_t enumeration_prearm_hold_ms;
     uint16_t gateway_epoch;
     uint16_t route_cost;
     uint16_t flood_profile_version;
@@ -193,6 +195,8 @@ struct gateway_route_adv_fields {
     uint8_t operation_policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
     uint8_t operation_policy_tlvs_len;
     bool operation_policy_present;
+    bool enumeration_prearm_present;
+    bool enumeration_survey_follows;
 };
 
 static int route_epoch_select_newer(uint32_t a,

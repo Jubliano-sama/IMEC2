@@ -1674,6 +1674,17 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
             ret = -EBUSY;
             goto out;
         }
+        if (survey_ops.anchor_consume_enumeration_handoff == NULL) {
+            anchor_rx_terminate_locked(false);
+            ret = -ENOTSUP;
+            goto out;
+        }
+        ret = survey_ops.anchor_consume_enumeration_handoff(
+            control->identity.assignment.assignment_epoch);
+        if (ret < 0) {
+            anchor_rx_terminate_locked(false);
+            goto out;
+        }
         anchor_state.identity = control->identity;
         anchor_state.neighbor_start_ms = start_ms;
         anchor_state.self_stop_ms = stop_ms;

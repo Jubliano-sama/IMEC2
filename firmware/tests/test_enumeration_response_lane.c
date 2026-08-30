@@ -14,7 +14,7 @@ static void test_fixed_schedule_is_shallowest_first_with_forwarding_tails(void)
     struct enumeration_response_timing timing = {0};
     const uint64_t start_ms = 1000u;
 
-    assert(ENUMERATION_RESPONSE_LANE_MS == 10000u);
+    assert(ENUMERATION_RESPONSE_LANE_MS == 19000u);
     assert(!enumeration_response_timing_at(start_ms, start_ms - 1u, &timing));
     assert(enumeration_response_ms_until_lane(start_ms, start_ms - 1u) == 1u);
     assert(enumeration_response_timing_at(start_ms, start_ms, &timing));
@@ -26,7 +26,7 @@ static void test_fixed_schedule_is_shallowest_first_with_forwarding_tails(void)
            timing.round_offset_ms == 0u);
     assert(enumeration_response_timing_at(
         start_ms, start_ms + ENUMERATION_RESPONSE_LANE_MS - 1u, &timing));
-    assert(timing.depth == 5u && timing.round == 19u &&
+    assert(timing.depth == 8u && timing.round == 25u &&
            timing.round_offset_ms == 124u);
     assert(!enumeration_response_timing_at(
         start_ms, start_ms + ENUMERATION_RESPONSE_LANE_MS, &timing));
@@ -42,7 +42,7 @@ static void test_perceived_depth_expands_by_exactly_one_next_hop_band(void)
     assert(enumeration_response_duration_ms(1u) == 1500u);
     assert(enumeration_response_duration_ms(2u) == 3250u);
     assert(enumeration_response_duration_ms(3u) == 5250u);
-    assert(enumeration_response_duration_ms(UWB_ENUM_MAX_HOPS) == 10000u);
+    assert(enumeration_response_duration_ms(UWB_ENUM_MAX_HOPS) == 19000u);
     assert(enumeration_response_depth_duration_ms(1u) == 1500u);
     assert(enumeration_response_depth_duration_ms(2u) == 1750u);
     assert(enumeration_response_depth_duration_ms(3u) == 2000u);

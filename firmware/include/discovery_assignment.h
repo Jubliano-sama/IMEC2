@@ -81,6 +81,13 @@ extern "C" {
      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS 150u
 #define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS 2000u
+/* Here-I-Am bridges its own bounded relay settle and the immediate CLAIM
+ * dispatch. CLAIM promotes this lease to the operation budget, while an
+ * abandoned preflight returns every anchor to low duty. */
+#define DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS 15000u
+/* Keep the reserved CLAIM epoch across the complete 120 s route-refresh
+ * budget plus the host's existing five-second terminal-delivery guard. */
+#define DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS 125000u
 #define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS \
     (MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS + \
      MESH_RADIO_EVENT_RETUNE_GUARD_MS + \

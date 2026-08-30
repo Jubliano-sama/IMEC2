@@ -125,6 +125,19 @@ add_test(NAME protocol_rx_lifecycle COMMAND test_protocol_rx_lifecycle)
 set_tests_properties(protocol_rx_lifecycle PROPERTIES
     LABELS "mesh_integration;hardware_models;protocol;state;radio")
 
+add_executable(test_enumeration_survey_state_alignment_scenarios
+    tests/mesh_integration/test_enumeration_survey_state_alignment_scenarios.c)
+target_link_libraries(test_enumeration_survey_state_alignment_scenarios
+    PRIVATE core)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_enumeration_survey_state_alignment_scenarios
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME enumeration_survey_state_alignment_scenarios
+    COMMAND test_enumeration_survey_state_alignment_scenarios)
+set_tests_properties(enumeration_survey_state_alignment_scenarios PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol;state;radio;timing;assignment;survey")
+
 add_executable(test_uwb_rf_scope tests/test_uwb_rf_scope.c)
 target_link_libraries(test_uwb_rf_scope PRIVATE core)
 add_test(NAME uwb_rf_scope COMMAND test_uwb_rf_scope)

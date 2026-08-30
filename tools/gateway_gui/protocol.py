@@ -174,6 +174,9 @@ TLV_ATTEMPT_INDEX = 0xA9
 TLV_DETECTION_SOURCE = 0xAA
 TLV_COMMAND_BUDGET_MS = 0xAB
 TLV_OPERATION_POLICY = 0xAE
+TLV_GATEWAY_ROUTE_ADV_MODE = 0xAF
+GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM = 1
+GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM = 2
 TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION = 0xB1
 TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT = 0xB2
 TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8
@@ -597,6 +600,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_ATTEMPT_INDEX: TlvSpec("ATTEMPT_INDEX", _scalar(1)),
     TLV_DETECTION_SOURCE: TlvSpec("DETECTION_SOURCE", _scalar(1)),
     TLV_OPERATION_POLICY: TlvSpec("OPERATION_POLICY", _operation_policy),
+    TLV_GATEWAY_ROUTE_ADV_MODE: TlvSpec("GATEWAY_ROUTE_ADV_MODE", _scalar(1)),
     TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION: TlvSpec(
         "DISCOVERY_ASSIGNMENT_SCHEME_VERSION", _scalar(1)
     ),
@@ -891,8 +895,8 @@ class SurveyAssignmentIdentity:
             raise ValueError("survey table commitment must be a nonzero SHA-256 digest")
         if not 1 <= self.slot_span <= SURVEY_MAX_ANCHORS:
             raise ValueError("survey slot span must be in 1..50")
-        if not 1 <= self.max_hop_count <= 5:
-            raise ValueError("survey max hop count must be in 1..5")
+        if not 1 <= self.max_hop_count <= 8:
+            raise ValueError("survey max hop count must be in 1..8")
 
     def encode(self) -> bytes:
         return b"".join(
@@ -2708,6 +2712,8 @@ def build_here_i_am_command(
     session_id: int,
     seq: int,
     operation_policy: OperationPolicyProfile | None = None,
+    enumeration_follows: bool = False,
+    survey_follows: bool = False,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -2715,12 +2721,30 @@ def build_here_i_am_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
+    if survey_follows and not enumeration_follows:
+        raise ValueError("survey prearm requires an enumeration")
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_FORCE_REDISCOVERY.to_bytes(2, "little"))
+    if enumeration_follows:
+        append_tlv(
+            payload,
+            TLV_GATEWAY_ROUTE_ADV_MODE,
+            bytes((
+                GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM
+                if survey_follows
+                else GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM,
+            )),
+        )
     if operation_policy is not None:
         append_operation_policy_tlvs(payload, operation_policy.encoded_values())
     return _build_command_frame(
-        label="Here I Am route refresh",
+        label=(
+            "Survey Enumeration Here I Am"
+            if survey_follows
+            else "Enumeration Here I Am"
+            if enumeration_follows
+            else "Here I Am route refresh"
+        ),
         command_id=CMD_FORCE_REDISCOVERY,
         host_id=host_id,
         dst_id=gateway_id,

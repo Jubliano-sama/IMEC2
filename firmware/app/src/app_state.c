@@ -437,17 +437,15 @@ bool local_anchor_discovery_assignment_project_pending_commit(
             &anchor_discovery_assignment_policy.joining_table_commitment,
             table_commitment);
     /*
-     * A newer CLAIM or TABLE-before-CLAIM is RAM-only until its TABLE
+     * A replacement CLAIM or TABLE-before-CLAIM is RAM-only until its TABLE
      * snapshot is durably installed. The transaction owner and the caller's
-     * exact pending-snapshot check make the older durable ACK authoritative
+     * exact pending-snapshot check make the prior durable ACK authoritative
      * during that interval, so its already-delivered proof must still be
-     * allowed to commit.
+     * allowed to commit. Epoch ordering is not an enumeration admission rule.
      */
     if (!pending_identity_current &&
         anchor_discovery_assignment_policy.joining_epoch != 0u &&
-        discovery_assignment_epoch_strictly_newer(
-            anchor_discovery_assignment_policy.joining_epoch,
-            next_epoch)) {
+        anchor_discovery_assignment_policy.joining_epoch != next_epoch) {
         pending_identity_current = true;
     }
     projected =

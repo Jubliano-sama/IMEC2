@@ -1598,6 +1598,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
         gateway_id: int,
         operation_policy: OperationPolicyProfile,
         status_text: str,
+        enumeration_follows: bool = False,
+        survey_follows: bool = False,
     ) -> GatewayCommandDispatch:
         session_id, seq = self._next_identity()
         command = build_here_i_am_command(
@@ -1606,6 +1608,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
             session_id=session_id,
             seq=seq,
             operation_policy=operation_policy,
+            enumeration_follows=enumeration_follows,
+            survey_follows=survey_follows,
         )
         return GatewayCommandDispatch(
             command_kind=3,
@@ -1642,6 +1646,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         *,
         ram_only_iteration: bool = False,
         expected_anchor_count_override: int | None = None,
+        survey_follows: bool = False,
     ) -> bool:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
@@ -1694,6 +1699,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     "Refreshing mesh routes before anchor enumeration and "
                     "discovery-slot assignment..."
                 ),
+                enumeration_follows=True,
+                survey_follows=survey_follows,
             )
             plan = GatewayCommandPlan.user_triggered(
                 target, preflight=preflight
@@ -1755,6 +1762,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         if not self._send_assign_discovery_slots(
             ram_only_iteration=True,
             expected_anchor_count_override=0,
+            survey_follows=True,
         ):
             self._survey_auto_all = False
             self._survey_chain_pending = False

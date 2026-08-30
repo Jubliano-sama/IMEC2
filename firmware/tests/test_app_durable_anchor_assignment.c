@@ -802,6 +802,33 @@ static void test_pending_promotion_costs_exactly_two_writes(void)
     assert(assignment_equal(&restored, &promoted));
 }
 
+static void test_lower_epoch_pending_assignment_round_trip(void)
+{
+    struct fake_store store = {0};
+    struct app_durable_state_anchor_assignment assignment =
+        promoted_assignment();
+    struct app_durable_state_anchor_assignment restored;
+
+    fill_commitment(&assignment.pending_table_commitment, 0x80u);
+    assignment.pending_epoch = 7u;
+    assignment.pending_table_command_seq = 202u;
+    assignment.table_packet_seq = 38u;
+    assignment.response_spread_ms = 1000u;
+    assignment.ack_pending = 1u;
+    assignment.pending_slot = 1u;
+    assignment.pending_slot_count = assignment.slot_count;
+    assignment.pending_response_lane = 1u;
+    assignment.pending_response_lane_count = 3u;
+    assignment.pending_valid = 1u;
+
+    install_store(&store, APP_DURABLE_STATE_ROLE_ANCHOR);
+    assert(app_durable_state_save_anchor_assignment(
+               TEST_GATEWAY_A, &assignment) == 0);
+    assert(app_durable_state_restore_anchor_assignment(
+               TEST_GATEWAY_A, &restored) == 1);
+    assert(assignment_equal(&restored, &assignment));
+}
+
 int main(void)
 {
     test_missing_and_canonical_round_trip();
@@ -812,5 +839,6 @@ int main(void)
     test_save_crash_cuts_keep_outcomes_explicit();
     test_delete_is_checked_and_idempotent();
     test_pending_promotion_costs_exactly_two_writes();
+    test_lower_epoch_pending_assignment_round_trip();
     return 0;
 }

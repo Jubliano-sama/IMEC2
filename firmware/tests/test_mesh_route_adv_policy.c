@@ -221,7 +221,232 @@ static void test_legacy_route_adv_remains_accepted(void)
         &result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
     assert(!result_has_action(
         &result, MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY));
+    assert(!result_has_action(
+        &result, MESH_RELAY_ACTION_ENUMERATION_PREARM));
     assert(route_selected(&anchor.upstream) != NULL);
+}
+
+static void test_enumeration_prearm_is_exact_and_forwarded(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct operation_policy_set policy = complete_policy();
+    struct mesh_gateway_route_adv_snapshot snapshot;
+    struct mesh_outbound advertisement;
+    struct mesh_outbound current;
+    struct mesh_outbound malformed;
+    struct mesh_relay_result result;
+    const uint32_t prearm_epoch = UINT32_C(0x50524541);
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    uint64_t previous_hop_id;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
+                    TEST_GATEWAY_ID, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    TEST_ANCHOR_BASE + 30u,
+                    TEST_GATEWAY_ID,
+                    TEST_ROUTE_EPOCH);
+    assert(mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+               &gateway,
+               TEST_ROUTE_SEQUENCE,
+               1000u,
+               &policy,
+               &snapshot) == PROTO_OK);
+    snapshot.enumeration_prearm_epoch = prearm_epoch;
+    snapshot.enumeration_prearm_hold_ms =
+        DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
+    snapshot.enumeration_prearm_present = true;
+    assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+               &gateway, &snapshot, &advertisement) == PROTO_OK);
+    assert(advertisement.payload_len ==
+           MESH_GATEWAY_ROUTE_ADV_PREARM_POLICY_PAYLOAD_LEN);
+    assert(tlv_find_unique(advertisement.payload,
+                           advertisement.payload_len,
+                           TLV_GATEWAY_ROUTE_ADV_MODE,
+                           &value,
+                           &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint8_t));
+    assert(value[0] == GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM);
+    assert(tlv_find_unique(advertisement.payload,
+                           advertisement.payload_len,
+                           TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                           &value,
+                           &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint32_t));
+    assert(proto_get_u32_le(value) == prearm_epoch);
+    assert(mesh_relay_handle_rx_with_random(
+               &anchor,
+               &advertisement.packet,
+               advertisement.payload,
+               advertisement.payload_len,
+               TEST_GATEWAY_ID,
+               90u,
+               1010u,
+               1u,
+               &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(result_has_action(&result, MESH_RELAY_ACTION_ENUMERATION_PREARM));
+    assert(result_has_action(
+        &result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    assert(result.enumeration_prearm_epoch == prearm_epoch);
+    assert(result.enumeration_prearm_hold_ms ==
+           DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS);
+    assert(!result.enumeration_survey_follows);
+    assert(result.operation_policy.assignment.operation_budget_ms ==
+           policy.assignment.operation_budget_ms);
+    assert(result.gateway_route_adv.payload_len ==
+           advertisement.payload_len + sizeof(uint64_t));
+
+    current = result.gateway_route_adv;
+    previous_hop_id = anchor.local_id;
+    for (uint8_t hop = 1u; hop < MESH_NETWORK_MAX_HOPS; hop++) {
+        struct mesh_relay next_anchor;
+
+        mesh_relay_init(&next_anchor,
+                        MESH_RELAY_ROLE_ANCHOR,
+                        TEST_ANCHOR_BASE + 30u + hop,
+                        TEST_GATEWAY_ID,
+                        TEST_ROUTE_EPOCH);
+        assert(mesh_relay_handle_rx_with_random(
+                   &next_anchor,
+                   &current.packet,
+                   current.payload,
+                   current.payload_len,
+                   previous_hop_id,
+                   (uint8_t)(90u - hop),
+                   1010u + hop,
+                   hop,
+                   &result) == PROTO_OK);
+        assert(result.status == PROTO_OK);
+        assert(result_has_action(
+            &result, MESH_RELAY_ACTION_ENUMERATION_PREARM));
+        assert(result.enumeration_prearm_epoch == prearm_epoch);
+        assert(result.enumeration_prearm_hold_ms ==
+               DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS);
+        assert(!result.enumeration_survey_follows);
+        if (hop + 1u < MESH_NETWORK_MAX_HOPS) {
+            assert(result_has_action(
+                &result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+            current = result.gateway_route_adv;
+        } else {
+            assert(!result_has_action(
+                &result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+        }
+        previous_hop_id = next_anchor.local_id;
+    }
+    assert(current.payload_len == MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN);
+
+    malformed = advertisement;
+    remove_unique_tlv(&malformed, TLV_DISCOVERY_ASSIGNMENT_EPOCH);
+    assert_route_adv_rejected_without_mutation(
+        &malformed, TEST_ANCHOR_BASE + 31u);
+
+    snapshot.operation_policy_present = false;
+    snapshot.operation_policy_tlvs_len = 0u;
+    assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+               &gateway, &snapshot, &malformed) == PROTO_ERR_MALFORMED);
+}
+
+static void test_survey_enumeration_intent_is_forwarded_exactly(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct mesh_relay hidden_anchor;
+    struct operation_policy_set policy = complete_policy();
+    struct mesh_gateway_route_adv_snapshot snapshot;
+    struct mesh_outbound advertisement;
+    struct mesh_outbound malformed;
+    struct mesh_relay_result result;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
+                    TEST_GATEWAY_ID, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    TEST_ANCHOR_BASE + 40u,
+                    TEST_GATEWAY_ID,
+                    TEST_ROUTE_EPOCH);
+    assert(mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+               &gateway,
+               TEST_ROUTE_SEQUENCE,
+               1000u,
+               &policy,
+               &snapshot) == PROTO_OK);
+    snapshot.enumeration_prearm_epoch = UINT32_C(0x53555256);
+    snapshot.enumeration_prearm_hold_ms =
+        DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
+    snapshot.enumeration_prearm_present = true;
+    snapshot.enumeration_survey_follows = true;
+    assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+               &gateway, &snapshot, &advertisement) == PROTO_OK);
+    assert(tlv_find_unique(advertisement.payload,
+                           advertisement.payload_len,
+                           TLV_GATEWAY_ROUTE_ADV_MODE,
+                           &value,
+                           &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint8_t));
+    assert(value[0] ==
+           GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM);
+
+    assert(mesh_relay_handle_rx_with_random(
+               &anchor,
+               &advertisement.packet,
+               advertisement.payload,
+               advertisement.payload_len,
+               TEST_GATEWAY_ID,
+               90u,
+               1010u,
+               1u,
+               &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(result_has_action(&result, MESH_RELAY_ACTION_ENUMERATION_PREARM));
+    assert(result.enumeration_survey_follows);
+    assert(result_has_action(
+        &result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    assert(tlv_find_unique(result.gateway_route_adv.payload,
+                           result.gateway_route_adv.payload_len,
+                           TLV_GATEWAY_ROUTE_ADV_MODE,
+                           &value,
+                           &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint8_t));
+    assert(value[0] ==
+           GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM);
+
+    mesh_relay_init(&hidden_anchor, MESH_RELAY_ROLE_ANCHOR,
+                    TEST_ANCHOR_BASE + 42u,
+                    TEST_GATEWAY_ID,
+                    TEST_ROUTE_EPOCH);
+    advertisement = result.gateway_route_adv;
+    assert(mesh_relay_handle_rx_with_random(
+               &hidden_anchor,
+               &advertisement.packet,
+               advertisement.payload,
+               advertisement.payload_len,
+               anchor.local_id,
+               89u,
+               1011u,
+               2u,
+               &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(result_has_action(&result, MESH_RELAY_ACTION_ENUMERATION_PREARM));
+    assert(result.enumeration_survey_follows);
+
+    malformed = advertisement;
+    assert(tlv_find_unique(malformed.payload,
+                           malformed.payload_len,
+                           TLV_GATEWAY_ROUTE_ADV_MODE,
+                           &value,
+                           &value_len) == PROTO_OK);
+    ((uint8_t *)value)[0] = UINT8_MAX;
+    assert_route_adv_rejected_without_mutation(
+        &malformed, TEST_ANCHOR_BASE + 41u);
+
+    snapshot.enumeration_prearm_present = false;
+    snapshot.enumeration_prearm_epoch = 0u;
+    snapshot.enumeration_prearm_hold_ms = 0u;
+    assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+               &gateway, &snapshot, &malformed) == PROTO_ERR_MALFORMED);
 }
 
 static void test_header_relevant_adv_must_pass_full_capture_admission(void)
@@ -1062,7 +1287,9 @@ static void test_multihop_forward_preserves_exact_policy_bytes(void)
         }
         previous_hop_id = local_id;
     }
-    assert(current.payload_len == MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN);
+    assert(current.payload_len ==
+           MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN -
+               MESH_GATEWAY_ROUTE_ADV_PREARM_TLV_BYTES);
 }
 
 static void test_malformed_and_duplicate_policy_reject_atomically(void)
@@ -1151,6 +1378,8 @@ int main(void)
 {
     test_gateway_snapshot_freezes_complete_policy();
     test_legacy_route_adv_remains_accepted();
+    test_enumeration_prearm_is_exact_and_forwarded();
+    test_survey_enumeration_intent_is_forwarded_exactly();
     test_header_relevant_adv_must_pass_full_capture_admission();
     test_route_request_requires_full_read_only_admission();
     test_route_request_epoch_transition_and_stale_rejection();

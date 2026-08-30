@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import importlib.util
+import inspect
 import sys
 import unittest
 from pathlib import Path
@@ -239,6 +240,11 @@ class RouteRefreshQualificationTests(unittest.TestCase):
 
 
 class ProvisioningHelpersTests(unittest.TestCase):
+    def test_reachability_qualification_prearms_enumeration(self) -> None:
+        source = inspect.getsource(provision.run)
+
+        self.assertIn('"enumeration_follows": True', source)
+
     def test_production_assignment_is_durable_unless_explicitly_ram_only(self) -> None:
         captured: list[argparse.Namespace] = []
 

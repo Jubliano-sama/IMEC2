@@ -73,6 +73,7 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 /* RAM-only, per-anchor flood activation for the current enumeration epoch. */
 static struct protocol_rx_downstream_activation
     mesh_enumeration_downstream_activation;
+static bool mesh_enumeration_downstream_survey_follows;
 
 #define MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS 50u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_COUNT 2u

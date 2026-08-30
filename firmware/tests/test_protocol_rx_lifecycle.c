@@ -202,6 +202,12 @@ static void test_forced_hop_downstream_wakes_once_per_generation(void)
         100u, 1000u));
     assert(!protocol_rx_downstream_activation_needs_wake(
         &activation, PROTOCOL_RX_OPERATION_ENUMERATION, UINT64_C(0x808), 200u));
+    /* Enumeration Here-I-Am creates the short lease; the same-epoch CLAIM
+     * promotes it without another downstream activation train. */
+    assert(protocol_rx_downstream_activation_mark(
+        &activation, PROTOCOL_RX_OPERATION_ENUMERATION, UINT64_C(0x808),
+        200u, 2000u));
+    assert(activation.deadline_ms == 2000u);
     assert(protocol_rx_downstream_activation_needs_wake(
         &activation, PROTOCOL_RX_OPERATION_ENUMERATION, UINT64_C(0x809), 200u));
     assert(!protocol_rx_downstream_activation_mark(

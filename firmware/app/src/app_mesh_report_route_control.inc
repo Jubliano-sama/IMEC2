@@ -18,12 +18,14 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     enum discovery_assignment_phase enumeration_phase;
     uint32_t enumeration_epoch;
     uint32_t enumeration_operation_budget_ms;
+    bool enumeration_survey_follows;
     bool compact_burst_owned =
         mesh_c5_flood_enumeration_identity(
             out,
             &enumeration_phase,
             &enumeration_epoch,
-            &enumeration_operation_budget_ms) ||
+            &enumeration_operation_budget_ms,
+            &enumeration_survey_follows) ||
         mesh_c5_compact_scheduled_control(out);
     int store_ret;
     int ret;

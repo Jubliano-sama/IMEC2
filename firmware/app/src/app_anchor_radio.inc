@@ -1975,6 +1975,9 @@ static void anchor_click_handoff_work_handler(struct k_work *work)
 static bool anchor_relay_control_followup_boost_active_state;
 static uint32_t anchor_relay_control_followup_boost_deadline_ms;
 static struct protocol_rx_lifecycle anchor_enumeration_rx_lifecycle;
+static bool anchor_enumeration_rx_prearmed;
+static bool anchor_enumeration_rx_survey_follows;
+static bool anchor_enumeration_rx_survey_handoff;
 static uint32_t anchor_enumeration_rx_claim_session_id;
 static uint32_t anchor_enumeration_rx_claim_command_seq;
 static bool anchor_enumeration_rx_claim_identity_valid;
@@ -2003,8 +2006,79 @@ static void anchor_enumeration_rx_clear_table_identity(void)
 
 static void anchor_enumeration_rx_clear_phase_identities(void)
 {
+    anchor_enumeration_rx_prearmed = false;
+    anchor_enumeration_rx_survey_follows = false;
+    anchor_enumeration_rx_survey_handoff = false;
     anchor_enumeration_rx_clear_claim_identity();
     anchor_enumeration_rx_clear_table_identity();
+}
+
+static int anchor_enumeration_rx_prearm(uint32_t epoch,
+                                        uint32_t hold_ms,
+                                        uint32_t operation_budget_ms,
+                                        bool survey_follows)
+{
+    enum protocol_rx_begin_result result;
+    uint32_t now_ms;
+    k_spinlock_key_t key;
+
+    if (epoch == 0u || hold_ms == 0u || hold_ms > INT32_MAX ||
+        operation_budget_ms == 0u || operation_budget_ms > INT32_MAX) {
+        return -EINVAL;
+    }
+    now_ms = k_uptime_get_32();
+    key = k_spin_lock(&anchor_enumeration_rx_lock);
+    if (anchor_enumeration_rx_lifecycle.operation ==
+            PROTOCOL_RX_OPERATION_ENUMERATION &&
+        anchor_enumeration_rx_lifecycle.generation != epoch &&
+        !discovery_assignment_epoch_strictly_newer(
+            epoch,
+            (uint32_t)anchor_enumeration_rx_lifecycle.generation)) {
+        k_spin_unlock(&anchor_enumeration_rx_lock, key);
+        return -ESTALE;
+    }
+    if (anchor_enumeration_rx_lifecycle.operation ==
+            PROTOCOL_RX_OPERATION_ENUMERATION &&
+        anchor_enumeration_rx_lifecycle.generation == epoch &&
+        anchor_enumeration_rx_survey_follows != survey_follows) {
+        k_spin_unlock(&anchor_enumeration_rx_lock, key);
+        return -ESTALE;
+    }
+    result = protocol_rx_lifecycle_begin(
+        &anchor_enumeration_rx_lifecycle,
+        PROTOCOL_RX_OPERATION_ENUMERATION,
+        epoch,
+        now_ms,
+        now_ms + hold_ms);
+    if (result == PROTOCOL_RX_BEGIN_BUSY) {
+        protocol_rx_lifecycle_init(&anchor_enumeration_rx_lifecycle);
+        anchor_enumeration_rx_clear_phase_identities();
+        result = protocol_rx_lifecycle_begin(
+            &anchor_enumeration_rx_lifecycle,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            epoch,
+            now_ms,
+            now_ms + hold_ms);
+    }
+    if (result == PROTOCOL_RX_BEGIN_ACCEPTED) {
+        anchor_enumeration_rx_clear_phase_identities();
+        anchor_enumeration_rx_prearmed = true;
+        anchor_enumeration_rx_survey_follows = survey_follows;
+    }
+    k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (result != PROTOCOL_RX_BEGIN_ACCEPTED &&
+        result != PROTOCOL_RX_BEGIN_DUPLICATE) {
+        return result == PROTOCOL_RX_BEGIN_BUSY ? -EBUSY : -EINVAL;
+    }
+    status_debug_printf(
+        "DBG_ENUM_RX_PREARM epoch=%u hold=%u budget=%u survey=%u duplicate=%u\n",
+        epoch,
+        hold_ms,
+        operation_budget_ms,
+        survey_follows ? 1u : 0u,
+        result == PROTOCOL_RX_BEGIN_DUPLICATE ? 1u : 0u);
+    (void)anchor_uwb_scan_schedule_ms(0u);
+    return 0;
 }
 
 static void anchor_compact_enumeration_deactivate(uint32_t epoch)
@@ -2048,6 +2122,18 @@ static int anchor_enumeration_rx_begin(uint32_t epoch,
     }
     if (result == PROTOCOL_RX_BEGIN_ACCEPTED) {
         anchor_enumeration_rx_clear_phase_identities();
+    } else if (result == PROTOCOL_RX_BEGIN_DUPLICATE &&
+               anchor_enumeration_rx_prearmed) {
+        if (!protocol_rx_lifecycle_set_deadline(
+                &anchor_enumeration_rx_lifecycle,
+                PROTOCOL_RX_OPERATION_ENUMERATION,
+                epoch,
+                now_ms,
+                now_ms + operation_budget_ms)) {
+            k_spin_unlock(&anchor_enumeration_rx_lock, key);
+            return -ESTALE;
+        }
+        anchor_enumeration_rx_prearmed = false;
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
     if (result != PROTOCOL_RX_BEGIN_ACCEPTED &&
@@ -2280,41 +2366,106 @@ static bool anchor_enumeration_rx_terminate_claim(
     return terminated;
 }
 
-static bool anchor_enumeration_rx_terminate_table(
+static bool anchor_enumeration_rx_finish_table(
     uint32_t epoch,
     uint32_t table_command_seq,
     const struct discovery_assignment_table_commitment *table_commitment,
     const char *reason)
 {
-    bool terminated = false;
+    bool completed = false;
+    bool survey_handoff = false;
+    uint32_t now_ms;
     k_spinlock_key_t key;
 
     if (epoch == 0u || table_command_seq == 0u || table_commitment == NULL) {
         return false;
     }
+    now_ms = k_uptime_get_32();
     key = k_spin_lock(&anchor_enumeration_rx_lock);
     if (anchor_enumeration_rx_table_identity_valid &&
         anchor_enumeration_rx_table_command_seq == table_command_seq &&
         discovery_assignment_table_commitment_equal(
             &anchor_enumeration_rx_table_commitment,
             table_commitment)) {
-        terminated = protocol_rx_lifecycle_terminate(
-            &anchor_enumeration_rx_lifecycle,
-            PROTOCOL_RX_OPERATION_ENUMERATION,
-            epoch);
+        if (anchor_enumeration_rx_survey_follows) {
+            if (anchor_enumeration_rx_survey_handoff) {
+                completed = true;
+            } else if (protocol_rx_lifecycle_set_deadline(
+                           &anchor_enumeration_rx_lifecycle,
+                           PROTOCOL_RX_OPERATION_ENUMERATION,
+                           epoch,
+                           now_ms,
+                           now_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS)) {
+                anchor_enumeration_rx_prearmed = false;
+                anchor_enumeration_rx_survey_handoff = true;
+                anchor_enumeration_rx_clear_claim_identity();
+                completed = true;
+            }
+            survey_handoff = completed;
+        } else {
+            completed = protocol_rx_lifecycle_terminate(
+                &anchor_enumeration_rx_lifecycle,
+                PROTOCOL_RX_OPERATION_ENUMERATION,
+                epoch);
+        }
     }
-    if (terminated) {
+    if (completed && !survey_handoff) {
         anchor_enumeration_rx_clear_phase_identities();
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
-    if (terminated) {
+    if (completed) {
         anchor_compact_enumeration_deactivate(epoch);
-        status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
-                            epoch,
-                            reason == NULL ? "table-terminal" : reason);
-        (void)anchor_uwb_scan_schedule_ms(anchor_uwb_scan_interval_ms);
+        if (survey_handoff) {
+            status_debug_printf(
+                "DBG_ENUM_RX_SURVEY_HANDOFF epoch=%u hold=%u\n",
+                epoch,
+                SURVEY_ENUMERATION_HANDOFF_HOLD_MS);
+            (void)anchor_uwb_scan_schedule_ms(0u);
+        } else {
+            status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
+                                epoch,
+                                reason == NULL ? "table-terminal" : reason);
+            (void)anchor_uwb_scan_schedule_ms(anchor_uwb_scan_interval_ms);
+        }
     }
-    return terminated;
+    return completed;
+}
+
+static int anchor_enumeration_rx_consume_survey_handoff(
+    uint32_t assignment_epoch)
+{
+    bool consumed = false;
+    k_spinlock_key_t key;
+
+    if (assignment_epoch == 0u) {
+        return -EINVAL;
+    }
+    key = k_spin_lock(&anchor_enumeration_rx_lock);
+    if (protocol_rx_lifecycle_expire(&anchor_enumeration_rx_lifecycle,
+                                     k_uptime_get_32())) {
+        anchor_enumeration_rx_clear_phase_identities();
+    }
+    if (anchor_enumeration_rx_lifecycle.operation ==
+            PROTOCOL_RX_OPERATION_ENUMERATION &&
+        anchor_enumeration_rx_lifecycle.generation == assignment_epoch &&
+        anchor_enumeration_rx_survey_follows &&
+        anchor_enumeration_rx_survey_handoff &&
+        anchor_enumeration_rx_table_identity_valid) {
+        consumed = protocol_rx_lifecycle_terminate(
+            &anchor_enumeration_rx_lifecycle,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            assignment_epoch);
+    }
+    if (consumed) {
+        anchor_enumeration_rx_clear_phase_identities();
+    }
+    k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (!consumed) {
+        return -ESTALE;
+    }
+    status_debug_printf("DBG_ENUM_RX_SURVEY_CONSUMED epoch=%u\n",
+                        assignment_epoch);
+    return 0;
 }
 
 void app_anchor_note_channel9_window_released(void)
@@ -3656,6 +3807,7 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
     .anchor_note_uwb_awake_since = anchor_note_uwb_awake_since,
     .anchor_handle_click_wake_claim = anchor_handle_mesh_click_wake_claim,
     .anchor_handle_local_command = anchor_handle_local_command,
+    .anchor_enumeration_prearm = anchor_enumeration_rx_prearm,
     .anchor_delivery_gateway_accepted =
         anchor_delivery_gateway_accepted,
     .anchor_delivery_gateway_confirmed =
@@ -3663,6 +3815,7 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
 #endif
 #if DEVICE_ROLE == ROLE_GATEWAY
     .gateway_route_refresh_event = gateway_route_refresh_observe,
+    .gateway_route_refresh_prearm = gateway_route_refresh_prearm_snapshot,
 #endif
 };
 

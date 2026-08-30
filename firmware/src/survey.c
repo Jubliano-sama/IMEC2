@@ -25,7 +25,6 @@ _Static_assert(
     "all scheduled range attempts must start inside their wave");
 _Static_assert(
     SURVEY_CONTROL_ORIGIN_BUDGET_MS +
-        SURVEY_CONTROL_ACTIVATION_BUDGET_MS +
         SURVEY_CONTROL_PROPAGATION_MARGIN_MS +
         (UWB_ENUM_MAX_HOPS * SURVEY_CONTROL_PER_HOP_BUDGET_MS) +
         SURVEY_CONTROL_REDUNDANCY_MS +
@@ -34,8 +33,13 @@ _Static_assert(
         SURVEY_RESULT_PREPARE_MS + ENUMERATION_RESPONSE_LANE_MS <
             SURVEY_INITIAL_SELF_EXPIRY_MS,
     "worst-case control and neighbor-result timing must fit self-expiry");
-_Static_assert(SURVEY_CONTROL_PER_HOP_BUDGET_MS == 1100u,
-               "survey START requires wake plus the compact relay bound");
+_Static_assert(
+    SURVEY_CONTROL_PER_HOP_BUDGET_MS ==
+        DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
+    "survey controls use the wake-free compact relay bound");
+_Static_assert(SURVEY_ENUMERATION_HANDOFF_HOLD_MS >=
+                   SURVEY_HOST_PLAN_TIMEOUT_MS,
+               "survey handoff must cover host START admission");
 
 static bool slot_valid(uint8_t slot)
 {
@@ -182,11 +186,9 @@ uint32_t survey_control_delivery_delay_ms(uint8_t max_hop_count)
         return 0u;
     }
     /* The origin is submitted asynchronously, so keep its complete custody
-     * budget plus the activation train of a wave admitted at that deadline.
-     * The shared START/PLAN barrier retains START's per-hop activation bound;
-     * PLAN itself is wake-free once START owns continuous Channel-5 RX. */
+     * budget. The survey-specific enumeration handoff already owns continuous
+     * Channel-5 RX at every hop, making both START and PLAN compact controls. */
     return SURVEY_CONTROL_ORIGIN_BUDGET_MS +
-           SURVEY_CONTROL_ACTIVATION_BUDGET_MS +
            SURVEY_CONTROL_PROPAGATION_MARGIN_MS +
            (uint32_t)max_hop_count *
                SURVEY_CONTROL_PER_HOP_BUDGET_MS +

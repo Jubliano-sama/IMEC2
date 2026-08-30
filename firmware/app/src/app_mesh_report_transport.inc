@@ -2541,17 +2541,69 @@ static bool mesh_c5_flood_enumeration_identity(
     const struct mesh_outbound *out,
     enum discovery_assignment_phase *phase_out,
     uint32_t *epoch_out,
-    uint32_t *operation_budget_ms_out)
+    uint32_t *operation_budget_ms_out,
+    bool *survey_follows_out)
 {
+    const uint8_t *value;
+    uint8_t value_len;
     enum command_id command_id;
     enum discovery_assignment_phase phase;
     struct operation_policy_set operation_policy;
+    uint8_t route_adv_mode;
     uint32_t epoch;
     uint32_t operation_budget_ms;
 
+    bool survey_follows = false;
+
     if (out == NULL || phase_out == NULL || epoch_out == NULL ||
-        operation_budget_ms_out == NULL ||
-        DEVICE_ROLE != ROLE_ANCHOR || out->packet.msg_type != MSG_COMMAND ||
+        operation_budget_ms_out == NULL || survey_follows_out == NULL) {
+        return false;
+    }
+    if (out->packet.msg_type == MSG_GATEWAY_ROUTE_ADV) {
+        if (tlv_find_unique(out->payload,
+                            out->payload_len,
+                            TLV_GATEWAY_ROUTE_ADV_MODE,
+                            &value,
+                            &value_len) != PROTO_OK ||
+            value_len != sizeof(uint8_t) ||
+            (value[0] != GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM &&
+             value[0] !=
+                 GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM)) {
+            return false;
+        }
+        route_adv_mode = value[0];
+        if (tlv_find_unique(out->payload,
+                            out->payload_len,
+                            TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                            &value,
+                            &value_len) != PROTO_OK ||
+            value_len != sizeof(uint32_t)) {
+            return false;
+        }
+        survey_follows = route_adv_mode ==
+            GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM;
+        epoch = proto_get_u32_le(value);
+        if (epoch == 0u ||
+            tlv_find_unique(out->payload,
+                            out->payload_len,
+                            TLV_DISCOVERY_ASSIGNMENT_PREARM_MS,
+                            &value,
+                            &value_len) != PROTO_OK ||
+            value_len != sizeof(uint32_t) ||
+            proto_get_u32_le(value) == 0u ||
+            operation_policy_set_from_tlvs(out->payload,
+                                           out->payload_len,
+                                           &operation_policy) != PROTO_OK ||
+            !operation_policy.assignment_present) {
+            return false;
+        }
+        *phase_out = DISCOVERY_ASSIGNMENT_PHASE_CLAIM;
+        *epoch_out = epoch;
+        *operation_budget_ms_out = proto_get_u32_le(value);
+        *survey_follows_out = survey_follows;
+        return true;
+    }
+    if (out->packet.msg_type != MSG_COMMAND ||
         gateway_command_extract_id(out->payload,
                                    out->payload_len,
                                    &command_id) != PROTO_OK ||
@@ -2576,6 +2628,7 @@ static bool mesh_c5_flood_enumeration_identity(
     *phase_out = phase;
     *epoch_out = epoch;
     *operation_budget_ms_out = operation_budget_ms;
+    *survey_follows_out = false;
     return true;
 }
 
@@ -2624,6 +2677,25 @@ static bool mesh_c5_compact_scheduled_activation(
            command_id == CMD_SURVEY_START;
 }
 
+static bool mesh_c5_survey_start_assignment_epoch(
+    const struct mesh_outbound *out,
+    uint32_t *assignment_epoch)
+{
+    struct survey_control control;
+
+    if (out == NULL || assignment_epoch == NULL ||
+        !mesh_c5_compact_scheduled_activation(out) ||
+        survey_control_extract_tlvs(out->payload,
+                                    out->payload_len,
+                                    &control) != PROTO_OK ||
+        control.phase != SURVEY_PHASE_NEIGHBOR_START ||
+        control.identity.assignment.assignment_epoch == 0u) {
+        return false;
+    }
+    *assignment_epoch = control.identity.assignment.assignment_epoch;
+    return true;
+}
+
 static int mesh_send_c5_flood_now_until(
     const struct mesh_outbound *out,
     uint8_t purpose,
@@ -2668,6 +2740,7 @@ static int mesh_send_c5_flood_now_until(
     bool compact_primary_control;
     bool atomic_gateway_control;
     bool enumeration_needs_wake = false;
+    bool enumeration_survey_follows = false;
     bool enumeration_burst_owned = false;
     bool gateway_enumeration_quick_copies;
     bool gateway_enumeration_claim;
@@ -2698,7 +2771,8 @@ static int mesh_send_c5_flood_now_until(
         &tx,
         &enumeration_phase,
         &enumeration_epoch,
-        &enumeration_operation_budget_ms);
+        &enumeration_operation_budget_ms,
+        &enumeration_survey_follows);
     compact_scheduled_control = mesh_c5_compact_scheduled_control(&tx);
     compact_scheduled_activation =
         mesh_c5_compact_scheduled_activation(&tx);
@@ -2719,9 +2793,11 @@ static int mesh_send_c5_flood_now_until(
     flood_ctx.atomic_gateway_control = atomic_gateway_control;
     if (enumeration_control) {
         enumeration_now_ms = k_uptime_get_32();
-        (void)protocol_rx_downstream_activation_expire(
-            &mesh_enumeration_downstream_activation,
-            enumeration_now_ms);
+        if (protocol_rx_downstream_activation_expire(
+                &mesh_enumeration_downstream_activation,
+                enumeration_now_ms)) {
+            mesh_enumeration_downstream_survey_follows = false;
+        }
         if (mesh_enumeration_downstream_activation.activated &&
             mesh_enumeration_downstream_activation.generation !=
                 enumeration_epoch) {
@@ -2735,27 +2811,45 @@ static int mesh_send_c5_flood_now_until(
                 &mesh_enumeration_downstream_activation,
                 PROTOCOL_RX_OPERATION_ENUMERATION,
                 mesh_enumeration_downstream_activation.generation);
+            mesh_enumeration_downstream_survey_follows = false;
         }
         enumeration_needs_wake = protocol_rx_downstream_activation_needs_wake(
             &mesh_enumeration_downstream_activation,
             PROTOCOL_RX_OPERATION_ENUMERATION,
             enumeration_epoch,
             enumeration_now_ms);
-        /* A gateway wake train reaches only the gateway's physical RF
-         * neighbors. The first enumeration control wave at each relay must
-         * wake its own downstream layer before forwarding; later phases in
-         * the same epoch reuse that downstream activation. */
+        /* The enumeration Here-I-Am reaches only one physical RF layer per
+         * sender. Every forwarding relay activates its own downstream layer;
+         * the same-epoch CLAIM then promotes that lease without waking again.
+         * A standalone CLAIM still falls back to the old per-hop wake path. */
         send_wake_train = enumeration_needs_wake;
     }
-    if (compact_scheduled_control && !compact_scheduled_activation) {
-        /* START establishes survey-owned continuous Channel-5 RX at every
-         * accepting hop. PLAN therefore uses only its compact copies. */
+    if (compact_scheduled_control) {
+        /* Survey-specific enumeration already owns continuous Channel-5 RX.
+         * START consumes that handoff; PLAN reuses START's survey ownership. */
         send_wake_train = false;
+    }
+    if (compact_scheduled_activation) {
+        uint32_t survey_assignment_epoch = 0u;
+        uint32_t now_ms = k_uptime_get_32();
+
+        if (!mesh_c5_survey_start_assignment_epoch(
+                &tx, &survey_assignment_epoch) ||
+            protocol_rx_downstream_activation_expire(
+                &mesh_enumeration_downstream_activation, now_ms) ||
+            !mesh_enumeration_downstream_survey_follows ||
+            protocol_rx_downstream_activation_needs_wake(
+                &mesh_enumeration_downstream_activation,
+                PROTOCOL_RX_OPERATION_ENUMERATION,
+                survey_assignment_epoch,
+                now_ms)) {
+            mesh_enumeration_downstream_survey_follows = false;
+            return -ESTALE;
+        }
     }
     gateway_enumeration_claim =
         mesh_c5_gateway_enumeration_claim(&tx);
-    long_gateway_activation = gateway_enumeration_claim ||
-        (compact_scheduled_activation && DEVICE_ROLE == ROLE_GATEWAY);
+    long_gateway_activation = gateway_enumeration_claim;
 
     if (compact_primary_control || gateway_enumeration_quick_copies) {
         mesh_c5_enumeration_relay_burst_begin(&tx);
@@ -2895,7 +2989,9 @@ out:
     if (result != NULL) {
         *result = aggregate_result;
     }
-    if (enumeration_control && enumeration_needs_wake &&
+    if (enumeration_control &&
+        (enumeration_needs_wake ||
+         enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) &&
         aggregate_result.sent_count > 0u) {
         (void)protocol_rx_downstream_activation_mark(
             &mesh_enumeration_downstream_activation,
@@ -2905,13 +3001,40 @@ out:
             enumeration_now_ms + enumeration_operation_budget_ms);
     }
     if (enumeration_control &&
-        (enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END ||
-         enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT) && ret == 0 &&
+        tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
+        aggregate_result.sent_count > 0u) {
+        mesh_enumeration_downstream_survey_follows =
+            enumeration_survey_follows;
+    }
+    if (enumeration_control &&
+        enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END && ret == 0 &&
+        aggregate_result.sent_count == attempt_count) {
+        if (mesh_enumeration_downstream_survey_follows) {
+            if (!protocol_rx_downstream_activation_mark(
+                &mesh_enumeration_downstream_activation,
+                PROTOCOL_RX_OPERATION_ENUMERATION,
+                enumeration_epoch,
+                enumeration_now_ms,
+                enumeration_now_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS)) {
+                mesh_enumeration_downstream_survey_follows = false;
+                ret = -ESTALE;
+            }
+        } else {
+            (void)protocol_rx_downstream_activation_clear(
+                &mesh_enumeration_downstream_activation,
+                PROTOCOL_RX_OPERATION_ENUMERATION,
+                enumeration_epoch);
+            mesh_enumeration_downstream_survey_follows = false;
+        }
+    }
+    if (enumeration_control &&
+        enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT && ret == 0 &&
         aggregate_result.sent_count == attempt_count) {
         (void)protocol_rx_downstream_activation_clear(
             &mesh_enumeration_downstream_activation,
             PROTOCOL_RX_OPERATION_ENUMERATION,
             enumeration_epoch);
+        mesh_enumeration_downstream_survey_follows = false;
     }
     if (ret == 0) {
         LOG_DBG("mesh bounded C5 flood sent: msg=0x%02x sent=%u busy_skip=%u defer=%u retry=%u reason=%s",
@@ -3109,14 +3232,11 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     out->flood_retry_count = view->flood_retry_count;
     out->queued_at_valid = view->queued_at_valid;
     out->earliest_tx_valid = view->earliest_tx_valid;
-    if (mesh_c5_compact_scheduled_control(out) &&
-        !mesh_c5_compact_scheduled_activation(out)) {
+    if (mesh_c5_compact_scheduled_control(out)) {
         send_wake_train = false;
     }
     if (send_wake_train &&
-        (mesh_c5_gateway_enumeration_claim(out) ||
-         (mesh_c5_compact_scheduled_activation(out) &&
-          DEVICE_ROLE == ROLE_GATEWAY))) {
+        mesh_c5_gateway_enumeration_claim(out)) {
         wake_train_ms =
             MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS;
     }

@@ -22,6 +22,8 @@ int app_anchor_init(void)
 #elif DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
             .anchor_upstream = anchor_survey_upstream,
+            .anchor_consume_enumeration_handoff =
+                anchor_enumeration_rx_consume_survey_handoff,
             .anchor_reschedule = anchor_survey_work_reschedule,
 #endif
         };

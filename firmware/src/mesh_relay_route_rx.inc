@@ -323,6 +323,34 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (fields->enumeration_prearm_present) {
+        ret = tlv_append_u8(payload,
+                            payload_cap,
+                            offset,
+                            TLV_GATEWAY_ROUTE_ADV_MODE,
+                            fields->enumeration_survey_follows ?
+                                GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM :
+                                GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = tlv_append_u32(payload,
+                             payload_cap,
+                             offset,
+                             TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                             fields->enumeration_prearm_epoch);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = tlv_append_u32(payload,
+                             payload_cap,
+                             offset,
+                             TLV_DISCOVERY_ASSIGNMENT_PREARM_MS,
+                             fields->enumeration_prearm_hold_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     return mesh_relay_operation_policy_append_exact(
         payload,
         payload_cap,
@@ -336,6 +364,8 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
                                         size_t payload_len,
                                         struct gateway_route_adv_fields *fields)
 {
+    uint8_t route_adv_mode = GATEWAY_ROUTE_ADV_MODE_ORDINARY;
+    int mode_ret;
     int ret;
 
     ret = find_u64_tlv(payload, payload_len, TLV_GATEWAY_ID, &fields->gateway_id);
@@ -409,13 +439,63 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
         fields->flood_retry_count = flood_control.retry_count;
     }
 
-    return mesh_relay_operation_policy_parse_exact(
+    mode_ret = find_u8_tlv(payload,
+                           payload_len,
+                           TLV_GATEWAY_ROUTE_ADV_MODE,
+                           &route_adv_mode);
+    if (mode_ret == PROTO_OK) {
+        if (route_adv_mode != GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM &&
+            route_adv_mode !=
+                GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM) {
+            return PROTO_ERR_MALFORMED;
+        }
+        ret = find_u32_tlv(payload,
+                           payload_len,
+                           TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                           &fields->enumeration_prearm_epoch);
+        if (ret != PROTO_OK) {
+            return PROTO_ERR_MALFORMED;
+        }
+        ret = find_u32_tlv(payload,
+                           payload_len,
+                           TLV_DISCOVERY_ASSIGNMENT_PREARM_MS,
+                           &fields->enumeration_prearm_hold_ms);
+        if (ret != PROTO_OK) {
+            return PROTO_ERR_MALFORMED;
+        }
+        fields->enumeration_prearm_present = true;
+        fields->enumeration_survey_follows =
+            route_adv_mode ==
+                GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM;
+    } else if (mode_ret == PROTO_ERR_NOT_FOUND) {
+        uint32_t unused;
+
+        if (find_u32_tlv(payload,
+                         payload_len,
+                         TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                         &unused) != PROTO_ERR_NOT_FOUND ||
+            find_u32_tlv(payload,
+                         payload_len,
+                         TLV_DISCOVERY_ASSIGNMENT_PREARM_MS,
+                         &unused) != PROTO_ERR_NOT_FOUND) {
+            return PROTO_ERR_MALFORMED;
+        }
+    } else {
+        return mode_ret;
+    }
+
+    ret = mesh_relay_operation_policy_parse_exact(
         payload,
         payload_len,
         &fields->operation_policy,
         fields->operation_policy_tlvs,
         &fields->operation_policy_tlvs_len,
         &fields->operation_policy_present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return fields->enumeration_prearm_present &&
+           !fields->operation_policy_present ? PROTO_ERR_MALFORMED : PROTO_OK;
 }
 
 static bool gateway_route_adv_required_tlvs_present(
@@ -1048,7 +1128,16 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
           mesh_relay_operation_policy_set_validate_complete(
               &fields->operation_policy) != PROTO_OK)) ||
         (!fields->operation_policy_present &&
-         fields->operation_policy_tlvs_len != 0u)) {
+         fields->operation_policy_tlvs_len != 0u) ||
+        (fields->enumeration_prearm_present &&
+         (fields->enumeration_prearm_epoch == 0u ||
+          fields->enumeration_prearm_hold_ms == 0u ||
+          fields->enumeration_prearm_hold_ms > INT32_MAX ||
+          !fields->operation_policy_present)) ||
+        (!fields->enumeration_prearm_present &&
+         (fields->enumeration_prearm_epoch != 0u ||
+          fields->enumeration_prearm_hold_ms != 0u ||
+          fields->enumeration_survey_follows))) {
         return false;
     }
     return true;
@@ -1368,6 +1457,15 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     if (fields.operation_policy_present && !alternate_path) {
         result->operation_policy = fields.operation_policy;
         result->actions |= MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY;
+    }
+    if (fields.enumeration_prearm_present && !alternate_path) {
+        result->enumeration_prearm_epoch =
+            fields.enumeration_prearm_epoch;
+        result->enumeration_prearm_hold_ms =
+            fields.enumeration_prearm_hold_ms;
+        result->enumeration_survey_follows =
+            fields.enumeration_survey_follows;
+        result->actions |= MESH_RELAY_ACTION_ENUMERATION_PREARM;
     }
 
     /*

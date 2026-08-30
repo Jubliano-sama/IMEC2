@@ -506,14 +506,13 @@ static void test_depth_aware_survey_control_schedule(void)
     for (uint8_t hop_count = 1u;
          hop_count <= UWB_ENUM_MAX_HOPS;
          hop_count++) {
-        uint32_t propagation_ms =
-            discovery_assignment_activation_propagation_hold_ms(hop_count);
         uint32_t schedule_ms =
             survey_control_delivery_delay_ms(hop_count);
         uint32_t required_ms =
             NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS +
-            MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
-            propagation_ms;
+            DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+            (uint32_t)hop_count *
+                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
 
         CHECK(schedule_ms == required_ms +
                                  DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS +
@@ -523,8 +522,8 @@ static void test_depth_aware_survey_control_schedule(void)
               "survey schedule must retain explicit post-delivery margin");
         if (previous_ms != 0u) {
             CHECK(schedule_ms - previous_ms ==
-                      DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS,
-                  "each survey depth must add one activated compact relay bound");
+                      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
+                  "each survey depth must add one wake-free compact relay bound");
         }
         previous_ms = schedule_ms;
     }

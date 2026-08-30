@@ -1609,7 +1609,7 @@ static bool test_table_window_keeps_autonomous_fast_ack_retries_live(void)
     return true;
 }
 
-static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(void)
+static bool test_epoch_rebase_and_unassigned_reboot_are_transactional(void)
 {
     struct gateway_model expanded = {0};
     struct gateway_model smaller = {0};
@@ -1728,18 +1728,29 @@ static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(voi
 
     CHECK(app_discovery_assignment_policy_note_claim(
               &anchor.policy, ASSIGNMENT_EPOCH) ==
-              APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE,
-          "older epoch claim was accepted after expansion");
-    CHECK(!anchor_apply_table(&anchor, smaller_payload, smaller_len,
-                              TABLE_GENERATION_1, true),
-          "older smaller generation reapplied");
+              APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
+          "received lower epoch claim was rejected after expansion");
+    CHECK(anchor_apply_table(&anchor, smaller_payload, smaller_len,
+                             TABLE_GENERATION_1, true),
+          "received lower epoch table did not stage");
     CHECK(anchor.assigned_slot == expanded_slot &&
               anchor.persisted_provisioned &&
               anchor.persisted_table_seq == TABLE_GENERATION_2 &&
+              anchor.pending_epoch == ASSIGNMENT_EPOCH &&
               discovery_assignment_table_commitment_equal(
                   &anchor.persisted_table_commitment,
                   &expanded_commitment),
-          "older smaller generation mutated expanded assignment");
+          "lower epoch TABLE changed committed state before proof");
+    CHECK(anchor_promote_after_table_end(&anchor, true, true),
+          "received lower epoch TABLE did not promote after proof");
+    CHECK(anchor.assigned_slot == 0u &&
+              anchor.persisted_epoch == ASSIGNMENT_EPOCH &&
+              anchor.persisted_table_seq == TABLE_GENERATION_1 &&
+              anchor.policy.retired_epoch_count == 0u &&
+              discovery_assignment_table_commitment_equal(
+                  &anchor.persisted_table_commitment,
+                  &smaller_commitment),
+          "lower epoch enumeration did not become authoritative");
 
     CHECK(!anchor_apply_table(&anchor, expanded_payload, expanded_len,
                               TABLE_GENERATION_3, true),
@@ -1747,7 +1758,7 @@ static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(voi
     CHECK(anchor.persisted_provisioned &&
               discovery_assignment_table_commitment_equal(
                   &anchor.persisted_table_commitment,
-                  &expanded_commitment),
+                  &smaller_commitment),
           "same-sequence conflict erased assignment");
 
     CHECK(app_discovery_assignment_policy_note_claim(
@@ -1758,13 +1769,13 @@ static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(voi
                               TABLE_GENERATION_3, true),
           "authoritative omission unexpectedly returned assigned");
     CHECK(anchor.persisted && anchor.persisted_provisioned &&
-              anchor.persisted_epoch == expanded_epoch &&
-              anchor.persisted_table_seq == TABLE_GENERATION_2 &&
+              anchor.persisted_epoch == ASSIGNMENT_EPOCH &&
+              anchor.persisted_table_seq == TABLE_GENERATION_1 &&
               discovery_assignment_table_commitment_equal(
                   &anchor.persisted_table_commitment,
-                  &expanded_commitment) &&
-              anchor.persisted_slot == expanded_slot &&
-              anchor.assigned_slot == expanded_slot,
+                  &smaller_commitment) &&
+              anchor.persisted_slot == 0u &&
+              anchor.assigned_slot == 0u,
           "uncommitted omission revoked the committed assignment");
 
     restored.id = anchor.id;
@@ -1785,16 +1796,16 @@ static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(voi
               &restored.policy),
           "failed re-enumeration lost committed slot after reboot");
     CHECK(app_discovery_assignment_policy_note_claim(
-              &restored.policy, expanded_epoch) ==
+              &restored.policy, ASSIGNMENT_EPOCH) ==
               APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
           "rebooted committed generation was not replayable");
-    CHECK(anchor_apply_table(&restored, expanded_payload, expanded_len,
-                             TABLE_GENERATION_2, true),
+    CHECK(anchor_apply_table(&restored, smaller_payload, smaller_len,
+                             TABLE_GENERATION_1, true),
           "exact committed generation did not replay");
-    CHECK(restored.policy.committed_table_seq == TABLE_GENERATION_2 &&
+    CHECK(restored.policy.committed_table_seq == TABLE_GENERATION_1 &&
               discovery_assignment_table_commitment_equal(
                   &restored.policy.committed_table_commitment,
-                  &expanded_commitment) &&
+                  &smaller_commitment) &&
               app_discovery_assignment_policy_normal_click_reply_allowed(
                   &restored.policy),
           "failed re-enumeration changed rebooted committed assignment");
@@ -2052,13 +2063,12 @@ struct pending_ack_supersession_model {
     bool pending_ack_active;
 };
 
-static bool pending_ack_yields_to_newer_claim(
+static bool pending_ack_yields_to_replacement_claim(
     struct pending_ack_supersession_model *state,
     uint32_t incoming_epoch)
 {
     if (state == NULL || !state->pending_ack_active ||
-        !discovery_assignment_epoch_strictly_newer(
-            incoming_epoch, state->pending_epoch)) {
+        incoming_epoch == 0u || incoming_epoch == state->pending_epoch) {
         return false;
     }
     state->pending_epoch = 0u;
@@ -2066,7 +2076,7 @@ static bool pending_ack_yields_to_newer_claim(
     return true;
 }
 
-static bool test_obsolete_ack_yields_to_newer_claim(void)
+static bool test_obsolete_ack_yields_to_replacement_claim(void)
 {
     struct pending_ack_supersession_model first_assignment = {
         .pending_epoch = ASSIGNMENT_EPOCH,
@@ -2079,11 +2089,11 @@ static bool test_obsolete_ack_yields_to_newer_claim(void)
         .pending_ack_active = true,
     };
 
-    CHECK(!pending_ack_yields_to_newer_claim(
+    CHECK(!pending_ack_yields_to_replacement_claim(
               &first_assignment, ASSIGNMENT_EPOCH),
           "same-epoch CLAIM displaced its own pending ACK");
-    CHECK(pending_ack_yields_to_newer_claim(
-              &first_assignment, ASSIGNMENT_EPOCH + 1u),
+    CHECK(pending_ack_yields_to_replacement_claim(
+              &first_assignment, ASSIGNMENT_EPOCH - 1u),
           "unprovisioned anchor could not leave an obsolete pending ACK");
     CHECK(!first_assignment.pending_ack_active &&
               first_assignment.pending_epoch == 0u,
@@ -2093,15 +2103,15 @@ static bool test_obsolete_ack_yields_to_newer_claim(void)
      * The now-unprovisioned anchor can answer E+1 and accept its TABLE. This
      * is the recovery path after E finalized without committing the anchor.
      */
-    first_assignment.pending_epoch = ASSIGNMENT_EPOCH + 1u;
+    first_assignment.pending_epoch = ASSIGNMENT_EPOCH - 1u;
     first_assignment.pending_ack_active = true;
     CHECK(first_assignment.pending_ack_active &&
               !first_assignment.has_committed_provisioned_slot,
-          "newer enumeration did not reacquire first-assignment custody");
+          "replacement enumeration did not reacquire first-assignment custody");
 
-    CHECK(pending_ack_yields_to_newer_claim(
-              &replacement, ASSIGNMENT_EPOCH + 1u),
-          "provisioned anchor let an obsolete ACK suppress a newer CLAIM");
+    CHECK(pending_ack_yields_to_replacement_claim(
+              &replacement, ASSIGNMENT_EPOCH - 1u),
+          "provisioned anchor let an obsolete ACK suppress a lower CLAIM");
     CHECK(!replacement.pending_ack_active &&
               replacement.pending_epoch == 0u &&
               replacement.has_committed_provisioned_slot,
@@ -2109,26 +2119,25 @@ static bool test_obsolete_ack_yields_to_newer_claim(void)
     return true;
 }
 
-static bool test_newer_claim_abort_retires_old_low_duty_ack(void)
+static bool test_replacement_claim_abort_retires_old_low_duty_ack(void)
 {
     struct assignment_transaction_snapshot_model snapshot = {
         .committed_epoch = ASSIGNMENT_EPOCH,
         .pending_epoch = ASSIGNMENT_EPOCH + 1u,
         .pending_valid = true,
     };
-    const uint32_t newer_claim_epoch = ASSIGNMENT_EPOCH + 2u;
+    const uint32_t replacement_claim_epoch = ASSIGNMENT_EPOCH - 1u;
     bool old_ack_low_duty_active = true;
     bool newer_table_persisted = false;
 
     /*
-     * A newer CLAIM is authoritative evidence that the gateway has moved on
+     * A replacement CLAIM is authoritative evidence that the gateway has moved on
      * from the older response window. It retires only the unacknowledged
      * candidate; the previously committed slot remains available if the new
      * operation later aborts before TABLE.
      */
-    CHECK(discovery_assignment_epoch_strictly_newer(
-              newer_claim_epoch, snapshot.pending_epoch),
-          "newer CLAIM fixture is not ordered");
+    CHECK(replacement_claim_epoch != snapshot.pending_epoch,
+          "replacement CLAIM fixture reused the pending identity");
     snapshot.pending_epoch = 0u;
     snapshot.pending_valid = false;
     old_ack_low_duty_active = false;
@@ -2136,7 +2145,7 @@ static bool test_newer_claim_abort_retires_old_low_duty_ack(void)
               !newer_table_persisted &&
               snapshot.committed_epoch == ASSIGNMENT_EPOCH &&
               !snapshot.pending_valid && snapshot.pending_epoch == 0u,
-          "newer CLAIM abort lost the committed slot or retained stale ACK custody");
+          "replacement CLAIM abort lost the committed slot or retained stale ACK custody");
     return true;
 }
 
@@ -2488,7 +2497,7 @@ int main(void)
     if (!test_table_window_keeps_autonomous_fast_ack_retries_live()) {
         return EXIT_FAILURE;
     }
-    if (!test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic()) {
+    if (!test_epoch_rebase_and_unassigned_reboot_are_transactional()) {
         return EXIT_FAILURE;
     }
     if (!test_real_rf_attempt_preserves_delayed_assignment_responses()) {
@@ -2506,10 +2515,10 @@ int main(void)
     if (!test_queued_delivery_promotes_before_new_claim_abort()) {
         return EXIT_FAILURE;
     }
-    if (!test_obsolete_ack_yields_to_newer_claim()) {
+    if (!test_obsolete_ack_yields_to_replacement_claim()) {
         return EXIT_FAILURE;
     }
-    if (!test_newer_claim_abort_retires_old_low_duty_ack()) {
+    if (!test_replacement_claim_abort_retires_old_low_duty_ack()) {
         return EXIT_FAILURE;
     }
     if (!test_expected_count_uses_unique_current_claim_responders()) {

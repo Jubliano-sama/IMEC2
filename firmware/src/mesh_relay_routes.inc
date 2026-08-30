@@ -1197,6 +1197,17 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
         sizeof(snapshot->operation_policy_tlvs)) {
         return PROTO_ERR_MALFORMED;
     }
+    if (snapshot->enumeration_prearm_present &&
+        (snapshot->enumeration_prearm_epoch == 0u ||
+         snapshot->enumeration_prearm_hold_ms == 0u ||
+         snapshot->enumeration_prearm_hold_ms > INT32_MAX ||
+         !snapshot->operation_policy_present)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (!snapshot->enumeration_prearm_present &&
+        snapshot->enumeration_survey_follows) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     memset(&fields, 0, sizeof(fields));
     ret = mesh_relay_operation_policy_parse_exact(
@@ -1213,6 +1224,13 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
         return PROTO_ERR_MALFORMED;
     }
     fields.operation_policy_present = operation_policy_present;
+    fields.enumeration_prearm_epoch = snapshot->enumeration_prearm_epoch;
+    fields.enumeration_prearm_hold_ms =
+        snapshot->enumeration_prearm_hold_ms;
+    fields.enumeration_prearm_present =
+        snapshot->enumeration_prearm_present;
+    fields.enumeration_survey_follows =
+        snapshot->enumeration_survey_follows;
 
     memset(out, 0, sizeof(*out));
     fields.gateway_id = relay->gateway_id;

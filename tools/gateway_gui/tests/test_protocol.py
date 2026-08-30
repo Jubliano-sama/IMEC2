@@ -60,6 +60,7 @@ from tools.gateway_gui.protocol import (
     TLV_DURATION_MS,
     TLV_EVENT_SEQ,
     TLV_GATEWAY_HOST_RECEIPT_IDENTITY,
+    TLV_GATEWAY_ROUTE_ADV_MODE,
     TLV_QUALITY,
     TLV_RANGE_STATUS,
     TLV_REASON,
@@ -1242,6 +1243,44 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(command.packet.dst_id, gateway_id)
         self.assertEqual(command.packet.value(TLV_COMMAND_ID), CMD_FORCE_REDISCOVERY)
         self.assertEqual([value.type_id for value in command.packet.tlvs], [TLV_COMMAND_ID])
+
+    def test_enumeration_here_i_am_carries_explicit_prearm_mode(self) -> None:
+        command = build_here_i_am_command(
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=0xAABBCCDDEEFF0011,
+            session_id=0x55667788,
+            seq=12,
+            enumeration_follows=True,
+        )
+
+        self.assertEqual(command.label, "Enumeration Here I Am")
+        self.assertEqual(command.packet.value(TLV_GATEWAY_ROUTE_ADV_MODE), 1)
+        self.assertEqual(
+            [value.type_id for value in command.packet.tlvs],
+            [TLV_COMMAND_ID, TLV_GATEWAY_ROUTE_ADV_MODE],
+        )
+
+    def test_survey_enumeration_here_i_am_carries_distinct_prearm_mode(self) -> None:
+        command = build_here_i_am_command(
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=0xAABBCCDDEEFF0011,
+            session_id=0x55667788,
+            seq=13,
+            enumeration_follows=True,
+            survey_follows=True,
+        )
+
+        self.assertEqual(command.label, "Survey Enumeration Here I Am")
+        self.assertEqual(command.packet.value(TLV_GATEWAY_ROUTE_ADV_MODE), 2)
+
+        with self.assertRaisesRegex(ValueError, "requires an enumeration"):
+            build_here_i_am_command(
+                host_id=DEFAULT_HOST_ID,
+                gateway_id=0xAABBCCDDEEFF0011,
+                session_id=0x55667788,
+                seq=14,
+                survey_follows=True,
+            )
 
     def test_assign_discovery_slots_command_targets_local_gateway_with_only_command_id(self) -> None:
         gateway_id = 0xAABBCCDDEEFF0011

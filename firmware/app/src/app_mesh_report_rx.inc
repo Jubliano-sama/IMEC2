@@ -3141,6 +3141,10 @@ static int mesh_route_refresh_build(void *ctx,
                                     struct mesh_outbound *out)
 {
     struct operation_policy_set operation_policy;
+    uint32_t prearm_epoch = 0u;
+    uint32_t prearm_hold_ms = 0u;
+    bool prearm_present = false;
+    bool survey_follows = false;
     int ret;
 
     ARG_UNUSED(ctx);
@@ -3149,6 +3153,15 @@ static int mesh_route_refresh_build(void *ctx,
     }
     if (!snapshot->valid) {
         app_operation_policy_snapshot(&operation_policy);
+        if (mesh_report_callbacks != NULL &&
+            mesh_report_callbacks->gateway_route_refresh_prearm != NULL) {
+            prearm_present =
+                mesh_report_callbacks->gateway_route_refresh_prearm(
+                    &prearm_epoch,
+                    &prearm_hold_ms,
+                    &operation_policy,
+                    &survey_follows);
+        }
         ret = mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
             &mesh_runtime,
             sequence,
@@ -3158,27 +3171,55 @@ static int mesh_route_refresh_build(void *ctx,
         if (ret != PROTO_OK) {
             return ret;
         }
+        if (prearm_present) {
+            snapshot->enumeration_prearm_epoch = prearm_epoch;
+            snapshot->enumeration_prearm_hold_ms = prearm_hold_ms;
+            snapshot->enumeration_prearm_present = true;
+            snapshot->enumeration_survey_follows = survey_follows;
+        }
     }
     return mesh_relay_build_gateway_route_adv_from_snapshot(&mesh_runtime,
                                                             snapshot,
                                                             out);
 }
 
-static int mesh_route_refresh_send_wake(void *ctx, const char *reason)
+static int mesh_route_refresh_send_wake(void *ctx,
+                                        const char *reason,
+                                        uint32_t duration_ms)
 {
     ARG_UNUSED(ctx);
-    return mesh_send_route_wake_train(
+    return mesh_send_route_wake_train_with_duration(
         MESH_BROADCAST_ID, NULL, NULL,
         C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH, reason, NULL, NULL,
-        FW_C5_TX_INTENT_BACKGROUND, NULL, NULL);
+        FW_C5_TX_INTENT_BACKGROUND, duration_ms, NULL, NULL);
 }
 
 static void mesh_route_refresh_note_sent(const struct mesh_outbound *out,
                                          uint32_t now_ms,
                                          void *ctx)
 {
+    enum discovery_assignment_phase phase;
+    uint32_t epoch;
+    uint32_t hold_ms;
+    bool survey_follows;
+
     ARG_UNUSED(ctx);
     mesh_relay_note_tx_sent(&mesh_runtime, out, now_ms);
+    if (mesh_c5_flood_enumeration_identity(out,
+                                           &phase,
+                                           &epoch,
+                                           &hold_ms,
+                                           &survey_follows)) {
+        (void)protocol_rx_downstream_activation_mark(
+            &mesh_enumeration_downstream_activation,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            epoch,
+            now_ms,
+            now_ms + hold_ms);
+        if (out->packet.msg_type == MSG_GATEWAY_ROUTE_ADV) {
+            mesh_enumeration_downstream_survey_follows = survey_follows;
+        }
+    }
 }
 
 static int mesh_route_refresh_begin_radio_control(void *ctx)
@@ -3323,6 +3364,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     mesh_report_callbacks = callbacks;
     protocol_rx_downstream_activation_init(
         &mesh_enumeration_downstream_activation);
+    mesh_enumeration_downstream_survey_follows = false;
 #if DEVICE_ROLE == ROLE_CLICKER
     /*
      * Clickers normally originate ranging rather than mesh traffic, but

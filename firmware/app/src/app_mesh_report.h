@@ -89,6 +89,10 @@ struct app_mesh_report_callbacks {
                                        const uint8_t *payload,
                                        size_t payload_len,
                                        uint64_t ingress_hop_id);
+    int (*anchor_enumeration_prearm)(uint32_t epoch,
+                                     uint32_t hold_ms,
+                                     uint32_t operation_budget_ms,
+                                     bool survey_follows);
     void (*gateway_note_anchor_boot_observation)(
         const struct proto_packet *packet,
         const uint8_t *payload,
@@ -106,6 +110,10 @@ struct app_mesh_report_callbacks {
         const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
     void (*gateway_route_refresh_event)(
         const struct app_node_comm_route_refresh_event *event);
+    bool (*gateway_route_refresh_prearm)(uint32_t *epoch,
+                                         uint32_t *hold_ms,
+                                         struct operation_policy_set *policy,
+                                         bool *survey_follows);
 };
 
 struct app_mesh_outbound_view {

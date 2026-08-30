@@ -42,6 +42,7 @@ from tools.gateway_gui.protocol import (
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
     TLV_DISCOVERY_ASSIGNMENT_PHASE,
     TLV_EXPECTED_NODE_COUNT,
+    TLV_GATEWAY_ROUTE_ADV_MODE,
     TLV_OPERATION_POLICY,
     TLV_REASON,
     append_tlv,
@@ -857,7 +858,13 @@ class AppModelTests(unittest.TestCase):
         )
         self.assertEqual(
             [value.type_id for value in parse_cobs_packet(plan.preflight.frame).tlvs],
-            [TLV_COMMAND_ID, TLV_OPERATION_POLICY],
+            [TLV_COMMAND_ID, TLV_GATEWAY_ROUTE_ADV_MODE, TLV_OPERATION_POLICY],
+        )
+        self.assertEqual(
+            parse_cobs_packet(plan.preflight.frame).value(
+                TLV_GATEWAY_ROUTE_ADV_MODE
+            ),
+            1,
         )
         self.assertEqual(
             plan.target.timeout_s,
@@ -908,6 +915,7 @@ class AppModelTests(unittest.TestCase):
             gui._send_assign_discovery_slots(
                 ram_only_iteration=True,
                 expected_anchor_count_override=0,
+                survey_follows=True,
             )
         )
 
@@ -920,6 +928,12 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(len(policies), 1)
         self.assertTrue(policies[0]["ram_only_iteration"])
         self.assertEqual(policies[0]["expected_anchor_count"], 0)
+        self.assertEqual(
+            parse_cobs_packet(plan.preflight.frame).value(
+                TLV_GATEWAY_ROUTE_ADV_MODE
+            ),
+            2,
+        )
         self.assertIn("unknown anchor roster", plan.target.status_text)
 
     def test_manual_here_i_am_carries_the_current_full_policy(self) -> None:

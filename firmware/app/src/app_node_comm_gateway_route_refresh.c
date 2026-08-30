@@ -437,7 +437,9 @@ static int refresh_prepare_outer(struct route_refresh_operation *operation,
         return -EIO;
     }
     if (outbound->payload_len != MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN &&
-        outbound->payload_len != MESH_GATEWAY_ROUTE_ADV_POLICY_PAYLOAD_LEN) {
+        outbound->payload_len != MESH_GATEWAY_ROUTE_ADV_POLICY_PAYLOAD_LEN &&
+        outbound->payload_len !=
+            MESH_GATEWAY_ROUTE_ADV_PREARM_POLICY_PAYLOAD_LEN) {
         return -EMSGSIZE;
     }
     if (outbound->packet.message_age_ms != 0u) {
@@ -586,6 +588,10 @@ static void refresh_work_handler(struct k_work *work)
         }
         if (!operation.wake_sent) {
             uint32_t wake_start_ms = outbound.earliest_tx_ms;
+            uint32_t wake_train_ms =
+                operation.snapshot.enumeration_prearm_present ?
+                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS :
+                    config->wake_train_ms;
             uint32_t current_ms = config->now_ms == NULL ? 0u :
                                   config->now_ms(config->ctx);
             bool response_priority =
@@ -596,8 +602,8 @@ static void refresh_work_handler(struct k_work *work)
                                  operation.response_due_ms) == 0u);
 
             if (!response_priority &&
-                wake_start_ms > config->wake_train_ms) {
-                wake_start_ms -= config->wake_train_ms;
+                wake_start_ms > wake_train_ms) {
+                wake_start_ms -= wake_train_ms;
             }
             if (!refresh_deadline_reached(current_ms, wake_start_ms)) {
                 refresh_flood_sleep(wake_start_ms, &operation);
@@ -611,7 +617,8 @@ static void refresh_work_handler(struct k_work *work)
             if (!response_priority) {
                 ret = config->send_wake == NULL ? -ENOTSUP :
                       config->send_wake(config->ctx,
-                                        "gateway-route-adv");
+                                        "gateway-route-adv",
+                                        wake_train_ms);
                 if (ret < 0) {
                     goto finish;
                 }

@@ -134,9 +134,14 @@ static void test_rebooted_assignment_late_claims_new_epoch(void)
                &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
            APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
     assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(policy.committed_epoch == EPOCH_1);
-    assert(policy.joining_epoch == EPOCH_2);
+    assert(policy.joining_epoch == EPOCH_1);
+    assert(app_discovery_assignment_policy_note_table(
+               &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
+           APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
+    assert(app_discovery_assignment_policy_commit(
+        &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
 
     assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_2) ==
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
@@ -166,7 +171,7 @@ static void test_out_of_order_old_table_cannot_interrupt_join(void)
            APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
 }
 
-static void test_committed_claim_cannot_erase_newer_join(void)
+static void test_received_claim_replaces_active_join(void)
 {
     struct app_discovery_assignment_policy policy;
 
@@ -176,36 +181,38 @@ static void test_committed_claim_cannot_erase_newer_join(void)
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(policy.joining_epoch == EPOCH_2);
     assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    assert(policy.joining_epoch == EPOCH_2);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    assert(policy.joining_epoch == EPOCH_1);
     assert(policy.claim_observed);
     assert(app_discovery_assignment_policy_note_table(
                &policy, EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
+    assert(app_discovery_assignment_policy_note_table(
+               &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
+           APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
 }
 
-static void test_retired_epoch_cannot_roll_back_committed_assignment(void)
+static void test_received_lower_epoch_rebases_committed_assignment(void)
 {
     struct app_discovery_assignment_policy policy;
+    uint32_t projected[DISCOVERY_ASSIGNMENT_RETIRED_EPOCH_CAP];
+    uint8_t projected_count = UINT8_MAX;
 
     advance_from_epoch_1_to_epoch_2(&policy);
     assert(policy.retired_epoch_count == 1u);
     assert(policy.retired_epochs[0] == EPOCH_1);
     assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    assert(app_discovery_assignment_policy_note_table(
-               &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
-    assert(policy.committed_epoch == EPOCH_2);
-
-    assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_3) ==
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_table(
                &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
-    assert(app_discovery_assignment_policy_note_table(
-               &policy, EPOCH_3, TABLE_SEQ_3, TABLE_COMMITMENT_3) ==
            APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    assert(app_discovery_assignment_policy_project_retired_epochs(
+        &policy, EPOCH_1, projected, &projected_count));
+    assert(projected_count == 0u);
+    assert(app_discovery_assignment_policy_commit(
+        &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
+    assert(policy.committed_epoch == EPOCH_1);
+    assert(policy.retired_epoch_count == 0u);
 }
 
 static void test_erased_nvs_production_anchor_is_unprovisioned(void)
@@ -270,29 +277,26 @@ static void test_authoritative_omission_is_unprovisioned_until_reassigned(void)
         &policy.committed_table_commitment, TABLE_COMMITMENT_2));
 }
 
-static void test_restored_pending_candidate_retains_committed_assignment(void)
+static void test_restored_lower_pending_candidate_can_commit(void)
 {
     struct app_discovery_assignment_policy policy;
 
     app_discovery_assignment_policy_init(
         &policy, true, true, true,
-        EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1);
+        EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2);
     assert(app_discovery_assignment_policy_restore_pending(
-        &policy, EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2));
-    assert(policy.committed_epoch == EPOCH_1);
-    assert(policy.joining_epoch == EPOCH_2);
+        &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
+    assert(policy.committed_epoch == EPOCH_2);
+    assert(policy.joining_epoch == EPOCH_1);
     assert(app_discovery_assignment_policy_normal_click_reply_allowed(
         &policy));
-    assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
     assert(app_discovery_assignment_policy_note_table(
-               &policy, EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2) ==
+               &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
            APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
     assert(app_discovery_assignment_policy_commit(
-        &policy, EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2));
-    assert(policy.committed_epoch == EPOCH_2);
-    assert(policy.retired_epoch_count == 1u);
-    assert(policy.retired_epochs[0] == EPOCH_1);
+        &policy, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
+    assert(policy.committed_epoch == EPOCH_1);
+    assert(policy.retired_epoch_count == 0u);
 }
 
 static void test_first_assignment_pending_remains_unprovisioned(void)
@@ -309,10 +313,11 @@ static void test_first_assignment_pending_remains_unprovisioned(void)
     assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_2) ==
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_claim(&policy, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    assert(policy.joining_epoch == EPOCH_1);
 }
 
-static void test_multi_generation_replay_history_survives_reset(void)
+static void test_multi_generation_history_rebases_on_received_lower_claim(void)
 {
     struct app_discovery_assignment_policy policy;
     struct app_discovery_assignment_policy restored;
@@ -343,37 +348,25 @@ static void test_multi_generation_replay_history_survives_reset(void)
     assert(app_discovery_assignment_policy_restore_retired_epochs(
         &restored, persisted_retired, persisted_retired_count));
     assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_2) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_3) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-
-    /* The current exact generation remains replayable so a lost ACK recovers. */
-    assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_4) ==
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_table(
-               &restored, EPOCH_4, TABLE_SEQ_4, TABLE_COMMITMENT_4) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
+               &restored, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
+           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    memset(persisted_retired, 0xa5, sizeof(persisted_retired));
+    assert(app_discovery_assignment_policy_project_retired_epochs(
+        &restored, EPOCH_1, persisted_retired, &persisted_retired_count));
+    assert(persisted_retired_count == 0u);
     assert(app_discovery_assignment_policy_commit(
-        &restored, EPOCH_4, TABLE_SEQ_4, TABLE_COMMITMENT_4));
-
-    persisted_retired[2] = EPOCH_2;
-    assert(!app_discovery_assignment_policy_restore_retired_epochs(
-        &restored, persisted_retired, persisted_retired_count));
+        &restored, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
+    assert(restored.committed_epoch == EPOCH_1);
+    assert(restored.retired_epoch_count == 0u);
 }
 
-static void test_ordered_epoch_rejects_stale_generation_after_history_eviction(void)
+static void test_lower_epoch_rebases_after_history_eviction(void)
 {
     struct app_discovery_assignment_policy policy;
-    struct app_discovery_assignment_policy restored;
     const uint32_t first_epoch = UINT32_C(5000);
-    uint32_t current_epoch;
-    uint32_t current_table_seq;
-    struct discovery_assignment_table_commitment current_commitment;
     struct discovery_assignment_table_commitment initial_commitment =
-        test_table_commitment(UINT32_C(0x70000000));
-    struct discovery_assignment_table_commitment stale_commitment =
         test_table_commitment(UINT32_C(0x70000000));
 
     app_discovery_assignment_policy_init(
@@ -409,45 +402,21 @@ static void test_ordered_epoch_rejects_stale_generation_after_history_eviction(v
         assert(policy.retired_epochs[index] ==
                first_epoch + DISCOVERY_ASSIGNMENT_RETIRED_EPOCH_CAP - index);
     }
-    for (uint32_t generation = 1u;
-         generation <= DISCOVERY_ASSIGNMENT_RETIRED_EPOCH_CAP;
-         generation++) {
-        assert(app_discovery_assignment_policy_note_claim(
-                   &policy, first_epoch + generation) ==
-               APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    }
     assert(!app_discovery_assignment_policy_epoch_retired(
         &policy, first_epoch));
     assert(app_discovery_assignment_policy_note_claim(
                &policy, first_epoch) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_table(
                &policy,
                first_epoch,
                UINT32_C(7000),
-               &stale_commitment) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
-
-    current_epoch = policy.committed_epoch;
-    current_table_seq = policy.committed_table_seq;
-    current_commitment = policy.committed_table_commitment;
-    app_discovery_assignment_policy_init(
-        &restored,
-        true,
-        true,
-        true,
-        current_epoch,
-        current_table_seq,
-        &current_commitment);
-    assert(app_discovery_assignment_policy_note_claim(
-               &restored, first_epoch) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    assert(app_discovery_assignment_policy_note_table(
-               &restored,
-               first_epoch,
-               UINT32_C(7000),
-               &stale_commitment) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
+               &initial_commitment) ==
+           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    assert(app_discovery_assignment_policy_commit(
+        &policy, first_epoch, UINT32_C(7000), &initial_commitment));
+    assert(policy.committed_epoch == first_epoch);
+    assert(policy.retired_epoch_count == 0u);
 }
 
 static void test_migrated_snapshot_accepts_one_new_scheme_epoch_then_orders(void)
@@ -482,10 +451,11 @@ static void test_migrated_snapshot_accepts_one_new_scheme_epoch_then_orders(void
     assert(policy.ordered_epoch_valid);
     assert(app_discovery_assignment_policy_note_claim(
                &policy, legacy_random_epoch) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    assert(policy.joining_epoch == legacy_random_epoch);
 }
 
-static void test_migration_candidate_uses_order_without_legacy_baseline(void)
+static void test_latest_received_claim_owns_migration_candidate(void)
 {
     struct app_discovery_assignment_policy policy;
     const uint32_t delayed_epoch = UINT32_C(6);
@@ -508,19 +478,20 @@ static void test_migration_candidate_uses_order_without_legacy_baseline(void)
     assert(policy.joining_epoch == live_epoch);
     assert(app_discovery_assignment_policy_note_claim(
                &policy, delayed_epoch) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    assert(policy.joining_epoch == delayed_epoch);
     assert(app_discovery_assignment_policy_note_table(
                &policy,
                delayed_epoch,
                TABLE_SEQ_1,
                TABLE_COMMITMENT_1) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
     assert(app_discovery_assignment_policy_note_table(
                &policy,
                live_epoch,
                TABLE_SEQ_2,
                TABLE_COMMITMENT_2) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
 
     app_discovery_assignment_policy_init(
         &policy,
@@ -534,8 +505,8 @@ static void test_migration_candidate_uses_order_without_legacy_baseline(void)
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_claim(
                &policy, delayed_epoch) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
-    assert(policy.joining_epoch == live_epoch);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    assert(policy.joining_epoch == delayed_epoch);
 }
 
 static void test_migration_ignores_random_retired_epoch_collision(void)
@@ -625,7 +596,10 @@ static void test_ordered_epoch_wrap_and_exact_replay(void)
         &policy, 1u, TABLE_SEQ_2, TABLE_COMMITMENT_2));
     assert(app_discovery_assignment_policy_note_claim(
                &policy, UINT32_MAX) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    assert(app_discovery_assignment_policy_note_table(
+               &policy, UINT32_MAX, TABLE_SEQ_3, TABLE_COMMITMENT_3) ==
+           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
 }
 
 static void test_replay_history_validation_is_fail_closed_and_canonical(void)
@@ -779,22 +753,24 @@ static void test_unassigned_generation_survives_reboot_and_blocks_replay(void)
         &restored.committed_table_commitment, TABLE_COMMITMENT_2));
 
     assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_1) ==
-           APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE);
+           APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_table(
                &restored, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
-    assert(restored.committed_table_seq == TABLE_SEQ_2);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    assert(app_discovery_assignment_policy_note_unassigned(
+        &restored, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
+    assert(restored.committed_table_seq == TABLE_SEQ_1);
     assert(!app_discovery_assignment_policy_normal_click_reply_allowed(
         &restored));
 
     /* An exact retransmission preserves the tombstone idempotently. */
-    assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_2) ==
+    assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_1) ==
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
     assert(app_discovery_assignment_policy_note_table(
-               &restored, EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2) ==
+               &restored, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1) ==
            APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
     assert(app_discovery_assignment_policy_note_unassigned(
-        &restored, EPOCH_2, TABLE_SEQ_2, TABLE_COMMITMENT_2));
+        &restored, EPOCH_1, TABLE_SEQ_1, TABLE_COMMITMENT_1));
 
     assert(app_discovery_assignment_policy_note_claim(&restored, EPOCH_3) ==
            APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
@@ -1014,16 +990,16 @@ int main(void)
     test_response_custody_requires_exact_operation_identity();
     test_rebooted_assignment_late_claims_new_epoch();
     test_out_of_order_old_table_cannot_interrupt_join();
-    test_committed_claim_cannot_erase_newer_join();
-    test_retired_epoch_cannot_roll_back_committed_assignment();
+    test_received_claim_replaces_active_join();
+    test_received_lower_epoch_rebases_committed_assignment();
     test_erased_nvs_production_anchor_is_unprovisioned();
     test_authoritative_omission_is_unprovisioned_until_reassigned();
-    test_restored_pending_candidate_retains_committed_assignment();
+    test_restored_lower_pending_candidate_can_commit();
     test_first_assignment_pending_remains_unprovisioned();
-    test_multi_generation_replay_history_survives_reset();
-    test_ordered_epoch_rejects_stale_generation_after_history_eviction();
+    test_multi_generation_history_rebases_on_received_lower_claim();
+    test_lower_epoch_rebases_after_history_eviction();
     test_migrated_snapshot_accepts_one_new_scheme_epoch_then_orders();
-    test_migration_candidate_uses_order_without_legacy_baseline();
+    test_latest_received_claim_owns_migration_candidate();
     test_migration_ignores_random_retired_epoch_collision();
     test_ordered_epoch_wrap_and_exact_replay();
     test_replay_history_validation_is_fail_closed_and_canonical();

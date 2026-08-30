@@ -118,7 +118,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             queue.count("app_mesh_c5_gateway_route_adv_rx_allowed("), 1
         )
 
-    def test_survey_start_and_plan_reuse_compact_primary_flood(self) -> None:
+    def test_survey_controls_reuse_enumeration_handoff_without_wake(self) -> None:
         classify = function_body(
             GATEWAY_COMMAND,
             "gateway_command_uses_compact_scheduled_flood",
@@ -137,7 +137,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
         self.assertIn("command_id == CMD_SURVEY_START", classify)
         self.assertIn("command_id == CMD_SURVEY_PLAN", classify)
-        self.assertNotIn("CMD_SURVEY_CANCEL", classify)
+        self.assertIn("command_id == CMD_SURVEY_CANCEL", classify)
         self.assertIn("command_id == CMD_SURVEY_START", activation)
         self.assertNotIn("CMD_SURVEY_PLAN", activation)
         self.assertIn(
@@ -167,16 +167,22 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "        mesh_c5_compact_scheduled_activation(&tx)",
             send,
         )
-        plan_bare = send.index(
-            "compact_scheduled_control && !compact_scheduled_activation"
+        wake_free = send.index("if (compact_scheduled_control)")
+        wake_suppression = send.index("send_wake_train = false", wake_free)
+        start_validation = send.index(
+            "if (compact_scheduled_activation)", wake_suppression
         )
-        plan_suppression = send.index("send_wake_train = false", plan_bare)
+        handoff_epoch = send.index(
+            "mesh_c5_survey_start_assignment_epoch(", start_validation
+        )
+        handoff_intent = send.index(
+            "!mesh_enumeration_downstream_survey_follows", handoff_epoch
+        )
+        handoff_live = send.index(
+            "protocol_rx_downstream_activation_needs_wake(", handoff_intent
+        )
         long_activation = send.index(
             "long_gateway_activation = gateway_enumeration_claim"
-        )
-        gateway_only = send.index(
-            "compact_scheduled_activation && DEVICE_ROLE == ROLE_GATEWAY",
-            long_activation,
         )
         attempt_loop = send.index(
             "for (uint16_t attempt = 0u; attempt < attempt_count; attempt++)"
@@ -193,10 +199,13 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn(
             "(single_opportunity || compact_primary_control)", send
         )
-        self.assertLess(plan_bare, plan_suppression)
-        self.assertLess(plan_suppression, long_activation)
-        self.assertLess(long_activation, gateway_only)
-        self.assertLess(gateway_only, attempt_loop)
+        self.assertLess(wake_free, wake_suppression)
+        self.assertLess(wake_suppression, start_validation)
+        self.assertLess(start_validation, handoff_epoch)
+        self.assertLess(handoff_epoch, handoff_intent)
+        self.assertLess(handoff_intent, handoff_live)
+        self.assertLess(handoff_live, long_activation)
+        self.assertLess(long_activation, attempt_loop)
         self.assertLess(attempt_loop, one_activation)
         self.assertLess(one_activation, first_attempt)
         self.assertLess(first_attempt, long_select)
@@ -204,6 +213,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(wake_send, three_copy_send)
         self.assertNotIn(
             "compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR", send
+        )
+        self.assertNotIn(
+            "compact_scheduled_activation && DEVICE_ROLE == ROLE_GATEWAY",
+            send,
         )
 
         self.assertIn(
@@ -213,7 +226,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         self.assertIn("NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD", gateway)
         self.assertIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", schedule)
-        self.assertIn("SURVEY_CONTROL_ACTIVATION_BUDGET_MS", schedule)
+        self.assertNotIn("SURVEY_CONTROL_ACTIVATION_BUDGET_MS", schedule)
         self.assertIn("SURVEY_CONTROL_PER_HOP_BUDGET_MS", schedule)
         self.assertIn("SURVEY_CONTROL_REDUNDANCY_MS", schedule)
 
@@ -241,6 +254,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
         self.assertLess(
             start.index("protocol_rx_lifecycle_begin("),
+            start.index("anchor_consume_enumeration_handoff"),
+        )
+        self.assertLess(
+            start.index("anchor_consume_enumeration_handoff"),
             start.index("anchor_state.active = true"),
         )
         self.assertIn("anchor_rx_terminate_locked(false)", start)
@@ -302,7 +319,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         abort_commit = abort.index(
             "app_operation_policy_commit_prepared", abort_retire
         )
-        end_accept = end.index("anchor_enumeration_rx_terminate_table(")
+        end_accept = end.index("anchor_enumeration_rx_finish_table(")
         end_retire = end.index(
             'anchor_retire_discovery_response_for_terminal_locked(epoch, "end")',
             end_accept,
@@ -413,17 +430,19 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertGreaterEqual(
             end.count("discovery_assignment_table_commitment_equal"), 2
         )
-        self.assertIn("anchor_enumeration_rx_terminate_table", end)
+        self.assertIn("anchor_enumeration_rx_finish_table", end)
         self.assertIn("reason=inactive-observation", end)
 
         begin_table = function_body(RADIO, "anchor_enumeration_rx_begin_table")
-        terminate_table = function_body(
-            RADIO, "anchor_enumeration_rx_terminate_table"
+        finish_table = function_body(
+            RADIO, "anchor_enumeration_rx_finish_table"
         )
         self.assertIn("anchor_enumeration_rx_table_identity_valid", begin_table)
         self.assertIn("table_command_seq", begin_table)
         self.assertIn("discovery_assignment_table_commitment_equal", begin_table)
-        self.assertIn("protocol_rx_lifecycle_terminate", terminate_table)
+        self.assertIn("protocol_rx_lifecycle_terminate", finish_table)
+        self.assertIn("SURVEY_ENUMERATION_HANDOFF_HOLD_MS", finish_table)
+        self.assertIn("protocol_rx_lifecycle_set_deadline", finish_table)
         unlisted = apply[apply.index("DBG_DISCOVERY_SLOT_UNASSIGNED") :]
         self.assertIn("anchor_enumeration_rx_begin_table", unlisted)
         self.assertLess(
@@ -1007,10 +1026,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         terminate_claim = function_body(
             RADIO, "anchor_enumeration_rx_terminate_claim"
         )
-        terminate_table = function_body(
-            RADIO, "anchor_enumeration_rx_terminate_table"
+        finish_table = function_body(
+            RADIO, "anchor_enumeration_rx_finish_table"
         )
-        for terminal in (begin_table, terminate_claim, terminate_table):
+        for terminal in (begin_table, terminate_claim, finish_table):
             self.assertEqual(
                 terminal.count("anchor_compact_enumeration_deactivate(epoch)"),
                 1,
@@ -1019,7 +1038,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "anchor_enumeration_response_lane", terminate_claim
         )
         self.assertNotIn(
-            "anchor_enumeration_response_lane", terminate_table
+            "anchor_enumeration_response_lane", finish_table
         )
 
     def test_enumeration_transport_owns_exactly_one_physical_send_per_copy(self) -> None:
@@ -2342,6 +2361,9 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM", identity)
         self.assertIn("gateway_enumeration_claim", send)
         self.assertIn(
+            "long_gateway_activation = gateway_enumeration_claim", send
+        )
+        self.assertNotIn(
             "compact_scheduled_activation && DEVICE_ROLE == ROLE_GATEWAY", send
         )
         self.assertIn("one_activation_per_wave", send)

@@ -400,7 +400,9 @@ static void test_here_i_am_ttl_and_epoch_fail_closed(void)
         }
         previous_id = id;
     }
-    CHECK(current.payload_len == MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN);
+    CHECK(current.payload_len ==
+          MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN -
+              MESH_GATEWAY_ROUTE_ADV_PREARM_TLV_BYTES);
 
     {
         struct mesh_relay newer;

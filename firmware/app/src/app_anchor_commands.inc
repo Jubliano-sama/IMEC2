@@ -1851,7 +1851,8 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
             transient ? 1u : 0u);
 }
 
-static int anchor_settle_ack_before_newer_assignment(uint32_t incoming_epoch)
+static int anchor_settle_ack_before_replacement_assignment(
+    uint32_t incoming_epoch)
 {
     struct anchor_discovery_claim_pending pending;
     struct node_comm_terminal_event event = {0};
@@ -1869,8 +1870,7 @@ static int anchor_settle_ack_before_newer_assignment(uint32_t incoming_epoch)
     if (!anchor_discovery_claim_pending.active ||
         anchor_discovery_claim_pending.phase !=
             DISCOVERY_ASSIGNMENT_PHASE_ACK ||
-        !discovery_assignment_epoch_strictly_newer(
-            incoming_epoch, anchor_discovery_claim_pending.epoch)) {
+        incoming_epoch == anchor_discovery_claim_pending.epoch) {
         k_mutex_unlock(&anchor_discovery_claim_mutex);
         k_mutex_unlock(
             &anchor_discovery_assignment_transaction_mutex);
@@ -1958,9 +1958,7 @@ static int anchor_clear_committed_assignment_for_new_claim(
     if (ret < 0 || !snapshot.valid || snapshot.provisioned == 0u) {
         return ret;
     }
-    if (snapshot.ordered_epoch_valid != 0u &&
-        !discovery_assignment_epoch_strictly_newer(incoming_epoch,
-                                                    snapshot.epoch)) {
+    if (incoming_epoch == snapshot.epoch) {
         return 0;
     }
 
@@ -2113,8 +2111,7 @@ static int anchor_schedule_discovery_response(
         anchor_discovery_claim_pending.phase ==
             DISCOVERY_ASSIGNMENT_PHASE_ACK &&
         phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
-        !discovery_assignment_epoch_strictly_newer(
-            epoch, anchor_discovery_claim_pending.epoch)) {
+        epoch == anchor_discovery_claim_pending.epoch) {
         uint32_t retained_handle =
             anchor_discovery_claim_pending.delivery_handle;
 
@@ -3709,7 +3706,7 @@ static int anchor_apply_discovery_assignment_command(
                 return ret;
             }
         }
-        if (!anchor_enumeration_rx_terminate_table(
+        if (!anchor_enumeration_rx_finish_table(
                 epoch,
                 end_identity.table_command_seq,
                 &end_identity.table_commitment,
@@ -3785,17 +3782,16 @@ static int anchor_apply_discovery_assignment_command(
         }
         if (snapshot.valid && snapshot.pending_valid != 0u &&
             snapshot.ack_pending != 0u &&
-            discovery_assignment_epoch_strictly_newer(
-                epoch, snapshot.pending_epoch)) {
+            epoch != snapshot.pending_epoch) {
             /*
-             * An ACK from an older enumeration cannot suppress the gateway's
-             * newer CLAIM. Drain its exact handle first: a queued DELIVERED
+             * An ACK from the prior enumeration cannot suppress a replacement
+             * CLAIM. Drain its exact handle first: a queued DELIVERED
              * terminal still promotes the proven candidate, while every
              * other classified terminal retires only the obsolete pending
              * response and preserves any already committed slot before the
-             * newer CLAIM is scheduled.
+             * replacement CLAIM is scheduled.
              */
-            ret = anchor_settle_ack_before_newer_assignment(epoch);
+            ret = anchor_settle_ack_before_replacement_assignment(epoch);
             if (ret < 0) {
                 return ret;
             }
@@ -3900,8 +3896,7 @@ static int anchor_apply_discovery_assignment_command(
          table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) &&
         snapshot.valid && snapshot.pending_valid != 0u &&
         snapshot.ack_pending != 0u &&
-        discovery_assignment_epoch_strictly_newer(
-            epoch, snapshot.pending_epoch)) {
+        epoch != snapshot.pending_epoch) {
         enum app_discovery_assignment_claim_decision claim_decision;
         bool claim_observed =
             table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY;
@@ -3909,10 +3904,10 @@ static int anchor_apply_discovery_assignment_command(
             snapshot.provisioned == 0u;
 
         /*
-         * The authoritative older pending ACK must be drained before either a
-         * correlated newer TABLE or a TABLE-before-CLAIM can replace its live
+         * The authoritative prior pending ACK must be drained before either a
+         * correlated replacement TABLE or a TABLE-before-CLAIM can replace its live
          * response owner. A queued DELIVERED terminal still promotes; every
-         * other terminal retires the obsolete candidate durably. If a newer
+         * other terminal retires the obsolete candidate durably. If a replacement
          * CLAIM had already been observed, replay that RAM-only fact after
          * restoring the resulting durable state.
          */
@@ -3920,7 +3915,7 @@ static int anchor_apply_discovery_assignment_command(
         if (ret != PROTO_OK) {
             return -ESTALE;
         }
-        ret = anchor_settle_ack_before_newer_assignment(epoch);
+        ret = anchor_settle_ack_before_replacement_assignment(epoch);
         if (ret < 0) {
             return ret;
         }

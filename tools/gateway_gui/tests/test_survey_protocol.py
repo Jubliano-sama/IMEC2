@@ -112,6 +112,18 @@ def complete_neighbor_event(count: int = 6) -> SurveyEvent:
 
 
 class SurveyCommandTests(unittest.TestCase):
+    def test_assignment_identity_covers_every_mesh_hop(self) -> None:
+        depth_eight = SurveyAssignmentIdentity(
+            7, 8, bytes((0x5A,)) * 32, 8, 8
+        )
+
+        self.assertEqual(
+            SurveyAssignmentIdentity.decode(depth_eight.encode()),
+            depth_eight,
+        )
+        with self.assertRaisesRegex(ValueError, "1..8"):
+            SurveyAssignmentIdentity(7, 8, bytes((0x5A,)) * 32, 8, 9)
+
     def test_start_cancel_and_get_status_are_gateway_local_commands(self) -> None:
         start = build_survey_start_command(
             host_id=HOST_ID, gateway_id=GATEWAY_ID, session_id=1, seq=1

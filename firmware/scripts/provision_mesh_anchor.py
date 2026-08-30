@@ -1459,6 +1459,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "session_id": route_identity,
                 "seq": route_identity & 0xFFFF,
                 "operation_policy": operation_policy,
+                "enumeration_follows": True,
             }
             qualification = RouteRefreshQualification(
                 route_identity,

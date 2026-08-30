@@ -274,8 +274,7 @@ static inline bool app_discovery_assignment_policy_restore_pending(
     if (policy == NULL || epoch == 0u || table_seq == 0u ||
         table_commitment == NULL ||
         (policy->committed_epoch != 0u &&
-         !discovery_assignment_epoch_strictly_newer(
-             epoch, policy->committed_epoch))) {
+         epoch == policy->committed_epoch)) {
         return false;
     }
     policy->joining_epoch = epoch;
@@ -303,11 +302,17 @@ static inline bool app_discovery_assignment_policy_project_retired_epochs(
         retired_epoch_count == NULL) {
         return false;
     }
-    if (!policy->ordered_epoch_valid) {
+    if (!policy->ordered_epoch_valid ||
+        (policy->committed_epoch != 0u &&
+         next_epoch != policy->committed_epoch &&
+         !discovery_assignment_epoch_strictly_newer(
+             next_epoch, policy->committed_epoch))) {
         /*
-         * Establishing the ordered scheme discards legacy random-epoch
-         * history. Persistence happens before the live commit, so project
-         * the same empty history that commit/note_unassigned will install.
+         * A received enumeration is authoritative even when its correlation
+         * epoch is numerically lower than the last committed operation. Such
+         * a rebase makes the old ordering history incomparable, so persist an
+         * empty history beside the pending TABLE and let this CLAIM establish
+         * the new baseline.
          */
         memset(retired_epochs,
                0,
@@ -367,12 +372,6 @@ app_discovery_assignment_policy_note_claim(
     if (policy == NULL || epoch == 0u) {
         return APP_DISCOVERY_ASSIGNMENT_CLAIM_INVALID;
     }
-    if ((policy->ordered_epoch_valid &&
-         app_discovery_assignment_policy_epoch_retired(policy, epoch)) ||
-        !app_discovery_assignment_policy_epoch_admissible(policy, epoch)) {
-        return APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE;
-    }
-
     if (policy->joining_epoch != epoch) {
         policy->joining_table_seq = 0u;
         memset(&policy->joining_table_commitment,
@@ -391,13 +390,28 @@ app_discovery_assignment_policy_note_table(
     uint32_t table_seq,
     const struct discovery_assignment_table_commitment *table_commitment)
 {
+    bool claim_owns_epoch;
+
     if (policy == NULL || epoch == 0u || table_seq == 0u ||
         table_commitment == NULL) {
         return APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID;
     }
-    if ((policy->ordered_epoch_valid &&
-         app_discovery_assignment_policy_epoch_retired(policy, epoch)) ||
-        !app_discovery_assignment_policy_epoch_admissible(policy, epoch)) {
+    claim_owns_epoch = policy->joining_epoch == epoch &&
+                       policy->claim_observed;
+    /*
+     * CLAIM establishes the authoritative active enumeration identity. Epoch
+     * ordering is deliberately not an admission rule: a valid lower epoch
+     * from a restarted gateway must still enumerate retained anchors. A TABLE
+     * for another epoch cannot replace a CLAIM already in progress.
+     */
+    if (policy->joining_epoch != 0u &&
+        policy->joining_epoch != epoch) {
+        return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+    }
+    if (!claim_owns_epoch &&
+        ((policy->ordered_epoch_valid &&
+          app_discovery_assignment_policy_epoch_retired(policy, epoch)) ||
+         !app_discovery_assignment_policy_epoch_admissible(policy, epoch))) {
         return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
     }
     /*
@@ -416,15 +430,6 @@ app_discovery_assignment_policy_note_table(
                            &policy->committed_table_commitment) ?
                APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY :
                APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
-    }
-    if (policy->joining_epoch != 0u &&
-        policy->joining_epoch != epoch) {
-        policy->joining_epoch = epoch;
-        policy->joining_table_seq = 0u;
-        memset(&policy->joining_table_commitment,
-               0,
-               sizeof(policy->joining_table_commitment));
-        policy->claim_observed = false;
     }
     if (policy->joining_epoch != 0u) {
         if (policy->joining_table_seq != 0u) {
@@ -484,7 +489,11 @@ static inline bool app_discovery_assignment_policy_commit(
         return false;
     }
 
-    establishing_order = !policy->ordered_epoch_valid;
+    establishing_order = !policy->ordered_epoch_valid ||
+        (policy->committed_epoch != 0u &&
+         policy->committed_epoch != epoch &&
+         !discovery_assignment_epoch_strictly_newer(
+             epoch, policy->committed_epoch));
     if (establishing_order) {
         memset(policy->retired_epochs, 0, sizeof(policy->retired_epochs));
         policy->retired_epoch_count = 0u;
@@ -537,7 +546,11 @@ static inline bool app_discovery_assignment_policy_note_unassigned(
         return false;
     }
 
-    establishing_order = !policy->ordered_epoch_valid;
+    establishing_order = !policy->ordered_epoch_valid ||
+        (policy->committed_epoch != 0u &&
+         policy->committed_epoch != epoch &&
+         !discovery_assignment_epoch_strictly_newer(
+             epoch, policy->committed_epoch));
     if (establishing_order) {
         memset(policy->retired_epochs, 0, sizeof(policy->retired_epochs));
         policy->retired_epoch_count = 0u;

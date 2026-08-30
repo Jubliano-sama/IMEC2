@@ -305,7 +305,7 @@ sequenceDiagram
     GW-->>A: Wake flood and Here-I-Am frames
     GW->>GUI: Gateway radio work finished
 
-    GUI->>GW: Send operation command
+    GUI->>GW: Send ordinary operation command
     GW-->>A: Wake flood and command frames
     GW->>GUI: Gateway radio work finished
 
@@ -323,11 +323,20 @@ sequenceDiagram
     participant GW as Gateway
     participant A as Anchors
 
-    GW-->>A: CLAIM wake and frames
+    GW-->>A: Enumeration HIA wake + reserved epoch
+    A->>A: Keep Channel 5 active
+    GW-->>A: CLAIM frames, no second wake
     A-->>GW: Reliable identity RESPONSES
     GW->>GW: Freeze immutable slot table
-    GW-->>A: TABLE wake and frames
+    GW-->>A: TABLE frames on same RX ownership
     A->>A: Validate and store complete table
+    alt Survey follows
+        GW-->>A: END retains exact epoch RX for 65 s
+        GW-->>A: START frames, no survey wake
+        A->>A: Consume handoff into survey RX ownership
+    else Enumeration only
+        GW-->>A: END releases enumeration RX
+    end
 ```
 
 Each response stays under normal packet custody until gateway ACK. An anchor replaces its stored table only after validating the complete new table. Repeated CLAIM and TABLE frames should be harmless.
@@ -358,7 +367,7 @@ stateDiagram-v2
 
 Pair selection can remain a normal function that receives the partial graph and pending jobs. It may choose pairs in parallel only when their endpoints and known neighbour sets do not overlap.
 
-The gateway's durable survey generation is also the explicit restart-repair boundary. When an anchor accepts a strictly newer generation, it aborts the older producer, abandons any exact older discovery or pair-result communication handles, and only then releases their RAM custody. The gateway retains the discovery START delivery and redrives that same generation at 10, 20, 30, and 40 seconds before the shared 90-second execution instant, so an anchor that spent an earlier wave draining obsolete custody still gets another bounded admission opportunity. Same-generation redrives remain idempotent, lower generations remain stale, and this cancellation never masquerades as a gateway acknowledgement.
+The gateway's durable survey generation is also the explicit restart-repair boundary. When an anchor accepts a strictly newer generation, it aborts the older producer, abandons any exact older discovery or pair-result communication handles, and only then releases their RAM custody. Survey-specific enumeration keeps the exact route awake for a bounded 65-second handoff; START consumes that handoff and redrives the same generation at 2, 4, 6, and 8 seconds without any survey wake train. Same-generation redrives remain idempotent, lower generations remain stale, and this cancellation never masquerades as a gateway acknowledgement.
 
 Pair arming follows the fixed order:
 

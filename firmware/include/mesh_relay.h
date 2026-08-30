@@ -106,6 +106,9 @@ extern "C" {
 #define MESH_GATEWAY_ROUTE_ADV_POLICY_PAYLOAD_LEN \
     (MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN + \
      OPERATION_POLICY_ALL_TLVS_LEN)
+#define MESH_GATEWAY_ROUTE_ADV_PREARM_POLICY_PAYLOAD_LEN \
+    (MESH_GATEWAY_ROUTE_ADV_POLICY_PAYLOAD_LEN + \
+     MESH_GATEWAY_ROUTE_ADV_PREARM_TLV_BYTES)
 #define C5_POLITE_SNIFF_MS 20u
 #define C5_POLITE_BACKOFF_MIN_MS 20u
 #define C5_POLITE_BACKOFF_MAX_MS 1600u
@@ -281,6 +284,7 @@ enum mesh_relay_role {
 
 enum mesh_relay_action {
     MESH_RELAY_ACTION_NONE = 0u,
+    MESH_RELAY_ACTION_ENUMERATION_PREARM = 1u << 0,
     MESH_RELAY_ACTION_DELIVER_LOCAL = 1u << 1,
     MESH_RELAY_ACTION_FORWARD = 1u << 2,
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
@@ -365,6 +369,8 @@ struct mesh_outbound {
 struct mesh_gateway_route_adv_snapshot {
     uint32_t gateway_route_seq;
     uint32_t queued_at_ms;
+    uint32_t enumeration_prearm_epoch;
+    uint32_t enumeration_prearm_hold_ms;
     uint16_t gateway_epoch;
     uint16_t packet_seq;
     uint16_t capacity_validity_interval_ms;
@@ -372,6 +378,8 @@ struct mesh_gateway_route_adv_snapshot {
     uint8_t operation_policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
     uint8_t operation_policy_tlvs_len;
     bool operation_policy_present;
+    bool enumeration_prearm_present;
+    bool enumeration_survey_follows;
     bool valid;
 };
 
@@ -735,7 +743,10 @@ struct mesh_relay_result {
     struct mesh_outbound route_reply_ack;
     uint64_t route_reply_backup_next_hop_id;
     uint64_t route_discovery_target_id;
+    uint32_t enumeration_prearm_epoch;
+    uint32_t enumeration_prearm_hold_ms;
     struct operation_policy_set operation_policy;
+    bool enumeration_survey_follows;
     bool route_reply_backup_valid;
     /* The relay committed an in-RAM route ordering transition. */
     bool route_state_changed;

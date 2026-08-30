@@ -3938,6 +3938,22 @@ after_gateway_ack:
             LOG_WRN("mesh route policy install failed: %d", ret);
         }
     }
+    if (result->actions & MESH_RELAY_ACTION_ENUMERATION_PREARM) {
+        int ret = mesh_report_callbacks == NULL ||
+                  mesh_report_callbacks->anchor_enumeration_prearm == NULL ?
+            -ENOTSUP :
+            mesh_report_callbacks->anchor_enumeration_prearm(
+                result->enumeration_prearm_epoch,
+                result->enumeration_prearm_hold_ms,
+                result->operation_policy.assignment.operation_budget_ms,
+                result->enumeration_survey_follows);
+
+        if (ret < 0) {
+            LOG_WRN("enumeration Here-I-Am prearm rejected: epoch=%u ret=%d",
+                    result->enumeration_prearm_epoch,
+                    ret);
+        }
+    }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
         bool forward_admission_retained = false;
         int ret;

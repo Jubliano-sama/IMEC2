@@ -353,7 +353,8 @@ bool gateway_command_uses_compact_scheduled_flood(const uint8_t *payload,
     return gateway_command_extract_id(payload, payload_len, &command_id) ==
                PROTO_OK &&
            (command_id == CMD_SURVEY_START ||
-            command_id == CMD_SURVEY_PLAN);
+            command_id == CMD_SURVEY_PLAN ||
+            command_id == CMD_SURVEY_CANCEL);
 }
 
 int gateway_command_extract_options(const uint8_t *payload,

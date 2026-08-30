@@ -31,6 +31,7 @@ struct refresh_fixture {
     uint32_t scheduled_delay_ms;
     uint32_t schedule_calls;
     uint32_t wake_calls;
+    uint32_t last_wake_duration_ms;
     uint32_t send_calls;
     uint32_t note_sent_calls;
     uint32_t stop_calls;
@@ -45,6 +46,7 @@ struct refresh_fixture {
     bool pause_after_first_send;
     bool run_schedule_synchronously;
     bool response_active;
+    bool enumeration_prearm;
     bool scan_active;
     uint8_t synchronous_schedule_calls;
 };
@@ -183,6 +185,7 @@ static int fixture_build(void *ctx,
         snapshot->gateway_capacity_state = RELAY_CAP_GREEN;
         snapshot->capacity_validity_interval_ms =
             RELAY_CAPACITY_HINT_VALIDITY_MS;
+        snapshot->enumeration_prearm_present = fixture->enumeration_prearm;
         snapshot->valid = true;
     }
     memset(out, 0, sizeof(*out));
@@ -192,8 +195,10 @@ static int fixture_build(void *ctx,
     out->packet.session_id = snapshot->gateway_route_seq;
     out->packet.seq = snapshot->packet_seq;
     out->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
-    out->packet.payload_len = MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN;
-    out->payload_len = MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN;
+    out->packet.payload_len = fixture->enumeration_prearm ?
+        MESH_GATEWAY_ROUTE_ADV_PREARM_POLICY_PAYLOAD_LEN :
+        MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN;
+    out->payload_len = out->packet.payload_len;
     memset(out->payload, 0, out->payload_len);
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
@@ -205,11 +210,12 @@ static int fixture_build(void *ctx,
     return 0;
 }
 
-static int fixture_wake(void *ctx, const char *reason)
+static int fixture_wake(void *ctx, const char *reason, uint32_t duration_ms)
 {
     struct refresh_fixture *fixture = ctx;
 
     assert(reason != NULL);
+    fixture->last_wake_duration_ms = duration_ms;
     fixture->wake_calls++;
     return 0;
 }
@@ -451,6 +457,22 @@ static void test_gateway_originates_one_four_copy_wave(void)
     assert(fixture.events[0].sent_count == fixture.send_calls);
     fixture_run(&fixture);
     assert(fixture.events[1].kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
+}
+
+static void test_enumeration_prearm_uses_long_root_wake(void)
+{
+    struct refresh_fixture fixture;
+    struct proto_packet command = correlated_command();
+
+    fixture_init(&fixture);
+    fixture.enumeration_prearm = true;
+    assert(app_node_comm_gateway_route_refresh_request(
+               0u, "enumeration-prearm", true, &command) == 0);
+    fixture_run(&fixture);
+    assert(fixture.wake_calls == 1u);
+    assert(fixture.last_wake_duration_ms ==
+           MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS);
+    assert(fixture.send_calls == app_mesh_flood_repeat_limit());
 }
 
 static void test_host_completion_waits_for_bounded_relay_settle(void)
@@ -844,6 +866,7 @@ int main(void)
     test_schedule_failure_is_terminal();
     test_manual_refresh_completion_does_not_schedule_maintenance();
     test_gateway_originates_one_four_copy_wave();
+    test_enumeration_prearm_uses_long_root_wake();
     test_host_completion_waits_for_bounded_relay_settle();
     test_concurrent_pause_stops_callbacks_and_preserves_correlation();
     test_synchronous_resume_schedule_cannot_strand_refresh();

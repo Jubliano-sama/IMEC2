@@ -43,9 +43,9 @@ struct protocol_rx_lifecycle {
 };
 
 struct protocol_rx_downstream_activation {
-    enum protocol_rx_operation operation;
     uint64_t generation;
     uint32_t deadline_ms;
+    enum protocol_rx_operation operation;
     bool activated;
 };
 

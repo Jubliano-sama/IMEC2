@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-/* One bounded schedule can expand through five hop-depth bands. */
+/* One bounded schedule can expand through every production mesh hop band. */
 #define ENUMERATION_RESPONSE_ROUND_MS 125u
 #define ENUMERATION_RESPONSE_SOURCE_ROUNDS_PER_DEPTH 12u
 #define ENUMERATION_RESPONSE_FORWARD_ROUNDS_PER_HOP 2u
@@ -46,7 +46,9 @@ extern "C" {
 /* CLAIM creation is the shared clock edge. The control flood and its forwards
  * must be clear before the first response band starts, but the full generic
  * 10-second delivery deadline is far larger than the actual bounded flood. */
-#define ENUMERATION_RESPONSE_START_DELAY_MS 3500u
+/* Eight wake-free CLAIM hops consume 8 * 540 ms, followed by the 150 ms
+ * propagation margin and 40 ms gateway preparation edge. */
+#define ENUMERATION_RESPONSE_START_DELAY_MS 4510u
 
 struct enumeration_response_timing {
     uint8_t depth;
@@ -60,8 +62,9 @@ struct enumeration_response_lane {
     uint64_t start_ms;
     uint32_t network_id;
     uint32_t epoch;
-    /* Hop depths need only three bits. Each bundle gets a millisecond offset
-     * drawn across the round instead of sharing a globally aligned cell. */
+    /* Hop depths are stored as (hop - 1), so three bits cover depths 1..8.
+     * Each bundle gets a millisecond offset drawn across the round instead of
+     * sharing a globally aligned cell. */
     uint8_t record_hops_packed[ENUMERATION_RESPONSE_HOP_STORAGE_BYTES];
     uint8_t round_offsets_ms[ENUMERATION_RESPONSE_MAX_BUNDLES];
     uint8_t hop_count;

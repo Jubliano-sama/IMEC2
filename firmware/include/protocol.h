@@ -333,6 +333,8 @@ enum tlv_type {
     TLV_FLOOD_RANDOM_BACKOFF_MAX_MS = 0x9E,
     TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS = 0x9F,
     TLV_FLOOD_RETRY_COUNT = 0xA0,
+    /* Bounded continuous-RX lease carried by an enumeration Here-I-Am. */
+    TLV_DISCOVERY_ASSIGNMENT_PREARM_MS = 0xA1,
     TLV_MESH_CH9_BATCH_ID = 0xA2,
     TLV_MESH_CH9_BATCH_FLAGS = 0xA3,
     TLV_DISCOVERY_ASSIGNMENT_PHASE = 0xA4,
@@ -346,6 +348,8 @@ enum tlv_type {
     TLV_EACK_PACKET_SEQUENCE = 0xAC,
     TLV_ROUTE_NODE_PATH = 0xAD,
     TLV_OPERATION_POLICY = 0xAE,
+    /* Optional route-advertisement purpose; absence means ordinary HIA. */
+    TLV_GATEWAY_ROUTE_ADV_MODE = 0xAF,
     /* Nonzero per-boot incarnation for channel-9 EVENT_PROPOSE recovery. */
     TLV_MESH_EVENT_BOOT_NONCE = 0xB0,
     /* Required wire scheme for ordered discovery-assignment epochs. */
@@ -403,6 +407,12 @@ enum tlv_type {
     TLV_SURVEY_STATUS = 0xC9,
     TLV_SURVEY_PARTIAL_REASONS = 0xCA,
     TLV_SURVEY_SKIPPED_PLAN = 0xCB,
+};
+
+enum gateway_route_adv_mode {
+    GATEWAY_ROUTE_ADV_MODE_ORDINARY = 0,
+    GATEWAY_ROUTE_ADV_MODE_ENUMERATION_PREARM = 1,
+    GATEWAY_ROUTE_ADV_MODE_ENUMERATION_SURVEY_PREARM = 2,
 };
 
 enum detection_source {

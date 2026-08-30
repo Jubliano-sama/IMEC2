@@ -20,6 +20,7 @@ struct app_survey_ops {
     void (*wake_gateway_rx)(void);
     void (*gateway_terminal)(void);
     int (*anchor_upstream)(uint64_t *parent_id, uint8_t *hop_count);
+    int (*anchor_consume_enumeration_handoff)(uint32_t assignment_epoch);
     int (*anchor_reschedule)(struct k_work_delayable *work,
                              uint32_t delay_ms);
 };

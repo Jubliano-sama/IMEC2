@@ -33,7 +33,8 @@ typedef int (*app_node_comm_route_refresh_build_fn)(
     struct mesh_gateway_route_adv_snapshot *snapshot,
     struct mesh_outbound *out);
 typedef int (*app_node_comm_route_refresh_wake_fn)(void *ctx,
-                                                   const char *reason);
+                                                   const char *reason,
+                                                   uint32_t duration_ms);
 typedef int (*app_node_comm_route_refresh_schedule_fn)(
     void *ctx, struct k_work_delayable *work, uint32_t delay_ms);
 typedef int (*app_node_comm_route_refresh_next_sequence_fn)(

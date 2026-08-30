@@ -32,8 +32,10 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    completed BLE write is shown as transport completion only, not command
    success.
 4. Use `Run Survey` for the complete current workflow. The GUI runs a fresh
-   RAM-only, unknown-roster enumeration, binds its exact returned slot map to
-   the new survey generation, submits the mutual-pair plan, shows every command
+   RAM-only, unknown-roster survey enumeration whose Here-I-Am tells anchors to
+   retain Channel-5 RX after END. Survey START consumes that exact 65-second
+   handoff, so START, PLAN, and CANCEL use no survey wake train. The GUI binds
+   the exact returned slot map to the new survey generation, submits the mutual-pair plan, shows every command
    and pair transition live, and solves the usable distances without blocking
    the Tk event loop. After a terminal pass, use `Add Other Neighbors` to merge
    new edges with retained ranges, `Other Neighbors Only` to solve from only the
@@ -161,9 +163,12 @@ acknowledgement or NVS-backed journal.
   `REASON`.
 - **Run Survey** chains the current `CMD_SURVEY_START = 0x0105` and
   `CMD_SURVEY_PLAN = 0x0106` controls behind a fresh RAM-only enumeration. Each
-  survey enumeration transmits an unknown expected count and trusts the exact
+  survey enumeration transmits an explicit survey-follows Here-I-Am and an
+  unknown expected count, then trusts the exact
   returned roster; during this chain the count box is only a progress/warning
-  hint and a mismatch does not control firmware. Follow-up passes require
+  hint and a mismatch does not control firmware. Successful END keeps the exact
+  enumerated path listening for 65 seconds; START must consume that matching
+  handoff and never falls back to a survey wake train. Follow-up passes require
   exactly the same stable anchor IDs, even if their discovery slots change, so
   measurements from different physical rosters cannot be merged. Each
   control owns one exact host session/sequence until its reliable result or

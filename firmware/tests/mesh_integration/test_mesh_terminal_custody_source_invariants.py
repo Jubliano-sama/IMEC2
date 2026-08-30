@@ -105,7 +105,7 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
         reschedule = tick.index("mesh_schedule_tx_timeout()", release_action)
         self.assertLess(release_action, reschedule)
 
-    def test_newer_claim_settles_any_older_ack_before_admission(self) -> None:
+    def test_replacement_claim_settles_any_prior_ack_before_admission(self) -> None:
         apply_assignment = function_body(
             ANCHOR, "anchor_apply_discovery_assignment_command"
         )
@@ -114,11 +114,12 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
             "anchor_resume_pending_discovery_assignment_ack(false)", same_epoch
         )
         same_epoch_return = apply_assignment.index("return 0;", same_epoch_resume)
-        newer = apply_assignment.index(
-            "discovery_assignment_epoch_strictly_newer(", same_epoch_return
+        replacement = apply_assignment.index(
+            "epoch != snapshot.pending_epoch", same_epoch_return
         )
         settle = apply_assignment.index(
-            "anchor_settle_ack_before_newer_assignment(epoch)", newer
+            "anchor_settle_ack_before_replacement_assignment(epoch)",
+            replacement,
         )
         note_claim = apply_assignment.index(
             "local_anchor_discovery_assignment_note_claim(epoch)", settle
@@ -127,16 +128,16 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
             "anchor_start_compact_enumeration_response_lane(", note_claim
         )
 
-        supersession_gate = apply_assignment[same_epoch_return:newer]
+        supersession_gate = apply_assignment[same_epoch_return:replacement]
         self.assertNotIn("snapshot.provisioned", supersession_gate)
         self.assertLess(same_epoch, same_epoch_resume)
         self.assertLess(same_epoch_resume, same_epoch_return)
-        self.assertLess(newer, settle)
+        self.assertLess(replacement, settle)
         self.assertLess(settle, note_claim)
         self.assertLess(note_claim, start_response_lane)
 
         settle_body = function_body(
-            ANCHOR, "anchor_settle_ack_before_newer_assignment"
+            ANCHOR, "anchor_settle_ack_before_replacement_assignment"
         )
         cancel = settle_body.index("app_node_comm_cancel_delivery(")
         take_terminal = settle_body.index(

@@ -74,6 +74,12 @@ BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
 BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS <
                  DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS,
              "compact response delay is a tighter bound than generic delivery expiry");
+BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS >=
+                 DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                 (UWB_ENUM_MAX_HOPS *
+                  DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS) +
+                 ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS,
+             "compact response edge must follow every wake-free CLAIM hop");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
              DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS,
              "default assignment budget must cover claim and table response horizons");
@@ -453,6 +459,12 @@ static void anchor_operation_high_duty_boost_begin(uint32_t duration_ms);
 static int anchor_enumeration_rx_begin(uint32_t epoch,
                                        uint32_t operation_budget_ms,
                                        bool allow_supersede);
+static int anchor_enumeration_rx_prearm(uint32_t epoch,
+                                        uint32_t hold_ms,
+                                        uint32_t operation_budget_ms,
+                                        bool survey_follows);
+static int anchor_enumeration_rx_consume_survey_handoff(
+    uint32_t assignment_epoch);
 static int anchor_enumeration_rx_begin_table(
     uint32_t epoch,
     uint32_t operation_budget_ms,
@@ -479,7 +491,7 @@ static bool anchor_enumeration_rx_terminate_claim(
     uint32_t claim_session_id,
     uint32_t claim_command_seq,
     const char *reason);
-static bool anchor_enumeration_rx_terminate_table(
+static bool anchor_enumeration_rx_finish_table(
     uint32_t epoch,
     uint32_t table_command_seq,
     const struct discovery_assignment_table_commitment *table_commitment,
@@ -520,6 +532,10 @@ static struct gateway_command_event gateway_observability_event(
     uint32_t gateway_sequence);
 static void gateway_route_refresh_observe(
     const struct app_node_comm_route_refresh_event *refresh);
+static bool gateway_route_refresh_prearm_snapshot(uint32_t *epoch,
+                                                   uint32_t *hold_ms,
+                                                   struct operation_policy_set *policy,
+                                                   bool *survey_follows);
 static void gateway_observe_host_terminal(
     const struct proto_packet *host_command,
     enum command_id command_id,

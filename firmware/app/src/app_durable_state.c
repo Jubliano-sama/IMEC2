@@ -814,8 +814,7 @@ static int durable_validate_anchor_assignment(
              assignment->pending_response_lane >=
                  assignment->pending_response_lane_count) ||
             (finalized_identity_present &&
-             !discovery_assignment_epoch_strictly_newer(
-                 assignment->pending_epoch, assignment->epoch))) {
+             assignment->pending_epoch == assignment->epoch)) {
             return -EINVAL;
         }
     } else if (pending_identity_present ||
