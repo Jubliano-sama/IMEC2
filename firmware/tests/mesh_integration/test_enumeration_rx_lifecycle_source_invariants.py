@@ -291,7 +291,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             r"mesh_relay_[A-Za-z0-9_]*parent[A-Za-z0-9_]*\s*\(",
         )
 
-    def test_end_and_abort_retire_exact_live_response_handle(self) -> None:
+    def test_table_commit_and_abort_retire_exact_live_response_handle(self) -> None:
         apply = function_body(
             COMMANDS, "anchor_apply_discovery_assignment_command"
         )
@@ -304,12 +304,9 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         abort = apply[
             apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT)") :
-            apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_END)")
-        ]
-        end = apply[
-            apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_END)") :
             apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM)")
         ]
+        table = apply[apply.index("discovery_assignment_parse_table_tlvs") :]
 
         abort_accept = abort.index("anchor_enumeration_rx_terminate_claim(")
         abort_retire = abort.index(
@@ -319,19 +316,19 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         abort_commit = abort.index(
             "app_operation_policy_commit_prepared", abort_retire
         )
-        end_accept = end.index("anchor_enumeration_rx_finish_table(")
-        end_retire = end.index(
-            'anchor_retire_discovery_response_for_terminal_locked(epoch, "end")',
-            end_accept,
+        table_accept = table.index("anchor_enumeration_rx_finish_table(")
+        table_retire = table.index(
+            "anchor_retire_discovery_response_for_terminal_locked(",
+            table_accept,
         )
-        end_commit = end.index(
-            "app_operation_policy_commit_prepared", end_retire
+        table_policy_commit = table.index(
+            "app_operation_policy_commit_prepared", table_retire
         )
 
         self.assertLess(abort_accept, abort_retire)
         self.assertLess(abort_retire, abort_commit)
-        self.assertLess(end_accept, end_retire)
-        self.assertLess(end_retire, end_commit)
+        self.assertLess(table_accept, table_retire)
+        self.assertLess(table_retire, table_policy_commit)
         transaction_lock = serialized.index(
             "k_mutex_lock(&anchor_discovery_assignment_transaction_mutex"
         )
@@ -403,9 +400,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         begin = function_body(RADIO, "anchor_enumeration_rx_begin")
 
         self.assertGreaterEqual(apply.count("anchor_enumeration_rx_begin("), 2)
-        self.assertGreaterEqual(
-            apply.count("anchor_enumeration_rx_begin_table("), 6
-        )
+        self.assertEqual(apply.count("anchor_enumeration_rx_begin_table("), 1)
         self.assertIn("PROTOCOL_RX_OPERATION_ENUMERATION", begin)
         self.assertIn("operation_budget_ms > INT32_MAX", begin)
         self.assertIn("allow_supersede", begin)
@@ -414,24 +409,35 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             LIFECYCLE,
         )
 
-    def test_end_requires_exact_pending_or_committed_table_identity(self) -> None:
+    def test_table_is_the_durable_commit_and_terminal_identity(self) -> None:
         apply = function_body(
             COMMANDS, "anchor_apply_discovery_assignment_command"
         )
-        end = apply[
-            apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_END)") :
-            apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM)")
-        ]
-
-        self.assertIn("discovery_assignment_extract_end_identity", end)
-        self.assertIn("end_identity.epoch != epoch", end)
-        self.assertIn("pending_table_command_seq", end)
-        self.assertIn("table_command_seq == end_identity.table_command_seq", end)
-        self.assertGreaterEqual(
-            end.count("discovery_assignment_table_commitment_equal"), 2
+        commit = function_body(COMMANDS, "anchor_commit_discovery_table_locked")
+        publish = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_publish_work_handler",
         )
-        self.assertIn("anchor_enumeration_rx_finish_table", end)
-        self.assertIn("reason=inactive-observation", end)
+
+        self.assertNotIn("DISCOVERY_ASSIGNMENT_PHASE_END", apply)
+        self.assertIn("anchor_save_discovery_assignment_semantic", commit)
+        self.assertIn("local_anchor_commit_discovery_assignment", commit)
+        self.assertIn("local_anchor_mark_discovery_assignment_unprovisioned", commit)
+        self.assertIn("snapshot->pending_valid = false", commit)
+        self.assertIn("snapshot->ack_pending = false", commit)
+        self.assertIn("anchor_commit_discovery_table_locked(", apply)
+        self.assertLess(
+            apply.index("anchor_commit_discovery_table_locked("),
+            apply.index("anchor_enumeration_rx_finish_table("),
+        )
+        self.assertNotIn("gateway_discovery_assignment_publish_end", GATEWAY_CONTROL)
+        self.assertNotIn("DISCOVERY_ASSIGNMENT_PHASE_END", GATEWAY_CONTROL)
+        self.assertIn("table-propagation-hold", publish)
+        self.assertIn("gateway_discovery_assignment_complete_success_locked", publish)
+        self.assertLess(
+            publish.index("table_propagation_pending = false"),
+            publish.index("gateway_discovery_assignment_complete_success_locked"),
+        )
 
         begin_table = function_body(RADIO, "anchor_enumeration_rx_begin_table")
         finish_table = function_body(
@@ -443,12 +449,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("protocol_rx_lifecycle_terminate", finish_table)
         self.assertIn("SURVEY_ENUMERATION_HANDOFF_HOLD_MS", finish_table)
         self.assertIn("protocol_rx_lifecycle_set_deadline", finish_table)
-        unlisted = apply[apply.index("DBG_DISCOVERY_SLOT_UNASSIGNED") :]
-        self.assertIn("anchor_enumeration_rx_begin_table", unlisted)
-        self.assertLess(
-            unlisted.index("anchor_enumeration_rx_begin_table"),
-            unlisted.index("anchor_schedule_late_discovery_claim"),
-        )
+        self.assertIn("SURVEY_ENUMERATION_HANDOFF_HOLD_MS", finish_table)
 
     def test_listener_owns_operation_before_response_scheduling(self) -> None:
         apply = function_body(
@@ -458,23 +459,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM)") :
             apply.index("discovery_assignment_parse_table_tlvs")
         ]
-        late_table = apply[
-            apply.index("APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM") :
-            apply.index("APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY")
-        ]
-        replay_start = apply.index(
-            "if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY)"
-        )
-        replay = apply[
-            replay_start : apply.index("An exact replay", replay_start)
-        ]
-
         self.assertIn("anchor_enumeration_rx_begin(", claim)
-        self.assertLess(
-            late_table.index("anchor_enumeration_rx_begin_table"),
-            late_table.index("anchor_schedule_late_discovery_claim"),
-        )
-        self.assertIn("anchor_enumeration_rx_begin_table", replay)
+        self.assertIn("anchor_enumeration_rx_begin_table", apply)
+        self.assertIn("anchor_enumeration_rx_finish_table", apply)
+        self.assertNotIn("anchor_schedule_late_discovery_claim(", apply)
 
     def test_abort_requires_exact_active_claim_identity(self) -> None:
         apply = function_body(
@@ -482,7 +470,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         abort = apply[
             apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT)") :
-            apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_END)")
+            apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM)")
         ]
         bind = function_body(RADIO, "anchor_enumeration_rx_bind_claim")
         terminate = function_body(
@@ -1121,7 +1109,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertEqual(old_nested_flood_count, 12)
         self.assertNotEqual(old_nested_flood_count, copy_count)
 
-    def test_table_and_end_root_copy_bursts_finish_before_anchor_relays(
+    def test_table_root_copy_burst_finishes_before_anchor_relays(
         self,
     ) -> None:
         submit = function_body(
@@ -1155,10 +1143,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE",
             retry_condition,
         )
-        self.assertIn(
-            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END",
-            retry_condition,
-        )
+        self.assertNotIn("GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END", submit)
         self.assertNotIn(
             "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM",
             retry_condition,
@@ -1201,7 +1186,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
         self.assertIn("#if DEVICE_ROLE == ROLE_GATEWAY", quick_root)
         self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_TABLE", quick_root)
-        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_END", quick_root)
+        self.assertNotIn("DISCOVERY_ASSIGNMENT_PHASE_END", quick_root)
         self.assertNotIn("DISCOVERY_ASSIGNMENT_PHASE_CLAIM", quick_root)
         root_classification = send.index(
             "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
@@ -1221,19 +1206,18 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(copy_gap, short_gap)
         self.assertLess(short_gap, relay_guard)
 
-        schedule = forward.index("out->earliest_tx_ms = now_ms +")
         upstream_burst = forward.index(
-            "DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS",
-            schedule,
+            "DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS"
         )
         relay_slot = forward.index(
             "mesh_enumeration_relay_delay_ms", upstream_burst
         )
-        self.assertLess(schedule, upstream_burst)
+        schedule = forward.index("out->earliest_tx_ms = now_ms +", relay_slot)
         self.assertLess(upstream_burst, relay_slot)
+        self.assertLess(relay_slot, schedule)
         self.assertEqual(copy_count, 3)
 
-    def test_gateway_table_end_burst_keeps_one_handoff_and_requires_all_copies(
+    def test_gateway_table_burst_keeps_one_handoff_and_requires_all_copies(
         self,
     ) -> None:
         view_send = function_body(
@@ -1276,7 +1260,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(logical_send, handoff_end)
         self.assertLess(handoff_end, final_rearm)
 
-        # TABLE/END and relayed anchor controls share one ref-counted burst
+        # TABLE and relayed anchor controls share one ref-counted burst
         # owner. It is acquired before the copy loop and released after the
         # all-copies completeness check on every exit.
         quick = burst_send.index(
@@ -2331,24 +2315,25 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertNotIn("anchor_enumeration_rx_terminate", failure)
         self.assertNotIn("anchor_enumeration_rx_note_recovery", failure)
 
-    def test_downstream_activation_marks_once_and_clears_after_end_relay(self) -> None:
+    def test_downstream_activation_marks_once_and_finalizes_after_table_relay(self) -> None:
         send = function_body(REPORT_TRANSPORT, "mesh_send_c5_flood_now_until")
+        prearm = function_body(RADIO, "anchor_enumeration_rx_prearm")
 
         self.assertIn("protocol_rx_downstream_activation_expire", send)
-        self.assertIn("discovery_assignment_epoch_strictly_newer", send)
-        stale = send.index("return -ESTALE;")
-        replace = send.index("protocol_rx_downstream_activation_clear", stale)
+        self.assertNotIn("discovery_assignment_epoch_strictly_newer", send)
+        self.assertNotIn("discovery_assignment_epoch_strictly_newer", prearm)
+        replace = send.index("protocol_rx_downstream_activation_clear")
         needs_wake = send.index("protocol_rx_downstream_activation_needs_wake")
-        self.assertLess(stale, replace)
         self.assertLess(replace, needs_wake)
         self.assertIn("send_wake_train = enumeration_needs_wake", send)
         self.assertIn("aggregate_result.sent_count > 0u", send)
-        end_clear = send[
-            send.index("enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END") :
+        table_clear = send[
+            send.index("enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE") :
         ]
-        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_ABORT", end_clear)
-        self.assertIn("aggregate_result.sent_count == attempt_count", end_clear)
-        self.assertIn("protocol_rx_downstream_activation_clear", end_clear)
+        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_ABORT", table_clear)
+        self.assertIn("aggregate_result.sent_count == attempt_count", table_clear)
+        self.assertIn("protocol_rx_downstream_activation_clear", table_clear)
+        self.assertIn("SURVEY_ENUMERATION_HANDOFF_HOLD_MS", table_clear)
 
     def test_gateway_operation_origin_gets_long_first_activation_train(self) -> None:
         identity = function_body(

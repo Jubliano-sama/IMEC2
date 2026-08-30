@@ -265,7 +265,7 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
             1,
         )
 
-    def test_startup_resume_restores_durable_state_before_cache_use(self) -> None:
+    def test_startup_migrates_legacy_pending_state_before_cache_use(self) -> None:
         start = function_body(ANCHOR_INIT, "app_anchor_start_anchor_role")
         resume = function_body(
             ANCHOR_COMMANDS,
@@ -284,70 +284,56 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
             "anchor_restore_discovery_assignment_ram(&snapshot)",
             durable_restore,
         )
-        schedule = resume.index(
-            "anchor_schedule_discovery_response(", cache_read
+        pending_check = resume.index(
+            "snapshot.pending_valid == 0u", cache_read
+        )
+        commit = resume.index(
+            "anchor_commit_discovery_table_locked(", pending_check
         )
         self.assertLess(work_init, startup_resume)
         self.assertLess(durable_restore, cache_read)
-        self.assertLess(cache_read, schedule)
+        self.assertLess(cache_read, pending_check)
+        self.assertLess(pending_check, commit)
+        self.assertNotIn("anchor_schedule_discovery_response(", resume)
 
-    def test_pending_and_promotion_persist_before_exposure(self) -> None:
+    def test_table_commit_persists_before_exposure(self) -> None:
         apply = function_body(
             ANCHOR_COMMANDS, "anchor_apply_discovery_assignment_command"
         )
-        promote = function_body(
+        commit = function_body(
             ANCHOR_COMMANDS,
-            "anchor_promote_discovery_assignment_locked_impl",
+            "anchor_commit_discovery_table_locked",
         )
 
-        self.assertRegex(
-            apply,
-            r"if\s*\(table_decision\s*!=\s*"
-            r"APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY\)\s*\{\s*"
-            r"table_decision\s*=\s*"
-            r"local_anchor_discovery_assignment_note_table\(",
+        note_table = apply.index(
+            "local_anchor_discovery_assignment_note_table("
         )
-        pending_saves = [
-            match.start()
-            for match in re.finditer(
-                r"anchor_save_discovery_assignment_semantic\(&snapshot\)",
-                apply,
-            )
-        ]
-        self.assertEqual(len(pending_saves), 2)
-        persist_then_apply = re.findall(
-            r"ret\s*=\s*"
-            r"anchor_save_discovery_assignment_semantic\(&snapshot\);\s*"
-            r"if\s*\(ret\s*<\s*0\)\s*\{.*?\}\s*"
-            r"table_decision\s*=\s*"
-            r"local_anchor_discovery_assignment_note_table\(",
-            apply,
-            re.DOTALL,
+        commit_call = apply.index(
+            "anchor_commit_discovery_table_locked(", note_table
         )
-        self.assertEqual(len(persist_then_apply), 2)
+        begin_table = apply.index(
+            "anchor_enumeration_rx_begin_table(", commit_call
+        )
+        finish_table = apply.index(
+            "anchor_enumeration_rx_finish_table(", begin_table
+        )
+        self.assertLess(note_table, commit_call)
+        self.assertLess(commit_call, begin_table)
+        self.assertLess(begin_table, finish_table)
+        self.assertNotIn("DISCOVERY_ASSIGNMENT_PHASE_ACK", apply)
 
-        listed_save, unlisted_save = pending_saves
-        listed_live_apply = apply.index(
-            "local_anchor_discovery_assignment_note_table(", listed_save
+        durable_save = commit.index(
+            "anchor_save_discovery_assignment_semantic(snapshot)"
         )
-        self.assertLess(listed_save, listed_live_apply)
-
-        unlisted_live_apply = apply.index(
-            "local_anchor_discovery_assignment_note_table(", unlisted_save
+        live_commit = commit.index(
+            "local_anchor_commit_discovery_assignment(", durable_save
         )
-        unlisted_schedule = apply.index(
-            "anchor_schedule_late_discovery_claim(", unlisted_live_apply
+        live_unprovision = commit.index(
+            "local_anchor_mark_discovery_assignment_unprovisioned(",
+            durable_save,
         )
-        self.assertLess(unlisted_save, unlisted_live_apply)
-        self.assertLess(unlisted_live_apply, unlisted_schedule)
-
-        promotion_save = promote.index(
-            "anchor_save_discovery_assignment_semantic(&snapshot)"
-        )
-        live_commit = promote.index(
-            "local_anchor_commit_discovery_assignment(", promotion_save
-        )
-        self.assertLess(promotion_save, live_commit)
+        self.assertLess(durable_save, live_commit)
+        self.assertLess(durable_save, live_unprovision)
 
     def test_retry_round_is_not_a_flash_mutation(self) -> None:
         to_durable = function_body(
@@ -374,20 +360,22 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         self.assertNotIn("app_durable_state_save_anchor_assignment", replay)
         self.assertNotIn("app_durable_state_delete_anchor_assignment", replay)
         self.assertIn("anchor_save_discovery_assignment_retry_ram", retry)
-        self.assertIn("anchor_save_discovery_assignment_retry_ram", replay)
+        self.assertNotIn("anchor_save_discovery_assignment_retry_ram", replay)
+        self.assertIn("anchor_commit_discovery_table_locked(", replay)
 
-    def test_sparse_identity_slot_has_a_durable_compact_timing_lane(self) -> None:
+    def test_claim_uses_compact_lane_and_table_creates_no_response_lane(self) -> None:
         to_durable = function_body(
             ANCHOR_COMMANDS, "anchor_assignment_snapshot_to_durable"
         )
         from_durable = function_body(
             ANCHOR_COMMANDS, "anchor_assignment_durable_to_snapshot"
         )
-        delay = function_body(
-            ANCHOR_COMMANDS, "anchor_discovery_response_delay_ms"
-        )
         apply = function_body(
             ANCHOR_COMMANDS, "anchor_apply_discovery_assignment_command"
+        )
+        compact = function_body(
+            ANCHOR_COMMANDS,
+            "anchor_start_compact_enumeration_response_lane",
         )
         resume = function_body(
             ANCHOR_COMMANDS,
@@ -398,11 +386,13 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         self.assertIn("pending_response_lane_count", to_durable)
         self.assertIn("pending_response_lane", from_durable)
         self.assertIn("pending_response_lane_count", from_durable)
-        self.assertIn("pending->response_lane", delay)
-        self.assertIn("pending->response_lane_count", delay)
-        self.assertIn("discovery_assignment_response_lane(", apply)
-        self.assertIn("snapshot.pending_response_lane = response_lane", apply)
-        self.assertIn("snapshot.pending_response_lane_count == 0u", resume)
+        self.assertIn(
+            "anchor_start_compact_enumeration_response_lane(", apply
+        )
+        self.assertIn("enumeration_response_lane_complete_depth(", compact)
+        self.assertNotIn("anchor_schedule_discovery_response(", apply)
+        self.assertNotIn("pending_response_lane =", apply)
+        self.assertIn("anchor_commit_discovery_table_locked(", resume)
 
     def test_ambiguous_promotion_retains_exact_owner(self) -> None:
         promotion = function_body(
@@ -429,8 +419,8 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         self.assertIn("if (ret == 0)", promotion)
 
     def test_semantic_changes_have_no_frequency_admission_gate(self) -> None:
-        apply = function_body(
-            ANCHOR_COMMANDS, "anchor_apply_discovery_assignment_command"
+        commit = function_body(
+            ANCHOR_COMMANDS, "anchor_commit_discovery_table_locked"
         )
 
         self.assertNotIn("ANCHOR_ASSIGNMENT_COMMISSIONING_BURST", ANCHOR_COMMANDS)
@@ -439,7 +429,7 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
             "anchor_admit_discovery_assignment_semantic_change", ANCHOR_COMMANDS
         )
         self.assertNotIn("assignment change admission rate-limited", ANCHOR_COMMANDS)
-        self.assertIn("anchor_save_discovery_assignment_semantic(&snapshot)", apply)
+        self.assertIn("anchor_save_discovery_assignment_semantic(snapshot)", commit)
 
     def test_native_and_source_guards_are_registered(self) -> None:
         self.assertIn("test_app_durable_anchor_assignment", CMAKE)

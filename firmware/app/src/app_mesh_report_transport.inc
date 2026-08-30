@@ -948,8 +948,7 @@ static bool mesh_c5_gateway_enumeration_quick_copy_burst(
                                                      &phase,
                                                      &epoch) == PROTO_OK &&
            epoch != 0u &&
-           (phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE ||
-            phase == DISCOVERY_ASSIGNMENT_PHASE_END);
+           phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE;
 #else
     ARG_UNUSED(out);
     return false;
@@ -2201,7 +2200,7 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
         mesh_gateway_collection_recovery_receipt_c5_allowed(
             flood_ctx->candidate);
 
-    /* Once the gateway starts a compact TABLE/END burst, queued receive work
+    /* Once the gateway starts its compact TABLE burst, queued receive work
      * cannot split its three physical copies into a partial logical send. */
     if (flood_ctx != NULL &&
         mesh_c5_enumeration_relay_burst_active() &&
@@ -2614,7 +2613,6 @@ static bool mesh_c5_flood_enumeration_identity(
                                                   &epoch) != PROTO_OK ||
         (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
          phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE &&
-         phase != DISCOVERY_ASSIGNMENT_PHASE_END &&
          phase != DISCOVERY_ASSIGNMENT_PHASE_ABORT)) {
         return false;
     }
@@ -2801,12 +2799,9 @@ static int mesh_send_c5_flood_now_until(
         if (mesh_enumeration_downstream_activation.activated &&
             mesh_enumeration_downstream_activation.generation !=
                 enumeration_epoch) {
-            if (!discovery_assignment_epoch_strictly_newer(
-                    enumeration_epoch,
-                    (uint32_t)mesh_enumeration_downstream_activation
-                        .generation)) {
-                return -ESTALE;
-            }
+            /* A new enumeration identity supersedes the old downstream
+             * lease regardless of its numeric value. Epochs correlate a
+             * wave; they are not freshness authority. */
             (void)protocol_rx_downstream_activation_clear(
                 &mesh_enumeration_downstream_activation,
                 PROTOCOL_RX_OPERATION_ENUMERATION,
@@ -3007,7 +3002,7 @@ out:
             enumeration_survey_follows;
     }
     if (enumeration_control &&
-        enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END && ret == 0 &&
+        enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE && ret == 0 &&
         aggregate_result.sent_count == attempt_count) {
         if (mesh_enumeration_downstream_survey_follows) {
             if (!protocol_rx_downstream_activation_mark(

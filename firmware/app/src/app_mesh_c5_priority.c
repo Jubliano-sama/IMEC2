@@ -98,8 +98,9 @@ bool app_mesh_c5_route_capture_relevant(
         state->control_origin_id : state->target_id;
 
     if (state->msg_type == MSG_ROUTE_REPLY) {
-        return state->src_id == state->target_id &&
-               state->dst_id == state->local_id &&
+        /* The route validator owns logical source and path identity.  This
+         * layer only correlates the reply to the active receive handoff. */
+        return state->dst_id == state->local_id &&
                (!state->route_identity_required ||
                 (state->expected_session_id != 0u &&
                  state->expected_flood_epoch_id != 0u &&
@@ -110,8 +111,11 @@ bool app_mesh_c5_route_capture_relevant(
     }
 
     if (state->msg_type == MSG_GATEWAY_ROUTE_ADV) {
-        return state->src_id == state->target_id &&
-               state->dst_id == MESH_BROADCAST_ID &&
+        /* A relayed control wake names the physical relay as target_id while
+         * the advertisement correctly retains the gateway as src_id.  The
+         * route validator checks gateway identity, ancestry, TTL, and loops. */
+        return state->dst_id == MESH_BROADCAST_ID &&
+               state->previous_hop_id != 0u &&
                state->previous_hop_id != MESH_BROADCAST_ID &&
                state->previous_hop_id != state->local_id;
     }

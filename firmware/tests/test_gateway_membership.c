@@ -628,7 +628,7 @@ static void test_invalid_pending_publication_rejected_at_export(void)
            PROTO_ERR_ARG);
 }
 
-static void test_confirmation_pending_table_roundtrips_and_retires(void)
+static void test_propagation_pending_table_roundtrips_and_retires(void)
 {
     struct gateway_membership_roster roster = sparse_roster(17u);
     struct gateway_membership_publication publication =
@@ -640,7 +640,7 @@ static void test_confirmation_pending_table_roundtrips_and_retires(void)
     uint8_t wire[GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE];
 
     publication.table_round =
-        GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING | 1u;
+        GATEWAY_MEMBERSHIP_TABLE_PROPAGATION_PENDING | 1u;
     assert(gateway_membership_export_assignment_snapshot(
                &roster,
                UINT32_C(0x12345678),
@@ -677,6 +677,6 @@ int main(void)
     test_pending_publication_corruption_rejected();
     test_exact_identity_fields_are_checksum_bound();
     test_invalid_pending_publication_rejected_at_export();
-    test_confirmation_pending_table_roundtrips_and_retires();
+    test_propagation_pending_table_roundtrips_and_retires();
     return 0;
 }

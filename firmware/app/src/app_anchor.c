@@ -71,15 +71,16 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #define GATEWAY_DISCOVERY_ASSIGNMENT_ABORT_DELIVERY_BUDGET_MS 10000u
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
              "gateway enumeration must cover the connected anchor maximum");
-BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS <
-                 DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS,
-             "compact response delay is a tighter bound than generic delivery expiry");
+BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS +
+                 ENUMERATION_RESPONSE_LANE_MS <
+                 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+             "pipelined CLAIM and response lane must fit the operation budget");
 BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS >=
                  DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
                  (UWB_ENUM_MAX_HOPS *
-                  DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS) +
+                  MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS) +
                  ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS,
-             "compact response edge must follow every wake-free CLAIM hop");
+             "response edge must follow every pipelined CLAIM hop");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
              DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS,
              "default assignment budget must cover claim and table response horizons");
@@ -201,17 +202,15 @@ struct anchor_discovery_response_terminal {
 #if DEVICE_ROLE == ROLE_GATEWAY
 enum gateway_discovery_assignment_stage {
     GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS = 0,
-    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS = 1,
-    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY = 2,
-    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_ABORT_DELIVERY = 3,
+    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION = 1,
+    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_ABORT_DELIVERY = 2,
 };
 
 enum gateway_discovery_assignment_delivery_kind {
     GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_NONE = 0,
     GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM = 1,
     GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE = 2,
-    GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END = 3,
-    GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT = 4,
+    GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT = 3,
 };
 
 struct gateway_discovery_assignment_state {
@@ -229,8 +228,6 @@ struct gateway_discovery_assignment_state {
     struct discovery_assignment_table_commitment table_commitment;
     uint32_t table_command_seq;
     uint16_t table_packet_seq;
-    uint32_t end_command_seq;
-    uint16_t end_packet_seq;
     uint32_t abort_command_seq;
     uint16_t abort_packet_seq;
     uint64_t operation_deadline_ms;
@@ -273,7 +270,8 @@ struct gateway_discovery_assignment_state {
     bool ram_only_iteration;
     bool replay;
     bool response_lane_active;
-    bool end_propagation_pending;
+    bool table_propagation_pending;
+    bool survey_follows;
     bool active;
 };
 #endif

@@ -1198,6 +1198,7 @@ set_tests_properties(dwm3000_models PROPERTIES LABELS "hardware_models")
 add_executable(test_multi_anchor_timing_invariants
     tests/mesh_integration/test_multi_anchor_timing_invariants.c
 )
+target_include_directories(test_multi_anchor_timing_invariants PRIVATE app/src)
 target_link_libraries(test_multi_anchor_timing_invariants PRIVATE core)
 add_test(NAME multi_anchor_timing_invariants
     COMMAND test_multi_anchor_timing_invariants)

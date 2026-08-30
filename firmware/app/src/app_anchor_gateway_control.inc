@@ -38,7 +38,8 @@ static void gateway_enumeration_prearm_reset_locked(void)
     gateway_discovery_assignment_state.response_spread_ms = 0u;
     gateway_discovery_assignment_state.expected_claim_count = 0u;
     gateway_discovery_assignment_state.ram_only_iteration = false;
-    gateway_discovery_assignment_state.end_propagation_pending = false;
+    gateway_discovery_assignment_state.table_propagation_pending = false;
+    gateway_discovery_assignment_state.survey_follows = false;
 }
 
 static bool gateway_enumeration_prearm_policy_equal_locked(
@@ -100,8 +101,7 @@ static int gateway_enumeration_prearm_prepare(
     gateway_discovery_assignment_state.operation_deadline_ms =
         (uint64_t)k_uptime_get_32() +
         DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS;
-    gateway_discovery_assignment_state.end_propagation_pending =
-        survey_follows;
+    gateway_discovery_assignment_state.survey_follows = survey_follows;
     k_mutex_unlock(&gateway_discovery_assignment_mutex);
     return 0;
 }
@@ -145,8 +145,7 @@ static bool gateway_route_refresh_prearm_snapshot(uint32_t *epoch,
                 gateway_discovery_assignment_state.ram_only_iteration,
         };
         policy->assignment_present = true;
-        *survey_follows =
-            gateway_discovery_assignment_state.end_propagation_pending;
+        *survey_follows = gateway_discovery_assignment_state.survey_follows;
         present = true;
     }
     k_mutex_unlock(&gateway_discovery_assignment_mutex);
@@ -521,8 +520,8 @@ static int gateway_discovery_assignment_prepare_durable_table_locked(void)
     publication.host_command =
         gateway_discovery_assignment_state.host_command;
     publication.committed_mask = committed_slot_mask;
-    /* Before host publication this field durably records which roster
-     * members answered CLAIM and therefore owe an exact ACK_CONFIRM. */
+    /* Schema-4 retains this historical field name. It records the current
+     * responders that the authoritative TABLE publishes to the host. */
     publication.acknowledged_mask = responder_slot_mask;
     publication.command_id = CMD_ASSIGN_DISCOVERY_SLOTS;
     publication.event_gateway_epoch = event.gateway_epoch;
@@ -532,7 +531,7 @@ static int gateway_discovery_assignment_prepare_durable_table_locked(void)
         (uint8_t)gateway_discovery_assignment_state.claim_count;
     publication.claimed_slot_span = claimed_slot_span;
     publication.table_round =
-        GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING | 1u;
+        GATEWAY_MEMBERSHIP_TABLE_PROPAGATION_PENDING | 1u;
     publication.publish_pending = 1u;
     membership_ret = gateway_discovery_assignment_state.ram_only_iteration ?
         gateway_set_registered_membership_roster_ram_only(
@@ -573,7 +572,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
 
     if (!gateway_discovery_assignment_state.active ||
         gateway_discovery_assignment_state.stage !=
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY ||
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION ||
         !gateway_discovery_assignment_state.table_delivery_succeeded) {
         return;
     }
@@ -595,9 +594,9 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         app_gateway_assignment_publisher_commit_prepared_batch(&event);
     if (publish_ret < 0) {
         /*
-         * The durable proof is authoritative now.  Retain the active
-         * operation and retry publication; emitting a failure would lie to
-         * the host while ACK retries are already eligible for success.
+         * The durable TABLE and completed propagation hold are authoritative
+         * now. Retain the active operation and retry publication; emitting a
+         * failure would lie to the host after the commit boundary.
          */
         LOG_ERR("discovery assignment committed telemetry activation failed: epoch=%u ret=%d",
                 gateway_discovery_assignment_state.epoch,
@@ -670,7 +669,7 @@ static bool gateway_discovery_assignment_adoption_identity_matches_locked(
     if (identity == NULL ||
         gateway_discovery_assignment_state.active ||
         gateway_discovery_assignment_state.stage !=
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS ||
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION ||
         !gateway_discovery_assignment_state.table_delivery_succeeded) {
         return false;
     }
@@ -765,8 +764,7 @@ static int gateway_discovery_assignment_submit_control_flood_locked(
         kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_NONE) {
         return -EINVAL;
     }
-    if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE ||
-        kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END) {
+    if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE) {
         outbound->flood_retry_count =
             MESH_ENUMERATION_RELAY_COPY_COUNT - 1u;
     }
@@ -797,14 +795,13 @@ static int gateway_discovery_assignment_submit_control_flood_locked(
      * The activation train establishes each anchor's response parent before
      * the command arrives.  Send a few real gateway CLAIM copies after that
      * train so one damaged extended frame does not make a direct anchor rely
-     * on a sibling's relay. TABLE and END remain one logical
-     * gateway-originated delivery each, but carry three quick physical copies
-     * before anchor relays begin. ABORT stays a single-copy origin.
+     * on a sibling's relay. TABLE is one logical gateway-originated delivery
+     * with three quick physical copies before anchor relays begin. ABORT stays
+     * a single-copy origin.
      */
     profile = kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM ?
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD :
         (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE ||
-               kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END ||
                kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT) ?
         NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN :
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD;
@@ -984,7 +981,7 @@ gateway_discovery_assignment_adaptive_deadline_offset_ms_locked(
         return gateway_discovery_assignment_window_ms_locked();
     }
     if (gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS) {
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION) {
         deadline_offset_ms = MAX(
             deadline_offset_ms,
             GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS);
@@ -1869,55 +1866,6 @@ static int gateway_start_discovery_assignment(
 #undef GATEWAY_ASSIGNMENT_START_RETURN
 }
 
-static int gateway_discovery_assignment_ack_proof_admission(
-    const struct proto_packet *packet,
-    uint32_t epoch,
-    const struct discovery_assignment_table_commitment *table_commitment)
-{
-    uint64_t member_ids[MESH_CONNECTED_MAX_ANCHORS];
-    uint8_t member_slots[MESH_CONNECTED_MAX_ANCHORS];
-    size_t member_count = 0u;
-    uint16_t membership_epoch = 0u;
-    int proof_ret;
-    int ret;
-
-    proof_ret = gateway_registered_membership_proves_assignment_ack(
-        epoch,
-        packet->session_id,
-        table_commitment,
-        packet->src_id);
-    if (proof_ret == 1) {
-        /*
-         * The first TABLE response is intentionally left in sender custody
-         * until an exact durable proof, or a newer durable roster that makes
-         * this response obsolete, exists. Reconcile only now, while gateway
-         * RX owns mesh_runtime: the durable roster is authoritative, retained
-         * members keep their ACK identities, and a removed member cannot hold
-         * the transition partition needed by this response retry.
-         */
-        ret = gateway_get_registered_membership_roster_with_slots(
-            member_ids,
-            member_slots,
-            ARRAY_SIZE(member_ids),
-            &member_count,
-            &membership_epoch);
-        if (ret != 0) {
-            return ret == -ENOENT ? -EAGAIN : ret;
-        }
-        ret = mesh_relay_reconcile_gateway_ack_membership(
-            &mesh_runtime, member_ids, member_count);
-        if (ret != PROTO_OK) {
-            LOG_ERR("gateway ACK membership reconcile failed: epoch=%u members=%u ret=%d",
-                    membership_epoch,
-                    (unsigned int)member_count,
-                    ret);
-            return mesh_errno_from_proto(ret);
-        }
-        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-    }
-    return proof_ret < 0 ? proof_ret : -EAGAIN;
-}
-
 static int gateway_discovery_assignment_note_compact_record_locked(
     const struct uwb_enumeration_record *record,
     uint64_t received_at_ms,
@@ -2204,17 +2152,12 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                             uint64_t previous_hop_id)
 {
     struct discovery_assignment_result assignment_result;
-    enum discovery_assignment_phase phase = 0;
-    uint8_t hop_count = 0u;
-    uint8_t observed_hop_count = 0u;
     uint64_t hash = 0u;
-    struct discovery_assignment_table_commitment table_commitment = {0};
     uint32_t epoch = 0u;
-    size_t anchor_index = SIZE_MAX;
-    bool ack_already_recorded = false;
-    bool late_table_recovery_claim = false;
-    uint8_t missing_ack_count;
     int ret;
+
+    ARG_UNUSED(received_at_ms);
+    ARG_UNUSED(previous_hop_id);
 
     if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL || payload == NULL ||
         packet->msg_type != MSG_COMMAND_RESULT) {
@@ -2229,15 +2172,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         status_debug_printf("DBG_ENUM_REJECT reason=envelope ret=%d\n", ret);
         return -EBADMSG;
     }
-    phase = assignment_result.phase;
     epoch = assignment_result.epoch;
     hash = assignment_result.hash;
-    table_commitment = assignment_result.table_commitment;
-    hop_count = assignment_result.hop_count_present ?
-                assignment_result.hop_count : 0u;
-    if (hop_count != 0u && hop_count <= DISCOVERY_ASSIGNMENT_MAX_HOPS) {
-        observed_hop_count = hop_count;
-    }
     if (packet->src_id == 0u ||
         hash != discovery_assignment_hash(packet->src_id)) {
         status_debug_printf("DBG_ENUM_REJECT reason=identity epoch=%u\n",
@@ -2245,9 +2181,9 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         return -EBADMSG;
     }
     /*
-     * Enumeration claims and table receipts now use the compact raw-UWB
-     * lane.  Retire a valid legacy result so an old queued frame cannot hold
-     * mesh custody, but never let that obsolete path mutate the new roster.
+     * Enumeration responses now use the compact raw-UWB lane. Retire a valid
+     * legacy result so an old queued frame cannot hold mesh custody, but never
+     * let that obsolete path mutate the new roster.
      */
     return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
 #if 0
@@ -2315,7 +2251,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
 
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
         if (gateway_discovery_assignment_state.stage !=
-                GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS ||
+                GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION ||
             packet->session_id !=
                 gateway_discovery_assignment_state.table_command_seq ||
             !discovery_assignment_table_commitment_equal(
@@ -2331,7 +2267,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     } else {
         late_table_recovery_claim =
             gateway_discovery_assignment_state.stage ==
-                GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
+                GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION &&
             gateway_discovery_assignment_rf_started_locked(
                 GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE) &&
             gateway_discovery_assignment_state.table_command_seq != 0u &&
@@ -2717,7 +2653,7 @@ static int gateway_discovery_assignment_publish_table(void)
             gateway_discovery_assignment_state.table_delivery_is_redrive =
                 false;
             gateway_discovery_assignment_state.stage =
-                GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS;
+                GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION;
         }
     } else {
         ret = mesh_errno_from_proto(ret);
@@ -2747,83 +2683,6 @@ static int gateway_discovery_assignment_publish_table(void)
                 sys_rand32_get())),
             "table-admission-retry");
     }
-    k_mutex_unlock(&gateway_discovery_assignment_mutex);
-    return ret;
-}
-
-static int gateway_discovery_assignment_publish_end(void)
-{
-    struct discovery_assignment_end_identity identity;
-    struct mesh_outbound outbound;
-    size_t payload_len;
-    int ret;
-
-    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
-    if (gateway_discovery_assignment_state.stage !=
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS ||
-        !gateway_discovery_assignment_state.table_delivery_succeeded) {
-        k_mutex_unlock(&gateway_discovery_assignment_mutex);
-        return -EAGAIN;
-    }
-    if (gateway_discovery_assignment_state.end_command_seq == 0u) {
-        gateway_discovery_assignment_state.end_command_seq =
-            gateway_next_broadcast_command_seq();
-    }
-    if (gateway_discovery_assignment_state.end_packet_seq == 0u) {
-        gateway_discovery_assignment_state.end_packet_seq =
-            gateway_next_command_seq();
-    }
-    if (gateway_discovery_assignment_state.end_command_seq == 0u ||
-        gateway_discovery_assignment_state.end_packet_seq == 0u) {
-        ret = -EIO;
-        goto out;
-    }
-    ret = gateway_build_discovery_assignment_command(
-        &outbound,
-        DISCOVERY_ASSIGNMENT_PHASE_END,
-        gateway_discovery_assignment_state.epoch,
-        gateway_discovery_assignment_state.end_command_seq,
-        gateway_discovery_assignment_state.end_packet_seq);
-    if (ret < 0) {
-        goto out;
-    }
-    identity = (struct discovery_assignment_end_identity) {
-        .epoch = gateway_discovery_assignment_state.epoch,
-        .table_command_seq =
-            gateway_discovery_assignment_state.table_command_seq,
-        .table_commitment =
-            gateway_discovery_assignment_state.table_commitment,
-    };
-    payload_len = outbound.payload_len;
-    ret = discovery_assignment_append_end_identity(
-        outbound.payload,
-        sizeof(outbound.payload),
-        &payload_len,
-        &identity);
-    if (ret != PROTO_OK) {
-        ret = mesh_errno_from_proto(ret);
-        goto out;
-    }
-    outbound.payload_len = (uint16_t)payload_len;
-    outbound.packet.payload_len = (uint16_t)payload_len;
-    ret = gateway_discovery_assignment_submit_control_flood_locked(
-        &outbound,
-        GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END);
-    if (ret == 0) {
-        gateway_discovery_assignment_state.stage =
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY;
-        (void)gateway_discovery_assignment_reschedule(
-            K_MSEC(GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS),
-            "end-delivery-poll");
-    } else {
-        (void)gateway_discovery_assignment_reschedule(
-            K_MSEC(100u), "end-admission-retry");
-    }
-out:
-    status_debug_printf("DBG_ENUM_END_TX epoch=%u table_seq=%u ret=%d\n",
-                        gateway_discovery_assignment_state.epoch,
-                        gateway_discovery_assignment_state.table_command_seq,
-                        ret);
     k_mutex_unlock(&gateway_discovery_assignment_mutex);
     return ret;
 }
@@ -2918,8 +2777,7 @@ static bool gateway_discovery_assignment_service_delivery(void)
         if (effective_delivered) {
             gateway_discovery_assignment_state.table_delivery_succeeded = true;
         }
-    } else if (kind != GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END &&
-               kind != GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT) {
+    } else if (kind != GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT) {
         gateway_discovery_assignment_fail_locked(COMMAND_INTERNAL_ERROR,
                                                  EPROTO);
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
@@ -2930,17 +2788,6 @@ static bool gateway_discovery_assignment_service_delivery(void)
         uint64_t response_window_origin_ms = event.terminal_at_ms;
         uint32_t wait_ms;
 
-        if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END) {
-            wait_ms =
-                gateway_discovery_assignment_propagation_hold_ms_locked();
-            gateway_discovery_assignment_state.phase_propagation_deadline_ms =
-                response_window_origin_ms + wait_ms;
-            gateway_discovery_assignment_state.end_propagation_pending = true;
-            (void)gateway_discovery_assignment_reschedule(
-                K_MSEC(wait_ms), "end-propagation-hold");
-            k_mutex_unlock(&gateway_discovery_assignment_mutex);
-            return true;
-        }
         if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT) {
             gateway_discovery_assignment_finish_failure_locked(
                 gateway_discovery_assignment_state.pending_failure_status,
@@ -2995,6 +2842,8 @@ static bool gateway_discovery_assignment_service_delivery(void)
                 gateway_discovery_assignment_propagation_hold_ms_locked();
             gateway_discovery_assignment_state.phase_propagation_deadline_ms =
                 response_window_origin_ms + wait_ms;
+            gateway_discovery_assignment_state.table_propagation_pending =
+                true;
         } else {
             wait_ms =
                 gateway_discovery_assignment_adaptive_deadline_offset_ms_locked(
@@ -3165,26 +3014,9 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
     }
 
     if (gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY &&
-        gateway_discovery_assignment_state.end_propagation_pending) {
-        uint64_t now_ms = (uint64_t)k_uptime_get();
-
-        if (now_ms < gateway_discovery_assignment_state
-                .phase_propagation_deadline_ms) {
-            (void)gateway_discovery_assignment_reschedule(
-                K_MSEC((uint32_t)(gateway_discovery_assignment_state
-                    .phase_propagation_deadline_ms - now_ms)),
-                "end-propagation-hold");
-            GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
-        }
-        gateway_discovery_assignment_state.end_propagation_pending = false;
-        gateway_discovery_assignment_complete_success_locked();
-        GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
-    }
-
-    if (gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
-        gateway_discovery_assignment_state.table_delivery_succeeded) {
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION &&
+        gateway_discovery_assignment_state.table_delivery_succeeded &&
+        gateway_discovery_assignment_state.table_propagation_pending) {
         uint64_t now_ms = (uint64_t)k_uptime_get();
 
         if (now_ms < gateway_discovery_assignment_state
@@ -3196,16 +3028,14 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
             GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
         }
         gateway_discovery_assignment_state.late_table_redrive_pending = false;
-        ret = gateway_discovery_assignment_publish_end();
-        if (ret < 0) {
-            (void)gateway_discovery_assignment_reschedule(
-                K_MSEC(100u), "end-submit-retry");
-        }
+        gateway_discovery_assignment_state.table_propagation_pending = false;
+        gateway_discovery_assignment_state.round_open = false;
+        gateway_discovery_assignment_complete_success_locked();
         GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
     }
     if (gateway_discovery_assignment_state.replay &&
         gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS) {
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION) {
         ret = gateway_discovery_assignment_publish_table();
         if (ret < 0) {
             (void)gateway_discovery_assignment_reschedule(
@@ -3327,7 +3157,7 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     if (gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION &&
         gateway_discovery_assignment_state.round_open &&
         gateway_discovery_assignment_state.table_delivery_succeeded) {
         uint32_t completion_deadline =
@@ -3344,11 +3174,8 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         gateway_discovery_assignment_state.response_ack_settle_armed = false;
         gateway_discovery_assignment_state.response_ack_settle_deadline_ms = 0u;
         gateway_discovery_assignment_state.round_open = false;
-        ret = gateway_discovery_assignment_publish_end();
-        if (ret < 0) {
-            (void)gateway_discovery_assignment_reschedule(
-                K_MSEC(100u), "end-submit-retry");
-        }
+        gateway_discovery_assignment_state.table_propagation_pending = false;
+        gateway_discovery_assignment_complete_success_locked();
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     if (app_discovery_assignment_operation_expired(
@@ -3420,7 +3247,7 @@ int app_anchor_gateway_assignment_resume_pending_table(
     if (DEVICE_ROLE != ROLE_GATEWAY || snapshot == NULL ||
         publication == NULL ||
         (snapshot->publication_table_round &
-         GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING) == 0u ||
+         GATEWAY_MEMBERSHIP_TABLE_PROPAGATION_PENDING) == 0u ||
         snapshot->node_count == 0u ||
         publication->acknowledged_mask == 0u) {
         return -EINVAL;
@@ -3485,7 +3312,7 @@ int app_anchor_gateway_assignment_resume_pending_table(
     gateway_discovery_assignment_state.max_hop_count =
         DISCOVERY_ASSIGNMENT_MAX_HOPS;
     gateway_discovery_assignment_state.stage =
-        GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS;
+        GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_PROPAGATION;
     gateway_discovery_assignment_state.generation =
         gateway_discovery_assignment_next_generation();
     gateway_discovery_assignment_state.replay = true;

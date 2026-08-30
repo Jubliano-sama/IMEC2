@@ -1,7 +1,9 @@
 #ifndef ENUMERATION_RESPONSE_LANE_H
 #define ENUMERATION_RESPONSE_LANE_H
 
+#include "discovery_assignment.h"
 #include "mesh_capacity.h"
+#include "mesh_relay.h"
 #include "uwb.h"
 
 #include <stdbool.h>
@@ -43,12 +45,16 @@ extern "C" {
 #define ENUMERATION_RESPONSE_NO_OFFSET 0xffu
 #define ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS 10u
 #define ENUMERATION_RESPONSE_TX_LATE_GUARD_MS 4u
-/* CLAIM creation is the shared clock edge. The control flood and its forwards
- * must be clear before the first response band starts, but the full generic
- * 10-second delivery deadline is far larger than the actual bounded flood. */
-/* Eight wake-free CLAIM hops consume 8 * 540 ms, followed by the 150 ms
- * propagation margin and 40 ms gateway preparation edge. */
-#define ENUMERATION_RESPONSE_START_DELAY_MS 4510u
+/* CLAIM creation is the shared clock edge. The control flood and every
+ * pipelined forward must be clear before the first response band starts. */
+/* CLAIM is wake-free, but it follows the Here-I-Am activation wave with one
+ * complete activation-hop lead at every relay. Start responses only after
+ * every possible CLAIM copy burst plus the gateway preparation edge. */
+#define ENUMERATION_RESPONSE_START_DELAY_MS \
+    (DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS + \
+     (UWB_ENUM_MAX_HOPS * \
+      MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS) + \
+     ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS)
 
 struct enumeration_response_timing {
     uint8_t depth;

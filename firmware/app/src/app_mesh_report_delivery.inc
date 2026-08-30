@@ -3956,6 +3956,10 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
         bool forward_admission_retained = false;
+        uint8_t forward_purpose =
+            (result->actions & MESH_RELAY_ACTION_ENUMERATION_PREARM) != 0u ?
+                C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD :
+                C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH;
         int ret;
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -3965,7 +3969,7 @@ after_gateway_ack:
                                 result->gateway_route_adv.earliest_tx_ms);
         }
         ret = mesh_send_c5_flood_response(&result->gateway_route_adv,
-                                          C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                          forward_purpose,
                                           "gateway-route-adv-forward",
                                           &forward_admission_retained);
         if (!forward_admission_retained) {

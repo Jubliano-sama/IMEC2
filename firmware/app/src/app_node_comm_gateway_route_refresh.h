@@ -10,12 +10,11 @@
 
 struct k_work_delayable;
 
-/* Two relay waves carry the gateway's root transmission through hop one and
- * hop two to hop three. Each relay actively yields the background receiver,
- * sends one activation train, then uses the shared fast advertisement profile;
- * one final guard covers the gateway/host handoff after the last possible
- * physical copy. */
-#define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS 2u
+/* CLAIM follows the enumeration Here-I-Am as a pipelined wave. The gateway
+ * waits for one complete relay hop; every CLAIM relay preserves that same
+ * one-hop lead, so depth N receives CLAIM only after depth N has had time to
+ * wake and prearm depth N+1. The whole Here-I-Am wave need not finish first. */
+#define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS 1u
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS \
     MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS \
@@ -23,8 +22,8 @@ struct k_work_delayable;
      APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS + \
      FLOOD_POST_ROOT_GUARD_MS)
 
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 2676u,
-               "Here-I-Am settle must cover two fast relay waves");
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 1413u,
+               "Here-I-Am settle must establish one relay-hop lead");
 
 typedef int (*app_node_comm_route_refresh_build_fn)(
     void *ctx,

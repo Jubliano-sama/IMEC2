@@ -2028,15 +2028,9 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
     }
     now_ms = k_uptime_get_32();
     key = k_spin_lock(&anchor_enumeration_rx_lock);
-    if (anchor_enumeration_rx_lifecycle.operation ==
-            PROTOCOL_RX_OPERATION_ENUMERATION &&
-        anchor_enumeration_rx_lifecycle.generation != epoch &&
-        !discovery_assignment_epoch_strictly_newer(
-            epoch,
-            (uint32_t)anchor_enumeration_rx_lifecycle.generation)) {
-        k_spin_unlock(&anchor_enumeration_rx_lock, key);
-        return -ESTALE;
-    }
+    /* Enumeration epochs correlate one exchange; they do not order gateway
+     * authority. Any different nonzero epoch replaces the active prearm,
+     * including a numerically lower epoch after a gateway restart. */
     if (anchor_enumeration_rx_lifecycle.operation ==
             PROTOCOL_RX_OPERATION_ENUMERATION &&
         anchor_enumeration_rx_lifecycle.generation == epoch &&
@@ -2190,7 +2184,7 @@ static int anchor_enumeration_rx_begin_table(
     if (bound) {
         /* TABLE is the semantic end of CLAIM collection. The persistent lane
          * remains scanner-owned but becomes inaccessible immediately, so an
-         * unACKed response cannot interfere with TABLE/END propagation. */
+         * unfinished response cannot interfere with TABLE propagation. */
         anchor_compact_enumeration_deactivate(epoch);
     }
     return bound ? 0 : -ESTALE;

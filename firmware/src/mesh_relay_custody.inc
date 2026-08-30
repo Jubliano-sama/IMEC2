@@ -3097,6 +3097,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     bool enumeration_control = false;
     bool compact_scheduled_control = false;
     bool compact_primary_control;
+    uint32_t compact_initial_delay_ms;
     int ret;
 
     if (!broadcast_packet_needs_forward(relay, packet, payload, payload_len)) {
@@ -3145,10 +3146,21 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
         }
     }
     slot_seed = flood_identity_seed(packet, relay->local_id);
+    compact_initial_delay_ms =
+        DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
+        mesh_enumeration_relay_delay_ms(relay->local_id, packet);
+    if (enumeration_control &&
+        assignment_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+        /* Here-I-Am is the activation wave and CLAIM is its pipelined
+         * follower. Preserve one complete activation-relay hop at every
+         * depth instead of waiting for the entire network wave at the root. */
+        compact_initial_delay_ms =
+            MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
+            mesh_enumeration_relay_delay_ms(relay->local_id, packet);
+    }
     out->earliest_tx_ms = now_ms +
         (compact_primary_control ?
-             DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
-                 mesh_enumeration_relay_delay_ms(relay->local_id, packet) :
+             compact_initial_delay_ms :
              flood_forward_total_delay_ms(
                  relay->local_id,
                  slot_seed,

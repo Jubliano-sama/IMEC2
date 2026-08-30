@@ -495,7 +495,7 @@ static void test_host_completion_waits_for_bounded_relay_settle(void)
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
     assert(fixture.scheduled_delay_ms ==
            APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 2u);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 1u);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS ==
            MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS == 1263u);
@@ -503,7 +503,7 @@ static void test_host_completion_waits_for_bounded_relay_settle(void)
            APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS *
                APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS +
                FLOOD_POST_ROOT_GUARD_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 2676u);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 1413u);
 
     fixture.now_ms = wave_complete_ms +
         APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - 1u;

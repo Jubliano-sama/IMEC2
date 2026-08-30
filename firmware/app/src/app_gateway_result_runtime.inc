@@ -484,7 +484,7 @@ static int gateway_membership_adopt_pending_commit(void)
     struct gateway_membership_roster restored = {0};
     struct app_durable_receipt adopted_receipt;
     uint16_t acknowledged_count;
-    bool confirmation_pending;
+    bool table_propagation_pending;
     int ret;
 
     if (!gateway_membership_adoption_pending) {
@@ -493,9 +493,9 @@ static int gateway_membership_adopt_pending_commit(void)
     if (gateway_membership_snapshot_state.publication_table_round == 0u) {
         return -EPROTO;
     }
-    confirmation_pending =
+    table_propagation_pending =
         (gateway_membership_snapshot_state.publication_table_round &
-         GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING) != 0u;
+         GATEWAY_MEMBERSHIP_TABLE_PROPAGATION_PENDING) != 0u;
 
     /* save() first rereads/adopts an exact committed candidate. If the first
      * write did not land, this is the same semantic commit retry, never a
@@ -516,7 +516,7 @@ static int gateway_membership_adopt_pending_commit(void)
     if (ret != PROTO_OK) {
         return -EPROTO;
     }
-    if (!confirmation_pending) {
+    if (!table_propagation_pending) {
         acknowledged_count = (uint16_t)__builtin_popcountll(
             gateway_membership_snapshot_state.publication_acknowledged_mask);
         ret = app_anchor_gateway_assignment_adopted_result_commit(
@@ -532,7 +532,8 @@ static int gateway_membership_adopt_pending_commit(void)
     gateway_membership_durable_receipt = adopted_receipt;
     gateway_membership_durable_receipt_valid = true;
     gateway_membership_adoption_pending = false;
-    gateway_membership_publisher_activation_pending = !confirmation_pending;
+    gateway_membership_publisher_activation_pending =
+        !table_propagation_pending;
     /* The original assignment deliberately retained its prepared publisher
      * and lease. It is not a reboot replay, so terminal host receipt still
      * has to release that live lease. */
@@ -2459,8 +2460,8 @@ int gateway_abort_pending_assignment_publication_ram_only(
         return -ESTALE;
     }
 
-    /* The table never reached protocol confirmation, so this in-RAM roster
-     * is not an assignment that later operations may reuse.  Durable
+    /* The TABLE never completed its bounded propagation hold, so this in-RAM
+     * roster is not an assignment that later operations may reuse. Durable
      * publications deliberately take a different recovery path. */
     gateway_membership_clear(&gateway_membership_roster_state);
     gateway_membership_clear_durable_evidence();
@@ -2815,7 +2816,7 @@ int gateway_replay_pending_assignment_publication(void)
         return ret;
     }
     if ((gateway_membership_snapshot_state.publication_table_round &
-         GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING) != 0u) {
+         GATEWAY_MEMBERSHIP_TABLE_PROPAGATION_PENDING) != 0u) {
         ret = gateway_membership_snapshot_get_publication(
             &gateway_membership_snapshot_state, &publication);
         if (ret != PROTO_OK) {

@@ -72,7 +72,6 @@ def main():
         help="Continue draining every RTT stream after the host command exits",
     )
     parser.add_argument("--erase-storage", action="store_true", help="Erase NVS storage partition (0x7a000-0x80000) on all boards before starting")
-    parser.add_argument("--deepest-hop", type=int, default=None)
     args = parser.parse_args()
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -143,9 +142,6 @@ def main():
                     "0.05",
                     "--require-assignment-success",
                 ])
-        if args.deepest_hop is not None:
-            prov_cmd.extend(["--deepest-hop", str(args.deepest_hop)])
-
         print(f"\nRunning command: {' '.join(prov_cmd)}\n")
         prov_proc = subprocess.Popen(
             prov_cmd,
@@ -194,7 +190,7 @@ def main():
         # Save provision output
         (log_dir / "provision.log").write_text("".join(prov_output))
 
-        # Keep draining after host completion so delayed END application,
+        # Keep draining after host completion so delayed TABLE application,
         # retries, and post-command radio faults remain in the same trace.
         post_capture_deadline = time.time() + max(
             0.0, args.post_capture_seconds

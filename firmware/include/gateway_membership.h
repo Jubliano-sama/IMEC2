@@ -21,7 +21,7 @@ extern "C" {
  * reconstructs the in-memory checksum on restore.
  */
 #define GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_VERSION 1u
-#define GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING UINT8_C(0x80)
+#define GATEWAY_MEMBERSHIP_TABLE_PROPAGATION_PENDING UINT8_C(0x80)
 #define GATEWAY_MEMBERSHIP_TABLE_ROUND_MASK UINT8_C(0x7f)
 #define GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE \
     (2u * GATEWAY_MEMBERSHIP_MAX_NODES * sizeof(uint64_t) + \
@@ -93,8 +93,9 @@ struct gateway_membership_snapshot {
     uint8_t assignment_proof_valid;
     uint8_t publication_host_flags;
     uint8_t publication_host_ttl;
-    /* The high bit means the exact RF TABLE still needs anchor confirmation;
-     * the low seven bits retain the host-visible publication attempt. */
+    /* The high bit means the exact immutable TABLE may still need its bounded
+     * flood/replay before host publication; the low seven bits retain the
+     * host-visible publication attempt. */
     uint8_t publication_table_round;
 };
 

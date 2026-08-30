@@ -1,6 +1,8 @@
+#include "app_node_comm_gateway_route_refresh.h"
 #include "dwm3000_runtime.h"
 #include "dwm3000_timing.h"
 #include "discovery_assignment.h"
+#include "enumeration_response_lane.h"
 #include "gateway_command.h"
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
@@ -529,6 +531,100 @@ static void test_depth_aware_survey_control_schedule(void)
     }
 }
 
+static void test_enumeration_claim_preserves_pipelined_activation_lead(void)
+{
+    const uint32_t root_lead_ms =
+        MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
+        FLOOD_POST_ROOT_GUARD_MS;
+
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 1u,
+          "enumeration root waits for more than one pipelined relay hop");
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == root_lead_ms,
+          "enumeration root lost its one-hop activation lead");
+    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
+        uint32_t here_i_am_relay_complete_ms =
+            (uint32_t)depth * MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS;
+        uint32_t earliest_claim_arrival_ms =
+            root_lead_ms +
+            (uint32_t)(depth - 1u) *
+                MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS;
+
+        CHECK(earliest_claim_arrival_ms >=
+                  here_i_am_relay_complete_ms + FLOOD_POST_ROOT_GUARD_MS,
+              "CLAIM overtakes the Here-I-Am relay at a deeper anchor");
+    }
+}
+
+static void test_enumeration_response_edge_follows_complete_claim_wave(void)
+{
+    CHECK(MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS ==
+              MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS,
+          "CLAIM no longer preserves one complete Here-I-Am hop");
+    CHECK(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 1628u,
+          "CLAIM relay bound changed without requalifying the response edge");
+    CHECK(ENUMERATION_RESPONSE_START_DELAY_MS == 13214u,
+          "shared enumeration response edge changed without requalification");
+    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
+        uint32_t worst_claim_complete_ms =
+            DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+            (uint32_t)depth *
+                MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS;
+
+        CHECK(worst_claim_complete_ms +
+                  ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS <=
+                  ENUMERATION_RESPONSE_START_DELAY_MS,
+              "response edge can precede the complete CLAIM wave");
+    }
+}
+
+static void test_table_is_the_single_terminal_propagation_wave(void)
+{
+    uint32_t previous_hold_ms = 0u;
+
+    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
+        uint32_t table_hold_ms =
+            discovery_assignment_control_propagation_hold_ms(depth);
+        uint32_t removed_table_then_end_ms = 2u * table_hold_ms;
+
+        CHECK(removed_table_then_end_ms - table_hold_ms == table_hold_ms,
+              "removing END did not save one complete propagation wave");
+        CHECK(table_hold_ms ==
+                  DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+                      (uint32_t)depth *
+                          DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
+              "TABLE completion lost its exact depth-bound propagation hold");
+        if (previous_hold_ms != 0u) {
+            CHECK(table_hold_ms - previous_hold_ms ==
+                      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
+                  "each TABLE depth must add one compact relay bound");
+        }
+        previous_hold_ms = table_hold_ms;
+    }
+    CHECK(discovery_assignment_control_propagation_hold_ms(1u) == 690u,
+          "direct TABLE completion edge changed without requalification");
+    CHECK(discovery_assignment_control_propagation_hold_ms(
+              UWB_ENUM_MAX_HOPS) == 4470u,
+          "maximum-depth TABLE completion edge changed without requalification");
+}
+
+static void test_survey_start_stays_inside_every_enumeration_handoff(void)
+{
+    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
+        uint32_t latest_start_arrival_ms =
+            SURVEY_HOST_PLAN_TIMEOUT_MS +
+            (uint32_t)depth *
+                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
+
+        CHECK(latest_start_arrival_ms <
+                  SURVEY_ENUMERATION_HANDOFF_HOLD_MS,
+              "wake-free survey START can outlive a retained enumeration listener");
+        CHECK(SURVEY_ENUMERATION_HANDOFF_HOLD_MS -
+                  latest_start_arrival_ms >=
+                  SURVEY_RADIO_GUARD_MS,
+              "survey START reaches a depth without a final radio guard");
+    }
+}
+
 static void test_maintained_normal_click_phy_and_capacity_contract(void)
 {
     const struct dwm3000_phy_timing *wake =
@@ -581,6 +677,10 @@ int main(void)
     test_enumeration_activation_phase_sweep();
     test_depth_aware_enumeration_control_listener();
     test_depth_aware_survey_control_schedule();
+    test_enumeration_claim_preserves_pipelined_activation_lead();
+    test_enumeration_response_edge_follows_complete_claim_wave();
+    test_table_is_the_single_terminal_propagation_wave();
+    test_survey_start_stays_inside_every_enumeration_handoff();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
     test_multi_anchor_claim_and_range_schedule_invariants();
 

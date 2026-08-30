@@ -2278,6 +2278,7 @@ static void test_scheduled_survey_controls_reuse_compact_relay_wave(void)
     const enum command_id scheduled_ids[] = {
         CMD_SURVEY_START,
         CMD_SURVEY_PLAN,
+        CMD_SURVEY_CANCEL,
     };
     struct mesh_relay relay;
     struct mesh_relay_result result;
@@ -2331,11 +2332,111 @@ static void test_scheduled_survey_controls_reuse_compact_relay_wave(void)
         assert(result.forward.flood_retry_count ==
                MESH_ENUMERATION_RELAY_COPY_COUNT - 1u);
         assert(result.forward.earliest_tx_valid);
+        assert(result.forward.earliest_tx_ms ==
+               now_ms +
+                   DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
+                   mesh_enumeration_relay_delay_ms(relay.local_id,
+                                                   &packet));
+    }
+}
+
+static void test_assignment_claim_preserves_activation_lead_at_every_depth(void)
+{
+    static const uint64_t anchor_ids[UWB_ENUM_MAX_HOPS] = {
+        UINT64_C(0xa100000000000001),
+        UINT64_C(0xa200000000000001),
+        UINT64_C(0xa300000000000001),
+        UINT64_C(0xa400000000000001),
+        UINT64_C(0xa500000000000001),
+        UINT64_C(0xa600000000000001),
+        UINT64_C(0xa700000000000001),
+        UINT64_C(0xa800000000000001),
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = UINT32_C(0xe11e0001),
+        .seq = 51u,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+    };
+    struct mesh_outbound hop = {0};
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    uint64_t previous_hop_id = GATEWAY;
+
+    assert(mesh_append_command_id(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  CMD_ASSIGN_DISCOVERY_SLOTS) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_SEQ,
+                          packet.session_id) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          UINT32_C(0xe11e1001)) == PROTO_OK);
+    assert(discovery_assignment_append_control_tlvs(
+               payload,
+               sizeof(payload),
+               &payload_len,
+               DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+               UINT32_C(0xe0010001)) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+
+    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
+        struct mesh_relay relay;
+        struct mesh_relay_result result;
+        const struct proto_packet *received_packet =
+            depth == 1u ? &packet : &hop.packet;
+        const uint8_t *received_payload =
+            depth == 1u ? payload : hop.payload;
+        size_t received_payload_len =
+            depth == 1u ? payload_len : hop.payload_len;
+        uint32_t now_ms = 4000u + (uint32_t)depth * 10u;
+
+        mesh_relay_init(&relay,
+                        MESH_RELAY_ROLE_ANCHOR,
+                        anchor_ids[depth - 1u],
+                        GATEWAY,
+                        13u);
+        assert(mesh_relay_handle_rx_with_random(
+                   &relay,
+                   received_packet,
+                   received_payload,
+                   received_payload_len,
+                   previous_hop_id,
+                   80u,
+                   now_ms,
+                   depth,
+                   &result) == PROTO_OK);
+        assert(result.status == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        if (depth == UWB_ENUM_MAX_HOPS) {
+            assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+            continue;
+        }
+
+        assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        assert(result.forward.earliest_tx_valid);
+        assert(result.forward.earliest_tx_ms ==
+               now_ms + MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
+                   mesh_enumeration_relay_delay_ms(relay.local_id,
+                                                   received_packet));
         assert(result.forward.earliest_tx_ms - now_ms >=
-               DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS);
-        assert(result.forward.earliest_tx_ms - now_ms <=
-               DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
-                   MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS);
+               MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS);
+        assert(result.forward.earliest_tx_ms - now_ms +
+                   (MESH_ENUMERATION_RELAY_COPY_COUNT *
+                    OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) +
+                   MESH_ENUMERATION_RELAY_COPY_TAIL_MS <=
+               MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS);
+        hop = result.forward;
+        previous_hop_id = relay.local_id;
     }
 }
 
@@ -21144,6 +21245,7 @@ int main(void)
     test_group_scope_broadcast_fails_closed_before_local_delivery();
     test_targeted_gateway_command_commits_only_after_local_admission();
     test_command_flood_broadcast_deduplicates_logical_sequence();
+    test_assignment_claim_preserves_activation_lead_at_every_depth();
     test_single_assignment_table_relays_three_copies_across_two_hops();
     test_scheduled_survey_controls_reuse_compact_relay_wave();
     test_collection_eack_broadcast_deduplicates_exact_round_only();

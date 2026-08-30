@@ -82,7 +82,7 @@ static void test_claim_start_tlv_remains_valid_after_countdown_becomes_negative(
     size_t payload_len = 0u;
     uint64_t start_ms = 0u;
     int64_t starts_in_ms = 0;
-    const uint64_t now_ms = 10000u;
+    const uint64_t now_ms = 20000u;
     const uint32_t late_age_ms =
         ENUMERATION_RESPONSE_START_DELAY_MS + 250u;
     uint32_t advertised_start_delay_ms;

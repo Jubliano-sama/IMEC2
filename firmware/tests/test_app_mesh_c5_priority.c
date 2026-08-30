@@ -85,7 +85,7 @@ static void test_gateway_route_adv_counts_as_route_capture(void)
     assert(!app_mesh_c5_route_capture_requires_ack_hold(state.msg_type));
 }
 
-static void test_unrelated_gateway_route_adv_is_ignored(void)
+static void test_gateway_route_adv_does_not_require_wake_source_as_origin(void)
 {
     struct app_mesh_c5_route_capture_state state = {
         .msg_type = MSG_GATEWAY_ROUTE_ADV,
@@ -96,10 +96,36 @@ static void test_unrelated_gateway_route_adv_is_ignored(void)
         .local_id = 0x3333333333333301ull,
     };
 
+    /* The contact target is a physical relay; the logical source remains the
+     * gateway and is validated by mesh_relay_validate_gateway_route_adv(). */
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = 0u;
     assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.src_id = state.target_id;
+    state.previous_hop_id = MESH_BROADCAST_ID;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
     state.previous_hop_id = state.local_id;
     assert(!app_mesh_c5_route_capture_relevant(&state));
+}
+
+static void test_route_reply_capture_does_not_duplicate_source_validation(void)
+{
+    const struct app_mesh_c5_route_capture_state route_reply = {
+        .msg_type = MSG_ROUTE_REPLY,
+        .session_id = 0x10203040u,
+        .flood_epoch_id = 0x50607080u,
+        .reply_nonce = 0x3344u,
+        .src_id = 0x7777888877776666ull,
+        .dst_id = 0x3333333333333301ull,
+        .previous_hop_id = 0x7777888877776666ull,
+        .target_id = 0x9999888877776666ull,
+        .local_id = 0x3333333333333301ull,
+        .expected_session_id = 0x10203040u,
+        .expected_flood_epoch_id = 0x50607080u,
+        .expected_reply_nonce = 0x3344u,
+        .route_identity_required = true,
+    };
+
+    assert(app_mesh_c5_route_capture_relevant(&route_reply));
 }
 
 static void test_route_reply_and_event_control_capture_rules(void)
@@ -937,7 +963,8 @@ int main(void)
     test_idle_state_does_not_defer();
     test_route_capture_releases_receive_abort();
     test_gateway_route_adv_counts_as_route_capture();
-    test_unrelated_gateway_route_adv_is_ignored();
+    test_gateway_route_adv_does_not_require_wake_source_as_origin();
+    test_route_reply_capture_does_not_duplicate_source_validation();
     test_route_reply_and_event_control_capture_rules();
     test_competing_route_request_yields_without_false_route_success();
     test_control_wake_captures_gateway_broadcast_command();

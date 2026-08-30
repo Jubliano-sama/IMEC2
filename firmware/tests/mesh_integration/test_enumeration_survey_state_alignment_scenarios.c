@@ -203,7 +203,9 @@ static bool apply_claim(struct anchor_model *anchor, uint32_t now_ms)
     return anchor_state_valid(anchor);
 }
 
-static bool apply_table(struct anchor_model *anchor, uint32_t sequence)
+static bool apply_table(struct anchor_model *anchor,
+                        uint32_t sequence,
+                        uint32_t now_ms)
 {
     CHECK(anchor_owner(anchor) == VISIBLE_OWNER_ENUMERATION,
           "TABLE arrived without enumeration ownership");
@@ -214,13 +216,6 @@ static bool apply_table(struct anchor_model *anchor, uint32_t sequence)
     } else {
         anchor->table_sequence = sequence;
     }
-    return anchor_state_valid(anchor);
-}
-
-static bool finish_enumeration(struct anchor_model *anchor, uint32_t now_ms)
-{
-    CHECK(anchor->table_sequence == TABLE_SEQUENCE,
-          "END did not match the committed TABLE");
     if (anchor->survey_follows) {
         CHECK(protocol_rx_lifecycle_set_deadline(
                   &anchor->enumeration,
@@ -228,26 +223,26 @@ static bool finish_enumeration(struct anchor_model *anchor, uint32_t now_ms)
                   ENUMERATION_EPOCH,
                   now_ms,
                   now_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS),
-              "survey END did not retain enumeration RX ownership");
+              "survey TABLE did not retain enumeration RX ownership");
         CHECK(protocol_rx_downstream_activation_mark(
                   &anchor->downstream,
                   PROTOCOL_RX_OPERATION_ENUMERATION,
                   ENUMERATION_EPOCH,
                   now_ms,
                   now_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS),
-              "survey END did not retain downstream activation");
+              "survey TABLE did not retain downstream activation");
         anchor->survey_handoff = true;
     } else {
         CHECK(protocol_rx_lifecycle_terminate(
                   &anchor->enumeration,
                   PROTOCOL_RX_OPERATION_ENUMERATION,
                   ENUMERATION_EPOCH),
-              "ordinary END did not release enumeration RX ownership");
+              "ordinary TABLE did not release enumeration RX ownership");
         CHECK(protocol_rx_downstream_activation_clear(
                   &anchor->downstream,
                   PROTOCOL_RX_OPERATION_ENUMERATION,
                   ENUMERATION_EPOCH),
-              "ordinary END did not release downstream activation");
+              "ordinary TABLE did not release downstream activation");
         anchor->table_sequence = 0u;
         anchor->survey_follows = false;
     }
@@ -329,8 +324,6 @@ static bool run_ordinary_enumeration(uint8_t topology_depth)
     uint32_t table_origin_ms = claim_origin_ms +
         ENUMERATION_RESPONSE_START_DELAY_MS +
         enumeration_response_duration_ms(topology_depth) + 1u;
-    uint32_t end_origin_ms = compact_arrival_ms(
-        table_origin_ms, topology_depth) + 1u;
 
     active_topology_depth = topology_depth;
     CHECK(compact_arrival_ms(claim_origin_ms, topology_depth) +
@@ -362,27 +355,19 @@ static bool run_ordinary_enumeration(uint8_t topology_depth)
 
     for (uint8_t depth = 1u; depth <= topology_depth; depth++) {
         active_anchor_depth = depth;
-        CHECK(apply_table(&anchors[depth - 1u], TABLE_SEQUENCE),
+        CHECK(apply_table(&anchors[depth - 1u],
+                          TABLE_SEQUENCE,
+                          compact_arrival_ms(table_origin_ms, depth)),
               "ordinary TABLE failed");
-        CHECK(population_continuously_owned(anchors, topology_depth),
-              "TABLE wave created a low-duty gap");
-    }
-
-    for (uint8_t depth = 1u; depth <= topology_depth; depth++) {
-        active_anchor_depth = depth;
-        CHECK(finish_enumeration(
-                  &anchors[depth - 1u],
-                  compact_arrival_ms(end_origin_ms, depth)),
-              "ordinary END failed");
         for (uint8_t index = 0u; index < topology_depth; index++) {
             active_anchor_depth = anchors[index].depth;
             CHECK(anchor_state_valid(&anchors[index]),
-                  "END wave exposed invalid ownership");
+                  "TABLE commit wave exposed invalid ownership");
             CHECK(index < depth ?
                       anchor_owner(&anchors[index]) == VISIBLE_OWNER_NONE :
                       anchor_owner(&anchors[index]) ==
                           VISIBLE_OWNER_ENUMERATION,
-                  "END wave released the wrong depth");
+                  "TABLE commit wave released the wrong depth");
         }
     }
     return true;
@@ -400,9 +385,7 @@ static bool run_enumeration_into_survey(uint8_t topology_depth)
     uint32_t table_origin_ms = claim_origin_ms +
         ENUMERATION_RESPONSE_START_DELAY_MS +
         enumeration_response_duration_ms(topology_depth) + 1u;
-    uint32_t end_origin_ms = compact_arrival_ms(
-        table_origin_ms, topology_depth) + 1u;
-    uint32_t start_origin_ms = end_origin_ms +
+    uint32_t start_origin_ms = table_origin_ms +
         SURVEY_ENUMERATION_HANDOFF_HOLD_MS - 1u;
     uint32_t start_stop_ms = start_origin_ms +
         SURVEY_INITIAL_SELF_EXPIRY_MS;
@@ -438,15 +421,15 @@ static bool run_enumeration_into_survey(uint8_t topology_depth)
     }
     for (uint8_t depth = 1u; depth <= topology_depth; depth++) {
         active_anchor_depth = depth;
-        CHECK(apply_table(&anchors[depth - 1u], TABLE_SEQUENCE),
+        CHECK(apply_table(&anchors[depth - 1u],
+                          TABLE_SEQUENCE,
+                          compact_arrival_ms(table_origin_ms, depth)),
               "survey TABLE failed");
-        CHECK(finish_enumeration(
-                  &anchors[depth - 1u],
-                  compact_arrival_ms(end_origin_ms, depth)),
-              "survey END failed to create its handoff");
+        CHECK(population_continuously_owned(anchors, topology_depth),
+              "survey TABLE propagation created an ownership gap");
     }
     CHECK(population_continuously_owned(anchors, topology_depth),
-          "survey END did not leave every anchor listening");
+          "survey TABLE did not leave every anchor listening");
 
     for (uint8_t depth = 1u; depth <= topology_depth; depth++) {
         uint32_t arrival_ms = compact_arrival_ms(start_origin_ms, depth);
@@ -562,8 +545,8 @@ static bool test_rejected_starts_preserve_or_release_the_right_owner(void)
     struct anchor_model anchor;
     uint32_t hia_ms = TEST_ORIGIN_MS;
     uint32_t claim_ms = hia_ms + 1000u;
-    uint32_t end_ms = claim_ms + 1000u;
-    uint32_t valid_start_ms = end_ms + 1000u;
+    uint32_t table_ms = claim_ms + 1000u;
+    uint32_t valid_start_ms = table_ms + 1000u;
 
     active_topology_depth = DISCOVERY_ASSIGNMENT_MAX_HOPS;
     for (uint8_t depth = 1u;
@@ -574,22 +557,20 @@ static bool test_rejected_starts_preserve_or_release_the_right_owner(void)
         CHECK(begin_here_i_am(&anchor, hia_ms, true),
               "boundary Here-I-Am failed");
         CHECK(apply_claim(&anchor, claim_ms), "boundary CLAIM failed");
-        CHECK(apply_table(&anchor, TABLE_SEQUENCE),
-              "boundary TABLE failed");
 
         CHECK(!start_survey(&anchor,
                             ENUMERATION_EPOCH,
                             SURVEY_GENERATION,
                             valid_start_ms,
                             valid_start_ms + SURVEY_INITIAL_SELF_EXPIRY_MS),
-              "START before END consumed an incomplete enumeration");
+              "START before TABLE consumed an incomplete enumeration");
         CHECK(anchor_owner(&anchor) == VISIBLE_OWNER_ENUMERATION,
               "rejected early START released enumeration ownership");
         CHECK(anchor_state_valid(&anchor),
               "rejected early START leaked staged ownership");
 
-        CHECK(finish_enumeration(&anchor, end_ms),
-              "boundary END failed");
+        CHECK(apply_table(&anchor, TABLE_SEQUENCE, table_ms),
+              "boundary TABLE failed to create its handoff");
         CHECK(!start_survey(&anchor,
                             ENUMERATION_EPOCH + 1u,
                             SURVEY_GENERATION,
@@ -628,15 +609,14 @@ static bool test_rejected_starts_preserve_or_release_the_right_owner(void)
         CHECK(begin_here_i_am(&anchor, hia_ms, true),
               "expiry Here-I-Am failed");
         CHECK(apply_claim(&anchor, claim_ms), "expiry CLAIM failed");
-        CHECK(apply_table(&anchor, TABLE_SEQUENCE),
+        CHECK(apply_table(&anchor, TABLE_SEQUENCE, table_ms),
               "expiry TABLE failed");
-        CHECK(finish_enumeration(&anchor, end_ms), "expiry END failed");
         CHECK(!start_survey(
                   &anchor,
                   ENUMERATION_EPOCH,
                   SURVEY_GENERATION,
-                  end_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS,
-                  end_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS +
+                  table_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS,
+                  table_ms + SURVEY_ENUMERATION_HANDOFF_HOLD_MS +
                       SURVEY_INITIAL_SELF_EXPIRY_MS),
               "START at the exact handoff deadline was accepted");
         CHECK(anchor_owner(&anchor) == VISIBLE_OWNER_NONE,

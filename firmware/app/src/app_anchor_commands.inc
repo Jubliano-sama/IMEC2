@@ -1142,10 +1142,86 @@ static int anchor_promote_discovery_assignment_after_ack_locked(
     return anchor_promote_discovery_assignment_locked_impl(pending, true);
 }
 
-static int anchor_promote_discovery_assignment_on_end_locked(
-    const struct anchor_discovery_claim_pending *pending)
+static int anchor_commit_discovery_table_locked(
+    struct app_mesh_discovery_assignment_snapshot *snapshot,
+    const struct app_mesh_discovery_assignment_snapshot *original_snapshot,
+    uint32_t epoch,
+    uint32_t table_command_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    bool provisioned,
+    uint8_t slot,
+    uint8_t slot_count)
 {
-    return anchor_promote_discovery_assignment_locked_impl(pending, false);
+    struct discovery_assignment_table_commitment committed_table;
+    int ret;
+
+    if (snapshot == NULL || original_snapshot == NULL || epoch == 0u ||
+        table_command_seq == 0u || table_commitment == NULL ||
+        (provisioned && (slot_count == 0u || slot >= slot_count))) {
+        return -EINVAL;
+    }
+    committed_table = *table_commitment;
+    if (!local_anchor_discovery_assignment_project_pending_commit(
+            epoch,
+            table_command_seq,
+            &committed_table,
+            snapshot->retired_epochs,
+            &snapshot->retired_epoch_count)) {
+        return -ESTALE;
+    }
+
+    snapshot->local_id = DEVICE_ID;
+    snapshot->gateway_id = GATEWAY_ID;
+    snapshot->size = sizeof(*snapshot);
+    snapshot->version = APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION;
+    snapshot->valid = true;
+    snapshot->ordered_epoch_valid = true;
+    snapshot->epoch = epoch;
+    snapshot->table_command_seq = table_command_seq;
+    snapshot->table_commitment = committed_table;
+    snapshot->slot = provisioned ? slot : 0u;
+    snapshot->slot_count = provisioned ? slot_count : 0u;
+    snapshot->provisioned = provisioned;
+    snapshot->ack_pending = false;
+    snapshot->table_packet_seq = 0u;
+    snapshot->response_spread_ms = 0u;
+    snapshot->pending_epoch = 0u;
+    snapshot->pending_table_command_seq = 0u;
+    memset(&snapshot->pending_table_commitment,
+           0,
+           sizeof(snapshot->pending_table_commitment));
+    snapshot->pending_slot = 0u;
+    snapshot->pending_slot_count = 0u;
+    snapshot->pending_response_lane = 0u;
+    snapshot->pending_response_lane_count = 0u;
+    snapshot->pending_valid = false;
+    snapshot->ack_retry_round = 0u;
+
+    ret = anchor_save_discovery_assignment_semantic(snapshot);
+    if (ret < 0) {
+        (void)anchor_restore_live_discovery_assignment_snapshot(
+            original_snapshot);
+        return ret;
+    }
+    ret = provisioned ?
+        local_anchor_commit_discovery_assignment(
+            epoch, table_command_seq, &committed_table, slot, slot_count) :
+        local_anchor_mark_discovery_assignment_unprovisioned(
+            epoch, table_command_seq, &committed_table);
+    if (ret != PROTO_OK &&
+        anchor_restore_live_discovery_assignment_snapshot(snapshot) !=
+            PROTO_OK) {
+        app_watchdog_stop_feeding();
+        return -EILSEQ;
+    }
+    status_debug_printf(
+        "DBG_DISCOVERY_SLOT_TABLE_COMMIT epoch=%u table_seq=%u provisioned=%u slot=%u slot_count=%u\n",
+        epoch,
+        table_command_seq,
+        provisioned ? 1u : 0u,
+        provisioned ? slot : 0u,
+        provisioned ? slot_count : 0u);
+    return 0;
 }
 
 static int anchor_promote_discovery_assignment_after_ack(
@@ -2405,13 +2481,10 @@ static int anchor_resume_pending_discovery_assignment_ack(
     bool explicit_table_replay)
 {
     struct app_mesh_discovery_assignment_snapshot snapshot = {0};
-    struct proto_packet command = {
-        .msg_type = MSG_COMMAND,
-        .src_id = GATEWAY_ID,
-        .dst_id = MESH_BROADCAST_ID,
-    };
+    struct app_mesh_discovery_assignment_snapshot original_snapshot;
     int ret;
 
+    ARG_UNUSED(explicit_table_replay);
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return 0;
     }
@@ -2431,42 +2504,22 @@ static int anchor_resume_pending_discovery_assignment_ack(
         snapshot.gateway_id != GATEWAY_ID) {
         return -ESTALE;
     }
-    if (explicit_table_replay && snapshot.ack_retry_round != 0u) {
-        snapshot.ack_retry_round = 0u;
-        ret = anchor_save_discovery_assignment_retry_ram(&snapshot);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    command.session_id = snapshot.pending_table_command_seq;
-    command.seq = snapshot.table_packet_seq;
-    /* A zero lane count is a pre-v9 pending record; retain its old safe
-     * schedule once, then any replayed TABLE replaces it with compact lanes. */
-    uint8_t response_lane_count =
-        snapshot.pending_response_lane_count == 0u ?
-            snapshot.pending_slot_count :
-            snapshot.pending_response_lane_count;
-    uint8_t response_lane =
-        snapshot.pending_response_lane_count == 0u ?
-            snapshot.pending_slot : snapshot.pending_response_lane;
-    ret = anchor_schedule_discovery_response(
-        &command,
+    original_snapshot = snapshot;
+    ret = anchor_commit_discovery_table_locked(
+        &snapshot,
+        &original_snapshot,
         snapshot.pending_epoch,
-        DISCOVERY_ASSIGNMENT_PHASE_ACK,
+        snapshot.pending_table_command_seq,
         &snapshot.pending_table_commitment,
+        true,
         snapshot.pending_slot,
-        snapshot.pending_slot_count,
-        response_lane,
-        response_lane_count,
-        snapshot.response_spread_ms,
-        snapshot.ack_retry_round,
-        true);
+        snapshot.pending_slot_count);
     if (ret == 0) {
         status_debug_printf(
-            "DBG_DISCOVERY_SLOT_ACK_RESUME state=ACK_PENDING epoch=%u generation=%u slot=%u\n",
-            snapshot.pending_epoch,
-            snapshot.pending_table_command_seq,
-            snapshot.pending_slot);
+            "DBG_DISCOVERY_SLOT_PENDING_MIGRATED state=PROVISIONED epoch=%u generation=%u slot=%u\n",
+            snapshot.epoch,
+            snapshot.table_command_seq,
+            snapshot.slot);
         return 1;
     }
     return ret;
@@ -3394,24 +3447,6 @@ static int anchor_restore_live_discovery_assignment_snapshot(
         snapshot->pending_valid != 0u);
 }
 
-static void anchor_rearm_discovery_ack_after_table_rollback(
-    const struct app_mesh_discovery_assignment_snapshot *snapshot)
-{
-    int ret;
-
-    if (snapshot == NULL || !snapshot->valid ||
-        snapshot->pending_valid == 0u ||
-        snapshot->ack_pending == 0u) {
-        return;
-    }
-    ret = anchor_resume_pending_discovery_assignment_ack(false);
-    if (ret < 0) {
-        LOG_ERR("anchor prior TABLE ACK rearm after rollback failed: epoch=%u ret=%d",
-                snapshot->pending_epoch,
-                ret);
-    }
-}
-
 static void anchor_retire_discovery_response_for_terminal_locked(
     uint32_t epoch,
     const char *reason)
@@ -3585,7 +3620,6 @@ static int anchor_apply_discovery_assignment_command(
     }
     if (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
         phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE &&
-        phase != DISCOVERY_ASSIGNMENT_PHASE_END &&
         phase != DISCOVERY_ASSIGNMENT_PHASE_ABORT) {
         return -EINVAL;
     }
@@ -3648,83 +3682,6 @@ static int anchor_apply_discovery_assignment_command(
             epoch,
             abort_identity.claim_session_id,
             abort_identity.claim_command_seq);
-        return 0;
-    }
-    if (phase == DISCOVERY_ASSIGNMENT_PHASE_END) {
-        struct discovery_assignment_end_identity end_identity = {0};
-        struct anchor_discovery_claim_pending pending;
-        bool exact_pending;
-        bool exact_committed;
-
-        ret = discovery_assignment_extract_end_identity(
-            payload, payload_len, &end_identity);
-        if (ret != PROTO_OK || end_identity.epoch != epoch) {
-            return ret == PROTO_OK ? -ESTALE : mesh_errno_from_proto(ret);
-        }
-        if (!anchor_enumeration_rx_matches_table(
-                epoch,
-                end_identity.table_command_seq,
-                &end_identity.table_commitment)) {
-            status_debug_printf(
-                "DBG_ENUM_END_REJECT epoch=%u table_seq=%u reason=inactive-observation\n",
-                epoch,
-                end_identity.table_command_seq);
-            return -ESTALE;
-        }
-        ret = anchor_restore_discovery_assignment_ram(&snapshot);
-        if (ret < 0) {
-            return ret;
-        }
-        exact_pending = snapshot.valid && snapshot.pending_valid != 0u &&
-            snapshot.pending_epoch == epoch &&
-            snapshot.pending_table_command_seq ==
-                end_identity.table_command_seq &&
-            discovery_assignment_table_commitment_equal(
-                &snapshot.pending_table_commitment,
-                &end_identity.table_commitment);
-        exact_committed = snapshot.valid && snapshot.provisioned != 0u &&
-            snapshot.epoch == epoch &&
-            snapshot.table_command_seq == end_identity.table_command_seq &&
-            discovery_assignment_table_commitment_equal(
-                &snapshot.table_commitment,
-                &end_identity.table_commitment);
-        if (!exact_pending && !exact_committed) {
-            status_debug_printf(
-                "DBG_ENUM_END_REJECT epoch=%u table_seq=%u reason=identity\n",
-                epoch,
-                end_identity.table_command_seq);
-            return -ESTALE;
-        }
-        if (exact_pending) {
-            if (!anchor_discovery_pending_from_snapshot(&snapshot,
-                                                        &pending)) {
-                return -ESTALE;
-            }
-            ret = anchor_promote_discovery_assignment_on_end_locked(
-                &pending);
-            if (ret < 0) {
-                return ret;
-            }
-        }
-        if (!anchor_enumeration_rx_finish_table(
-                epoch,
-                end_identity.table_command_seq,
-                &end_identity.table_commitment,
-                "end")) {
-            status_debug_printf(
-                "DBG_ENUM_END_REJECT epoch=%u table_seq=%u reason=inactive-observation\n",
-                epoch,
-                end_identity.table_command_seq);
-            return -ESTALE;
-        }
-        anchor_retire_discovery_response_for_terminal_locked(epoch, "end");
-        app_operation_policy_commit_prepared(&policy_candidate);
-        status_debug_printf(
-            "DBG_ENUM_END_ACCEPT epoch=%u table_seq=%u pending=%u committed=%u\n",
-            epoch,
-            end_identity.table_command_seq,
-            exact_pending ? 1u : 0u,
-            exact_committed ? 1u : 0u);
         return 0;
     }
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
@@ -3876,444 +3833,95 @@ static int anchor_apply_discovery_assignment_command(
          snapshot.gateway_id != GATEWAY_ID)) {
         return -ESTALE;
     }
-    if (anchor_discovery_response_terminal_matches(
-            epoch,
-            DISCOVERY_ASSIGNMENT_PHASE_ACK,
-            packet->session_id,
-            packet->seq,
-            &table_commitment)) {
-        status_debug_printf(
-            "DBG_DISCOVERY_SLOT_RESPONSE_TERMINAL_REPLAY phase=%u epoch=%u generation=%u\n",
-            DISCOVERY_ASSIGNMENT_PHASE_ACK,
-            epoch,
-            packet->session_id);
-        app_operation_policy_commit_prepared(&policy_candidate);
-        return 0;
-    }
-    table_decision = local_anchor_discovery_assignment_preview_table(
-        epoch, packet->session_id, &table_commitment);
-    if ((table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY ||
-         table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) &&
-        snapshot.valid && snapshot.pending_valid != 0u &&
-        snapshot.ack_pending != 0u &&
-        epoch != snapshot.pending_epoch) {
-        enum app_discovery_assignment_claim_decision claim_decision;
-        bool claim_observed =
-            table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY;
-        bool retired_first_assignment =
-            snapshot.provisioned == 0u;
-
-        /*
-         * The authoritative prior pending ACK must be drained before either a
-         * correlated replacement TABLE or a TABLE-before-CLAIM can replace its live
-         * response owner. A queued DELIVERED terminal still promotes; every
-         * other terminal retires the obsolete candidate durably. If a replacement
-         * CLAIM had already been observed, replay that RAM-only fact after
-         * restoring the resulting durable state.
-         */
-        ret = anchor_restore_live_discovery_assignment_snapshot(&snapshot);
-        if (ret != PROTO_OK) {
-            return -ESTALE;
-        }
-        ret = anchor_settle_ack_before_replacement_assignment(epoch);
-        if (ret < 0) {
-            return ret;
-        }
-        ret = anchor_restore_discovery_assignment_ram(&snapshot);
-        if (ret < 0) {
-            return ret;
-        }
-        if ((!snapshot.valid && !retired_first_assignment) ||
-            (snapshot.valid &&
-             (snapshot.local_id != DEVICE_ID ||
-              snapshot.gateway_id != GATEWAY_ID))) {
-            return -ESTALE;
-        }
-        if (claim_observed) {
-            claim_decision =
-                local_anchor_discovery_assignment_note_claim(epoch);
-            if (claim_decision != APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND) {
-                return -ESTALE;
-            }
-        }
-    }
-    /*
-     * Preview again after an older pending ACK was settled. APPLY is kept as
-     * a pure preview until the exact pending record is durable below; the
-     * remaining decisions do not create assignment custody and may update
-     * the live policy immediately.
-     */
-    table_decision = local_anchor_discovery_assignment_preview_table(
-        epoch, packet->session_id, &table_commitment);
-    if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
-        table_decision = local_anchor_discovery_assignment_note_table(
-            epoch, packet->session_id, &table_commitment);
-    }
-    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID) {
-        return -EINVAL;
-    }
-    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE) {
-        status_debug_printf("DBG_DISCOVERY_SLOT_STALE phase=table epoch=%u state=%s\n",
-                            epoch,
-                            app_discovery_assignment_provisioning_state_name(
-                                local_anchor_discovery_assignment_provisioning_state()));
-        LOG_WRN("anchor ignored stale discovery assignment table: epoch=%u",
-                epoch);
-        return 0;
-    }
-    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) {
-        enum app_discovery_assignment_claim_decision claim_decision =
-            local_anchor_discovery_assignment_note_claim(epoch);
-
-        if (claim_decision != APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND) {
-            (void)anchor_restore_live_discovery_assignment_snapshot(
-                &snapshot);
-            anchor_rearm_discovery_ack_after_table_rollback(&snapshot);
-            return -ESTALE;
-        }
-        status_debug_printf("DBG_DISCOVERY_SLOT_LATE_CLAIM epoch=%u state=%s count=%u\n",
-                            epoch,
-                            app_discovery_assignment_provisioning_state_name(
-                                local_anchor_discovery_assignment_provisioning_state()),
-                            (unsigned int)entry_count);
-        LOG_WRN("anchor received discovery table before claim epoch: epoch=%u count=%u; retaining committed assignment and late-claiming",
-                epoch,
-                (unsigned int)entry_count);
-        ret = anchor_enumeration_rx_begin_table(
-            epoch,
-            operation_policy.assignment.operation_budget_ms,
-            packet->session_id,
-            &table_commitment,
-            true);
-        if (ret < 0) {
-            return ret;
-        }
-        ret = anchor_schedule_late_discovery_claim(
-            packet,
-            epoch,
-            (uint8_t)entry_count,
-            operation_policy.assignment.response_spread_ms);
-        if (ret < 0) {
-            (void)anchor_restore_live_discovery_assignment_snapshot(
-                &snapshot);
-            anchor_rearm_discovery_ack_after_table_rollback(&snapshot);
-            return ret;
-        }
-        app_operation_policy_commit_prepared(&policy_candidate);
-        return 0;
-    }
-    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY) {
-        for (size_t i = 0u; i < entry_count; i++) {
-            if (entries[i].anchor_id == DEVICE_ID) {
-                ret = anchor_enumeration_rx_begin_table(
-                    epoch,
-                    operation_policy.assignment.operation_budget_ms,
-                    packet->session_id,
-                    &table_commitment,
-                    false);
-                if (ret < 0) {
-                    return ret;
-                }
-                status_debug_printf("DBG_DISCOVERY_SLOT_TABLE_REPLAY epoch=%u generation=%u slot=%u\n",
-                                    epoch,
-                                    packet->session_id,
-                                    entries[i].slot);
-                app_operation_policy_commit_prepared(&policy_candidate);
-                return 0;
-            }
-        }
-        /*
-         * An exact replay of a persisted unassigned generation has no table
-         * ACK to send, but it still re-establishes the accepted RAM-only
-         * operation profile after a reset.
-         */
-        ret = anchor_enumeration_rx_begin_table(
-            epoch,
-            operation_policy.assignment.operation_budget_ms,
-            packet->session_id,
-            &table_commitment,
-            false);
-        if (ret < 0) {
-            return ret;
-        }
-        app_operation_policy_commit_prepared(&policy_candidate);
-        return 0;
-    }
-
-    if (anchor_discovery_assignment_ram_only_iteration) {
-        ret = app_survey_anchor_note_ram_roster(
-            entries, entry_count, slot_count, epoch, packet->session_id,
-            &table_commitment);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-
-    for (size_t i = 0u; i < entry_count; i++) {
-        if (entries[i].anchor_id != DEVICE_ID) {
-            continue;
-        }
-        {
-            struct app_mesh_discovery_assignment_snapshot original_snapshot =
-                snapshot;
-            bool establishing_order;
-            uint8_t response_lane = 0u;
-            uint8_t response_lane_count = 0u;
-
-            ret = discovery_assignment_response_lane(
-                entries,
-                entry_count,
-                DEVICE_ID,
-                &response_lane,
-                &response_lane_count);
-            if (ret != PROTO_OK) {
-                return mesh_errno_from_proto(ret);
-            }
-
-            if (snapshot.valid &&
-                snapshot.pending_valid != 0u &&
-                snapshot.pending_epoch == epoch &&
-                snapshot.pending_table_command_seq ==
-                    packet->session_id &&
-                discovery_assignment_table_commitment_equal(
-                    &snapshot.pending_table_commitment,
-                    &table_commitment) &&
-                snapshot.pending_slot == entries[i].slot &&
-                snapshot.pending_slot_count == slot_count) {
-                if (snapshot.pending_response_lane != response_lane ||
-                    snapshot.pending_response_lane_count !=
-                        response_lane_count) {
-                    snapshot.pending_response_lane = response_lane;
-                    snapshot.pending_response_lane_count =
-                        response_lane_count;
-                    ret = anchor_save_discovery_assignment_semantic(
-                        &snapshot);
-                    if (ret < 0) {
-                        return ret;
-                    }
-                }
-                ret = anchor_enumeration_rx_begin_table(
-                    epoch,
-                    operation_policy.assignment.operation_budget_ms,
-                    packet->session_id,
-                    &table_commitment,
-                    false);
-                if (ret < 0) {
-                    return ret;
-                }
-                app_operation_policy_commit_prepared(&policy_candidate);
-                status_debug_printf(
-                    "DBG_DISCOVERY_SLOT_TABLE_RETAIN epoch=%u generation=%u slot=%u\n",
-                    epoch,
-                    packet->session_id,
-                    entries[i].slot);
-                return 0;
-            }
-            if (!snapshot.valid) {
-                snapshot.local_id = DEVICE_ID;
-                snapshot.gateway_id = GATEWAY_ID;
-                snapshot.version =
-                    APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION;
-                snapshot.valid = true;
-            }
-            establishing_order = !snapshot.ordered_epoch_valid;
-            if (establishing_order) {
-                snapshot.epoch = 0u;
-                snapshot.table_command_seq = 0u;
-                memset(&snapshot.table_commitment,
-                       0,
-                       sizeof(snapshot.table_commitment));
-                snapshot.slot = 0u;
-                snapshot.slot_count = 0u;
-                snapshot.provisioned = 0u;
-            }
-            snapshot.ordered_epoch_valid = true;
-            snapshot.pending_epoch = epoch;
-            snapshot.pending_table_command_seq = packet->session_id;
-            snapshot.pending_table_commitment = table_commitment;
-            snapshot.table_packet_seq = packet->seq;
-            snapshot.response_spread_ms =
-                operation_policy.assignment.response_spread_ms;
-            snapshot.pending_slot = entries[i].slot;
-            snapshot.pending_slot_count = slot_count;
-            snapshot.pending_response_lane = response_lane;
-            snapshot.pending_response_lane_count = response_lane_count;
-            snapshot.pending_valid = true;
-            snapshot.ack_pending = false;
-            snapshot.ack_retry_round = 0u;
-            if (!local_anchor_discovery_assignment_export_retired_epochs(
-                    snapshot.retired_epochs,
-                    &snapshot.retired_epoch_count)) {
-                (void)anchor_restore_live_discovery_assignment_snapshot(
-                    &original_snapshot);
-                anchor_rearm_discovery_ack_after_table_rollback(
-                    &original_snapshot);
-                return -ESTALE;
-            }
-            if (establishing_order) {
-                memset(snapshot.retired_epochs,
-                       0,
-                       sizeof(snapshot.retired_epochs));
-                snapshot.retired_epoch_count = 0u;
-            }
-            ret = anchor_save_discovery_assignment_semantic(&snapshot);
-            if (ret < 0) {
-                int rollback_ret =
-                    anchor_restore_live_discovery_assignment_snapshot(
-                        &original_snapshot);
-
-                LOG_WRN("anchor pending discovery assignment persistence failed: epoch=%u slot=%u ret=%d",
-                        epoch,
-                        entries[i].slot,
-                        ret);
-                if (rollback_ret != PROTO_OK) {
-                    LOG_ERR("anchor pending assignment live rollback failed: epoch=%u ret=%d",
-                            epoch,
-                            rollback_ret);
-                }
-                anchor_rearm_discovery_ack_after_table_rollback(
-                    &original_snapshot);
-                return ret;
-            }
-            table_decision = local_anchor_discovery_assignment_note_table(
-                epoch, packet->session_id, &table_commitment);
-            if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
-                ret = anchor_restore_live_discovery_assignment_snapshot(
-                    &snapshot);
-                return ret == PROTO_OK ? -ESTALE : -EILSEQ;
-            }
-        }
-        app_operation_policy_commit_prepared(&policy_candidate);
-        ret = anchor_enumeration_rx_begin_table(
-            epoch,
-            operation_policy.assignment.operation_budget_ms,
-            packet->session_id,
-            &table_commitment,
-            true);
-        if (ret < 0) {
-            return ret;
-        }
-        status_debug_printf("DBG_DISCOVERY_SLOT_ASSIGNED state=END_PENDING epoch=%u slot=%u slot_count=%u anchors=%u hash=0x%016llx\n",
-                            epoch,
-                            entries[i].slot,
-                            slot_count,
-                            (unsigned int)entry_count,
-                            (unsigned long long)entries[i].hash);
-        LOG_INF("anchor discovery slot pending END: epoch=%u slot=%u slot_count=%u anchors=%u",
-                epoch,
-                entries[i].slot,
-                slot_count,
-                (unsigned int)entry_count);
-        return 0;
-    }
-
     {
         struct app_mesh_discovery_assignment_snapshot original_snapshot =
             snapshot;
-        bool establishing_order;
+        bool listed = false;
+        uint8_t assigned_slot = 0u;
 
-        if (!snapshot.valid) {
-            snapshot.local_id = DEVICE_ID;
-            snapshot.gateway_id = GATEWAY_ID;
-            snapshot.version =
-                APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION;
-            snapshot.valid = true;
+        table_decision = local_anchor_discovery_assignment_preview_table(
+            epoch, packet->session_id, &table_commitment);
+        if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID) {
+            return -EINVAL;
         }
-        establishing_order = !snapshot.ordered_epoch_valid;
-        if (establishing_order) {
-            snapshot.epoch = 0u;
-            snapshot.table_command_seq = 0u;
-            memset(&snapshot.table_commitment,
-                   0,
-                   sizeof(snapshot.table_commitment));
-            snapshot.slot = 0u;
-            snapshot.slot_count = 0u;
-            snapshot.provisioned = 0u;
-        }
-        snapshot.ordered_epoch_valid = true;
-        snapshot.pending_epoch = epoch;
-        snapshot.pending_table_command_seq = packet->session_id;
-        snapshot.pending_table_commitment = table_commitment;
-        snapshot.table_packet_seq = 0u;
-        snapshot.response_spread_ms = 0u;
-        snapshot.pending_slot = 0u;
-        snapshot.pending_slot_count = slot_count;
-        snapshot.pending_response_lane = 0u;
-        snapshot.pending_response_lane_count = 0u;
-        snapshot.pending_valid = true;
-        snapshot.ack_pending = false;
-        snapshot.ack_retry_round = 0u;
-        if (!local_anchor_discovery_assignment_export_retired_epochs(
-                snapshot.retired_epochs,
-                &snapshot.retired_epoch_count)) {
-            (void)anchor_restore_live_discovery_assignment_snapshot(
-                &original_snapshot);
-            anchor_rearm_discovery_ack_after_table_rollback(
-                &original_snapshot);
+        if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE) {
+            status_debug_printf(
+                "DBG_DISCOVERY_SLOT_STALE phase=table epoch=%u state=%s\n",
+                epoch,
+                app_discovery_assignment_provisioning_state_name(
+                    local_anchor_discovery_assignment_provisioning_state()));
             return -ESTALE;
         }
-        if (establishing_order) {
-            memset(snapshot.retired_epochs,
-                   0,
-                   sizeof(snapshot.retired_epochs));
-            snapshot.retired_epoch_count = 0u;
+        if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM &&
+            local_anchor_discovery_assignment_note_claim(epoch) !=
+                APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND) {
+            return -ESTALE;
         }
-        ret = anchor_save_discovery_assignment_semantic(&snapshot);
-        if (ret < 0) {
-            int rollback_ret =
-                anchor_restore_live_discovery_assignment_snapshot(
-                    &original_snapshot);
-
-            if (rollback_ret != PROTO_OK) {
-                LOG_ERR("anchor unlisted assignment live rollback failed: epoch=%u ret=%d",
-                        epoch,
-                        rollback_ret);
+        for (size_t i = 0u; i < entry_count; i++) {
+            if (entries[i].anchor_id == DEVICE_ID) {
+                listed = true;
+                assigned_slot = entries[i].slot;
+                break;
             }
-            anchor_rearm_discovery_ack_after_table_rollback(
-                &original_snapshot);
-            return ret;
         }
-        table_decision = local_anchor_discovery_assignment_note_table(
-            epoch, packet->session_id, &table_commitment);
-        if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
-            ret = anchor_restore_live_discovery_assignment_snapshot(
-                &snapshot);
-            return ret == PROTO_OK ? -ESTALE : -EILSEQ;
+
+        if (anchor_discovery_assignment_ram_only_iteration) {
+            ret = app_survey_anchor_note_ram_roster(
+                entries, entry_count, slot_count, epoch, packet->session_id,
+                &table_commitment);
+            if (ret < 0) {
+                return ret;
+            }
         }
-    }
-    /*
-     * Absence from an uncommitted replacement table is not proof that the
-     * gateway durably removed this anchor. Retain any committed slot across
-     * reset and late-claim with the operation epoch; a later included TABLE
-     * plus delivered ACK is the only assignment-changing transaction.
-     */
-    app_operation_policy_commit_prepared(&policy_candidate);
-    status_debug_printf("DBG_DISCOVERY_SLOT_UNASSIGNED state=%s epoch=%u count=%u reason=not-listed-retain-committed\n",
-                        app_discovery_assignment_provisioning_state_name(
-                            local_anchor_discovery_assignment_provisioning_state()),
-                        epoch,
-                        (unsigned int)entry_count);
-    LOG_WRN("anchor not listed in uncommitted discovery table; retaining committed assignment and late-claiming: epoch=%u count=%u",
+
+        if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY) {
+            table_decision = local_anchor_discovery_assignment_note_table(
+                epoch, packet->session_id, &table_commitment);
+            if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
+                (void)anchor_restore_live_discovery_assignment_snapshot(
+                    &original_snapshot);
+                return -ESTALE;
+            }
+            ret = anchor_commit_discovery_table_locked(
+                &snapshot,
+                &original_snapshot,
+                epoch,
+                packet->session_id,
+                &table_commitment,
+                listed,
+                assigned_slot,
+                slot_count);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+
+        ret = anchor_enumeration_rx_begin_table(
             epoch,
-            (unsigned int)entry_count);
-    ret = anchor_enumeration_rx_begin_table(
-        epoch,
-        operation_policy.assignment.operation_budget_ms,
-        packet->session_id,
-        &table_commitment,
-        true);
-    if (ret < 0) {
-        return ret;
+            operation_policy.assignment.operation_budget_ms,
+            packet->session_id,
+            &table_commitment,
+            table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
+        if (ret < 0 || !anchor_enumeration_rx_finish_table(
+                epoch,
+                packet->session_id,
+                &table_commitment,
+                "table-committed")) {
+            return ret < 0 ? ret : -ESTALE;
+        }
+        anchor_retire_discovery_response_for_terminal_locked(
+            epoch, "table-committed");
+        app_operation_policy_commit_prepared(&policy_candidate);
+        status_debug_printf(
+            "DBG_DISCOVERY_SLOT_TABLE_ACCEPT epoch=%u table_seq=%u listed=%u slot=%u anchors=%u replay=%u\n",
+            epoch,
+            packet->session_id,
+            listed ? 1u : 0u,
+            listed ? assigned_slot : 0u,
+            (unsigned int)entry_count,
+            table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY ? 1u : 0u);
+        return 0;
     }
-    ret = anchor_schedule_late_discovery_claim(
-        packet,
-        epoch,
-        (uint8_t)entry_count,
-        operation_policy.assignment.response_spread_ms);
-    if (ret < 0) {
-        return ret;
-    }
-    return 0;
 }
 
 static int anchor_apply_discovery_assignment_command_serialized(

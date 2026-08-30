@@ -100,6 +100,17 @@ extern "C" {
      MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
      MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS + \
      MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS)
+/* CLAIM follows the enumeration Here-I-Am as a pipelined wave. Its first
+ * downstream copy waits for one complete Here-I-Am hop; the full bound also
+ * contains CLAIM's diversified first-copy delay and remaining copy burst. */
+#define MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS \
+    MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
+#define MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS \
+    (MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS + \
+     MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS + \
+     (MESH_ENUMERATION_RELAY_COPY_COUNT * \
+      OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
+     MESH_ENUMERATION_RELAY_COPY_TAIL_MS)
 #define MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN \
     (MESH_GATEWAY_ROUTE_ADV_FIXED_TLV_BYTES + \
      PROTO_TLV_U64_ENCODED_LEN)
@@ -290,7 +301,7 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
     /* An exact next-hop ACK transferred an eligible gateway-bound packet
      * into the parent's RAM custody. The source may retire its Channel-9
-     * exchange; TABLE END or ABORT still decides a provisional assignment. */
+     * exchange. The authoritative TABLE now commits enumeration directly. */
     MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED = 1u << 4,
     MESH_RELAY_ACTION_DROP = 1u << 6,
     /* The original gateway ACK was authenticated. The immutable source packet
