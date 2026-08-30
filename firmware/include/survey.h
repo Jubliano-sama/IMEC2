@@ -14,11 +14,15 @@
 extern "C" {
 #endif
 
-#define SURVEY_PROTOCOL_VERSION 1u
+#define SURVEY_PROTOCOL_VERSION 2u
 #define SURVEY_MAX_ANCHORS MESH_CONNECTED_MAX_ANCHORS
-#define SURVEY_MAX_DEGREE 4u
-#define SURVEY_MAX_PAIRS \
-    ((SURVEY_MAX_ANCHORS * SURVEY_MAX_DEGREE) / 2u)
+#define SURVEY_MAX_DEGREE (SURVEY_MAX_ANCHORS - 1u)
+/* Firmware owns one bounded batch; the GUI owns the remaining pair queue. */
+#define SURVEY_MAX_PAIRS 100u
+#define SURVEY_MAX_TOTAL_PAIRS \
+    ((SURVEY_MAX_ANCHORS * (SURVEY_MAX_ANCHORS - 1u)) / 2u)
+#define SURVEY_MAX_BATCHES \
+    ((SURVEY_MAX_TOTAL_PAIRS + SURVEY_MAX_PAIRS - 1u) / SURVEY_MAX_PAIRS)
 #define SURVEY_NEIGHBOR_BITMAP_BYTES \
     ((SURVEY_MAX_ANCHORS + 7u) / 8u)
 #define SURVEY_NEIGHBOR_RECORD_WIRE_LEN \
@@ -26,12 +30,15 @@ extern "C" {
 #define SURVEY_PAIR_REQUEST_WIRE_LEN 2u
 #define SURVEY_PLAN_PAIR_WIRE_LEN 3u
 #define SURVEY_RANGE_RESULT_WIRE_LEN 8u
+#define SURVEY_SIGNAL_RECORD_WIRE_LEN 8u
+#define SURVEY_SIGNAL_LEVELS_PER_RECORD 14u
+#define SURVEY_MAX_SIGNAL_RECORDS 112u
 #define SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN \
     (sizeof(uint32_t) + sizeof(uint32_t) + \
      sizeof(struct discovery_assignment_table_commitment) + 2u)
 #define SURVEY_PLAN_HEADER_WIRE_LEN \
     (1u + sizeof(uint32_t) + SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN + \
-     sizeof(uint32_t) + sizeof(uint32_t) + 2u + \
+     sizeof(uint32_t) + sizeof(uint32_t) + 4u + \
      SEMANTIC_DIGEST_SHA256_LEN)
 #define SURVEY_PLAN_MAX_WIRE_LEN \
     (SURVEY_PLAN_HEADER_WIRE_LEN + \
@@ -166,12 +173,18 @@ struct survey_range_result {
     uint8_t reserved;
 };
 
+struct survey_signal_record {
+    uint8_t bytes[SURVEY_SIGNAL_RECORD_WIRE_LEN];
+};
+
 struct survey_plan {
     struct survey_identity identity;
     uint32_t execution_start_delay_ms;
     uint32_t self_stop_delay_ms;
     uint8_t pair_count;
     uint8_t wave_count;
+    uint8_t batch_index;
+    bool final_batch;
     struct survey_plan_pair pairs[SURVEY_MAX_PAIRS];
     uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN];
 };
@@ -230,6 +243,8 @@ int survey_build_plan(const struct survey_identity *identity,
                       const struct survey_pair_request *requests,
                       size_t request_count,
                       uint32_t execution_start_delay_ms,
+                      uint8_t batch_index,
+                      bool final_batch,
                       struct survey_plan_build_result *result);
 bool survey_plan_commitment(const struct survey_plan *plan,
                             uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN]);
@@ -262,6 +277,19 @@ size_t survey_range_result_encode(
 int survey_range_result_decode(const uint8_t *data,
                                size_t data_len,
                                struct survey_range_result *result);
+uint8_t survey_rsl_quantize_dbm(int8_t rsl_dbm);
+int8_t survey_rsl_level_dbm(uint8_t level);
+uint8_t survey_signal_record_count_for_slot(uint8_t owner_slot);
+size_t survey_signal_record_encode(
+    uint8_t owner_slot,
+    uint8_t chunk_index,
+    const uint8_t levels[SURVEY_MAX_ANCHORS],
+    struct survey_signal_record *record);
+int survey_signal_record_decode(
+    const struct survey_signal_record *record,
+    uint8_t *owner_slot,
+    uint8_t *base_slot,
+    uint8_t levels[SURVEY_SIGNAL_LEVELS_PER_RECORD]);
 size_t survey_plan_encode(const struct survey_plan *plan,
                           uint8_t *out,
                           size_t out_cap);

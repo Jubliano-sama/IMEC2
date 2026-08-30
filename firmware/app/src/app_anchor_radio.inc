@@ -3039,12 +3039,14 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool compact_enumeration_window = false;
     bool local_protocol_response_active = false;
     bool protocol_owned_work_due = false;
+    bool survey_radio_work_pending = false;
     bool protocol_flood_pending = false;
     bool post_ch9_recovery_scan = false;
     bool ch9_receive_prepare_pending = false;
     uint32_t ch9_retry_ms = 0u;
     uint32_t ch9_receive_prepare_delay_ms = 0u;
     uint32_t compact_lane_start_wait_ms = 0u;
+    uint32_t survey_radio_work_wait_ms = 0u;
     uint32_t relay_tx_retry_ms = 0u;
     uint32_t scan_rx_ms = ANCHOR_UWB_SCAN_RX_MS;
     uint32_t mesh_rx_queue_depth = 0u;
@@ -3286,6 +3288,17 @@ protocol_rx_window:
         survey_continuous_rx = app_survey_anchor_rx_continuous();
         protocol_continuous_rx = enumeration_continuous_rx ||
                                  survey_continuous_rx;
+        survey_radio_work_pending = survey_continuous_rx &&
+            app_survey_anchor_radio_work_pending(
+                (uint64_t)k_uptime_get(), &survey_radio_work_wait_ms);
+        if (survey_radio_work_pending) {
+            if (survey_radio_work_wait_ms == 0u) {
+                goto scan_complete;
+            }
+            if (scan_rx_ms > survey_radio_work_wait_ms) {
+                scan_rx_ms = survey_radio_work_wait_ms;
+            }
+        }
         if (enumeration_continuous_rx) {
             uint64_t enumeration_now_ms = (uint64_t)k_uptime_get();
 
@@ -3352,8 +3365,14 @@ protocol_rx_window:
                 mesh_report_next_channel9_activity_prepare_delay_ms(
                     k_uptime_get_32(), &receive_prepare_delay_ms) &&
                 receive_prepare_delay_ms <= scan_reserve_ms;
+            bool survey_radio_work_due = survey_continuous_rx &&
+                app_survey_anchor_radio_work_pending(
+                    (uint64_t)k_uptime_get(),
+                    &survey_radio_work_wait_ms) &&
+                survey_radio_work_wait_ms == 0u;
 
             protocol_owned_work_due =
+                survey_radio_work_due ||
                 mesh_relay_tx_active(&mesh_runtime) ||
                 mesh_c5_protocol_flood_work_pending() ||
                 mesh_rx_pending_count() > 0u ||

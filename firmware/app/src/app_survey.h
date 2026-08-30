@@ -15,7 +15,11 @@
 
 struct app_survey_ops {
     int (*send_control)(const struct survey_control *control,
-                        uint64_t *origin_ms);
+                        uint32_t *delivery_handle);
+    int (*control_origin)(uint32_t delivery_handle,
+                          uint64_t *origin_ms);
+    int (*control_detach)(uint32_t delivery_handle);
+    int (*control_abandon)(uint32_t delivery_handle);
     int (*emit_event)(const struct survey_event *event);
     void (*wake_gateway_rx)(void);
     void (*gateway_terminal)(void);
@@ -66,6 +70,8 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
                                     const struct survey_control *control);
 bool app_survey_anchor_active(void);
 bool app_survey_anchor_rx_continuous(void);
+bool app_survey_anchor_radio_work_pending(uint64_t now_ms,
+                                          uint32_t *wait_ms_out);
 enum protocol_rx_recovery_result app_survey_anchor_rx_note_recovery(
     bool recovered);
 

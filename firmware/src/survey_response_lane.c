@@ -4,10 +4,10 @@
 
 #include <string.h>
 
-_Static_assert(SURVEY_RESPONSE_MAX_BUNDLES == 5u,
-               "one compact lane must carry all one hundred pair results");
-_Static_assert(sizeof(struct survey_response_lane) <= 896u,
-               "survey response custody must remain below 896 bytes");
+_Static_assert(SURVEY_RESPONSE_MAX_BUNDLES == 9u,
+               "one lane must carry reachability plus compact signal records");
+_Static_assert(sizeof(struct survey_response_lane) <= 1408u,
+               "survey response custody must remain below 1408 bytes");
 
 static bool kind_valid(enum survey_response_kind kind)
 {
@@ -18,7 +18,7 @@ static bool kind_valid(enum survey_response_kind kind)
 static uint8_t max_records_for_kind(enum survey_response_kind kind)
 {
     return kind == SURVEY_RESPONSE_NEIGHBORS ?
-        SURVEY_MAX_ANCHORS : SURVEY_RESPONSE_MAX_RECORDS;
+        SURVEY_RESPONSE_MAX_RECORDS : SURVEY_MAX_PAIRS;
 }
 
 static uint8_t bundle_count_for_records(uint8_t record_count)
@@ -48,10 +48,19 @@ static bool record_valid(enum survey_response_kind kind,
     }
     if (kind == SURVEY_RESPONSE_NEIGHBORS) {
         struct survey_neighbor_report decoded;
+        struct survey_signal_record signal;
+        uint8_t owner;
+        uint8_t base;
+        uint8_t levels[SURVEY_SIGNAL_LEVELS_PER_RECORD];
 
-        return survey_neighbor_report_decode(record->bytes,
-                                             sizeof(record->bytes),
-                                             &decoded) == PROTO_OK;
+        if (record->bytes[0] < SURVEY_MAX_ANCHORS) {
+            return survey_neighbor_report_decode(record->bytes,
+                                                 sizeof(record->bytes),
+                                                 &decoded) == PROTO_OK;
+        }
+        memcpy(signal.bytes, record->bytes, sizeof(signal.bytes));
+        return survey_signal_record_decode(&signal, &owner, &base, levels) ==
+               PROTO_OK;
     }
     if (kind == SURVEY_RESPONSE_RANGES) {
         struct survey_range_result decoded;

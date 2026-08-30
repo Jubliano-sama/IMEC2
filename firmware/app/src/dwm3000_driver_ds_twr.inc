@@ -597,6 +597,45 @@ static int responder_poll_once(uint64_t local_anchor_id,
                             timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms);
     }
 
+    /*
+     * Stage every invariant RESPONSE byte before opening the POLL RX window.
+     * The reply edge is fixed relative to the received POLL, so after POLL
+     * acceptance the responder may only patch the two timestamps before the
+     * delayed-TX command.  This mirrors the initiator's prepared FINAL path
+     * and keeps both equal reply intervals free of full-frame SPI writes.
+     */
+    response.header.type = MSG_UWB_RESP;
+    response.header.seq = expected->seq;
+    response.header.round_index = expected->round_index;
+    response.header.network_id = expected->network_id;
+    response.header.session_id = expected->session_id;
+    response.header.session_nonce = expected->session_nonce;
+    response.header.initiator_short_addr =
+        short_addr_from_id(expected->initiator_id);
+    response.header.responder_short_addr = short_addr_from_id(local_anchor_id);
+    response.header.flags = expected->flags;
+    response.header.initiator_id = expected->initiator_id;
+    response.header.responder_id = local_anchor_id;
+    response.poll_rx_ts_32 = 0u;
+    response.resp_tx_ts_32 = 0u;
+    ret = uwb_encode_response(&response, tx_buffer, sizeof(tx_buffer), &tx_len);
+    if (ret != PROTO_OK) {
+        if (result != NULL) {
+            result->status = RANGE_INTERNAL_ERROR;
+        }
+        return -EINVAL;
+    }
+    ret = write_tx_frame(tx_buffer, tx_len);
+    if (ret == 0) {
+        ret = take_port_error("response-prestage");
+    }
+    if (ret < 0) {
+        if (result != NULL) {
+            result->status = RANGE_INTERNAL_ERROR;
+        }
+        return ret;
+    }
+
     dwt_setpreambledetecttimeout(0u);
     dwt_setrxtimeout(0u);
     clear_all_events();
@@ -722,17 +761,6 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                                      reply_delay_uus);
     resp_tx_ts = delayed_tx_timestamp_from_programmed_time(resp_tx_time);
 
-    response.header.type = MSG_UWB_RESP;
-    response.header.seq = poll.header.seq;
-    response.header.round_index = poll.header.round_index;
-    response.header.network_id = poll.header.network_id;
-    response.header.session_id = poll.header.session_id;
-    response.header.session_nonce = poll.header.session_nonce;
-    response.header.initiator_short_addr = poll.header.initiator_short_addr;
-    response.header.responder_short_addr = short_addr_from_id(local_anchor_id);
-    response.header.flags = poll.header.flags;
-    response.header.initiator_id = poll.header.initiator_id;
-    response.header.responder_id = local_anchor_id;
     response.poll_rx_ts_32 = (uint32_t)poll_rx_ts;
     response.resp_tx_ts_32 = (uint32_t)resp_tx_ts;
 
@@ -743,14 +771,23 @@ static int responder_poll_once(uint64_t local_anchor_id,
         }
         return -EINVAL;
     }
+    ret = patch_tx_frame(&tx_buffer[UWB_HEADER_LEN],
+                         2u * sizeof(uint32_t),
+                         UWB_HEADER_LEN);
+    if (ret < 0) {
+        if (result != NULL) {
+            result->status = RANGE_INTERNAL_ERROR;
+        }
+        return ret;
+    }
 
     dwt_setrxaftertxdelay(ds_twr_rx_after_tx_delay_uus(reply_delay_uus));
     dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
     dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
     dwt_setdelayedtrxtime(resp_tx_time);
-    ret = send_range_frame(tx_buffer, tx_len,
-                           DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+    ret = start_prepared_range_frame(
+        tx_len, DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
     if (ret < 0) {
         if (result != NULL) {
             result->status = RANGE_DELAYED_TX_MISSED;

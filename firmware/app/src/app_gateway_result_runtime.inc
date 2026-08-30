@@ -690,6 +690,70 @@ void gateway_command_result_tracking_resume(void)
 }
 #endif
 
+static bool gateway_survey_event_envelope_valid(const uint8_t *payload,
+                                                size_t payload_len,
+                                                uint32_t *generation)
+{
+    uint8_t kind;
+    size_t expected;
+
+    if (payload == NULL || generation == NULL || payload_len < 8u ||
+        payload[0] != SURVEY_PROTOCOL_VERSION ||
+        payload[2] > SURVEY_TERMINAL_BUSY) {
+        return false;
+    }
+    kind = payload[1];
+    *generation = proto_get_u32_le(&payload[4]);
+    if (*generation == 0u) {
+        return false;
+    }
+    if (kind == SURVEY_EVENT_SIGNALS) {
+        if (payload_len < SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN ||
+            payload[3] == 0u || payload[3] > SURVEY_MAX_SIGNAL_RECORDS) {
+            return false;
+        }
+        expected = SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN +
+            (size_t)payload[3] * SURVEY_SIGNAL_RECORD_WIRE_LEN;
+        return payload_len == expected;
+    }
+    if (payload_len < SURVEY_EVENT_HEADER_WIRE_LEN ||
+        kind < SURVEY_EVENT_NEIGHBOR_GRAPH ||
+        kind > SURVEY_EVENT_BATCH_COMPLETE) {
+        return false;
+    }
+    if (kind != SURVEY_EVENT_NEIGHBOR_GRAPH &&
+        (payload[3] >= SURVEY_MAX_BATCHES || payload[64] > 1u)) {
+        return false;
+    }
+    switch (kind) {
+    case SURVEY_EVENT_NEIGHBOR_GRAPH:
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN +
+            (size_t)payload[3] * SURVEY_NEIGHBOR_RECORD_WIRE_LEN;
+        break;
+    case SURVEY_EVENT_PLAN_ACCEPTED:
+        if (payload[11] > SURVEY_MAX_PAIRS ||
+            payload[13] > SURVEY_MAX_PAIRS) {
+            return false;
+        }
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN +
+            (size_t)payload[11] * SURVEY_PLAN_PAIR_WIRE_LEN +
+            (size_t)payload[13] * SURVEY_EVENT_SKIP_WIRE_LEN;
+        break;
+    case SURVEY_EVENT_RANGE_PROGRESS:
+    case SURVEY_EVENT_TERMINAL:
+    case SURVEY_EVENT_BATCH_COMPLETE:
+        if (payload[10] > SURVEY_MAX_PAIRS) {
+            return false;
+        }
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN +
+            (size_t)payload[10] * SURVEY_RANGE_RESULT_WIRE_LEN;
+        break;
+    default:
+        return false;
+    }
+    return payload_len == expected;
+}
+
 int gateway_ble_stream_packet(const struct proto_packet *packet,
                               const uint8_t *payload,
                               size_t payload_len,
@@ -740,14 +804,14 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
             return -EBADMSG;
         }
     } else if (packet != NULL && packet->msg_type == MSG_SURVEY_EVENT) {
-        struct survey_event event;
+        uint32_t generation = 0u;
 
         if (packet->flags == FLAG_GATEWAY_ACK_REQUIRED &&
             payload != NULL && packet->src_id != 0u &&
             packet->src_id == packet->dst_id && packet->seq != 0u &&
-            survey_event_decode(payload, payload_len, &event) == PROTO_OK &&
-            event.identity.generation != 0u &&
-            packet->session_id == event.identity.generation) {
+            gateway_survey_event_envelope_valid(payload, payload_len,
+                                                &generation) &&
+            packet->session_id == generation) {
             retain_until_sent = true;
         } else {
             return -EBADMSG;

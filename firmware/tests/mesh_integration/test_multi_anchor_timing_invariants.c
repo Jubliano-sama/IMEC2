@@ -511,7 +511,6 @@ static void test_depth_aware_survey_control_schedule(void)
         uint32_t schedule_ms =
             survey_control_delivery_delay_ms(hop_count);
         uint32_t required_ms =
-            NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS +
             DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
             (uint32_t)hop_count *
                 DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
@@ -519,7 +518,7 @@ static void test_depth_aware_survey_control_schedule(void)
         CHECK(schedule_ms == required_ms +
                                  DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS +
                                  SURVEY_RADIO_GUARD_MS,
-              "survey schedule lost its queue, propagation, or guard bound");
+              "survey schedule lost its RF-origin propagation or guard bound");
         CHECK(schedule_ms > required_ms,
               "survey schedule must retain explicit post-delivery margin");
         if (previous_ms != 0u) {

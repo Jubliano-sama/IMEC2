@@ -158,6 +158,38 @@ assert "RANGE_RX_ERROR" in responder[poll_failure:poll_timeout_return], (
     "a non-timeout pre-POLL receive failure must be reported as an RX error"
 )
 
+response_prestage = responder.index("ret = uwb_encode_response(")
+response_write = responder.index("ret = write_tx_frame(", response_prestage)
+response_receive = responder.index("ret = receive_frame(", response_write)
+response_reencode = responder.index(
+    "ret = uwb_encode_response(", response_receive
+)
+response_patch = responder.index("ret = patch_tx_frame(", response_reencode)
+response_delayed_time = responder.index(
+    "dwt_setdelayedtrxtime(resp_tx_time)", response_patch
+)
+response_start = responder.index(
+    "ret = start_prepared_range_frame(", response_delayed_time
+)
+assert (
+    response_prestage
+    < response_write
+    < response_receive
+    < response_reencode
+    < response_patch
+    < response_delayed_time
+    < response_start
+), (
+    "the responder must stage its invariant RESPONSE before POLL RX, then "
+    "patch only timestamps before the delayed-TX command"
+)
+assert "2u * sizeof(uint32_t)" in responder[
+    response_patch:response_delayed_time
+], "the prepared RESPONSE path must patch exactly its two timestamp fields"
+assert "send_range_frame(tx_buffer, tx_len" not in responder[
+    response_receive:response_start
+], "the post-POLL deadline must not contain a full RESPONSE frame write"
+
 fatal_mask_start = DRIVER.index("#define DWM3000_SYS_STATUS_HI_FATAL_MASK")
 fatal_mask_end = DRIVER.index("#define RX_TERMINAL_STATUS_MASK", fatal_mask_start)
 fatal_mask = DRIVER[fatal_mask_start:fatal_mask_end]

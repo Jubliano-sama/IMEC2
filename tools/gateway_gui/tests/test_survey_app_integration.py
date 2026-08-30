@@ -100,7 +100,7 @@ def result_packet(
 def neighbor_packet() -> Packet:
     assignment = SurveyAssignmentIdentity(71, 81, bytes((0x5A,)) * 32, 3, 3)
     payload = bytearray(SURVEY_EVENT_HEADER_WIRE_LEN)
-    payload[0] = 1
+    payload[0] = 2
     payload[1] = 1
     payload[2] = 1
     payload[3] = 3
@@ -131,7 +131,7 @@ def neighbor_packet() -> Packet:
 def plan_packet() -> Packet:
     assignment = SurveyAssignmentIdentity(71, 81, bytes((0x5A,)) * 32, 3, 3)
     payload = bytearray(SURVEY_EVENT_HEADER_WIRE_LEN)
-    payload[0] = 1
+    payload[0] = 2
     payload[1] = 2
     payload[2] = 1
     payload[4:8] = (9).to_bytes(4, "little")
@@ -168,6 +168,7 @@ def gui_model() -> GatewayGui:
     gui._survey_chain_pending = False
     gui._survey_phase = "neighbors"
     gui.status_text = FakeVariable()  # type: ignore[assignment]
+    gui.survey_max_degree_text = FakeVariable("4")  # type: ignore[assignment]
     gui._dispatch_gateway_command = Mock()  # type: ignore[method-assign]
     gui._refresh_survey_view = Mock()  # type: ignore[method-assign]
     gui._update_command_state = Mock()  # type: ignore[method-assign]

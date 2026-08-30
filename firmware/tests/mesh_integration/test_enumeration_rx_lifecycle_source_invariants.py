@@ -78,6 +78,129 @@ def braced_block(source: str, start: int) -> str:
 
 
 class EnumerationRxLifecycleSourceTests(unittest.TestCase):
+    def test_gateway_survey_terminal_waits_for_cleanup_ownership(self) -> None:
+        cleanup = function_body(APP_SURVEY, "gateway_begin_cleanup_locked")
+        due = function_body(
+            APP_SURVEY, "gateway_cleanup_event_if_due_locked"
+        )
+        work = function_body(APP_SURVEY, "gateway_work_handler")
+
+        self.assertIn(
+            "gateway_state.stage = APP_SURVEY_GATEWAY_CLEANUP", cleanup
+        )
+        release = cleanup.index(
+            "gateway_state.cleanup_deadline_ms = gateway_state.self_stop_ms"
+        )
+        schedule = cleanup.index(
+            "gateway_work_reschedule(gateway_state.cleanup_deadline_ms)",
+            release,
+        )
+        self.assertLess(release, schedule)
+
+        stage = due.index(
+            "gateway_state.stage != APP_SURVEY_GATEWAY_CLEANUP"
+        )
+        deadline = due.index(
+            "now_ms < gateway_state.cleanup_deadline_ms", stage
+        )
+        reject = due.index("return false", deadline)
+        event = due.index("*event = gateway_state.last_event", reject)
+        self.assertLess(stage, deadline)
+        self.assertLess(deadline, reject)
+        self.assertLess(reject, event)
+
+        due_call = "gateway_cleanup_event_if_due_locked(now_ms, &event)"
+        self.assertEqual(work.count(f"terminal = {due_call}"), 2)
+        self.assertEqual(work.count("gateway_terminal_publish(&event)"), 2)
+        for match in re.finditer(r"gateway_terminal_publish\(&event\)", work):
+            gate = work.rfind(f"terminal = {due_call}", 0, match.start())
+            self.assertGreaterEqual(gate, 0)
+            guarded = work[gate:match.start()]
+            self.assertIn("if (terminal)", guarded)
+
+    def test_wait_plan_and_final_stride_enter_cleanup(self) -> None:
+        work = function_body(APP_SURVEY, "gateway_work_handler")
+        wait_start = work.index(
+            "gateway_state.stage == APP_SURVEY_GATEWAY_WAIT_PLAN"
+        )
+        execute_start = work.index(
+            "gateway_state.stage == APP_SURVEY_GATEWAY_EXECUTING",
+            wait_start,
+        )
+        wait_plan = work[wait_start:execute_start]
+
+        abort_phase = wait_plan.index(
+            "abort_control.phase = SURVEY_PHASE_ABORT"
+        )
+        cleanup = wait_plan.index("gateway_begin_cleanup_locked(", abort_phase)
+        queue = wait_plan.index("queue_abort = true", cleanup)
+        self.assertLess(abort_phase, cleanup)
+        self.assertLess(cleanup, queue)
+        self.assertNotIn("terminal = true", wait_plan)
+
+        queue_start = work.index("if (queue_abort)", execute_start)
+        queue_end = work.index("if (publish", queue_start)
+        queued_abort = work[queue_start:queue_end]
+        send = queued_abort.index(
+            "ops.send_control(&abort_control, &abort_handle)"
+        )
+        self.assertGreaterEqual(send, 0)
+        self.assertIn("ops.control_detach(abort_handle)", queued_abort[send:])
+        self.assertNotIn("gateway_terminal_publish", queued_abort)
+        self.assertNotIn("cleanup_deadline_ms = abort_handle", queued_abort)
+
+        execute_end = work.index("if (queue_abort)", execute_start)
+        executing = work[execute_start:execute_end]
+        final_stride = executing.index(
+            "gateway_state.stride_index >= total_strides"
+        )
+        progress = executing.index(
+            "SURVEY_EVENT_TERMINAL", final_stride
+        )
+        cleanup = executing.index("gateway_begin_cleanup_locked(", progress)
+        self.assertLess(final_stride, progress)
+        self.assertLess(progress, cleanup)
+        self.assertNotIn("terminal = true", executing[final_stride:])
+
+    def test_explicit_abort_retains_active_owner_until_cleanup(self) -> None:
+        abort = function_body(APP_SURVEY, "app_survey_gateway_abort")
+
+        begin = abort.index("gateway_begin_cleanup_locked(&event)")
+        send = abort.index("ops.send_control(&control, &abort_handle)", begin)
+        self.assertLess(begin, send)
+        self.assertIn("ops.control_detach(abort_handle)", abort[send:])
+        self.assertNotIn("gateway_begin_cleanup_locked(", abort[send:])
+        for premature_release in (
+            "gateway_state.active = false",
+            "gateway_terminal_publish(",
+            "ops.gateway_terminal",
+            "ops.emit_event",
+        ):
+            self.assertNotIn(premature_release, abort)
+
+    def test_active_survey_gates_ordinary_host_commands(self) -> None:
+        route = function_body(GATEWAY_CONTROL, "gateway_route_host_packet")
+
+        extract = route.index(
+            "gateway_command_extract_id(payload, payload_len, &command_id)"
+        )
+        active = route.index("app_survey_gateway_active()", extract)
+        busy = route.index("return -EBUSY", active)
+        ordinary_dispatch = route.index(
+            "command_id == CMD_FORCE_REDISCOVERY", busy
+        )
+        self.assertLess(extract, active)
+        self.assertLess(active, busy)
+        self.assertLess(busy, ordinary_dispatch)
+        survey_gate = route[active:busy]
+        for allowed in (
+            "CMD_SURVEY_START",
+            "CMD_SURVEY_PLAN",
+            "CMD_SURVEY_CANCEL",
+            "CMD_SURVEY_GET_STATUS",
+        ):
+            self.assertIn(f"command_id != {allowed}", survey_gate)
+
     def test_retryable_local_survey_commands_leave_result_to_worker(self) -> None:
         for function_name in (
             "gateway_start_survey",
@@ -132,6 +255,9 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         gateway = function_body(
             GATEWAY_CONTROL, "gateway_survey_send_control"
+        )
+        origin = function_body(
+            GATEWAY_CONTROL, "gateway_survey_control_origin"
         )
         schedule = function_body(SURVEY, "survey_control_delivery_delay_ms")
 
@@ -225,7 +351,17 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             gateway,
         )
         self.assertIn("NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD", gateway)
-        self.assertIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", schedule)
+        self.assertNotIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", schedule)
+        self.assertIn(
+            "app_node_comm_delivery_first_rf_started_at", origin
+        )
+        self.assertNotIn("k_sleep", gateway)
+        self.assertNotIn("while (", gateway)
+        self.assertIn("*delivery_handle = handle", gateway)
+        self.assertIn("APP_SURVEY_GATEWAY_WAIT_START_RF", APP_SURVEY)
+        self.assertIn("APP_SURVEY_GATEWAY_WAIT_PLAN_RF", APP_SURVEY)
+        self.assertIn("survey_ops.control_origin", APP_SURVEY)
+        self.assertIn("outbound.queued_at_valid = false", gateway)
         self.assertNotIn("SURVEY_CONTROL_ACTIVATION_BUDGET_MS", schedule)
         self.assertIn("SURVEY_CONTROL_PER_HOP_BUDGET_MS", schedule)
         self.assertIn("SURVEY_CONTROL_REDUNDANCY_MS", schedule)
@@ -277,6 +413,20 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5", continuous)
         self.assertIn("protocol_rx_lifecycle_note_rx_recovery(", recovery)
         self.assertIn("PROTOCOL_RX_RECOVERY_TERMINATED", recovery)
+
+    def test_survey_listener_yields_same_queue_at_radio_prepare_edge(self) -> None:
+        pending = function_body(
+            APP_SURVEY, "app_survey_anchor_radio_work_pending"
+        )
+        scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
+
+        self.assertIn("APP_SURVEY_ANCHOR_ACTION_NEIGHBORS", pending)
+        self.assertIn("APP_SURVEY_ANCHOR_ACTION_EXECUTE", pending)
+        self.assertIn("APP_SURVEY_ANCHOR_PREPARE_MS", pending)
+        self.assertIn("app_survey_anchor_radio_work_pending(", scan)
+        self.assertIn("scan_rx_ms = survey_radio_work_wait_ms", scan)
+        self.assertIn("survey_radio_work_wait_ms == 0u", scan)
+        self.assertIn("survey_radio_work_due ||", scan)
 
     def test_relayed_claim_cannot_replace_here_i_am_gateway_parent(self) -> None:
         apply = function_body(

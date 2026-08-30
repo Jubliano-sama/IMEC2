@@ -204,15 +204,23 @@ TLV_SURVEY_RESULTS = 0xC8
 TLV_SURVEY_STATUS = 0xC9
 TLV_SURVEY_PARTIAL_REASONS = 0xCA
 TLV_SURVEY_SKIPPED_PLAN = 0xCB
+TLV_SURVEY_BATCH = 0xCC
 
-SURVEY_PROTOCOL_VERSION = 1
+SURVEY_PROTOCOL_VERSION = 2
 SURVEY_MAX_ANCHORS = 50
-SURVEY_MAX_DEGREE = 4
+SURVEY_MAX_DEGREE = 49
+SURVEY_DEFAULT_DEGREE = 4
 SURVEY_MAX_PAIRS = 100
+SURVEY_MAX_TOTAL_PAIRS = 1225
+SURVEY_MAX_BATCHES = 13
 SURVEY_NEIGHBOR_BITMAP_BYTES = 7
 SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN = 42
 SURVEY_EVENT_HEADER_WIRE_LEN = 72
+SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN = 50
 SURVEY_NEIGHBOR_RECORD_WIRE_LEN = 8
+SURVEY_SIGNAL_RECORD_WIRE_LEN = 8
+SURVEY_SIGNAL_LEVELS_PER_RECORD = 14
+SURVEY_MAX_SIGNAL_RECORDS = 112
 SURVEY_PLAN_PAIR_WIRE_LEN = 3
 SURVEY_RANGE_RESULT_WIRE_LEN = 8
 SURVEY_NO_MEDIAN_MM = -(1 << 31)
@@ -221,6 +229,8 @@ SURVEY_EVENT_NEIGHBOR_GRAPH = 1
 SURVEY_EVENT_PLAN_ACCEPTED = 2
 SURVEY_EVENT_RANGE_PROGRESS = 3
 SURVEY_EVENT_TERMINAL = 4
+SURVEY_EVENT_BATCH_COMPLETE = 5
+SURVEY_EVENT_SIGNALS = 6
 
 SURVEY_TERMINAL_COMPLETE = 0
 SURVEY_TERMINAL_PARTIAL = 1
@@ -635,6 +645,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
         "SURVEY_PARTIAL_REASONS", _scalar(2)
     ),
     TLV_SURVEY_SKIPPED_PLAN: TlvSpec("SURVEY_SKIPPED_PLAN"),
+    TLV_SURVEY_BATCH: TlvSpec("SURVEY_BATCH", _exact_bytes(2)),
 }
 
 # Keep every currently assigned protocol TLV named even where the GUI does not
@@ -961,6 +972,14 @@ class SurveyRangeResult:
 
 
 @dataclass(frozen=True)
+class SurveySignalMeasurement:
+    observer_slot: int
+    target_slot: int
+    level: int
+    rsl_dbm: int
+
+
+@dataclass(frozen=True)
 class SurveyEvent:
     kind: int
     status: int
@@ -973,6 +992,9 @@ class SurveyEvent:
     wave_count: int = 0
     skipped_pairs: tuple[SurveySkippedPair, ...] = ()
     range_results: tuple[SurveyRangeResult, ...] = ()
+    signal_measurements: tuple[SurveySignalMeasurement, ...] = ()
+    batch_index: int = 0
+    final_batch: bool = False
 
 
 def _slots_from_bitmap(raw: bytes) -> frozenset[int]:
@@ -991,13 +1013,21 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
     )
     if isinstance(packet_or_payload, Packet) and packet_or_payload.msg_type != MSG_SURVEY_EVENT:
         raise DecodeError("survey event decoder requires MSG_SURVEY_EVENT")
-    if len(payload) < SURVEY_EVENT_HEADER_WIRE_LEN:
-        raise DecodeError("survey event is shorter than its fixed header")
+    if len(payload) < 2:
+        raise DecodeError("survey event is shorter than its identity header")
     if payload[0] != SURVEY_PROTOCOL_VERSION:
         raise DecodeError(f"unsupported survey event version {payload[0]}")
     kind = payload[1]
+    if kind == SURVEY_EVENT_SIGNALS:
+        return _decode_survey_signal_event(payload)
+    if len(payload) < SURVEY_EVENT_HEADER_WIRE_LEN:
+        raise DecodeError("survey event is shorter than its fixed header")
     status = payload[2]
-    graph_count = payload[3]
+    graph_count = payload[3] if kind == SURVEY_EVENT_NEIGHBOR_GRAPH else 0
+    batch_index = 0 if kind == SURVEY_EVENT_NEIGHBOR_GRAPH else payload[3]
+    final_batch = (
+        kind != SURVEY_EVENT_NEIGHBOR_GRAPH and payload[64] != 0
+    )
     generation = int.from_bytes(payload[4:8], "little")
     partial_reasons = int.from_bytes(payload[8:10], "little")
     result_count = payload[10]
@@ -1007,7 +1037,13 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
     assignment = SurveyAssignmentIdentity.decode(payload[14:56])
     occupied_mask = int.from_bytes(payload[56:64], "little")
     received_mask = int.from_bytes(payload[64:72], "little")
-    if generation == 0 or status > 4 or kind not in (1, 2, 3, 4):
+    if (
+        generation == 0
+        or status > 4
+        or kind not in (1, 2, 3, 4, 5)
+        or batch_index >= SURVEY_MAX_BATCHES
+        or (kind != SURVEY_EVENT_NEIGHBOR_GRAPH and payload[64] > 1)
+    ):
         raise DecodeError("survey event has an invalid identity, status, or kind")
     offset = SURVEY_EVENT_HEADER_WIRE_LEN
     reports: list[SurveyNeighborReport] = []
@@ -1097,6 +1133,75 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
         wave_count=wave_count,
         skipped_pairs=tuple(skipped),
         range_results=tuple(results),
+        batch_index=batch_index,
+        final_batch=final_batch,
+    )
+
+
+def _signal_record_position(key: int) -> tuple[int, int]:
+    if key < SURVEY_MAX_ANCHORS:
+        raise DecodeError("survey signal record has an invalid key")
+    ordinal = key - SURVEY_MAX_ANCHORS
+    for owner in range(SURVEY_MAX_ANCHORS):
+        chunks = (
+            owner + SURVEY_SIGNAL_LEVELS_PER_RECORD - 1
+        ) // SURVEY_SIGNAL_LEVELS_PER_RECORD
+        if ordinal < chunks:
+            return owner, ordinal * SURVEY_SIGNAL_LEVELS_PER_RECORD
+        ordinal -= chunks
+    raise DecodeError("survey signal record key exceeds the anchor roster")
+
+
+def _decode_survey_signal_event(payload: bytes) -> SurveyEvent:
+    if len(payload) < SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN:
+        raise DecodeError("survey signal event is shorter than its fixed header")
+    status = payload[2]
+    record_count = payload[3]
+    generation = int.from_bytes(payload[4:8], "little")
+    if (
+        status > SURVEY_TERMINAL_BUSY
+        or generation == 0
+        or not 1 <= record_count <= SURVEY_MAX_SIGNAL_RECORDS
+        or len(payload) != SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN
+        + record_count * SURVEY_SIGNAL_RECORD_WIRE_LEN
+    ):
+        raise DecodeError("survey signal event has invalid identity or length")
+    assignment = SurveyAssignmentIdentity.decode(payload[8:50])
+    measurements: list[SurveySignalMeasurement] = []
+    seen_keys: set[int] = set()
+    offset = SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN
+    for _ in range(record_count):
+        raw = payload[offset : offset + SURVEY_SIGNAL_RECORD_WIRE_LEN]
+        key = raw[0]
+        if key in seen_keys:
+            raise DecodeError("survey signal event repeats a record key")
+        seen_keys.add(key)
+        owner, base = _signal_record_position(key)
+        for index in range(SURVEY_SIGNAL_LEVELS_PER_RECORD):
+            packed = raw[1 + index // 2]
+            level = (packed & 0x0F) if index % 2 == 0 else (packed >> 4)
+            target = base + index
+            if target >= owner:
+                if level:
+                    raise DecodeError("survey signal record exceeds its owner slot")
+                continue
+            if level:
+                measurements.append(
+                    SurveySignalMeasurement(
+                        observer_slot=owner,
+                        target_slot=target,
+                        level=level,
+                        rsl_dbm=-105 + (level - 1) * 5,
+                    )
+                )
+        offset += SURVEY_SIGNAL_RECORD_WIRE_LEN
+    return SurveyEvent(
+        kind=SURVEY_EVENT_SIGNALS,
+        status=status,
+        generation=generation,
+        assignment=assignment,
+        partial_reasons=0,
+        signal_measurements=tuple(measurements),
     )
 
 
@@ -1126,13 +1231,13 @@ def _mutual_survey_edges(
 def select_degree_balanced_survey_pairs(
     event: SurveyEvent,
     *,
-    degree_cap: int = SURVEY_MAX_DEGREE,
+    degree_cap: int = SURVEY_DEFAULT_DEGREE,
     excluded_pairs: Iterable[tuple[int, int]] = (),
 ) -> tuple[tuple[int, int], ...]:
     """Retained legacy deterministic degree-balanced selector."""
 
     if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
-        raise ValueError("survey degree cap must be in 1..4")
+        raise ValueError("survey degree cap must be in 1..49")
     candidates = _mutual_survey_edges(event, excluded_pairs)
     degree = {slot: 0 for slot in event.occupied_slots}
     selected: list[tuple[int, int]] = []
@@ -1278,13 +1383,13 @@ def _shortest_selected_path(
 def select_rigidity_aware_survey_pairs(
     event: SurveyEvent,
     *,
-    degree_cap: int = SURVEY_MAX_DEGREE,
+    degree_cap: int = SURVEY_DEFAULT_DEGREE,
     excluded_pairs: Iterable[tuple[int, int]] = (),
 ) -> tuple[tuple[int, int], ...]:
     """Select a connectivity- and rigidity-first degree-capped mutual-edge plan."""
 
     if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
-        raise ValueError("survey degree cap must be in 1..4")
+        raise ValueError("survey degree cap must be in 1..49")
     slots = sorted(event.occupied_slots)
     candidates = _mutual_survey_edges(event, excluded_pairs)
     candidate_degree = {
@@ -1403,12 +1508,12 @@ def select_closest_survey_pairs(
     event: SurveyEvent,
     positions_m_by_slot: dict[int, tuple[float, float]],
     *,
-    degree_cap: int = SURVEY_MAX_DEGREE,
+    degree_cap: int = SURVEY_DEFAULT_DEGREE,
 ) -> tuple[tuple[int, int], ...]:
     """Select a short, connected, rigidity-aware pass from solved positions."""
 
     if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
-        raise ValueError("survey degree cap must be in 1..4")
+        raise ValueError("survey degree cap must be in 1..49")
     slots = sorted(event.occupied_slots)
     if set(positions_m_by_slot) != set(slots):
         raise ValueError("closest-pair seed must cover every occupied survey slot")
@@ -1523,7 +1628,7 @@ def select_closest_survey_pairs(
 def select_survey_pairs(
     event: SurveyEvent,
     *,
-    degree_cap: int = SURVEY_MAX_DEGREE,
+    degree_cap: int = SURVEY_DEFAULT_DEGREE,
     strategy: str = "rigidity",
     excluded_pairs: Iterable[tuple[int, int]] = (),
 ) -> tuple[tuple[int, int], ...]:
@@ -2850,12 +2955,16 @@ def build_survey_plan_command(
     generation: int,
     assignment: SurveyAssignmentIdentity,
     pairs: tuple[tuple[int, int], ...],
+    batch_index: int = 0,
+    final_batch: bool = True,
 ) -> CommandFrame:
     _validate_survey_command_envelope(host_id, gateway_id, session_id, seq)
     if not 0 < generation <= 0xFFFFFFFF:
         raise ValueError("survey generation must be a nonzero uint32")
     if len(pairs) > SURVEY_MAX_PAIRS:
         raise ValueError("survey plan exceeds the 100-pair cap")
+    if not 0 <= batch_index < SURVEY_MAX_BATCHES:
+        raise ValueError("survey batch index must be in 0..12")
     raw_pairs = bytearray()
     for first, second in pairs:
         if not 0 <= first < SURVEY_MAX_ANCHORS or not 0 <= second < SURVEY_MAX_ANCHORS:
@@ -2865,6 +2974,11 @@ def build_survey_plan_command(
     append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_PLAN.to_bytes(2, "little"))
     append_tlv(payload, TLV_SURVEY_GENERATION, generation.to_bytes(4, "little"))
     append_tlv(payload, TLV_SURVEY_ASSIGNMENT_IDENTITY, assignment.encode())
+    append_tlv(
+        payload,
+        TLV_SURVEY_BATCH,
+        bytes((batch_index, 1 if final_batch else 0)),
+    )
     if raw_pairs:
         append_tlv(payload, TLV_SURVEY_PLAN, bytes(raw_pairs))
     return _build_command_frame(

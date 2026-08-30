@@ -283,6 +283,10 @@ bool app_node_comm_peek_delivery_event_for(
     struct node_comm_terminal_event *event_out);
 int app_node_comm_delivery_attempts_started(uint32_t handle,
                                             uint8_t *attempts_out);
+/* Exact first physical RF edge retained by the delivery owner. */
+int app_node_comm_delivery_first_rf_started_at(
+    uint32_t handle,
+    uint64_t *rf_started_at_ms_out);
 /* The active delivery generation binds an asynchronous backend attempt. */
 int app_node_comm_delivery_generation(uint32_t handle,
                                       uint32_t *generation_out);

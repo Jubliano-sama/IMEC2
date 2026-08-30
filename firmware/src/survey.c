@@ -9,7 +9,9 @@
 _Static_assert(SURVEY_MAX_ANCHORS == 50u,
                "survey protocol is qualified for fifty anchors");
 _Static_assert(SURVEY_MAX_PAIRS == 100u,
-               "degree four permits at most one hundred pairs");
+               "one firmware batch must stay within one hundred pairs");
+_Static_assert(SURVEY_MAX_DEGREE == 49u && SURVEY_MAX_BATCHES == 13u,
+               "fifty anchors must permit the complete simple graph");
 _Static_assert(SURVEY_NEIGHBOR_RECORD_WIRE_LEN == 8u,
                "neighbor presence record must remain compact");
 _Static_assert(SURVEY_PLAN_MAX_WIRE_LEN <= PACKET_EXT_MAX_PAYLOAD_LEN,
@@ -188,11 +190,10 @@ uint32_t survey_control_delivery_delay_ms(uint8_t max_hop_count)
     if (max_hop_count == 0u || max_hop_count > UWB_ENUM_MAX_HOPS) {
         return 0u;
     }
-    /* The origin is submitted asynchronously, so keep its complete custody
-     * budget. The survey-specific enumeration handoff already owns continuous
-     * Channel-5 RX at every hop, making both START and PLAN compact controls. */
-    return SURVEY_CONTROL_ORIGIN_BUDGET_MS +
-           SURVEY_CONTROL_PROPAGATION_MARGIN_MS +
+    /* The caller publishes the exact first gateway RF edge as this schedule's
+     * origin. Enumeration already owns continuous Channel-5 RX at every hop,
+     * so only propagation, relay, redundancy, and radio guard remain. */
+    return SURVEY_CONTROL_PROPAGATION_MARGIN_MS +
            (uint32_t)max_hop_count *
                SURVEY_CONTROL_PER_HOP_BUDGET_MS +
            SURVEY_CONTROL_REDUNDANCY_MS +
@@ -294,6 +295,7 @@ static bool plan_shape_valid(const struct survey_plan *plan)
         !survey_assignment_identity_valid(&plan->identity.assignment) ||
         plan->pair_count > SURVEY_MAX_PAIRS ||
         plan->execution_start_delay_ms == 0u ||
+        plan->batch_index >= SURVEY_MAX_BATCHES ||
         plan->self_stop_delay_ms <= plan->execution_start_delay_ms) {
         return false;
     }
@@ -324,7 +326,7 @@ bool survey_plan_commitment(const struct survey_plan *plan,
 {
     struct semantic_digest_sha256_context context;
     uint8_t identity[SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN];
-    uint8_t fixed[15u];
+    uint8_t fixed[17u];
 
     if (!plan_shape_valid(plan) || commitment == NULL ||
         survey_assignment_identity_encode(&plan->identity.assignment,
@@ -338,6 +340,8 @@ bool survey_plan_commitment(const struct survey_plan *plan,
     fixed[12] = plan->pair_count;
     fixed[13] = plan->wave_count;
     fixed[14] = SURVEY_PROTOCOL_VERSION;
+    fixed[15] = plan->batch_index;
+    fixed[16] = plan->final_batch ? 1u : 0u;
     if (!semantic_digest_sha256_update(&context, fixed, sizeof(fixed)) ||
         !semantic_digest_sha256_update(&context, identity, sizeof(identity))) {
         return false;
@@ -371,6 +375,8 @@ int survey_build_plan(const struct survey_identity *identity,
                       const struct survey_pair_request *requests,
                       size_t request_count,
                       uint32_t execution_start_delay_ms,
+                      uint8_t batch_index,
+                      bool final_batch,
                       struct survey_plan_build_result *result)
 {
     uint8_t degree[SURVEY_MAX_ANCHORS] = {0};
@@ -379,12 +385,15 @@ int survey_build_plan(const struct survey_identity *identity,
         hop_counts == NULL || result == NULL ||
         (requests == NULL && request_count != 0u) ||
         request_count > SURVEY_MAX_PAIRS || execution_start_delay_ms == 0u ||
+        batch_index >= SURVEY_MAX_BATCHES ||
         !survey_assignment_identity_valid(&identity->assignment)) {
         return PROTO_ERR_ARG;
     }
     memset(result, 0, sizeof(*result));
     result->plan.identity = *identity;
     result->plan.execution_start_delay_ms = execution_start_delay_ms;
+    result->plan.batch_index = batch_index;
+    result->plan.final_batch = final_batch;
 
     for (size_t input = 0u; input < request_count; input++) {
         const struct survey_pair_request *request = &requests[input];
@@ -472,6 +481,10 @@ int survey_build_plan(const struct survey_identity *identity,
     result->plan.self_stop_delay_ms = execution_start_delay_ms +
         survey_execution_duration_ms(result->plan.wave_count,
                                      identity->assignment.max_hop_count);
+    if (!final_batch) {
+        result->plan.self_stop_delay_ms += SURVEY_HOST_PLAN_TIMEOUT_MS +
+                                           execution_start_delay_ms;
+    }
     if (result->plan.self_stop_delay_ms <= execution_start_delay_ms ||
         result->plan.self_stop_delay_ms > SURVEY_HARD_CAP_MS ||
         !survey_plan_commitment(&result->plan, result->plan.commitment)) {
@@ -652,6 +665,112 @@ int survey_range_result_decode(const uint8_t *data,
             SURVEY_RANGE_RESULT_WIRE_LEN ? PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
+uint8_t survey_rsl_quantize_dbm(int8_t rsl_dbm)
+{
+    if (rsl_dbm == 0) {
+        return 0u;
+    }
+    if (rsl_dbm <= -105) {
+        return 1u;
+    }
+    if (rsl_dbm >= -35) {
+        return 15u;
+    }
+    return (uint8_t)(1 + (rsl_dbm + 105) / 5);
+}
+
+int8_t survey_rsl_level_dbm(uint8_t level)
+{
+    return level == 0u || level > 15u ? 0 :
+           (int8_t)(-105 + (int8_t)(level - 1u) * 5);
+}
+
+uint8_t survey_signal_record_count_for_slot(uint8_t owner_slot)
+{
+    return owner_slot >= SURVEY_MAX_ANCHORS ? 0u :
+        (uint8_t)((owner_slot + SURVEY_SIGNAL_LEVELS_PER_RECORD - 1u) /
+                  SURVEY_SIGNAL_LEVELS_PER_RECORD);
+}
+
+static uint8_t survey_signal_record_key(uint8_t owner_slot,
+                                        uint8_t chunk_index)
+{
+    uint16_t key = SURVEY_MAX_ANCHORS;
+
+    for (uint8_t slot = 0u; slot < owner_slot; slot++) {
+        key += survey_signal_record_count_for_slot(slot);
+    }
+    key += chunk_index;
+    return key <= UINT8_MAX ? (uint8_t)key : UINT8_MAX;
+}
+
+size_t survey_signal_record_encode(
+    uint8_t owner_slot,
+    uint8_t chunk_index,
+    const uint8_t levels[SURVEY_MAX_ANCHORS],
+    struct survey_signal_record *record)
+{
+    uint8_t count = survey_signal_record_count_for_slot(owner_slot);
+    uint8_t base = (uint8_t)(chunk_index * SURVEY_SIGNAL_LEVELS_PER_RECORD);
+
+    if (levels == NULL || record == NULL || chunk_index >= count) {
+        return 0u;
+    }
+    memset(record, 0, sizeof(*record));
+    record->bytes[0] = survey_signal_record_key(owner_slot, chunk_index);
+    for (uint8_t index = 0u; index < SURVEY_SIGNAL_LEVELS_PER_RECORD;
+         index++) {
+        uint8_t target = (uint8_t)(base + index);
+        uint8_t level = target < owner_slot ? levels[target] : 0u;
+        uint8_t byte = (uint8_t)(1u + index / 2u);
+
+        if (level > 15u) {
+            return 0u;
+        }
+        record->bytes[byte] |= index % 2u == 0u ? level :
+            (uint8_t)(level << 4);
+    }
+    return sizeof(record->bytes);
+}
+
+int survey_signal_record_decode(
+    const struct survey_signal_record *record,
+    uint8_t *owner_slot,
+    uint8_t *base_slot,
+    uint8_t levels[SURVEY_SIGNAL_LEVELS_PER_RECORD])
+{
+    uint16_t ordinal;
+
+    if (record == NULL || owner_slot == NULL || base_slot == NULL ||
+        levels == NULL || record->bytes[0] < SURVEY_MAX_ANCHORS) {
+        return PROTO_ERR_ARG;
+    }
+    ordinal = (uint16_t)(record->bytes[0] - SURVEY_MAX_ANCHORS);
+    for (uint8_t slot = 0u; slot < SURVEY_MAX_ANCHORS; slot++) {
+        uint8_t count = survey_signal_record_count_for_slot(slot);
+
+        if (ordinal >= count) {
+            ordinal -= count;
+            continue;
+        }
+        *owner_slot = slot;
+        *base_slot = (uint8_t)(ordinal * SURVEY_SIGNAL_LEVELS_PER_RECORD);
+        for (uint8_t index = 0u; index < SURVEY_SIGNAL_LEVELS_PER_RECORD;
+             index++) {
+            uint8_t packed = record->bytes[1u + index / 2u];
+
+            levels[index] = index % 2u == 0u ?
+                (uint8_t)(packed & 0x0fu) : (uint8_t)(packed >> 4);
+            if ((uint8_t)(*base_slot + index) >= slot &&
+                levels[index] != 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+        return PROTO_OK;
+    }
+    return PROTO_ERR_MALFORMED;
+}
+
 size_t survey_plan_encode(const struct survey_plan *plan,
                           uint8_t *out,
                           size_t out_cap)
@@ -678,6 +797,8 @@ size_t survey_plan_encode(const struct survey_plan *plan,
     offset += sizeof(uint32_t);
     out[offset++] = plan->pair_count;
     out[offset++] = plan->wave_count;
+    out[offset++] = plan->batch_index;
+    out[offset++] = plan->final_batch ? 1u : 0u;
     memcpy(&out[offset], plan->commitment, sizeof(plan->commitment));
     offset += sizeof(plan->commitment);
     for (uint8_t i = 0u; i < plan->pair_count; i++) {
@@ -718,7 +839,10 @@ int survey_plan_decode(const uint8_t *data,
     offset += sizeof(uint32_t);
     plan->pair_count = data[offset++];
     plan->wave_count = data[offset++];
-    if (plan->pair_count > SURVEY_MAX_PAIRS) {
+    plan->batch_index = data[offset++];
+    plan->final_batch = data[offset++] != 0u;
+    if (plan->pair_count > SURVEY_MAX_PAIRS ||
+        plan->batch_index >= SURVEY_MAX_BATCHES || data[offset - 1u] > 1u) {
         return PROTO_ERR_MALFORMED;
     }
     expected = SURVEY_PLAN_HEADER_WIRE_LEN +
