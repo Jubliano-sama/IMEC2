@@ -386,7 +386,9 @@ static bool run_enumeration_into_survey(uint8_t topology_depth)
         ENUMERATION_RESPONSE_START_DELAY_MS +
         enumeration_response_duration_ms(topology_depth) + 1u;
     uint32_t start_origin_ms = table_origin_ms +
-        SURVEY_ENUMERATION_HANDOFF_HOLD_MS - 1u;
+        SURVEY_ENUMERATION_TABLE_PROPAGATION_MS +
+        SURVEY_ENUMERATION_HOST_START_BUDGET_MS +
+        SURVEY_CONTROL_ORIGIN_BUDGET_MS;
     uint32_t start_stop_ms = start_origin_ms +
         SURVEY_INITIAL_SELF_EXPIRY_MS;
     uint32_t plan_origin_ms = start_origin_ms +

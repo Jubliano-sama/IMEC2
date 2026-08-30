@@ -38,8 +38,11 @@ _Static_assert(
         DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
     "survey controls use the wake-free compact relay bound");
 _Static_assert(SURVEY_ENUMERATION_HANDOFF_HOLD_MS >=
-                   SURVEY_HOST_PLAN_TIMEOUT_MS,
-               "survey handoff must cover host START admission");
+                   SURVEY_ENUMERATION_TABLE_PROPAGATION_MS +
+                       SURVEY_ENUMERATION_HOST_START_BUDGET_MS +
+                       SURVEY_CONTROL_ORIGIN_BUDGET_MS +
+                       SURVEY_RADIO_GUARD_MS,
+               "survey handoff must cover TABLE, host START, and radio admission");
 
 static bool slot_valid(uint8_t slot)
 {

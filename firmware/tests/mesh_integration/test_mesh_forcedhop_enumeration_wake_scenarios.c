@@ -728,7 +728,9 @@ static bool survey_start_follows_enumeration_handoff_at_all_depths(void)
     uint8_t command_frame[PACKET_EXT_MAX_LEN];
     const uint64_t enumeration_end_root_us = UINT64_C(1000000);
     const uint64_t survey_root_start_us = enumeration_end_root_us +
-        (uint64_t)SURVEY_HOST_PLAN_TIMEOUT_MS * 1000u;
+        ((uint64_t)SURVEY_ENUMERATION_TABLE_PROPAGATION_MS +
+         SURVEY_ENUMERATION_HOST_START_BUDGET_MS +
+         SURVEY_CONTROL_ORIGIN_BUDGET_MS) * 1000u;
     uint32_t command_airtime_us;
     uint64_t relay_stride_us;
     uint64_t tx_start_us = survey_root_start_us;
@@ -761,7 +763,9 @@ static bool survey_start_follows_enumeration_handoff_at_all_depths(void)
         uint16_t tx_index = UINT16_MAX;
 
         CHECK(tx_start_us - handoff_start_us ==
-                  (uint64_t)SURVEY_HOST_PLAN_TIMEOUT_MS * 1000u,
+                  ((uint64_t)SURVEY_ENUMERATION_TABLE_PROPAGATION_MS +
+                   SURVEY_ENUMERATION_HOST_START_BUDGET_MS +
+                   SURVEY_CONTROL_ORIGIN_BUDGET_MS) * 1000u,
               "survey START and enumeration handoff lost phase alignment");
         CHECK(schedule_control_rx(&fixture.world, receiver,
                                   tx_start_us, command_len),

@@ -62,9 +62,22 @@ extern "C" {
 #define SURVEY_EXTRA_DRAIN_STRIDES 2u
 #define SURVEY_INITIAL_SELF_EXPIRY_MS 180000u
 #define SURVEY_HOST_PLAN_TIMEOUT_MS 60000u
-#define SURVEY_ENUMERATION_HANDOFF_GUARD_MS 5000u
+/* Enumeration completion is already TABLE-propagation bounded. The GUI
+ * dispatches START immediately after the terminal, so this handoff covers
+ * that complete TABLE wave, the existing five-second host terminal guard,
+ * one bounded gateway control submission, and the final radio guard. The
+ * later host PLAN timeout begins after neighbor collection and is unrelated. */
+#define SURVEY_ENUMERATION_HOST_START_BUDGET_MS 5000u
+#define SURVEY_ENUMERATION_TABLE_PROPAGATION_MS \
+    (DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS + \
+     (UWB_ENUM_MAX_HOPS * \
+      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS))
+#define SURVEY_ENUMERATION_HANDOFF_GUARD_MS SURVEY_RADIO_GUARD_MS
 #define SURVEY_ENUMERATION_HANDOFF_HOLD_MS \
-    (SURVEY_HOST_PLAN_TIMEOUT_MS + SURVEY_ENUMERATION_HANDOFF_GUARD_MS)
+    (SURVEY_ENUMERATION_TABLE_PROPAGATION_MS + \
+     SURVEY_ENUMERATION_HOST_START_BUDGET_MS + \
+     SURVEY_CONTROL_ORIGIN_BUDGET_MS + \
+     SURVEY_ENUMERATION_HANDOFF_GUARD_MS)
 #define SURVEY_HARD_CAP_MS 1800000u
 #define SURVEY_MIN_SUCCESSFUL_RANGES 3u
 #define SURVEY_NO_MEDIAN_MM INT32_MIN

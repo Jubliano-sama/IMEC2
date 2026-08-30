@@ -609,18 +609,29 @@ static void test_table_is_the_single_terminal_propagation_wave(void)
 
 static void test_survey_start_stays_inside_every_enumeration_handoff(void)
 {
-    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
-        uint32_t latest_start_arrival_ms =
-            SURVEY_HOST_PLAN_TIMEOUT_MS +
-            (uint32_t)depth *
-                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
+    uint32_t maximum_table_propagation_ms =
+        discovery_assignment_control_propagation_hold_ms(UWB_ENUM_MAX_HOPS);
 
-        CHECK(latest_start_arrival_ms <
+    CHECK(SURVEY_ENUMERATION_TABLE_PROPAGATION_MS ==
+              maximum_table_propagation_ms,
+          "survey handoff table bound diverged from enumeration");
+    CHECK(SURVEY_ENUMERATION_HANDOFF_HOLD_MS == 19530u,
+          "survey handoff changed without requalifying the host boundary");
+    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
+        uint32_t table_arrival_ms =
+            discovery_assignment_control_propagation_hold_ms(depth);
+        uint32_t latest_start_arrival_ms =
+            maximum_table_propagation_ms +
+            SURVEY_ENUMERATION_HOST_START_BUDGET_MS +
+            SURVEY_CONTROL_ORIGIN_BUDGET_MS + table_arrival_ms;
+        uint32_t handoff_age_ms =
+            latest_start_arrival_ms - table_arrival_ms;
+
+        CHECK(handoff_age_ms <
                   SURVEY_ENUMERATION_HANDOFF_HOLD_MS,
               "wake-free survey START can outlive a retained enumeration listener");
         CHECK(SURVEY_ENUMERATION_HANDOFF_HOLD_MS -
-                  latest_start_arrival_ms >=
-                  SURVEY_RADIO_GUARD_MS,
+                  handoff_age_ms == SURVEY_ENUMERATION_HANDOFF_GUARD_MS,
               "survey START reaches a depth without a final radio guard");
     }
 }
