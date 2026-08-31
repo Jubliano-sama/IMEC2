@@ -2355,7 +2355,9 @@ static int anchor_start_compact_enumeration_response_lane(
         max_hop_count > UWB_ENUM_MAX_HOPS) {
         return -EINVAL;
     }
-    selected = route_selected(&mesh_runtime.upstream);
+    now_ms = (uint64_t)k_uptime_get();
+    selected = mesh_relay_current_gateway_route(&mesh_runtime,
+                                                (uint32_t)now_ms);
     if (selected == NULL || selected->next_hop_id == 0u ||
         selected->hop_count == UINT8_MAX) {
         return -EHOSTUNREACH;
@@ -2370,7 +2372,6 @@ static int anchor_start_compact_enumeration_response_lane(
         return -E2BIG;
     }
 
-    now_ms = (uint64_t)k_uptime_get();
     if (!enumeration_response_claim_start(
             now_ms,
             command->message_age_ms,
@@ -2431,7 +2432,8 @@ static int anchor_survey_upstream(uint64_t *parent_id, uint8_t *hop_count)
     if (parent_id == NULL || hop_count == NULL) {
         return -EINVAL;
     }
-    selected = route_selected(&mesh_runtime.upstream);
+    selected = mesh_relay_current_gateway_route(&mesh_runtime,
+                                                k_uptime_get_32());
     if (selected == NULL || selected->next_hop_id == 0u ||
         selected->hop_count == UINT8_MAX || selected->hop_count == UINT8_MAX - 1u) {
         return -EHOSTUNREACH;

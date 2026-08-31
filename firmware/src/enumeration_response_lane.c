@@ -10,9 +10,9 @@ _Static_assert(UWB_ENUM_MAX_HOPS == 8u,
                "the qualified lane covers every production mesh hop depth");
 _Static_assert(ENUMERATION_RESPONSE_DEPTH_MS == 1500u,
                "one-hop source responses must occupy 1500 ms");
-_Static_assert(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 1628u,
+_Static_assert(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 5470u,
                "pipelined CLAIM relay bound changed");
-_Static_assert(ENUMERATION_RESPONSE_START_DELAY_MS == 13214u,
+_Static_assert(ENUMERATION_RESPONSE_START_DELAY_MS == 43950u,
                "response edge must follow every pipelined CLAIM relay");
 _Static_assert(ENUMERATION_RESPONSE_LANE_MS == 19000u,
                "eight response depths plus ordered relay tails occupy 19 s");

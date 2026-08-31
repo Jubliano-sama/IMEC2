@@ -1106,6 +1106,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         start = function_body(
             COMMANDS, "anchor_start_compact_enumeration_response_lane"
         )
+        survey_upstream = function_body(COMMANDS, "anchor_survey_upstream")
 
         self.assertGreater(owner_guard, -1)
         self.assertGreater(owner_end, owner)
@@ -1142,6 +1143,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertEqual(RADIO.count("enumeration_response_lane_begin("), 1)
         self.assertNotIn("enumeration_response_lane_stop(", resume)
         self.assertNotIn("memset(", resume)
+        self.assertIn("mesh_relay_current_gateway_route(", start)
+        self.assertNotIn("route_selected(", start)
+        self.assertIn("mesh_relay_current_gateway_route(", survey_upstream)
+        self.assertNotIn("route_selected(", survey_upstream)
 
         active_replay = start[
             start.index("if (anchor_enumeration_response_config.active") :
@@ -1507,7 +1512,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         self.assertIn("ret = -EIO", incomplete_block)
 
-    def test_gateway_command_relay_wave_keeps_all_admitted_copies_atomic(
+    def test_gateway_command_wave_is_atomic_but_here_i_am_wake_is_polite(
         self,
     ) -> None:
         send = function_body(
@@ -1611,8 +1616,17 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(accepted, retained)
         self.assertLess(retained, deferred)
 
-        # The same purpose-only exclusion covers the wake train, including an
-        # enumeration activation train, without command-specific decoding.
+        # Ordinary gateway-command wakes stay atomic. A relayed Here-I-Am is
+        # deliberately excluded so two parents may observe one another and
+        # back off instead of collision-locking their complete wake trains.
+        route_adv = wake.index("bool gateway_route_adv_relay =")
+        route_adv_classification = wake[
+            route_adv : wake.index(";", route_adv) + 1
+        ]
+        self.assertIn(
+            "authorization_candidate != NULL", route_adv_classification
+        )
+        self.assertIn("MSG_GATEWAY_ROUTE_ADV", route_adv_classification)
         wake_atomic = wake.index("bool atomic_gateway_control =")
         wake_classification = wake[
             wake_atomic : wake.index(";", wake_atomic) + 1
@@ -1621,8 +1635,19 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD",
             wake_classification,
         )
+        self.assertIn("!gateway_route_adv_relay", wake_classification)
         self.assertNotIn("authorization_candidate", wake_classification)
         self.assertNotIn("CMD_ASSIGN_DISCOVERY_SLOTS", wake_classification)
+        self.assertLess(route_adv, wake_atomic)
+
+        attempt = wake.index("wake_train_attempt:", wake_atomic)
+        boost = wake.index("boost_single_shot =", attempt)
+        boost_expression = wake[boost : wake.index(";", boost) + 1]
+        self.assertIn("!gateway_route_adv_relay", boost_expression)
+        self.assertIn(
+            "anchor_relay_control_followup_boost_active()",
+            boost_expression,
+        )
 
         pre = wake.index("if (!atomic_gateway_control)", wake_atomic)
         pre_sniff = wake.index(
@@ -1633,7 +1658,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         train_listen = wake.index("mesh_route_wake_listen_for_click", train)
         post = wake.index(
-            "if (!atomic_gateway_control && ret >= 0 && sent_count > 0u)",
+            "if (!atomic_gateway_control && !gateway_route_adv_relay &&",
             train_listen,
         )
         post_sniff = wake.index(
@@ -1644,6 +1669,22 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(train, train_listen)
         self.assertLess(train_listen, post)
         self.assertLess(post, post_sniff)
+
+        retry_limit = wake.index("uint8_t polite_retry_limit =")
+        retry_limit_expression = wake[
+            retry_limit : wake.index(";", retry_limit) + 1
+        ]
+        self.assertIn("gateway_route_adv_relay ?", retry_limit_expression)
+        self.assertIn(
+            "MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES", retry_limit_expression
+        )
+        retry = wake.index("if (ret == -EAGAIN && c5_activity &&", post_sniff)
+        retry_condition = wake[retry : wake.index("{", retry)]
+        retry_block = braced_block(wake, retry)
+        self.assertIn("polite_retry < polite_retry_limit", retry_condition)
+        self.assertIn("mesh_route_wake_backoff(", retry_block)
+        self.assertIn("gateway_route_adv_relay", retry_block)
+        self.assertIn("polite_retry++", retry_block)
 
     def test_compact_gateway_clock_domain_stays_64_bit_across_wrap(
         self,

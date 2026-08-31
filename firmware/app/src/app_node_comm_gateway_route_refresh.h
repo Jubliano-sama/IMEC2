@@ -22,7 +22,7 @@ struct k_work_delayable;
      APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS + \
      FLOOD_POST_ROOT_GUARD_MS)
 
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 1413u,
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 5255u,
                "Here-I-Am settle must establish one relay-hop lead");
 
 typedef int (*app_node_comm_route_refresh_build_fn)(

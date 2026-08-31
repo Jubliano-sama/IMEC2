@@ -6,6 +6,7 @@
 #include "mesh_relay.h"
 #include "mesh_sim.h"
 #include "protocol.h"
+#include "uwb.h"
 
 #include <inttypes.h>
 #include <stdbool.h>
@@ -26,6 +27,9 @@
 #define RESPONSE_SEQUENCE UINT16_C(2)
 #define FIRST_COMMAND_TX_US UINT64_C(1000)
 #define RX_GUARD_US UINT64_C(100)
+#define WAKE_COPY_GAP_US UINT64_C(500)
+#define ROUTE_ADV_RECEIVED_AT_MS UINT32_C(1000)
+#define ROUTE_ADV_RANDOM UINT32_C(0x12345678)
 #define DIRECT_ROUTE_TX_TIMEOUT_MS 20u
 #define DIRECT_ROUTE_ATTEMPT_MAX_US \
     ((uint64_t)(DIRECT_ROUTE_TX_TIMEOUT_MS + \
@@ -209,6 +213,132 @@ static int build_assignment_claim(struct mesh_outbound *outbound)
     }
     outbound->payload_len = (uint16_t)payload_len;
     return PROTO_OK;
+}
+
+static int build_enumeration_route_advertisement(
+    struct mesh_relay *gateway,
+    struct mesh_outbound *advertisement)
+{
+    struct operation_policy_set policy;
+    struct mesh_gateway_route_adv_snapshot snapshot;
+    int ret;
+
+    if (gateway == NULL || advertisement == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    operation_policy_set_defaults(&policy);
+    policy.assignment_present = true;
+    policy.assignment.expected_anchor_count = 3u;
+    policy.assignment.operation_budget_ms =
+        OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS;
+    policy.assignment.response_spread_ms =
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS;
+    policy.assignment.ram_only_iteration = true;
+    ret = mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+        gateway,
+        ASSIGNMENT_EPOCH,
+        ROUTE_ADV_RECEIVED_AT_MS,
+        &policy,
+        &snapshot);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    snapshot.enumeration_prearm_epoch = ASSIGNMENT_EPOCH;
+    snapshot.enumeration_prearm_hold_ms =
+        DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
+    snapshot.enumeration_prearm_present = true;
+    return mesh_relay_build_gateway_route_adv_from_snapshot(
+        gateway, &snapshot, advertisement);
+}
+
+static int schedule_route_adv_wake_train(struct mesh_sim_world *world,
+                                         uint8_t sender,
+                                         uint64_t start_us,
+                                         uint64_t *last_end_us)
+{
+    const uint64_t close_us = start_us +
+        (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u;
+    uint64_t sender_id;
+    uint64_t at_us = start_us;
+    size_t sent_count = 0u;
+
+    if (world == NULL || last_end_us == NULL || sender >= world->role_count) {
+        return MESH_SIM_ERR_ARG;
+    }
+    sender_id = world->roles[sender].id;
+    while (at_us < close_us) {
+        struct uwb_wake_claim_frame claim = {0};
+        uint8_t frame[UWB_WAKE_CLAIM_LEN];
+        uint64_t remaining_us = close_us - at_us;
+        uint16_t remaining_ms =
+            (uint16_t)((remaining_us + UINT64_C(999)) / UINT64_C(1000));
+        uint16_t claimed_ms = (uint16_t)(remaining_ms + 500u);
+        uint16_t tx_index = UINT16_MAX;
+        size_t frame_len = 0u;
+        int ret;
+
+        if (claimed_ms > UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS) {
+            claimed_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS;
+        }
+        claim.network_id = UINT32_C(0x494d4543);
+        claim.clicker_id = sender_id;
+        claim.click_event_id = ASSIGNMENT_EPOCH;
+        claim.attempt_index = 1u;
+        claim.priority_id = sender_id;
+        claim.wake_channel = UWB_CHANNEL_WAKE_CONTACT;
+        claim.ranging_channel = UWB_CHANNEL_WAKE_CONTACT;
+        claim.wake_train_ends_in_ms = remaining_ms;
+        claim.discovery_starts_in_ms = remaining_ms;
+        claim.claimed_duration_ms = claimed_ms;
+        claim.min_anchor_count = 1u;
+        claim.max_anchor_count = 1u;
+        claim.nonce = sender_id ^ ASSIGNMENT_EPOCH;
+        claim.flags = FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                      FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+        ret = uwb_encode_wake_claim(&claim,
+                                    frame,
+                                    sizeof(frame),
+                                    &frame_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = mesh_sim_schedule_raw_tx(world,
+                                       sender,
+                                       at_us,
+                                       UWB_CHANNEL_WAKE_CONTACT,
+                                       MESH_SIM_PHY_CHANNEL5_WAKE,
+                                       frame,
+                                       frame_len,
+                                       false,
+                                       &tx_index);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+        *last_end_us = world->transmissions[tx_index].end_us;
+        at_us = *last_end_us + WAKE_COPY_GAP_US;
+        sent_count++;
+    }
+    return sent_count == 0u ? MESH_SIM_ERR_EVENT_ORDER : MESH_SIM_OK;
+}
+
+static size_t decoded_receptions_from(const struct mesh_sim_world *world,
+                                      uint64_t source_id,
+                                      uint64_t receiver_id,
+                                      enum mesh_sim_phy phy)
+{
+    size_t decoded = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *reception = &world->receptions[i];
+
+        if (reception->source_id == source_id &&
+            reception->receiver_id == receiver_id &&
+            reception->phy == phy &&
+            reception->outcome == MESH_SIM_RX_DECODED) {
+            decoded++;
+        }
+    }
+    return decoded;
 }
 
 static int run_scenario(enum response_rx_mode mode,
@@ -633,6 +763,332 @@ static int test_two_simultaneous_relays_diversify_three_copy_schedule(void)
     return 0;
 }
 
+static int test_two_here_i_am_relays_do_not_collision_lock_hidden_child(void)
+{
+    static struct mesh_sim_world world;
+    const struct uwb_anchor_config downstream_config = {
+        .network_id = UINT32_C(0x494d4543),
+        .anchor_id = DOWNSTREAM_ID,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+    };
+    struct mesh_relay gateway_model;
+    struct mesh_relay relay_a_model;
+    struct mesh_relay relay_b_model;
+    struct mesh_relay relay_a_repeat_model;
+    struct mesh_anchor_downlink_store relay_a_store;
+    struct mesh_anchor_downlink_store relay_b_store;
+    struct mesh_anchor_downlink_store relay_a_repeat_store;
+    struct mesh_outbound root_advertisement;
+    struct mesh_relay_result result_a;
+    struct mesh_relay_result result_b;
+    struct mesh_relay_result result_a_repeat;
+    const struct mesh_outbound *forwards[2];
+    const uint64_t relay_ids[2] = {RELAY_A_ID, RELAY_B_ID};
+    uint8_t encoded[2][PACKET_EXT_MAX_LEN];
+    size_t encoded_len[2] = {0u, 0u};
+    uint32_t frame_duration_us[2] = {0u, 0u};
+    uint64_t control_starts[2][MESH_GATEWAY_ROUTE_ADV_COPY_COUNT];
+    uint64_t wake_end_a = 0u;
+    uint64_t wake_end_b = 0u;
+    uint64_t wake_start_a;
+    uint64_t wake_start_b;
+    uint64_t latest_wake_end;
+    uint64_t rx_start_us = UINT64_MAX;
+    uint64_t rx_end_us = 0u;
+    uint32_t delay_a_ms;
+    uint32_t delay_b_ms;
+    uint32_t first_due_ms;
+    uint8_t gateway;
+    uint8_t relay_a;
+    uint8_t relay_b;
+    uint8_t downstream;
+    int ret;
+
+    mesh_relay_init(&gateway_model,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY_ID,
+                    GATEWAY_ID,
+                    ASSIGNMENT_EPOCH);
+    mesh_relay_init(&relay_a_model,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    RELAY_A_ID,
+                    GATEWAY_ID,
+                    ASSIGNMENT_EPOCH);
+    mesh_relay_init(&relay_b_model,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    RELAY_B_ID,
+                    GATEWAY_ID,
+                    ASSIGNMENT_EPOCH);
+    mesh_relay_init(&relay_a_repeat_model,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    RELAY_A_ID,
+                    GATEWAY_ID,
+                    ASSIGNMENT_EPOCH);
+    REQUIRE(mesh_relay_attach_anchor_downlink_store(
+                &relay_a_model, &relay_a_store) == PROTO_OK,
+            "attach relay A route store");
+    REQUIRE(mesh_relay_attach_anchor_downlink_store(
+                &relay_b_model, &relay_b_store) == PROTO_OK,
+            "attach relay B route store");
+    REQUIRE(mesh_relay_attach_anchor_downlink_store(
+                &relay_a_repeat_model, &relay_a_repeat_store) == PROTO_OK,
+            "attach repeated relay A route store");
+    REQUIRE(build_enumeration_route_advertisement(
+                &gateway_model, &root_advertisement) == PROTO_OK,
+            "build enumeration Here-I-Am");
+
+    REQUIRE(mesh_relay_handle_rx_with_random(
+                &relay_a_model,
+                &root_advertisement.packet,
+                root_advertisement.payload,
+                root_advertisement.payload_len,
+                GATEWAY_ID,
+                90u,
+                ROUTE_ADV_RECEIVED_AT_MS,
+                ROUTE_ADV_RANDOM,
+                &result_a) == PROTO_OK &&
+                result_a.status == PROTO_OK &&
+                (result_a.actions &
+                 MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) != 0u,
+            "relay A did not accept the Here-I-Am");
+    REQUIRE(mesh_relay_handle_rx_with_random(
+                &relay_b_model,
+                &root_advertisement.packet,
+                root_advertisement.payload,
+                root_advertisement.payload_len,
+                GATEWAY_ID,
+                90u,
+                ROUTE_ADV_RECEIVED_AT_MS,
+                ROUTE_ADV_RANDOM,
+                &result_b) == PROTO_OK &&
+                result_b.status == PROTO_OK &&
+                (result_b.actions &
+                 MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) != 0u,
+            "relay B did not accept the Here-I-Am");
+    REQUIRE(mesh_relay_handle_rx_with_random(
+                &relay_a_repeat_model,
+                &root_advertisement.packet,
+                root_advertisement.payload,
+                root_advertisement.payload_len,
+                GATEWAY_ID,
+                90u,
+                ROUTE_ADV_RECEIVED_AT_MS,
+                ROUTE_ADV_RANDOM,
+                &result_a_repeat) == PROTO_OK &&
+                result_a_repeat.status == PROTO_OK,
+            "repeated relay A schedule setup failed");
+
+    REQUIRE(result_a.gateway_route_adv.earliest_tx_valid &&
+                result_b.gateway_route_adv.earliest_tx_valid &&
+                result_a_repeat.gateway_route_adv.earliest_tx_valid,
+            "Here-I-Am relay omitted its first-TX deadline");
+    REQUIRE(result_a.gateway_route_adv.earliest_tx_ms ==
+                result_a_repeat.gateway_route_adv.earliest_tx_ms,
+            "same node/packet/random input produced a different relay slot");
+    REQUIRE(result_a.gateway_route_adv.earliest_tx_ms >=
+                ROUTE_ADV_RECEIVED_AT_MS + MESH_RADIO_WAKE_TRAIN_MS &&
+                result_b.gateway_route_adv.earliest_tx_ms >=
+                ROUTE_ADV_RECEIVED_AT_MS + MESH_RADIO_WAKE_TRAIN_MS,
+            "first typed Here-I-Am starts before a complete relay wake train");
+    delay_a_ms = result_a.gateway_route_adv.earliest_tx_ms -
+                 ROUTE_ADV_RECEIVED_AT_MS - MESH_RADIO_WAKE_TRAIN_MS;
+    delay_b_ms = result_b.gateway_route_adv.earliest_tx_ms -
+                 ROUTE_ADV_RECEIVED_AT_MS - MESH_RADIO_WAKE_TRAIN_MS;
+    REQUIRE(delay_a_ms <= MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS &&
+                delay_b_ms <= MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS &&
+                delay_a_ms % MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS ==
+                    0u &&
+                delay_b_ms % MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS ==
+                    0u,
+            "Here-I-Am relay deadlines escaped the production slot grid");
+    REQUIRE(delay_a_ms != delay_b_ms,
+            "distinct relay IDs remained in the same deterministic wake slot");
+
+    /* First exercise the actual low-duty wake boundary. Both relays are
+     * direct to the gateway, the child hears both relays, and the child has no
+     * gateway link. */
+    mesh_sim_init(&world, UINT32_C(0xA55171D6));
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                              GATEWAY_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &gateway) == MESH_SIM_OK,
+            "add Here-I-Am gateway");
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              RELAY_A_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &relay_a) == MESH_SIM_OK,
+            "add Here-I-Am relay A");
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              RELAY_B_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &relay_b) == MESH_SIM_OK,
+            "add Here-I-Am relay B");
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              DOWNSTREAM_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &downstream) == MESH_SIM_OK,
+            "add RF-hidden downstream anchor");
+    REQUIRE(mesh_sim_set_link(&world, gateway, relay_a, 100u, 10u) ==
+                MESH_SIM_OK &&
+                mesh_sim_set_link(&world, gateway, relay_b, 100u, 10u) ==
+                MESH_SIM_OK &&
+                mesh_sim_set_link(&world, relay_a, downstream, 100u, 10u) ==
+                MESH_SIM_OK &&
+                mesh_sim_set_link(&world, relay_b, downstream, 100u, 10u) ==
+                MESH_SIM_OK,
+            "build direct-parent/RF-hidden-child topology");
+    REQUIRE(!world.reachable[gateway][downstream],
+            "RF-hidden child unexpectedly has a gateway link");
+    REQUIRE(mesh_sim_init_anchor_session(
+                &world, downstream, &downstream_config) == PROTO_OK,
+            "initialize RF-hidden low-duty listener");
+    REQUIRE(mesh_sim_start_anchor_low_duty(&world, downstream, 0u) ==
+                MESH_SIM_OK &&
+                mesh_sim_run_until(&world, 0u) == MESH_SIM_OK,
+            "start RF-hidden low-duty listener");
+
+    wake_start_a =
+        (uint64_t)(result_a.gateway_route_adv.earliest_tx_ms -
+                   MESH_RADIO_WAKE_TRAIN_MS) * 1000u;
+    wake_start_b =
+        (uint64_t)(result_b.gateway_route_adv.earliest_tx_ms -
+                   MESH_RADIO_WAKE_TRAIN_MS) * 1000u;
+    REQUIRE(schedule_route_adv_wake_train(
+                &world, relay_a, wake_start_a, &wake_end_a) == MESH_SIM_OK,
+            "schedule relay A activation train");
+    REQUIRE(schedule_route_adv_wake_train(
+                &world, relay_b, wake_start_b, &wake_end_b) == MESH_SIM_OK,
+            "schedule relay B activation train");
+    latest_wake_end = wake_end_a > wake_end_b ? wake_end_a : wake_end_b;
+    REQUIRE(mesh_sim_run_until(&world, latest_wake_end + 1u) == MESH_SIM_OK,
+            "run simultaneous-parent activation trains");
+    REQUIRE(decoded_receptions_from(&world,
+                                    RELAY_A_ID,
+                                    DOWNSTREAM_ID,
+                                    MESH_SIM_PHY_CHANNEL5_WAKE) +
+                decoded_receptions_from(&world,
+                                        RELAY_B_ID,
+                                        DOWNSTREAM_ID,
+                                        MESH_SIM_PHY_CHANNEL5_WAKE) > 0u,
+            "all relayed activation copies remained collision-locked");
+    REQUIRE(world.roles[downstream].anchor_session.diagnostics.claims > 0u,
+            "RF-hidden child never accepted a relayed activation claim");
+
+    /* Reinitialize only the radio world and preserve the real forwarded wire
+     * images and their relative production slots. A continuous listener here
+     * represents the prearm lease established by the preceding wake. */
+    mesh_sim_init(&world, UINT32_C(0xA55171D7));
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                              GATEWAY_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &gateway) == MESH_SIM_OK,
+            "add control-wave gateway");
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              RELAY_A_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &relay_a) == MESH_SIM_OK,
+            "add control-wave relay A");
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              RELAY_B_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &relay_b) == MESH_SIM_OK,
+            "add control-wave relay B");
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              DOWNSTREAM_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                              &downstream) == MESH_SIM_OK,
+            "add control-wave downstream anchor");
+    REQUIRE(mesh_sim_set_link(&world, gateway, relay_a, 100u, 10u) ==
+                MESH_SIM_OK &&
+                mesh_sim_set_link(&world, gateway, relay_b, 100u, 10u) ==
+                MESH_SIM_OK &&
+                mesh_sim_set_link(&world, relay_a, downstream, 100u, 10u) ==
+                MESH_SIM_OK &&
+                mesh_sim_set_link(&world, relay_b, downstream, 100u, 10u) ==
+                MESH_SIM_OK,
+            "rebuild direct-parent/RF-hidden-child topology");
+    REQUIRE(!world.reachable[gateway][downstream],
+            "control-wave child unexpectedly has a gateway link");
+
+    forwards[0] = &result_a.gateway_route_adv;
+    forwards[1] = &result_b.gateway_route_adv;
+    first_due_ms = forwards[0]->earliest_tx_ms < forwards[1]->earliest_tx_ms ?
+        forwards[0]->earliest_tx_ms : forwards[1]->earliest_tx_ms;
+    for (uint8_t relay = 0u; relay < 2u; relay++) {
+        ret = encode_application_packet(&forwards[relay]->packet,
+                                        forwards[relay]->payload,
+                                        forwards[relay]->payload_len,
+                                        encoded[relay],
+                                        sizeof(encoded[relay]),
+                                        &encoded_len[relay]);
+        REQUIRE(ret == PROTO_OK,
+                "encode forwarded Here-I-Am relay=%u ret=%d", relay, ret);
+        frame_duration_us[relay] = mesh_sim_frame_duration_us(
+            MESH_SIM_PHY_CHANNEL5_MESH_CONTROL, encoded_len[relay]);
+        REQUIRE(frame_duration_us[relay] > 0u,
+                "forwarded Here-I-Am has no modeled airtime relay=%u", relay);
+        control_starts[relay][0] = FIRST_COMMAND_TX_US +
+            (uint64_t)(forwards[relay]->earliest_tx_ms - first_due_ms) *
+                1000u;
+        for (uint8_t copy = 1u;
+             copy < MESH_GATEWAY_ROUTE_ADV_COPY_COUNT;
+             copy++) {
+            uint32_t copy_gap_ms = mesh_flood_copy_diversification_ms(
+                relay_ids[relay], &forwards[relay]->packet, copy) %
+                (MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS + 1u);
+
+            control_starts[relay][copy] =
+                control_starts[relay][copy - 1u] +
+                frame_duration_us[relay] + (uint64_t)copy_gap_ms * 1000u;
+        }
+        if (control_starts[relay][0] < rx_start_us) {
+            rx_start_us = control_starts[relay][0];
+        }
+        if (control_starts[relay][MESH_GATEWAY_ROUTE_ADV_COPY_COUNT - 1u] +
+                frame_duration_us[relay] + 10u > rx_end_us) {
+            rx_end_us =
+                control_starts[relay]
+                              [MESH_GATEWAY_ROUTE_ADV_COPY_COUNT - 1u] +
+                frame_duration_us[relay] + 10u;
+        }
+    }
+    REQUIRE(rx_start_us >= RX_GUARD_US,
+            "control listener guard underflow");
+    REQUIRE(mesh_sim_schedule_rx(&world,
+                                 downstream,
+                                 rx_start_us - RX_GUARD_US,
+                                 rx_end_us + RX_GUARD_US,
+                                 UWB_CHANNEL_WAKE_CONTACT,
+                                 MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                 NULL) == MESH_SIM_OK,
+            "arm prearmed child for both Here-I-Am bursts");
+    for (uint8_t relay = 0u; relay < 2u; relay++) {
+        uint8_t sender = relay == 0u ? relay_a : relay_b;
+
+        for (uint8_t copy = 0u;
+             copy < MESH_GATEWAY_ROUTE_ADV_COPY_COUNT;
+             copy++) {
+            REQUIRE(mesh_sim_schedule_raw_tx(
+                        &world,
+                        sender,
+                        control_starts[relay][copy],
+                        UWB_CHANNEL_WAKE_CONTACT,
+                        MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                        encoded[relay],
+                        encoded_len[relay],
+                        false,
+                        NULL) == MESH_SIM_OK,
+                    "schedule Here-I-Am relay=%u copy=%u", relay, copy);
+        }
+    }
+    REQUIRE(mesh_sim_run(&world) == MESH_SIM_OK,
+            "run staggered Here-I-Am copy bursts");
+    REQUIRE(decoded_receptions_from(&world,
+                                    RELAY_A_ID,
+                                    DOWNSTREAM_ID,
+                                    MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) > 0u &&
+                decoded_receptions_from(
+                    &world,
+                    RELAY_B_ID,
+                    DOWNSTREAM_ID,
+                    MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) > 0u,
+            "one current-wave parent remained collision-locked");
+    return 0;
+}
+
 int main(void)
 {
     int ret = test_gateway_command_yields_for_assignment_claim();
@@ -645,6 +1101,10 @@ int main(void)
         return ret;
     }
     ret = test_two_simultaneous_relays_diversify_three_copy_schedule();
+    if (ret != 0) {
+        return ret;
+    }
+    ret = test_two_here_i_am_relays_do_not_collision_lock_hidden_child();
     if (ret != 0) {
         return ret;
     }

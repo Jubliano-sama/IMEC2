@@ -1183,6 +1183,194 @@ static void test_gateway_adv_sequence_freshness_is_commit_late_and_wrap_safe(voi
     assert(anchor.gateway_route_adv_seq == 1u);
 }
 
+static void test_current_wave_parent_selection_is_arrival_order_independent(void)
+{
+    const uint64_t direct_parent_id = TEST_ANCHOR_BASE + 60u;
+    const uint64_t long_grandparent_id = TEST_ANCHOR_BASE + 61u;
+    const uint64_t long_parent_id = TEST_ANCHOR_BASE + 62u;
+    const uint64_t child_id = TEST_ANCHOR_BASE + 63u;
+    const uint32_t current_sequence = TEST_ROUTE_SEQUENCE + 1u;
+
+    for (uint8_t long_path_first = 0u; long_path_first <= 1u;
+         long_path_first++) {
+        struct mesh_relay gateway;
+        struct mesh_relay direct_parent;
+        struct mesh_relay long_grandparent;
+        struct mesh_relay long_parent;
+        struct mesh_relay child;
+        struct mesh_anchor_downlink_store direct_parent_store;
+        struct mesh_anchor_downlink_store long_grandparent_store;
+        struct mesh_anchor_downlink_store long_parent_store;
+        struct mesh_anchor_downlink_store child_store;
+        struct operation_policy_set policy = complete_policy();
+        struct mesh_gateway_route_adv_snapshot snapshot;
+        struct mesh_outbound root_advertisement;
+        struct mesh_relay_result direct_result;
+        struct mesh_relay_result long_grandparent_result;
+        struct mesh_relay_result long_parent_result;
+        struct mesh_relay_result child_result;
+        const struct mesh_outbound *first;
+        const struct mesh_outbound *second;
+        const struct route_candidate *current_selected;
+        struct route_candidate stale_direct = {
+            .next_hop_id = TEST_GATEWAY_ID,
+            .gateway_id = TEST_GATEWAY_ID,
+            .route_epoch = TEST_ROUTE_EPOCH,
+            .last_seen_ms = 900u,
+            .hop_count = 0u,
+            .link_quality = 100u,
+            .valid = true,
+        };
+        uint64_t first_parent_id;
+        uint64_t second_parent_id;
+        bool saw_direct_parent = false;
+        bool saw_long_parent = false;
+
+        mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
+                        TEST_GATEWAY_ID, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
+        mesh_relay_init(&direct_parent, MESH_RELAY_ROLE_ANCHOR,
+                        direct_parent_id, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
+        mesh_relay_init(&long_grandparent, MESH_RELAY_ROLE_ANCHOR,
+                        long_grandparent_id, TEST_GATEWAY_ID,
+                        TEST_ROUTE_EPOCH);
+        mesh_relay_init(&long_parent, MESH_RELAY_ROLE_ANCHOR,
+                        long_parent_id, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
+        mesh_relay_init(&child, MESH_RELAY_ROLE_ANCHOR,
+                        child_id, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
+        assert(mesh_relay_attach_anchor_downlink_store(
+                   &direct_parent, &direct_parent_store) == PROTO_OK);
+        assert(mesh_relay_attach_anchor_downlink_store(
+                   &long_grandparent, &long_grandparent_store) == PROTO_OK);
+        assert(mesh_relay_attach_anchor_downlink_store(
+                   &long_parent, &long_parent_store) == PROTO_OK);
+        assert(mesh_relay_attach_anchor_downlink_store(
+                   &child, &child_store) == PROTO_OK);
+
+        assert(mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+                   &gateway,
+                   current_sequence,
+                   1000u,
+                   &policy,
+                   &snapshot) == PROTO_OK);
+        snapshot.enumeration_prearm_epoch = UINT32_C(0x43555252);
+        snapshot.enumeration_prearm_hold_ms =
+            DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
+        snapshot.enumeration_prearm_present = true;
+        assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+                   &gateway, &snapshot, &root_advertisement) == PROTO_OK);
+
+        assert(mesh_relay_handle_rx_with_random(
+                   &direct_parent,
+                   &root_advertisement.packet,
+                   root_advertisement.payload,
+                   root_advertisement.payload_len,
+                   TEST_GATEWAY_ID,
+                   80u,
+                   1010u,
+                   1u,
+                   &direct_result) == PROTO_OK);
+        assert(direct_result.status == PROTO_OK);
+        assert(result_has_action(
+            &direct_result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+
+        assert(mesh_relay_handle_rx_with_random(
+                   &long_grandparent,
+                   &root_advertisement.packet,
+                   root_advertisement.payload,
+                   root_advertisement.payload_len,
+                   TEST_GATEWAY_ID,
+                   100u,
+                   1010u,
+                   2u,
+                   &long_grandparent_result) == PROTO_OK);
+        assert(long_grandparent_result.status == PROTO_OK);
+        assert(result_has_action(
+            &long_grandparent_result,
+            MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+        assert(mesh_relay_handle_rx_with_random(
+                   &long_parent,
+                   &long_grandparent_result.gateway_route_adv.packet,
+                   long_grandparent_result.gateway_route_adv.payload,
+                   long_grandparent_result.gateway_route_adv.payload_len,
+                   long_grandparent_id,
+                   100u,
+                   1020u,
+                   3u,
+                   &long_parent_result) == PROTO_OK);
+        assert(long_parent_result.status == PROTO_OK);
+        assert(result_has_action(
+            &long_parent_result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+
+        /* This route is intentionally cheaper than either path established by
+         * the current Here-I-Am, but it has no ancestry proof for that wave. */
+        assert(route_upsert_candidate(&child.upstream,
+                                      &stale_direct) == PROTO_OK);
+        assert(route_selected(&child.upstream) != NULL);
+        assert(route_selected(&child.upstream)->next_hop_id ==
+               TEST_GATEWAY_ID);
+        assert(mesh_relay_current_gateway_route(&child, 1020u) == NULL);
+
+        first = long_path_first ? &long_parent_result.gateway_route_adv :
+                                  &direct_result.gateway_route_adv;
+        first_parent_id = long_path_first ? long_parent_id : direct_parent_id;
+        second = long_path_first ? &direct_result.gateway_route_adv :
+                                   &long_parent_result.gateway_route_adv;
+        second_parent_id = long_path_first ? direct_parent_id : long_parent_id;
+
+        assert(mesh_relay_handle_rx_with_random(
+                   &child,
+                   &first->packet,
+                   first->payload,
+                   first->payload_len,
+                   first_parent_id,
+                   90u,
+                   1030u,
+                   4u,
+                   &child_result) == PROTO_OK);
+        assert(child_result.status == PROTO_OK);
+        assert(mesh_relay_handle_rx_with_random(
+                   &child,
+                   &second->packet,
+                   second->payload,
+                   second->payload_len,
+                   second_parent_id,
+                   90u,
+                   1040u,
+                   5u,
+                   &child_result) == PROTO_OK);
+        assert(child_result.status == PROTO_OK);
+        assert(child.gateway_route_adv_seq == current_sequence);
+
+        for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+            const struct route_candidate *candidate =
+                &child.upstream.candidates[i];
+
+            if (!candidate->valid) {
+                continue;
+            }
+            if (candidate->next_hop_id == direct_parent_id) {
+                saw_direct_parent = true;
+                assert(candidate->hop_count == 1u);
+            } else if (candidate->next_hop_id == long_parent_id) {
+                saw_long_parent = true;
+                assert(candidate->hop_count == 2u);
+            }
+        }
+        assert(saw_direct_parent);
+        assert(saw_long_parent);
+
+        /* Generic delivery may keep using the old direct path. Enumeration is
+         * bound only to parents that carried the newest advertisement. */
+        assert(route_selected(&child.upstream) != NULL);
+        assert(route_selected(&child.upstream)->next_hop_id ==
+               TEST_GATEWAY_ID);
+        current_selected = mesh_relay_current_gateway_route(&child, 1040u);
+        assert(current_selected != NULL);
+        assert(current_selected->next_hop_id == direct_parent_id);
+        assert(current_selected->hop_count == 1u);
+    }
+}
+
 static void test_configured_route_uses_one_complete_epoch_transition(void)
 {
     struct mesh_relay anchor;
@@ -1433,6 +1621,7 @@ int main(void)
     test_route_request_requires_full_read_only_admission();
     test_route_request_epoch_transition_and_old_request_recovery();
     test_gateway_adv_sequence_freshness_is_commit_late_and_wrap_safe();
+    test_current_wave_parent_selection_is_arrival_order_independent();
     test_configured_route_uses_one_complete_epoch_transition();
     test_multihop_forward_preserves_exact_policy_bytes();
     test_malformed_and_duplicate_policy_reject_atomically();

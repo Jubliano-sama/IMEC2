@@ -83,11 +83,18 @@ extern "C" {
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
 /* Here-I-Am is a short route refresh, not a general discovery wave. Each
  * relay yields the background receiver, sends one ordinary activation train,
- * then sends three closely spaced advertisement copies. Every participant
- * and the gateway settle calculation use this one bounded timing profile. */
-#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS 1u
-#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS 0u
-#define MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS 1u
+ * then sends three advertisement copies. Relays choose one of 32 node-mixed
+ * start slots before the wake train and defer a complete wake+advertisement
+ * wave when another relay is already active. This prevents two direct
+ * parents of the same low-duty child from remaining collision-locked for the
+ * whole activation wave. Every participant and the gateway settle
+ * calculation use this one bounded timing profile. */
+#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS 25u
+#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_COUNT 32u
+#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS \
+    ((MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_COUNT - 1u) * \
+     MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS)
+#define MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS 25u
 #define MESH_GATEWAY_ROUTE_ADV_COPY_COUNT (FLOOD_DEFAULT_RETRY_COUNT + 1u)
 #define MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS 600u
 #define MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS \
@@ -95,10 +102,23 @@ extern "C" {
       OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
      ((MESH_GATEWAY_ROUTE_ADV_COPY_COUNT - 1u) * \
       MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS))
+#define MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS \
+    (MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
+     MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS)
+#define MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MAX_MS \
+    (MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS + 200u)
+#define MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES 2u
+#define MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS \
+    (MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
+     MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MAX_MS)
+#define MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS \
+    (MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES * \
+     MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS)
 #define MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS \
     (MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS + \
      MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
      MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS + \
+     MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS + \
      MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS)
 /* CLAIM follows the enumeration Here-I-Am as a pipelined wave. Its first
  * downstream copy waits for one complete Here-I-Am hop; the full bound also
@@ -825,6 +845,13 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     const struct mesh_relay *relay,
     uint64_t target_id);
+/* Select only among paths proven by the newest fully handled Here-I-Am.
+ * This is the operation-scoped parent set used by enumeration and survey;
+ * older same-epoch routes remain available to ordinary delivery failover but
+ * cannot impersonate the current activation wave. */
+const struct route_candidate *mesh_relay_current_gateway_route(
+    const struct mesh_relay *relay,
+    uint32_t now_ms);
 /*
  * Forced-depth bench anchors must not infer parent depth from a command's TTL:
  * a deeper anchor can rebroadcast a short copy that looks locally correct.

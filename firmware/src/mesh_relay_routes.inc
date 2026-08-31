@@ -109,6 +109,43 @@ const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     return selected;
 }
 
+const struct route_candidate *mesh_relay_current_gateway_route(
+    const struct mesh_relay *relay,
+    uint32_t now_ms)
+{
+    struct route_table current_wave;
+
+    if (relay == NULL || relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        relay->anchor_downlink_store == NULL ||
+        relay->gateway_route_adv_seq == 0u) {
+        return NULL;
+    }
+
+    current_wave = relay->upstream;
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &relay->upstream.candidates[i];
+        const struct mesh_route_path *path =
+            upstream_candidate_ancestry(relay, candidate);
+        const struct mesh_upstream_ancestry_entry *ancestry =
+            &relay->anchor_downlink_store->upstream_ancestry[i];
+
+        if (!candidate->valid ||
+            candidate->gateway_id != relay->gateway_id ||
+            candidate->route_epoch != relay->upstream.current_epoch ||
+            path == NULL || !ancestry->valid ||
+            ancestry->gateway_route_seq != relay->gateway_route_adv_seq) {
+            current_wave.candidates[i].valid = false;
+        }
+    }
+    if (route_select_best_at(&current_wave, now_ms) != PROTO_OK ||
+        current_wave.selected_index == ROUTE_NO_SELECTION ||
+        current_wave.selected_index >= ROUTE_MAX_CANDIDATES) {
+        return NULL;
+    }
+    return &relay->upstream.candidates[current_wave.selected_index];
+}
+
 int mesh_relay_validate_forced_gateway_control_parent(
     const struct mesh_relay *relay,
     uint64_t previous_hop_id,

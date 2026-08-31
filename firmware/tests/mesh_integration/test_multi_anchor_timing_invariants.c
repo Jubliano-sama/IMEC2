@@ -536,6 +536,12 @@ static void test_enumeration_claim_preserves_pipelined_activation_lead(void)
         MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
         FLOOD_POST_ROOT_GUARD_MS;
 
+    CHECK(MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS == 1510u,
+          "one failed Here-I-Am contention attempt lost its full wake bound");
+    CHECK(MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS == 3020u,
+          "Here-I-Am contention no longer charges both failed attempts");
+    CHECK(MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS == 5105u,
+          "Here-I-Am relay-hop bound changed without requalification");
     CHECK(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 1u,
           "enumeration root waits for more than one pipelined relay hop");
     CHECK(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == root_lead_ms,
@@ -559,9 +565,9 @@ static void test_enumeration_response_edge_follows_complete_claim_wave(void)
     CHECK(MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS ==
               MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS,
           "CLAIM no longer preserves one complete Here-I-Am hop");
-    CHECK(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 1628u,
+    CHECK(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 5470u,
           "CLAIM relay bound changed without requalifying the response edge");
-    CHECK(ENUMERATION_RESPONSE_START_DELAY_MS == 13214u,
+    CHECK(ENUMERATION_RESPONSE_START_DELAY_MS == 43950u,
           "shared enumeration response edge changed without requalification");
     for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
         uint32_t worst_claim_complete_ms =

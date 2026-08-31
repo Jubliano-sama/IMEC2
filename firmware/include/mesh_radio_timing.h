@@ -29,9 +29,9 @@
 #define MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS 20u
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 
-/* A relayed gateway control skips the courtesy sniffs because gateway
- * control is atomic, but it still needs the post-wake retune boundary before
- * the typed frame. Other relayed wake users perform both courtesy sniffs. */
+/* Atomic gateway control skips the courtesy sniffs, but it still needs the
+ * post-wake retune boundary before the typed frame. Here-I-Am relays and
+ * other polite wake users use this conservative two-sniff envelope. */
 #define MESH_RADIO_CONTROL_RELAY_WAKE_ENVELOPE_MS \
     (MESH_RADIO_WAKE_TRAIN_MS + MESH_RADIO_EVENT_RETUNE_GUARD_MS)
 #define MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS \

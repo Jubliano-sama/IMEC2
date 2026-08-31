@@ -1324,7 +1324,16 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     flood_control.random_backoff_max_ms = fields.random_backoff_max_ms;
     flood_control.random_backoff_slot_ms = fields.random_backoff_slot_ms;
     flood_control.retry_count = fields.flood_retry_count;
-    out->earliest_tx_ms = now_ms +
+    /* earliest_tx_ms names the first typed advertisement, while the adapter
+     * starts the preceding activation train one wake duration earlier. Keep
+     * that wake start in the future so the node-mixed relay slot actually
+     * staggers competing parents; the former now+0..1 ms value had already
+     * expired when the adapter subtracted the 500 ms wake duration, making
+     * every relay start immediately. */
+    random_value = mix32(random_value ^ (uint32_t)local_id ^
+                         (uint32_t)(local_id >> 32) ^ packet->session_id ^
+                         ((uint32_t)packet->seq << 16));
+    out->earliest_tx_ms = now_ms + MESH_RADIO_WAKE_TRAIN_MS +
         flood_random_slotted_delay_ms(flood_control.random_backoff_max_ms,
                                       flood_control.random_backoff_slot_ms,
                                       random_value);

@@ -1924,25 +1924,33 @@ static int mesh_route_wake_sniff_activity(const char *phase,
 static bool mesh_route_wake_backoff(uint64_t target_id,
                                     const char *phase,
                                     const char *reason,
-                                    uint8_t retry_index)
+                                    uint8_t retry_index,
+                                    bool gateway_route_adv_relay)
 {
-    uint32_t delay_ms = app_wake_train_politeness_backoff_ms(
-        retry_index,
-        sys_rand32_get());
+    uint8_t retry_limit = gateway_route_adv_relay ?
+        MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES :
+        APP_WAKE_TRAIN_POLITE_MAX_RETRIES;
+    uint32_t random_value = sys_rand32_get();
+    uint32_t delay_ms = gateway_route_adv_relay ?
+        MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS +
+            random_value %
+                (MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MAX_MS -
+                 MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS + 1u) :
+        app_wake_train_politeness_backoff_ms(retry_index, random_value);
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_MESH_WAKE_POLITE_BACKOFF phase=%s target=0x%llx retry=%u/%u delay=%u reason=%s\n",
                             phase == NULL ? "unknown" : phase,
                             (unsigned long long)target_id,
                             (uint32_t)retry_index + 1u,
-                            APP_WAKE_TRAIN_POLITE_MAX_RETRIES,
+                            retry_limit,
                             delay_ms,
                             reason == NULL ? "route" : reason);
     }
     LOG_INF("mesh route wake train deferred after C5 activity: target=0x%016llx retry=%u/%u phase=%s backoff_ms=%u reason=%s",
             (unsigned long long)target_id,
             (uint32_t)retry_index + 1u,
-            APP_WAKE_TRAIN_POLITE_MAX_RETRIES,
+            retry_limit,
             phase == NULL ? "unknown" : phase,
             delay_ms,
             reason == NULL ? "route" : reason);
@@ -2063,8 +2071,15 @@ static int mesh_send_route_wake_train_with_duration(
     uint8_t polite_retry = 0u;
     uint8_t click_quality = 0u;
     bool c5_activity = false;
+    bool gateway_route_adv_relay =
+        DEVICE_ROLE == ROLE_ANCHOR && authorization_candidate != NULL &&
+        authorization_candidate->packet.msg_type == MSG_GATEWAY_ROUTE_ADV;
     bool atomic_gateway_control =
-        purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
+        purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD &&
+        !gateway_route_adv_relay;
+    uint8_t polite_retry_limit = gateway_route_adv_relay ?
+        MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES :
+        APP_WAKE_TRAIN_POLITE_MAX_RETRIES;
     bool boost_single_shot = false;
     bool click_captured = false;
     bool local_can_range_clicks =
@@ -2210,6 +2225,7 @@ wake_train_attempt:
      * responder falls back to the full train with no new fallback state.
      */
     boost_single_shot = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+                        !gateway_route_adv_relay &&
                         anchor_relay_control_followup_boost_active();
     wake_train_config.wake_adv_ms = wake_train_ms;
     if (boost_single_shot) {
@@ -2496,7 +2512,8 @@ wake_train_attempt:
         }
     }
 
-    if (!atomic_gateway_control && ret >= 0 && sent_count > 0u) {
+    if (!atomic_gateway_control && !gateway_route_adv_relay &&
+        ret >= 0 && sent_count > 0u) {
         ret = mesh_route_wake_sniff_activity("post",
                                              target_id,
                                              reason,
@@ -2541,12 +2558,13 @@ out:
     if (ret < 0) {
         mesh_c5_contact_clear("wake-train-fail");
         if (ret == -EAGAIN && c5_activity &&
-            polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
+            polite_retry < polite_retry_limit) {
             mesh_restart_role_scan();
             if (mesh_route_wake_backoff(target_id,
                                         activity_phase,
                                         reason,
-                                        polite_retry)) {
+                                        polite_retry,
+                                        gateway_route_adv_relay)) {
                 ret = -ECANCELED;
                 goto out_unlock;
             }

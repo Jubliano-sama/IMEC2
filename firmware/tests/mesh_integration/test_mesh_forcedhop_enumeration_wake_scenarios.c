@@ -494,10 +494,18 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
 {
     static struct fixture fixture;
     uint8_t command_frame[PACKET_EXT_MAX_LEN];
-    uint64_t activation_start_us =
+    uint64_t activation_hop_start_us =
         PIPELINE_BASE_US +
         (uint64_t)(depth - 1u) *
             MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS * 1000u;
+    uint64_t busy_retry_delay_us = production_timing ?
+        (uint64_t)MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES *
+            MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS * 1000u :
+        0u;
+    uint64_t activation_start_us = activation_hop_start_us;
+    uint32_t activation_wake_ms = production_timing ?
+        MESH_RADIO_WAKE_TRAIN_MS :
+        MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS;
     uint32_t claim_hop_delay_ms = production_timing ?
         MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS :
         DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS;
@@ -517,6 +525,22 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
           "pipeline output pointers missing");
     *decoded = false;
     *ownership_conflict = false;
+    if (production_timing) {
+        activation_start_us +=
+            (uint64_t)(MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS +
+                       MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS) *
+                1000u +
+            busy_retry_delay_us;
+        CHECK(busy_retry_delay_us ==
+                  (uint64_t)MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS * 1000u,
+              "pipeline did not charge both worst-case busy retries");
+        CHECK(activation_start_us - activation_hop_start_us ==
+                  (uint64_t)(MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS +
+                             MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS +
+                             MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS) *
+                      1000u,
+              "pipeline omitted pre-wake relay delay");
+    }
     CHECK(setup_depth_fixture(&fixture, depth),
           "depth fixture setup failed");
     CHECK(build_enumeration_claim(command_frame, sizeof(command_frame),
@@ -526,14 +550,25 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
               &fixture.world,
               fixture.forced,
               activation_start_us,
-              MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS,
+              activation_wake_ms,
               UINT32_C(0xe100) + depth,
               &activation_end_us),
           "depth activation relay schedule failed");
-    CHECK(activation_end_us <=
-              activation_start_us +
-                  (uint64_t)MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS * 1000u,
-          "activation wake exceeds the production relay-hop bound");
+    if (production_timing) {
+        CHECK(activation_end_us <=
+                  activation_hop_start_us +
+                      (uint64_t)(
+                          MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS -
+                          MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS) *
+                          1000u,
+              "busy-retried wake leaves no room for the Here-I-Am burst");
+    } else {
+        CHECK(activation_end_us <=
+                  activation_start_us +
+                      (uint64_t)MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS *
+                          1000u,
+              "activation wake exceeds the production relay-hop bound");
+    }
 
     first_reception = fixture.world.reception_count;
     CHECK(mesh_sim_schedule_raw_tx(
@@ -585,7 +620,7 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
     }
     CHECK(ret == MESH_SIM_OK,
           "pipelined CLAIM receiver overlaps activation ownership");
-    CHECK(claim_start_us >= activation_start_us +
+    CHECK(claim_start_us >= activation_hop_start_us +
               (uint64_t)MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS * 1000u +
               (uint64_t)FLOOD_POST_ROOT_GUARD_MS * 1000u,
           "production CLAIM lost the local activation lead");
