@@ -1,3 +1,4 @@
 bleak>=0.22,<2
 numpy>=2,<3
 scipy>=1.14,<2
+pillow>=11,<13

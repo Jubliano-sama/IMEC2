@@ -8,6 +8,7 @@ from tools.gateway_gui.app import GatewayGui
 from tools.gateway_gui.anchor_geometry_connectivity import (
     CONNECTIVITY_INTERVAL_ALGORITHM,
 )
+from tools.gateway_gui.anchor_geometry import AnchorPairDistance
 from tools.gateway_gui.command_orchestration import GatewayCommandDispatch
 from tools.gateway_gui.delivery_dedup import GatewayPacketDeduplicator
 from tools.gateway_gui.protocol import (
@@ -176,6 +177,28 @@ def gui_model() -> GatewayGui:
 
 
 class SurveyAppIntegrationTests(unittest.TestCase):
+    def test_operator_disabled_edge_is_removed_from_range_and_neighbor_inputs(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        pairs = (
+            AnchorPairDistance("A", "B", 3.0),
+            AnchorPairDistance("B", "C", 4.0),
+        )
+        gui.survey_model = Mock(
+            geometry_pairs=pairs,
+            neighbor_pairs=frozenset((("A", "B"), ("B", "C"))),
+        )  # type: ignore[assignment]
+        gui.survey_geometry_view = Mock(
+            effective_geometry_pairs=(pairs[1],),
+            disabled_edge_keys=frozenset((("A", "B"),)),
+            edge_edit_counts=(1, 0),
+        )  # type: ignore[assignment]
+
+        effective, neighbors, counts = gui._effective_geometry_inputs()
+
+        self.assertEqual(effective, (pairs[1],))
+        self.assertEqual(neighbors, frozenset((("B", "C"),)))
+        self.assertEqual(counts, (1, 0))
+
     def test_all_neighbor_action_starts_fresh_and_continues_with_merge(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui._survey_auto_all = False

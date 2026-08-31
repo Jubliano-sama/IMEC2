@@ -44,6 +44,7 @@ from .protocol import (
 )
 from .survey_runtime import SurveyCommandOwner, SurveyOperationModel
 from .survey_view import LayoutRegistration, SurveyGeometryView
+from .theme import AMBER_BG, ERROR_BG, INK, PANEL_ALT_BG, SUCCESS_BG
 
 
 class GatewayDiagnosticsMixin:
@@ -98,6 +99,7 @@ class GatewayDiagnosticsMixin:
             on_translate=self._nudge_layout_translation,
             on_scale=self._nudge_layout_scale,
             on_reset=self._reset_layout_registration,
+            on_mirror=self._mirror_layout_frame,
         )
         self.click_diagnostics_view.pack(fill="both", expand=True)
         self.survey_geometry_view = SurveyGeometryView(
@@ -152,7 +154,7 @@ class GatewayDiagnosticsMixin:
             return
         try:
             layout = evaluate_anchor_layout(
-                model.geometry_pairs,
+                view.effective_geometry_pairs,
                 positions_m,
                 algorithm=MANUALLY_EDITED_LAYOUT_ALGORITHM,
             )
@@ -177,6 +179,11 @@ class GatewayDiagnosticsMixin:
         view = getattr(self, "survey_geometry_view", None)
         if view is not None:
             view.reset_transform()
+
+    def _mirror_layout_frame(self) -> None:
+        view = getattr(self, "survey_geometry_view", None)
+        if view is not None:
+            view.mirror_layout_frame()
 
     def _diagnostic_tab_changed(self, _event: tk.Event[Any]) -> None:
         if not hasattr(self, "click_location_tab"):
@@ -273,10 +280,18 @@ class GatewayDiagnosticsMixin:
         )
 
     def _configure_diagnostic_packet_tags(self) -> None:
-        self.packet_tree.tag_configure("wake_normal", background="#e4f2ee")
-        self.packet_tree.tag_configure("wake_late", background="#fbe9e8")
-        self.packet_tree.tag_configure("wake_collision", background="#fff0d6")
-        self.packet_tree.tag_configure("wake_unknown", background="#edf0f2")
+        self.packet_tree.tag_configure(
+            "wake_normal", background=SUCCESS_BG, foreground=INK
+        )
+        self.packet_tree.tag_configure(
+            "wake_late", background=ERROR_BG, foreground=INK
+        )
+        self.packet_tree.tag_configure(
+            "wake_collision", background=AMBER_BG, foreground=INK
+        )
+        self.packet_tree.tag_configure(
+            "wake_unknown", background=PANEL_ALT_BG, foreground=INK
+        )
 
     def _diagnostic_packet_tags(self, packet: Packet) -> tuple[str, ...]:
         diagnostic = self._wake_by_packet_key.get(self._wake_evidence(packet).key)
@@ -348,7 +363,7 @@ class GatewayDiagnosticsMixin:
                 except ValueError as exc:
                     self.survey_model.geometry_failed(revision, str(exc))
         self._refresh_survey_view()
-        if applied and view is not None:
+        if applied and view is not None and layout is not None:
             self._apply_survey_geometry_positions(view.registration)
             self.status_text.set(
                 f"Geometry re-solve complete: {layout.algorithm}; "
@@ -451,6 +466,25 @@ class GatewayDiagnosticsMixin:
             current_positions_override,
         )
 
+    def _effective_geometry_inputs(
+        self,
+    ) -> tuple[
+        tuple[Any, ...],
+        frozenset[tuple[str, str]],
+        tuple[int, int],
+    ]:
+        """Return the current RAM-only connection edits for one solve."""
+
+        model = self.survey_model
+        view = getattr(self, "survey_geometry_view", None)
+        if view is None:
+            return model.geometry_pairs, model.neighbor_pairs, (0, 0)
+        return (
+            view.effective_geometry_pairs,
+            model.neighbor_pairs - view.disabled_edge_keys,
+            view.edge_edit_counts,
+        )
+
     def _submit_geometry_solve(
         self,
         solver: str,
@@ -470,9 +504,12 @@ class GatewayDiagnosticsMixin:
             if model.layout is not None
             else None
         )
+        effective_pairs, neighbor_pairs, edge_edit_counts = (
+            self._effective_geometry_inputs()
+        )
         all_pair_count = len(model.geometry_pairs)
         solve_pairs = select_nearest_anchor_ranges(
-            model.geometry_pairs,
+            effective_pairs,
             nearest_per_anchor,
         )
         future = self._geometry_executor.submit(
@@ -480,7 +517,7 @@ class GatewayDiagnosticsMixin:
             solve_pairs,
             solver=solver,
             seed=seed,
-            neighbor_pairs=model.neighbor_pairs,
+            neighbor_pairs=neighbor_pairs,
             nonneighbor_pairs=model.nonneighbor_pairs,
             current_positions_m=current,
             nonneighbor_min_m=neighbor_min_m,
@@ -527,14 +564,22 @@ class GatewayDiagnosticsMixin:
                     }
                 )
             else:
+                annotations: list[str] = []
                 if nearest_per_anchor > 0:
+                    annotations.append(
+                        f"closest {nearest_per_anchor}/anchor, "
+                        f"{len(solve_pairs)}/{all_pair_count} ranges"
+                    )
+                disabled_count, adjusted_count = edge_edit_counts
+                if disabled_count or adjusted_count:
+                    annotations.append(
+                        f"GUI edges: {disabled_count} disabled, "
+                        f"{adjusted_count} adjusted"
+                    )
+                if annotations:
                     layout = replace(
                         layout,
-                        algorithm=(
-                            f"{layout.algorithm}; closest "
-                            f"{nearest_per_anchor}/anchor, "
-                            f"{len(solve_pairs)}/{all_pair_count} ranges"
-                        ),
+                        algorithm=f"{layout.algorithm}; {'; '.join(annotations)}",
                     )
                 self.events.put(
                     {
@@ -568,8 +613,11 @@ class GatewayDiagnosticsMixin:
                 view.geometry_var.set(str(exc))
             self.status_text.set(str(exc))
             return
+        effective_pairs, _neighbor_pairs, edge_edit_counts = (
+            self._effective_geometry_inputs()
+        )
         refine_pairs = select_nearest_anchor_ranges(
-            model.geometry_pairs,
+            effective_pairs,
             nearest_per_anchor,
         )
         all_pair_count = len(model.geometry_pairs)
@@ -600,14 +648,22 @@ class GatewayDiagnosticsMixin:
                     "error": f"Distance-only refinement failed: {exc}",
                 }
             else:
+                annotations: list[str] = []
                 if nearest_per_anchor > 0:
+                    annotations.append(
+                        f"closest {nearest_per_anchor}/anchor, "
+                        f"{len(refine_pairs)}/{all_pair_count} ranges"
+                    )
+                disabled_count, adjusted_count = edge_edit_counts
+                if disabled_count or adjusted_count:
+                    annotations.append(
+                        f"GUI edges: {disabled_count} disabled, "
+                        f"{adjusted_count} adjusted"
+                    )
+                if annotations:
                     layout = replace(
                         layout,
-                        algorithm=(
-                            f"{layout.algorithm}; closest "
-                            f"{nearest_per_anchor}/anchor, "
-                            f"{len(refine_pairs)}/{all_pair_count} ranges"
-                        ),
+                        algorithm=f"{layout.algorithm}; {'; '.join(annotations)}",
                     )
                 payload = {
                     "kind": "survey_geometry_solved",

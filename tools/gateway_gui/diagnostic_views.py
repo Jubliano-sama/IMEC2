@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 from typing import Callable, Iterable
+
+from PIL import Image, ImageEnhance, ImageTk, UnidentifiedImageError
 
 from .diagnostic_models import (
     ClickDiagnosticState, CommandTimelineModel, TopologyComparison,
@@ -19,13 +23,101 @@ from .survey_view import (
     LayoutRegistrationControls,
     held_translation_delta,
 )
+from .theme import (
+    ACCENT,
+    AMBER,
+    BORDER,
+    CANVAS_BG,
+    CONNECTION,
+    ERROR,
+    GRID,
+    INK,
+    MAGENTA,
+    MUTED,
+    PANEL_BG,
+)
 
 
-ACCENT = "#126b5b"
-AMBER = "#a56200"
-ERROR = "#a72b2b"
-MUTED = "#667079"
-BLUE = "#315c9b"
+BLUE = "#2f8cff"
+
+
+def parse_blueprint_dimensions_m(
+    width_value: str,
+    height_value: str,
+) -> tuple[float, float]:
+    """Parse an exact metric blueprint rectangle."""
+
+    values: list[float] = []
+    for label, raw in (
+        ("Blueprint width", width_value),
+        ("Blueprint height", height_value),
+    ):
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be a number in metres.") from exc
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{label} must be finite and greater than zero.")
+        values.append(value)
+    return values[0], values[1]
+
+
+class BlueprintControls(ttk.Frame):
+    """Shared embedded/fullscreen controls for one RAM-only floor plan."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        width_var: tk.StringVar,
+        height_var: tk.StringVar,
+        status_var: tk.StringVar,
+        on_load: Callable[[], None],
+        on_apply: Callable[[], None],
+        on_clear: Callable[[], None],
+        on_mirror: Callable[[], None],
+    ) -> None:
+        super().__init__(parent, style="Panel.TFrame")
+        self.columnconfigure(2, weight=1)
+        ttk.Button(self, text="Load blueprint", command=on_load).grid(
+            row=0, column=0, padx=(0, 4)
+        )
+        self.clear_button = ttk.Button(self, text="Clear", command=on_clear)
+        self.clear_button.grid(row=0, column=1, padx=(0, 8))
+        ttk.Label(
+            self,
+            textvariable=status_var,
+            style="PanelMuted.TLabel",
+        ).grid(row=0, column=2, columnspan=5, sticky="w")
+        ttk.Label(self, text="Blueprint width (m)", style="Panel.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(4, 0)
+        )
+        ttk.Entry(self, textvariable=width_var, width=8).grid(
+            row=1, column=1, sticky="w", padx=(4, 10), pady=(4, 0)
+        )
+        ttk.Label(self, text="Height (m)", style="Panel.TLabel").grid(
+            row=1, column=2, sticky="e", pady=(4, 0)
+        )
+        ttk.Entry(self, textvariable=height_var, width=8).grid(
+            row=1, column=3, sticky="w", padx=(4, 4), pady=(4, 0)
+        )
+        self.apply_button = ttk.Button(
+            self,
+            text="Apply exact size",
+            command=on_apply,
+        )
+        self.apply_button.grid(row=1, column=4, padx=(0, 8), pady=(4, 0))
+        self.mirror_button = ttk.Button(
+            self,
+            text="Mirror anchors",
+            command=on_mirror,
+        )
+        self.mirror_button.grid(row=1, column=5, pady=(4, 0))
+
+    def set_enabled(self, *, has_blueprint: bool, has_positions: bool) -> None:
+        self.clear_button.configure(state="normal" if has_blueprint else "disabled")
+        self.apply_button.configure(state="normal" if has_blueprint else "disabled")
+        self.mirror_button.configure(state="normal" if has_positions else "disabled")
 
 
 class ClickDiagnosticsView(ttk.Frame):
@@ -36,11 +128,13 @@ class ClickDiagnosticsView(ttk.Frame):
         on_translate: Callable[[float, float], None] = lambda _x, _y: None,
         on_scale: Callable[[float], None] = lambda _factor: None,
         on_reset: Callable[[], None] = lambda: None,
+        on_mirror: Callable[[], None] = lambda: None,
     ) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
         self._on_translate = on_translate
         self._on_scale = on_scale
         self._on_reset = on_reset
+        self._on_mirror = on_mirror
         self._fullscreen_window: tk.Toplevel | None = None
         self._fullscreen_canvas: tk.Canvas | None = None
         self._fullscreen_registration_controls: LayoutRegistrationControls | None = None
@@ -49,8 +143,24 @@ class ClickDiagnosticsView(ttk.Frame):
         self._registration_scale = 1.0
         self._registration_translate_x_m = 0.0
         self._registration_translate_y_m = 0.0
+        self._selected_anchor_id: str | None = None
+        self._blueprint_source: Image.Image | None = None
+        self._blueprint_path: Path | None = None
+        self._blueprint_width_m = 10.0
+        self._blueprint_height_m = 10.0
+        self._blueprint_render_cache: dict[tuple[int, int], Image.Image] = {}
+        self._blueprint_photo_by_canvas: dict[int, ImageTk.PhotoImage] = {}
+        self.blueprint_width_var = tk.StringVar(value="10.000")
+        self.blueprint_height_var = tk.StringVar(value="10.000")
+        self.blueprint_status_var = tk.StringVar(
+            value="Load a raster blueprint, then enter its exact size in metres."
+        )
+        self.selection_var = tk.StringVar(
+            value="Click an anchor to isolate its connections."
+        )
+        self._blueprint_controls: list[BlueprintControls] = []
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
         bar = ttk.Frame(self, style="Panel.TFrame")
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         bar.columnconfigure(1, weight=1)
@@ -64,30 +174,73 @@ class ClickDiagnosticsView(ttk.Frame):
             command=self._open_fullscreen,
         ).grid(row=0, column=2, sticky="e")
         ttk.Label(bar, textvariable=self.fit_var, style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
-        ttk.Label(bar, textvariable=self.wake_var, wraplength=650, justify="left").grid(
+        ttk.Label(bar, textvariable=self.wake_var, style="Panel.TLabel", wraplength=650, justify="left").grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(3, 0)
         )
+        ttk.Label(
+            bar,
+            textvariable=self.selection_var,
+            style="PanelMuted.TLabel",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        self.blueprint_controls = self._make_blueprint_controls(self)
+        self.blueprint_controls.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         self.registration_controls = LayoutRegistrationControls(
             self,
             on_translate=on_translate,
             on_scale=on_scale,
             on_reset=on_reset,
         )
-        self.registration_controls.grid(row=1, column=0, sticky="ew", pady=(0, 6))
-        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=1, highlightbackground="#d5dbdd")
-        self.canvas.grid(row=2, column=0, sticky="nsew")
+        self.registration_controls.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self.canvas = tk.Canvas(
+            self,
+            background=CANVAS_BG,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        self.canvas.grid(row=3, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", lambda _event: self.redraw())
+        self.canvas.bind(
+            "<Button-1>",
+            lambda event, source=self.canvas: self._select_anchor_at(source, event),  # type: ignore[misc]
+        )
         self.diagnostic_state: ClickDiagnosticState | None = None
         self.positions: dict[str, tuple[float, float]] = {}
         self.reference_positions: dict[str, tuple[float, float]] = {}
         self.connections: frozenset[tuple[str, str]] = frozenset()
+        self._sync_blueprint_controls()
+
+    def _make_blueprint_controls(self, parent: tk.Misc) -> BlueprintControls:
+        controls = BlueprintControls(
+            parent,
+            width_var=self.blueprint_width_var,
+            height_var=self.blueprint_height_var,
+            status_var=self.blueprint_status_var,
+            on_load=self._load_blueprint,
+            on_apply=self._apply_blueprint_size,
+            on_clear=self._clear_blueprint,
+            on_mirror=self._on_mirror,
+        )
+        self._blueprint_controls.append(controls)
+        return controls
+
+    def _sync_blueprint_controls(self) -> None:
+        for controls in self._blueprint_controls:
+            if controls.winfo_exists():
+                controls.set_enabled(
+                    has_blueprint=self._blueprint_source is not None,
+                    has_positions=bool(self.positions),
+                )
 
     def show(self, state: ClickDiagnosticState, positions: dict[str, tuple[float, float]]) -> None:
         self.diagnostic_state = state
         self.positions = dict(positions)
+        if self._selected_anchor_id not in self.positions:
+            self._selected_anchor_id = None
+            self.selection_var.set("Click an anchor to isolate its connections.")
         self.registration_controls.set_enabled(bool(positions))
         if self._fullscreen_registration_controls is not None:
             self._fullscreen_registration_controls.set_enabled(bool(positions))
+        self._sync_blueprint_controls()
         if state.identity:
             self.identity_var.set(f"Session {state.identity[0]}  •  Event {state.identity[1]}  •  Clicker {anchor_label(state.identity[2])}")
         else:
@@ -130,6 +283,156 @@ class ClickDiagnosticsView(ttk.Frame):
         self.connections = connections
         self.redraw()
 
+    def _load_blueprint(self) -> None:
+        selected = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(),
+            title="Load workplace blueprint",
+            filetypes=(
+                ("Blueprint images", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff"),
+                ("All files", "*"),
+            ),
+        )
+        if not selected:
+            return
+        path = Path(selected)
+        try:
+            with Image.open(path) as image:
+                image.load()
+                source = image.convert("RGB")
+        except (OSError, UnidentifiedImageError) as exc:
+            self.blueprint_status_var.set(f"Could not load blueprint: {exc}")
+            return
+        source.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+        source = ImageEnhance.Color(source).enhance(0.78)
+        self._blueprint_source = ImageEnhance.Brightness(source).enhance(0.46)
+        self._blueprint_path = path
+        try:
+            width_m, _height_m = parse_blueprint_dimensions_m(
+                self.blueprint_width_var.get(),
+                self.blueprint_height_var.get(),
+            )
+        except ValueError:
+            width_m = 10.0
+        self._blueprint_width_m = width_m
+        self._blueprint_height_m = width_m * source.height / source.width
+        self.blueprint_width_var.set(f"{self._blueprint_width_m:.3f}")
+        self.blueprint_height_var.set(f"{self._blueprint_height_m:.3f}")
+        self._blueprint_render_cache.clear()
+        self.blueprint_status_var.set(
+            f"{path.name} · aspect-ratio size applied; enter exact plan dimensions."
+        )
+        self._sync_blueprint_controls()
+        self.redraw()
+
+    def _apply_blueprint_size(self) -> None:
+        if self._blueprint_source is None:
+            return
+        try:
+            width_m, height_m = parse_blueprint_dimensions_m(
+                self.blueprint_width_var.get(),
+                self.blueprint_height_var.get(),
+            )
+        except ValueError as exc:
+            self.blueprint_status_var.set(str(exc))
+            return
+        self._blueprint_width_m = width_m
+        self._blueprint_height_m = height_m
+        name = self._blueprint_path.name if self._blueprint_path is not None else "Blueprint"
+        self.blueprint_status_var.set(
+            f"{name} · exact footprint {width_m:.3f} × {height_m:.3f} m"
+        )
+        self.redraw()
+
+    def _clear_blueprint(self) -> None:
+        self._blueprint_source = None
+        self._blueprint_path = None
+        self._blueprint_render_cache.clear()
+        self._blueprint_photo_by_canvas.clear()
+        self.blueprint_status_var.set(
+            "Load a raster blueprint, then enter its exact size in metres."
+        )
+        self._sync_blueprint_controls()
+        self.redraw()
+
+    def _projection_for_canvas(self, canvas: tk.Canvas):
+        if not self.positions:
+            return None
+        points = list((self.reference_positions or self.positions).values())
+        if self._blueprint_source is not None:
+            points.extend(
+                (
+                    (0.0, 0.0),
+                    (self._blueprint_width_m, 0.0),
+                    (0.0, self._blueprint_height_m),
+                    (self._blueprint_width_m, self._blueprint_height_m),
+                )
+            )
+        points.append((0.0, 0.0))
+        return _projector(points, canvas.winfo_width(), canvas.winfo_height())
+
+    def _select_anchor_at(
+        self,
+        canvas: tk.Canvas,
+        event: tk.Event[tk.Misc],
+    ) -> str | None:
+        project = self._projection_for_canvas(canvas)
+        if project is None:
+            return None
+        closest: tuple[float, str] | None = None
+        for anchor_id, point in self.positions.items():
+            x, y = project(*point)
+            distance = math.hypot(float(event.x) - x, float(event.y) - y)
+            if closest is None or distance < closest[0]:
+                closest = distance, anchor_id
+        self._selected_anchor_id = (
+            closest[1] if closest is not None and closest[0] <= 14.0 else None
+        )
+        self.selection_var.set(
+            f"…{self._selected_anchor_id[-4:]}: incident connections highlighted"
+            if self._selected_anchor_id is not None
+            else "Click an anchor to isolate its connections."
+        )
+        self.redraw()
+        return "break" if self._selected_anchor_id is not None else None
+
+    def _draw_blueprint(self, canvas: tk.Canvas, project: Callable[[float, float], tuple[float, float]]) -> None:
+        source = self._blueprint_source
+        if source is None:
+            self._blueprint_photo_by_canvas.pop(id(canvas), None)
+            return
+        left, bottom = project(0.0, 0.0)
+        right, top = project(self._blueprint_width_m, self._blueprint_height_m)
+        x = min(left, right)
+        y = min(top, bottom)
+        width_px = max(1, round(abs(right - left)))
+        height_px = max(1, round(abs(bottom - top)))
+        cache_key = (width_px, height_px)
+        rendered = self._blueprint_render_cache.get(cache_key)
+        if rendered is None:
+            rendered = source.resize(cache_key, Image.Resampling.BILINEAR)
+            self._blueprint_render_cache[cache_key] = rendered
+            while len(self._blueprint_render_cache) > 6:
+                self._blueprint_render_cache.pop(next(iter(self._blueprint_render_cache)))
+        photo = ImageTk.PhotoImage(rendered, master=canvas)
+        self._blueprint_photo_by_canvas[id(canvas)] = photo
+        canvas.create_image(x, y, image=photo, anchor="nw")
+        canvas.create_rectangle(
+            x,
+            y,
+            x + width_px,
+            y + height_px,
+            outline=BORDER,
+            width=2,
+        )
+        canvas.create_text(
+            x + 8,
+            y + 8,
+            text=f"PLAN  {self._blueprint_width_m:.2f} × {self._blueprint_height_m:.2f} m",
+            fill=ACCENT,
+            anchor="nw",
+            font=("TkFixedFont", 8, "bold"),
+        )
+
     def redraw(self) -> None:
         self._draw_click_graph(self.canvas)
         window = self._fullscreen_window
@@ -146,25 +449,25 @@ class ClickDiagnosticsView(ttk.Frame):
         if not self.positions:
             canvas.create_text(max(canvas.winfo_width(), 400) / 2, max(canvas.winfo_height(), 260) / 2, text="No solved geometry", fill=MUTED)
             return
-        points = list((self.reference_positions or self.positions).values())
-        points.append((0.0, 0.0))
-        project = _projector(points, canvas.winfo_width(), canvas.winfo_height())
+        project = self._projection_for_canvas(canvas)
+        assert project is not None
+        self._draw_blueprint(canvas, project)
         origin_x, origin_y = project(0.0, 0.0)
         canvas.create_line(
             0,
             origin_y,
             canvas.winfo_width(),
             origin_y,
-            fill="#e3e7e9",
-            dash=(3, 4),
+            fill=GRID,
+            dash=(3, 5),
         )
         canvas.create_line(
             origin_x,
             0,
             origin_x,
             canvas.winfo_height(),
-            fill="#e3e7e9",
-            dash=(3, 4),
+            fill=GRID,
+            dash=(3, 5),
         )
         state = self.diagnostic_state
         for anchor_a, anchor_b in sorted(self.connections):
@@ -172,14 +475,18 @@ class ClickDiagnosticsView(ttk.Frame):
                 continue
             ax, ay = project(*self.positions[anchor_a])
             bx, by = project(*self.positions[anchor_b])
+            incident = (
+                self._selected_anchor_id is not None
+                and self._selected_anchor_id in (anchor_a, anchor_b)
+            )
             canvas.create_line(
                 ax,
                 ay,
                 bx,
                 by,
-                fill="#c5ced1",
-                width=1,
-                dash=(2, 5),
+                fill=ACCENT if incident else GRID if self._selected_anchor_id else CONNECTION,
+                width=3 if incident else 1,
+                dash=() if incident else (2, 5),
             )
         if state:
             for anchor_id, radius in state.ranges_m.items():
@@ -187,17 +494,32 @@ class ClickDiagnosticsView(ttk.Frame):
                     continue
                 x, y = project(*self.positions[anchor_id])
                 scale = project.scale
-                canvas.create_oval(x - radius * scale, y - radius * scale, x + radius * scale, y + radius * scale, outline="#7aa7a0", dash=(4, 4))
+                canvas.create_oval(x - radius * scale, y - radius * scale, x + radius * scale, y + radius * scale, outline=ACCENT, dash=(4, 4))
         for anchor_id, point in sorted(self.positions.items()):
             x, y = project(*point)
-            canvas.create_oval(x - 6, y - 6, x + 6, y + 6, fill=BLUE, outline="")
-            canvas.create_text(x + 9, y - 7, text=anchor_id, anchor="sw", fill="#20262b")
+            selected = anchor_id == self._selected_anchor_id
+            canvas.create_oval(
+                x - 7,
+                y - 7,
+                x + 7,
+                y + 7,
+                fill=BLUE,
+                outline=MAGENTA if selected else CANVAS_BG,
+                width=3 if selected else 1,
+            )
+            canvas.create_text(
+                x + 10,
+                y - 8,
+                text=f"…{anchor_id[-4:]}",
+                anchor="sw",
+                fill=INK,
+            )
         if state and state.result:
             x, y = project(state.result.x_m, state.result.y_m)
             classification = state.wake.classification if state.wake else "unknown"
             color, marker = {WAKE_NORMAL: (ACCENT, "OK"), WAKE_LATE: (ERROR, "!"), WAKE_COLLISION: (AMBER, "C")}.get(classification, (MUTED, "?"))
-            canvas.create_oval(x - 11, y - 11, x + 11, y + 11, fill=color, outline="#20262b")
-            canvas.create_text(x, y, text=marker, fill="#ffffff", font=("TkDefaultFont", 8, "bold"))
+            canvas.create_oval(x - 11, y - 11, x + 11, y + 11, fill=color, outline=CANVAS_BG)
+            canvas.create_text(x, y, text=marker, fill=INK, font=("TkDefaultFont", 8, "bold"))
 
     def _open_fullscreen(self) -> None:
         window = self._fullscreen_window
@@ -208,9 +530,9 @@ class ClickDiagnosticsView(ttk.Frame):
         window = tk.Toplevel(self)
         self._fullscreen_window = window
         window.title("IMEC2 Click Location — Fullscreen")
-        window.configure(background="#ffffff")
+        window.configure(background=PANEL_BG)
         window.columnconfigure(0, weight=1)
-        window.rowconfigure(2, weight=1)
+        window.rowconfigure(3, weight=1)
 
         header = ttk.Frame(window, style="Panel.TFrame", padding=(8, 6))
         header.grid(row=0, column=0, sticky="ew")
@@ -236,6 +558,14 @@ class ClickDiagnosticsView(ttk.Frame):
             command=self._close_fullscreen,
         ).grid(row=0, column=2, rowspan=2)
 
+        fullscreen_blueprint_controls = self._make_blueprint_controls(window)
+        fullscreen_blueprint_controls.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=8,
+            pady=(2, 4),
+        )
         self._fullscreen_registration_controls = LayoutRegistrationControls(
             window,
             on_translate=self._on_translate,
@@ -243,7 +573,7 @@ class ClickDiagnosticsView(ttk.Frame):
             on_reset=self._on_reset,
         )
         self._fullscreen_registration_controls.grid(
-            row=1,
+            row=2,
             column=0,
             sticky="ew",
             padx=8,
@@ -255,10 +585,15 @@ class ClickDiagnosticsView(ttk.Frame):
             self._registration_translate_x_m,
             self._registration_translate_y_m,
         )
-        canvas = tk.Canvas(window, background="#ffffff", highlightthickness=0)
+        self._sync_blueprint_controls()
+        canvas = tk.Canvas(window, background=CANVAS_BG, highlightthickness=0)
         self._fullscreen_canvas = canvas
-        canvas.grid(row=2, column=0, sticky="nsew")
+        canvas.grid(row=3, column=0, sticky="nsew")
         canvas.bind("<Configure>", lambda _event: self.redraw())
+        canvas.bind(
+            "<Button-1>",
+            lambda event, source=canvas: self._select_anchor_at(source, event),  # type: ignore[misc]
+        )
         window.bind("<KeyPress>", self._fullscreen_key_pressed)
         window.bind("<KeyRelease>", self._fullscreen_key_released)
         window.bind("<Escape>", lambda _event: self._close_fullscreen())
@@ -304,6 +639,7 @@ class ClickDiagnosticsView(ttk.Frame):
 
     def _close_fullscreen(self) -> None:
         window = self._fullscreen_window
+        canvas = self._fullscreen_canvas
         after_id = self._held_move_after_id
         self._held_move_after_id = None
         self._held_move_keys.clear()
@@ -314,6 +650,12 @@ class ClickDiagnosticsView(ttk.Frame):
         self._fullscreen_registration_controls = None
         if window is not None and window.winfo_exists():
             window.destroy()
+        if canvas is not None:
+            self._blueprint_photo_by_canvas.pop(id(canvas), None)
+        self._blueprint_controls = [
+            controls for controls in self._blueprint_controls
+            if controls.winfo_exists()
+        ]
 
 
 class MeshDiagnosticsView(ttk.Frame):
@@ -442,8 +784,25 @@ def _projector(points: Iterable[tuple[float, float]], width: int, height: int):
     values = list(points)
     min_x, max_x = min(point[0] for point in values), max(point[0] for point in values)
     min_y, max_y = min(point[1] for point in values), max(point[1] for point in values)
-    scale = min((max(width, 300) - 80) / max(max_x - min_x, 1.0), (max(height, 220) - 70) / max(max_y - min_y, 1.0))
+    render_width = max(width, 160)
+    render_height = max(height, 80)
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    horizontal_padding = min(80.0, max(24.0, render_width * 0.12))
+    vertical_padding = min(70.0, max(24.0, render_height * 0.22))
+    scale = max(
+        min(
+            (render_width - horizontal_padding) / span_x,
+            (render_height - vertical_padding) / span_y,
+        ),
+        1e-6,
+    )
+    offset_x = (render_width - span_x * scale) / 2.0
+    offset_y = (render_height - span_y * scale) / 2.0
     def project(x: float, y: float) -> tuple[float, float]:
-        return 40 + (x - min_x) * scale, max(height, 220) - 35 - (y - min_y) * scale
+        return (
+            offset_x + (x - min_x) * scale,
+            render_height - offset_y - (y - min_y) * scale,
+        )
     project.scale = scale  # type: ignore[attr-defined]
     return project

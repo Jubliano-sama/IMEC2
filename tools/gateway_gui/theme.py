@@ -1,0 +1,23 @@
+"""Shared high-contrast palette for the gateway desktop UI."""
+
+APP_BG = "#070b16"
+PANEL_BG = "#0d1424"
+PANEL_ALT_BG = "#121d31"
+CANVAS_BG = "#080e1b"
+HEADER = "#090f1f"
+
+INK = "#e7f7ff"
+MUTED = "#8499ad"
+ACCENT = "#00e5c3"
+ACCENT_DARK = "#00aa91"
+MAGENTA = "#ff4fd8"
+AMBER = "#ffc857"
+ERROR = "#ff5c7a"
+ERROR_BG = "#2a1020"
+SUCCESS_BG = "#0a302d"
+AMBER_BG = "#34270d"
+
+BORDER = "#263852"
+GRID = "#223149"
+CONNECTION = "#63758c"
+SELECTION = "#173d4a"

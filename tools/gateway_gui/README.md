@@ -292,17 +292,26 @@ with the worst residual value shown in the canvas legend rather than hidden
 behind a fixed quality threshold.
 
 The survey and click-location tabs both expose the same button-only frame
-controls: 0.25 m X/Y nudges, 5% uniform scale steps, and reset. Their viewport is
-fixed to the solver frame so each nudge is visible. One uniform factor scales
-both coordinate axes and incoming click ranges, preserving the geometry's
-similarity transform; the controls do not rewrite survey measurements or solver
-residuals. Changing that frame re-solves the retained click in place, so scale
-or translation does not erase the current marker. Both graphs open synchronized
-fullscreen visualizations with their frame controls. Hold WASD to translate the
-frame continuously; Escape, F11, or the on-screen exit button returns to the
-console. The survey fullscreen toolbar also mirrors the solver, seed, radio
-minimum, neighbor maximum, distance-only refinement, closest-range filter, and
-orientation controls from the embedded view.
+controls: 0.25 m X/Y nudges, 5% uniform scale steps, mirror, and reset. Their
+viewport is fixed to the solver frame so each nudge is visible. One uniform
+factor scales both coordinate axes and incoming click ranges, preserving the
+geometry's similarity transform; the controls do not rewrite survey measurements
+or solver residuals. Changing that frame re-solves the retained click in place,
+so scale, mirror, or translation does not erase the current marker. Both graphs
+open synchronized fullscreen visualizations with their frame controls. Hold WASD
+to translate the frame continuously; Escape, F11, or the on-screen exit button
+returns to the console. The survey fullscreen toolbar also mirrors the solver,
+seed, radio minimum, neighbor maximum, distance-only refinement, closest-range
+filter, and orientation controls from the embedded view.
+
+The click-location view can load a PNG, JPEG, WebP, BMP, or TIFF workplace
+blueprint into GUI RAM. Enter the plan's exact width and height in metres; the
+image rectangle, anchor coordinates, range circles, and click solution then use
+one metre-per-metre canvas projection. The image is aspect-sized on load as a
+starting point, but only `Apply exact size` makes the entered workplace footprint
+authoritative. Clearing the blueprint does not clear survey geometry. Click one
+anchor in either embedded or fullscreen click view to highlight only its radio
+connections.
 
 Drag any anchor in the embedded or fullscreen survey graph to keep a manual
 RAM-only layout; its measured-edge residuals are recalculated without moving
@@ -310,8 +319,19 @@ the other anchors. `Re-solve dragged` explicitly optimizes from that edited
 layout with the currently selected solver, while an ordinary solve can still
 use any selected seed.
 
+Click a measured anchor-to-anchor edge to edit it before the next solve. A
+disabled edge is omitted from both measured-distance and positive-neighbor solve
+inputs, while an adjusted edge substitutes the entered positive distance. These
+edits are RAM-only overlays: the original survey records remain unchanged, and
+all edits reset when a new survey run begins. Click an anchor to fade unrelated
+edges and highlight its incident connections.
+
 The click-location canvas draws the retained radio-neighbor graph as faint
 dotted lines behind anchors, range circles, and the solved click marker.
+
+The desktop uses a high-contrast Tokyo-night palette: indigo work surfaces,
+cyan operation state, magenta selection, and amber warnings. This is the default
+visual theme; protocol state and semantic status colors remain unchanged.
 
 `Clear Survey Data` removes retained survey passes, measured ranges, geometry,
 and click localization from GUI RAM. It deliberately leaves packet/activity

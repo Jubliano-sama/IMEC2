@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import tkinter as tk
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from tkinter import ttk
 from typing import Iterable
 
@@ -29,14 +29,22 @@ from .anchor_geometry_visibility import (
 from .anchor_geometry_seeds import SEED_CURRENT
 from .diagnostic_models import anchor_label
 from .survey_runtime import SurveyOperationModel
+from .theme import (
+    ACCENT,
+    AMBER,
+    BORDER,
+    CANVAS_BG,
+    CONNECTION,
+    ERROR,
+    GRID,
+    INK,
+    MAGENTA,
+    MUTED,
+    PANEL_BG,
+    SUCCESS_BG,
+)
 
 
-INK = "#20262b"
-MUTED = "#667079"
-ACCENT = "#126b5b"
-AMBER = "#a56200"
-ERROR = "#a72b2b"
-PANEL_BG = "#ffffff"
 TRANSLATION_STEP_M = 0.25
 SCALE_STEP = 1.05
 HELD_TRANSLATION_STEP_M = 0.10
@@ -86,6 +94,77 @@ class CanvasProjection:
         )
 
 
+EdgeKey = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class EdgeOverride:
+    enabled: bool = True
+    distance_m: float | None = None
+
+
+def edge_key(anchor_a_id: str, anchor_b_id: str) -> EdgeKey:
+    """Return one stable undirected connection identity."""
+
+    if anchor_a_id <= anchor_b_id:
+        return anchor_a_id, anchor_b_id
+    return anchor_b_id, anchor_a_id
+
+
+def apply_edge_overrides(
+    pairs: Iterable[AnchorPairDistance],
+    overrides: dict[EdgeKey, EdgeOverride],
+) -> tuple[AnchorPairDistance, ...]:
+    """Apply RAM-only operator edits without mutating survey measurements."""
+
+    effective: list[AnchorPairDistance] = []
+    for pair in pairs:
+        override = overrides.get(edge_key(pair.anchor_a_id, pair.anchor_b_id))
+        if override is not None and not override.enabled:
+            continue
+        if override is not None and override.distance_m is not None:
+            effective.append(
+                replace(
+                    pair,
+                    distance_m=override.distance_m,
+                    enabled=True,
+                    source=f"{pair.source}; GUI distance override",
+                )
+            )
+        else:
+            effective.append(pair)
+    return tuple(effective)
+
+
+def parse_edge_distance_m(value: str) -> float:
+    distance = _parse_radio_distance(value, "Connection distance")
+    if distance <= 0.0:
+        raise ValueError("Connection distance must be greater than zero.")
+    return distance
+
+
+def point_segment_distance_px(
+    point: tuple[float, float],
+    segment_start: tuple[float, float],
+    segment_end: tuple[float, float],
+) -> float:
+    """Return the shortest screen-space distance to a connection segment."""
+
+    px, py = point
+    ax, ay = segment_start
+    bx, by = segment_end
+    dx = bx - ax
+    dy = by - ay
+    length_squared = dx * dx + dy * dy
+    if length_squared <= 1e-12:
+        return math.hypot(px - ax, py - ay)
+    amount = max(
+        0.0,
+        min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_squared),
+    )
+    return math.hypot(px - (ax + amount * dx), py - (ay + amount * dy))
+
+
 class LayoutRegistrationControls(ttk.Frame):
     """Button-only controls shared by geometry and click-location views."""
 
@@ -98,12 +177,12 @@ class LayoutRegistrationControls(ttk.Frame):
         on_reset: Callable[[], None],
     ) -> None:
         super().__init__(parent, style="Panel.TFrame")
-        ttk.Label(self, text="Move frame").grid(row=0, column=0, padx=(0, 3))
+        ttk.Label(self, text="Move frame", style="Panel.TLabel").grid(row=0, column=0, padx=(0, 3))
         specs: tuple[tuple[str, Callable[[], None]], ...] = (
-            ("← X", lambda: on_translate(-TRANSLATION_STEP_M, 0.0)),
-            ("X →", lambda: on_translate(TRANSLATION_STEP_M, 0.0)),
-            ("Y ↓", lambda: on_translate(0.0, -TRANSLATION_STEP_M)),
-            ("Y ↑", lambda: on_translate(0.0, TRANSLATION_STEP_M)),
+            ("X −", lambda: on_translate(-TRANSLATION_STEP_M, 0.0)),
+            ("X +", lambda: on_translate(TRANSLATION_STEP_M, 0.0)),
+            ("Y −", lambda: on_translate(0.0, -TRANSLATION_STEP_M)),
+            ("Y +", lambda: on_translate(0.0, TRANSLATION_STEP_M)),
             ("Scale −", lambda: on_scale(1.0 / SCALE_STEP)),
             ("Scale +", lambda: on_scale(SCALE_STEP)),
             ("Reset", on_reset),
@@ -115,6 +194,7 @@ class LayoutRegistrationControls(ttk.Frame):
                 text=label,
                 command=command,
                 state="disabled",
+                width=4 if label.startswith(("X", "Y")) else 7,
             )
             button.grid(row=0, column=column, padx=(3, 0))
             self.buttons.append(button)
@@ -342,6 +422,19 @@ class SurveyGeometryView(ttk.Frame):
         self._drag_start_px: tuple[float, float] | None = None
         self._drag_moved = False
         self._manual_layout_dirty = False
+        self._selected_anchor_id: str | None = None
+        self._selected_edge_key: EdgeKey | None = None
+        self._edge_overrides: dict[EdgeKey, EdgeOverride] = {}
+        self._edge_override_run_serial = -1
+        self.edge_selection_var = tk.StringVar(
+            value="Select a measured connection to disable or adjust it."
+        )
+        self.edge_distance_var = tk.StringVar()
+        self._edge_distance_entries: list[ttk.Entry] = []
+        self._edge_apply_buttons: list[ttk.Button] = []
+        self._edge_toggle_buttons: list[ttk.Button] = []
+        self._edge_reset_buttons: list[ttk.Button] = []
+        self._edge_reset_all_buttons: list[ttk.Button] = []
 
         self.columnconfigure(0, weight=2)
         self.columnconfigure(1, weight=3)
@@ -397,13 +490,13 @@ class SurveyGeometryView(ttk.Frame):
         self.steps.tag_configure("done", foreground=ACCENT)
         self.steps.tag_configure("warning", foreground=AMBER)
         self.steps.tag_configure("failed", foreground=ERROR)
-        self.steps.tag_configure("running", background="#e4f2ee")
+        self.steps.tag_configure("running", background=SUCCESS_BG, foreground=INK)
         self.steps.grid(row=0, column=0, sticky="nsew")
 
         geometry = ttk.Frame(self, style="Panel.TFrame")
         geometry.grid(row=1, column=1, sticky="nsew", pady=(0, 6))
         geometry.columnconfigure(0, weight=1)
-        geometry.rowconfigure(3, weight=1)
+        geometry.rowconfigure(4, weight=1)
         toolbar = ttk.Frame(geometry, style="Panel.TFrame")
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         toolbar.columnconfigure(0, weight=1)
@@ -434,34 +527,41 @@ class SurveyGeometryView(ttk.Frame):
         self.fullscreen_button.grid(row=0, column=4, padx=(8, 0))
         solver_bar = ttk.Frame(geometry, style="Panel.TFrame")
         solver_bar.grid(row=1, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(solver_bar, text="Solver").grid(row=0, column=0, padx=(0, 3))
+        solver_row = ttk.Frame(solver_bar, style="Panel.TFrame")
+        solver_row.grid(row=0, column=0, sticky="w")
+        ttk.Label(solver_row, text="Solver", style="Panel.TLabel").grid(
+            row=0, column=0, padx=(0, 3)
+        )
         self.solver_var = tk.StringVar(value=CONNECTIVITY_INTERVAL_ALGORITHM)
         self.solver_combo = ttk.Combobox(
-            solver_bar,
+            solver_row,
             textvariable=self.solver_var,
             values=SOLVER_CHOICES,
             state="readonly",
-            width=40,
+            width=32,
         )
         self.solver_combo.grid(row=0, column=1, padx=(0, 8))
-        ttk.Label(solver_bar, text="Seed").grid(row=0, column=2, padx=(0, 3))
+        ttk.Label(solver_row, text="Seed", style="Panel.TLabel").grid(
+            row=0, column=2, padx=(0, 3)
+        )
         self.seed_var = tk.StringVar(value=CONNECTIVITY_SEEDS[0])
         self.seed_combo = ttk.Combobox(
-            solver_bar,
+            solver_row,
             textvariable=self.seed_var,
             values=CONNECTIVITY_SEEDS,
             state="readonly",
-            width=24,
+            width=20,
         )
         self.seed_combo.grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(solver_bar, text="Radio min (m)").grid(
-            row=1,
+        range_row = ttk.Frame(solver_bar, style="Panel.TFrame")
+        range_row.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(range_row, text="Radio min (m)", style="Panel.TLabel").grid(
+            row=0,
             column=0,
-            pady=(4, 0),
             padx=(0, 3),
         )
         self.neighbor_min_spinbox = ttk.Spinbox(
-            solver_bar,
+            range_row,
             textvariable=self.neighbor_min_var,
             from_=0.1,
             to=100.0,
@@ -469,16 +569,15 @@ class SurveyGeometryView(ttk.Frame):
             width=6,
         )
         self.neighbor_min_spinbox.grid(
-            row=1, column=1, padx=(0, 8), pady=(4, 0)
+            row=0, column=1, padx=(0, 12)
         )
-        ttk.Label(solver_bar, text="Neighbor max (m)").grid(
-            row=1,
+        ttk.Label(range_row, text="Neighbor max (m)", style="Panel.TLabel").grid(
+            row=0,
             column=2,
-            pady=(4, 0),
             padx=(0, 3),
         )
         self.neighbor_max_spinbox = ttk.Spinbox(
-            solver_bar,
+            range_row,
             textvariable=self.neighbor_max_var,
             from_=0.1,
             to=100.0,
@@ -486,29 +585,17 @@ class SurveyGeometryView(ttk.Frame):
             width=6,
         )
         self.neighbor_max_spinbox.grid(
-            row=1, column=3, padx=(0, 8), pady=(4, 0)
+            row=0, column=3, padx=(0, 8)
         )
-        self.solve_button = ttk.Button(
-            solver_bar,
-            text="Solve / re-solve",
-            command=self._request_solve,
-            state="disabled",
-        )
-        self.solve_button.grid(row=1, column=4, pady=(4, 0))
-        self.refine_button = ttk.Button(
-            solver_bar,
-            text="Refine measured distances only",
-            command=self._request_refinement,
-            state="disabled",
-        )
-        self.refine_button.grid(
-            row=1, column=5, padx=(4, 0), pady=(4, 0)
-        )
-        ttk.Label(solver_bar, text="Closest ranges / anchor (0=all)").grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(4, 0)
-        )
+        action_row = ttk.Frame(solver_bar, style="Panel.TFrame")
+        action_row.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(
+            action_row,
+            text="Closest ranges / anchor (0=all)",
+            style="Panel.TLabel",
+        ).grid(row=0, column=0, sticky="w")
         self.nearest_anchor_count_spinbox = ttk.Spinbox(
-            solver_bar,
+            action_row,
             textvariable=self.nearest_anchor_count_var,
             from_=0,
             to=255,
@@ -516,16 +603,31 @@ class SurveyGeometryView(ttk.Frame):
             width=6,
         )
         self.nearest_anchor_count_spinbox.grid(
-            row=2, column=2, sticky="w", pady=(4, 0)
+            row=0, column=1, sticky="w", padx=(4, 12)
         )
-        self.resolve_dragged_button = ttk.Button(
-            solver_bar,
-            text="Re-solve dragged",
-            command=self._request_dragged_solve,
+        self.solve_button = ttk.Button(
+            action_row,
+            text="Solve / re-solve",
+            command=self._request_solve,
             state="disabled",
         )
+        self.solve_button.grid(row=0, column=2)
+        self.refine_button = ttk.Button(
+            action_row,
+            text="Refine distances",
+            command=self._request_refinement,
+            state="disabled",
+        )
+        self.refine_button.grid(row=0, column=3, padx=(4, 0))
+        self.resolve_dragged_button = ttk.Button(
+            action_row,
+            text="Re-solve drag",
+            command=self._request_dragged_solve,
+            state="disabled",
+            width=11,
+        )
         self.resolve_dragged_button.grid(
-            row=2, column=4, sticky="w", pady=(4, 0)
+            row=0, column=4, padx=(4, 0)
         )
 
         self.registration_controls = LayoutRegistrationControls(
@@ -535,14 +637,16 @@ class SurveyGeometryView(ttk.Frame):
             on_reset=self.reset_transform,
         )
         self.registration_controls.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        self.edge_editor = self._build_edge_editor(geometry)
+        self.edge_editor.grid(row=3, column=0, sticky="ew", pady=(0, 4))
         self.canvas = tk.Canvas(
             geometry,
-            background=PANEL_BG,
+            background=CANVAS_BG,
             highlightthickness=1,
-            highlightbackground="#d5dbdd",
+            highlightbackground=BORDER,
             height=300,
         )
-        self.canvas.grid(row=3, column=0, sticky="nsew")
+        self.canvas.grid(row=4, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", lambda _event: self._redraw())
         self._bind_anchor_dragging(self.canvas)
 
@@ -589,8 +693,72 @@ class SurveyGeometryView(ttk.Frame):
         self.pairs.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
 
+        self._sync_edge_editor()
+
+    def _build_edge_editor(self, parent: tk.Misc) -> ttk.Frame:
+        editor = ttk.Frame(parent, style="Panel.TFrame")
+        editor.columnconfigure(0, weight=1)
+        ttk.Label(
+            editor,
+            textvariable=self.edge_selection_var,
+            style="PanelMuted.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(editor, text="Distance (m)", style="Panel.TLabel").grid(row=0, column=1, padx=(0, 3))
+        distance = ttk.Entry(
+            editor,
+            textvariable=self.edge_distance_var,
+            width=8,
+        )
+        distance.grid(row=0, column=2, padx=(0, 4))
+        apply_button = ttk.Button(
+            editor,
+            text="Apply",
+            command=self._apply_selected_edge_distance,
+        )
+        apply_button.grid(row=0, column=3, padx=(0, 4))
+        toggle_button = ttk.Button(
+            editor,
+            text="Disable",
+            command=self._toggle_selected_edge,
+        )
+        toggle_button.grid(row=0, column=4, padx=(0, 4))
+        reset_button = ttk.Button(
+            editor,
+            text="Reset edge",
+            command=self._reset_selected_edge,
+        )
+        reset_button.grid(row=0, column=5, padx=(0, 4))
+        reset_all_button = ttk.Button(
+            editor,
+            text="Reset all edits",
+            command=self._reset_all_edge_overrides,
+        )
+        reset_all_button.grid(row=0, column=6)
+        self._edge_distance_entries.append(distance)
+        self._edge_apply_buttons.append(apply_button)
+        self._edge_toggle_buttons.append(toggle_button)
+        self._edge_reset_buttons.append(reset_button)
+        self._edge_reset_all_buttons.append(reset_all_button)
+        return editor
+
     def show_model(self, model: SurveyOperationModel) -> None:
         self.model = model
+        if model.run_serial != self._edge_override_run_serial:
+            self._edge_override_run_serial = model.run_serial
+            self._edge_overrides.clear()
+            self._selected_edge_key = None
+            self._selected_anchor_id = None
+        measured_keys = {
+            edge_key(pair.anchor_a_id, pair.anchor_b_id)
+            for pair in model.geometry_pairs
+        }
+        self._edge_overrides = {
+            key: override
+            for key, override in self._edge_overrides.items()
+            if key in measured_keys
+        }
+        if self._selected_edge_key not in measured_keys:
+            self._selected_edge_key = None
         self.headline_var.set(model.headline)
         self.progress.configure(value=model.progress_percent)
         if model.generation is None:
@@ -666,6 +834,7 @@ class SurveyGeometryView(ttk.Frame):
         else:
             self.geometry_var.set(model.geometry_requirement)
         self._show_pairs(model)
+        self._sync_edge_editor()
         self._redraw()
 
     def _show_pairs(self, model: SurveyOperationModel) -> None:
@@ -703,6 +872,164 @@ class SurveyGeometryView(ttk.Frame):
                 tags=(tag,) if tag else (),
             )
 
+    @property
+    def effective_geometry_pairs(self) -> tuple[AnchorPairDistance, ...]:
+        model = self.model
+        if model is None:
+            return ()
+        return apply_edge_overrides(model.geometry_pairs, self._edge_overrides)
+
+    @property
+    def disabled_edge_keys(self) -> frozenset[EdgeKey]:
+        return frozenset(
+            key for key, override in self._edge_overrides.items()
+            if not override.enabled
+        )
+
+    @property
+    def edge_edit_counts(self) -> tuple[int, int]:
+        disabled = sum(
+            not override.enabled for override in self._edge_overrides.values()
+        )
+        adjusted = sum(
+            override.distance_m is not None
+            for override in self._edge_overrides.values()
+        )
+        return disabled, adjusted
+
+    def _pair_for_key(self, key: EdgeKey) -> AnchorPairDistance | None:
+        model = self.model
+        if model is None:
+            return None
+        return next(
+            (
+                pair for pair in model.geometry_pairs
+                if edge_key(pair.anchor_a_id, pair.anchor_b_id) == key
+            ),
+            None,
+        )
+
+    def _select_anchor(self, anchor_id: str | None) -> None:
+        self._selected_anchor_id = anchor_id
+        self._selected_edge_key = None
+        self._sync_edge_editor()
+        self._redraw()
+
+    def _select_edge(self, key: EdgeKey | None) -> None:
+        self._selected_edge_key = key
+        self._selected_anchor_id = None
+        self._sync_edge_editor()
+        self._redraw()
+
+    def _sync_edge_editor(self) -> None:
+        key = self._selected_edge_key
+        pair = self._pair_for_key(key) if key is not None else None
+        override = self._edge_overrides.get(key) if key is not None else None
+        state = (
+            "normal"
+            if pair is not None and not self._geometry_job_pending
+            else "disabled"
+        )
+        for entry in self._edge_distance_entries:
+            if entry.winfo_exists():
+                entry.configure(state=state)
+        buttons = (
+            *self._edge_apply_buttons,
+            *self._edge_toggle_buttons,
+            *self._edge_reset_buttons,
+        )
+        for button in buttons:
+            if button.winfo_exists():
+                button.configure(state=state)
+        for button in self._edge_reset_all_buttons:
+            if button.winfo_exists():
+                button.configure(
+                    state=(
+                        "normal"
+                        if self._edge_overrides and not self._geometry_job_pending
+                        else "disabled"
+                    )
+                )
+        if pair is None:
+            self.edge_distance_var.set("")
+            if self._selected_anchor_id is not None:
+                self.edge_selection_var.set(
+                    f"…{self._selected_anchor_id[-4:]}: "
+                    "incident connections highlighted"
+                )
+            else:
+                self.edge_selection_var.set(
+                    "Select a measured connection to disable or adjust it."
+                )
+            return
+        assert key is not None
+        enabled = override.enabled if override is not None else True
+        distance = (
+            override.distance_m
+            if override is not None and override.distance_m is not None
+            else pair.distance_m
+        )
+        self.edge_distance_var.set(f"{distance:.3f}")
+        edit = (
+            f" · measured {pair.distance_m:.3f} m"
+            if abs(distance - pair.distance_m) > 1e-12
+            else ""
+        )
+        self.edge_selection_var.set(
+            f"…{key[0][-4:]} ↔ …{key[1][-4:]} · "
+            f"{'enabled' if enabled else 'disabled'}{edit}"
+        )
+        for button in self._edge_toggle_buttons:
+            if button.winfo_exists():
+                button.configure(text="Disable" if enabled else "Enable")
+
+    def _apply_selected_edge_distance(self) -> None:
+        key = self._selected_edge_key
+        pair = self._pair_for_key(key) if key is not None else None
+        if key is None or pair is None:
+            return
+        try:
+            distance = parse_edge_distance_m(self.edge_distance_var.get())
+        except ValueError as exc:
+            self.edge_selection_var.set(str(exc))
+            return
+        prior = self._edge_overrides.get(key, EdgeOverride())
+        self._edge_overrides[key] = EdgeOverride(
+            enabled=prior.enabled,
+            distance_m=distance,
+        )
+        self._sync_edge_editor()
+        self._redraw()
+
+    def _toggle_selected_edge(self) -> None:
+        key = self._selected_edge_key
+        if key is None or self._pair_for_key(key) is None:
+            return
+        prior = self._edge_overrides.get(key, EdgeOverride())
+        replacement = EdgeOverride(
+            enabled=not prior.enabled,
+            distance_m=prior.distance_m,
+        )
+        if replacement.enabled and replacement.distance_m is None:
+            self._edge_overrides.pop(key, None)
+        else:
+            self._edge_overrides[key] = replacement
+        self._sync_edge_editor()
+        self._redraw()
+
+    def _reset_selected_edge(self) -> None:
+        key = self._selected_edge_key
+        if key is None:
+            return
+        self._edge_overrides.pop(key, None)
+        self._sync_edge_editor()
+        self._redraw()
+
+    def _reset_all_edge_overrides(self) -> None:
+        self._edge_overrides.clear()
+        self._sync_edge_editor()
+        self._redraw()
+
     def _rotate(self, degrees: float) -> None:
         if not self._oriented_positions:
             return
@@ -714,6 +1041,11 @@ class SurveyGeometryView(ttk.Frame):
             return
         self._oriented_positions = mirror_layout(self._oriented_positions, "x")
         self._apply_transform()
+
+    def mirror_layout_frame(self) -> None:
+        """Mirror the shared survey/click registration from either tab."""
+
+        self._mirror()
 
     def _apply_transform(self) -> None:
         if not self._oriented_positions:
@@ -727,6 +1059,8 @@ class SurveyGeometryView(ttk.Frame):
         self._display_positions = transformed
         self._show_registration()
         self._redraw()
+        if self._on_positions_changed is not None:
+            self._on_positions_changed(self.registration)
 
     def accept_manual_layout(self, layout: AnchorLayoutResult) -> None:
         """Synchronize a model-accepted drag without resetting frame controls."""
@@ -748,17 +1082,17 @@ class SurveyGeometryView(ttk.Frame):
     def _bind_anchor_dragging(self, canvas: tk.Canvas) -> None:
         canvas.bind(
             "<ButtonPress-1>",
-            lambda event, source=canvas: self._anchor_drag_started(
+            lambda event, source=canvas: self._anchor_drag_started(  # type: ignore[misc]
                 source, event
             ),
         )
         canvas.bind(
             "<B1-Motion>",
-            lambda event, source=canvas: self._anchor_dragged(source, event),
+            lambda event, source=canvas: self._anchor_dragged(source, event),  # type: ignore[misc]
         )
         canvas.bind(
             "<ButtonRelease-1>",
-            lambda event, source=canvas: self._anchor_drag_finished(
+            lambda event, source=canvas: self._anchor_drag_finished(  # type: ignore[misc]
                 source, event
             ),
         )
@@ -769,29 +1103,56 @@ class SurveyGeometryView(ttk.Frame):
         event: tk.Event[tk.Misc],
     ) -> str | None:
         model = self.model
-        if (
-            model is None
-            or model.layout is None
-            or not self._display_positions
-            or self._geometry_job_pending
-        ):
+        if model is None:
             return None
-        width = max(canvas.winfo_width(), 520)
-        height = max(canvas.winfo_height(), 260)
-        reference = self._oriented_positions or self._display_positions
+        positions = self._display_positions or self._fallback_positions(model)
+        if not positions:
+            return None
+        width = max(canvas.winfo_width(), 160)
+        height = max(canvas.winfo_height(), 80)
+        reference = self._oriented_positions or positions
         projection = _canvas_projection(
             (*reference.values(), (0.0, 0.0)),
             width,
             height,
         )
         closest: tuple[float, str] | None = None
-        for anchor_id, position in self._display_positions.items():
+        for anchor_id, position in positions.items():
             x_px, y_px = projection.project(*position)
             distance = math.hypot(event.x - x_px, event.y - y_px)
             if closest is None or distance < closest[0]:
                 closest = (distance, anchor_id)
         if closest is None or closest[0] > 14.0:
+            closest_edge: tuple[float, EdgeKey] | None = None
+            for pair in model.geometry_pairs:
+                if (
+                    pair.anchor_a_id not in positions
+                    or pair.anchor_b_id not in positions
+                ):
+                    continue
+                distance = point_segment_distance_px(
+                    (float(event.x), float(event.y)),
+                    projection.project(*positions[pair.anchor_a_id]),
+                    projection.project(*positions[pair.anchor_b_id]),
+                )
+                key = edge_key(pair.anchor_a_id, pair.anchor_b_id)
+                if closest_edge is None or distance < closest_edge[0]:
+                    closest_edge = (distance, key)
+            if closest_edge is not None and closest_edge[0] <= 10.0:
+                self._select_edge(closest_edge[1])
+                return "break"
+            self._select_anchor(None)
             return None
+        self._selected_anchor_id = closest[1]
+        self._selected_edge_key = None
+        self._sync_edge_editor()
+        if (
+            model.layout is None
+            or not self._display_positions
+            or self._geometry_job_pending
+        ):
+            self._redraw()
+            return "break"
         self._drag_anchor_id = closest[1]
         self._drag_canvas = canvas
         self._drag_projection = projection
@@ -1017,24 +1378,27 @@ class SurveyGeometryView(ttk.Frame):
                 else "disabled"
             )
         )
-        solve_text = (
+        embedded_solve_text = (
             "Solving..." if self._geometry_job_pending else "Solve / re-solve"
         )
-        self.solve_button.configure(text=solve_text)
-        refine_text = "Refine measured distances only"
+        self.solve_button.configure(text=embedded_solve_text)
         self.refine_button.configure(
             state="normal" if has_layout and can_solve else "disabled",
-            text=refine_text,
+            text="Refine distances",
         )
         if self._fullscreen_solve_button is not None:
             self._fullscreen_solve_button.configure(
                 state="normal" if can_solve else "disabled",
-                text=solve_text,
+                text=(
+                    "Solving..."
+                    if self._geometry_job_pending
+                    else "Solve / re-solve"
+                ),
             )
         if self._fullscreen_refine_button is not None:
             self._fullscreen_refine_button.configure(
                 state="normal" if has_layout and can_solve else "disabled",
-                text=refine_text,
+                text="Refine measured distances only",
             )
         if self._fullscreen_resolve_dragged_button is not None:
             self._fullscreen_resolve_dragged_button.configure(
@@ -1056,7 +1420,7 @@ class SurveyGeometryView(ttk.Frame):
         window.title("IMEC2 Survey Geometry — Fullscreen")
         window.configure(background=PANEL_BG)
         window.columnconfigure(0, weight=1)
-        window.rowconfigure(3, weight=1)
+        window.rowconfigure(4, weight=1)
         header = ttk.Frame(window, style="Panel.TFrame", padding=(8, 6))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
@@ -1078,7 +1442,7 @@ class SurveyGeometryView(ttk.Frame):
 
         solver_bar = ttk.Frame(window, style="Panel.TFrame", padding=(8, 2))
         solver_bar.grid(row=1, column=0, sticky="ew")
-        ttk.Label(solver_bar, text="Solver").grid(row=0, column=0, padx=(0, 3))
+        ttk.Label(solver_bar, text="Solver", style="Panel.TLabel").grid(row=0, column=0, padx=(0, 3))
         ttk.Combobox(
             solver_bar,
             textvariable=self.solver_var,
@@ -1086,7 +1450,7 @@ class SurveyGeometryView(ttk.Frame):
             state="readonly",
             width=40,
         ).grid(row=0, column=1, padx=(0, 8))
-        ttk.Label(solver_bar, text="Seed").grid(row=0, column=2, padx=(0, 3))
+        ttk.Label(solver_bar, text="Seed", style="Panel.TLabel").grid(row=0, column=2, padx=(0, 3))
         ttk.Combobox(
             solver_bar,
             textvariable=self.seed_var,
@@ -1094,7 +1458,7 @@ class SurveyGeometryView(ttk.Frame):
             state="readonly",
             width=24,
         ).grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(solver_bar, text="Radio min (m)").grid(
+        ttk.Label(solver_bar, text="Radio min (m)", style="Panel.TLabel").grid(
             row=0,
             column=4,
             padx=(0, 3),
@@ -1107,7 +1471,7 @@ class SurveyGeometryView(ttk.Frame):
             increment=0.5,
             width=6,
         ).grid(row=0, column=5, padx=(0, 8))
-        ttk.Label(solver_bar, text="Neighbor max (m)").grid(
+        ttk.Label(solver_bar, text="Neighbor max (m)", style="Panel.TLabel").grid(
             row=0,
             column=6,
             padx=(0, 3),
@@ -1120,7 +1484,7 @@ class SurveyGeometryView(ttk.Frame):
             increment=0.5,
             width=6,
         ).grid(row=0, column=7, padx=(0, 8))
-        ttk.Label(solver_bar, text="Closest ranges / anchor (0=all)").grid(
+        ttk.Label(solver_bar, text="Closest ranges / anchor (0=all)", style="Panel.TLabel").grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
         ttk.Spinbox(
@@ -1176,13 +1540,21 @@ class SurveyGeometryView(ttk.Frame):
             padx=8,
             pady=(2, 4),
         )
+        edge_editor = self._build_edge_editor(window)
+        edge_editor.grid(
+            row=3,
+            column=0,
+            sticky="ew",
+            padx=8,
+            pady=(0, 4),
+        )
         canvas = tk.Canvas(
             window,
-            background=PANEL_BG,
+            background=CANVAS_BG,
             highlightthickness=0,
         )
         self._fullscreen_canvas = canvas
-        canvas.grid(row=3, column=0, sticky="nsew")
+        canvas.grid(row=4, column=0, sticky="nsew")
         canvas.bind("<Configure>", lambda _event: self._redraw())
         self._bind_anchor_dragging(canvas)
         window.bind("<KeyPress>", self._fullscreen_key_pressed)
@@ -1196,6 +1568,7 @@ class SurveyGeometryView(ttk.Frame):
             window.state("zoomed")
         self._show_registration()
         self._sync_control_states()
+        self._sync_edge_editor()
         window.focus_force()
         self._redraw()
 
@@ -1257,6 +1630,26 @@ class SurveyGeometryView(ttk.Frame):
             self._drag_moved = False
         if window is not None and window.winfo_exists():
             window.destroy()
+        self._edge_distance_entries = [
+            widget for widget in self._edge_distance_entries
+            if widget.winfo_exists()
+        ]
+        self._edge_apply_buttons = [
+            widget for widget in self._edge_apply_buttons
+            if widget.winfo_exists()
+        ]
+        self._edge_toggle_buttons = [
+            widget for widget in self._edge_toggle_buttons
+            if widget.winfo_exists()
+        ]
+        self._edge_reset_buttons = [
+            widget for widget in self._edge_reset_buttons
+            if widget.winfo_exists()
+        ]
+        self._edge_reset_all_buttons = [
+            widget for widget in self._edge_reset_all_buttons
+            if widget.winfo_exists()
+        ]
 
     def _redraw(self) -> None:
         self._draw_geometry(self.canvas)
@@ -1273,8 +1666,8 @@ class SurveyGeometryView(ttk.Frame):
     def _draw_geometry(self, canvas: tk.Canvas) -> None:
         canvas.delete("all")
         model = self.model
-        width = max(canvas.winfo_width(), 520)
-        height = max(canvas.winfo_height(), 260)
+        width = max(canvas.winfo_width(), 160)
+        height = max(canvas.winfo_height(), 80)
         if model is None or not model.slot_to_anchor:
             canvas.create_text(
                 width / 2,
@@ -1299,45 +1692,87 @@ class SurveyGeometryView(ttk.Frame):
         )
         project = projection.project
         origin_x, origin_y = project(0.0, 0.0)
-        canvas.create_line(0, origin_y, width, origin_y, fill="#e3e7e9", dash=(3, 4))
-        canvas.create_line(origin_x, 0, origin_x, height, fill="#e3e7e9", dash=(3, 4))
-        canvas.create_text(
-            origin_x + 4,
-            origin_y - 4,
-            text="(0, 0)",
-            fill=MUTED,
-            anchor="sw",
-            font=("TkDefaultFont", 8),
-        )
+        canvas.create_line(0, origin_y, width, origin_y, fill=GRID, dash=(3, 5))
+        canvas.create_line(origin_x, 0, origin_x, height, fill=GRID, dash=(3, 5))
+        if height >= 110:
+            canvas.create_text(
+                origin_x + 4,
+                origin_y - 4,
+                text="(0, 0)",
+                fill=MUTED,
+                anchor="sw",
+                font=("TkDefaultFont", 8),
+            )
         node_errors = (
             node_mean_absolute_errors(
-                model.geometry_pairs,
+                self.effective_geometry_pairs,
                 model.layout.residuals_m,
             )
             if model.layout is not None
             else {}
         )
         measured_keys: set[tuple[str, str]] = set()
-        for pair in model.geometry_pairs:
-            label_a = pair.anchor_a_id
-            label_b = pair.anchor_b_id
+        for measured_pair in model.geometry_pairs:
+            label_a = measured_pair.anchor_a_id
+            label_b = measured_pair.anchor_b_id
             if label_a not in positions or label_b not in positions:
                 continue
-            measured_keys.add(tuple(sorted((label_a, label_b))))
+            key = edge_key(label_a, label_b)
+            measured_keys.add(key)
+            override = self._edge_overrides.get(key)
+            enabled = override.enabled if override is not None else True
+            distance_m = (
+                override.distance_m
+                if override is not None and override.distance_m is not None
+                else measured_pair.distance_m
+            )
+            adjusted = abs(distance_m - measured_pair.distance_m) > 1e-12
+            selected = key == self._selected_edge_key
+            incident = (
+                self._selected_anchor_id is not None
+                and self._selected_anchor_id in key
+            )
+            color: str
+            line_width: int
+            dash: tuple[int, ...]
+            if selected:
+                color, line_width, dash = MAGENTA, 4, ()
+            elif not enabled:
+                color, line_width, dash = ERROR, 2, (3, 5)
+            elif incident:
+                color, line_width, dash = ACCENT, 3, ()
+            elif self._selected_anchor_id is not None:
+                color, line_width, dash = GRID, 1, (2, 5)
+            elif adjusted:
+                color, line_width, dash = AMBER, 3, ()
+            else:
+                color, line_width, dash = CONNECTION, 2, ()
             ax, ay = project(*positions[label_a])
             bx, by = project(*positions[label_b])
-            canvas.create_line(ax, ay, bx, by, fill=MUTED, width=2)
-            canvas.create_text(
-                (ax + bx) / 2,
-                (ay + by) / 2 - 8,
-                text=f"{pair.distance_m:.2f} m",
-                fill=MUTED,
-                font=("TkDefaultFont", 8),
+            canvas.create_line(
+                ax,
+                ay,
+                bx,
+                by,
+                fill=color,
+                width=line_width,
+                dash=dash,
+                activefill=MAGENTA,
+                activewidth=max(line_width, 5),
             )
+            suffix = " · OFF" if not enabled else " · EDIT" if adjusted else ""
+            if height >= 180 or selected or adjusted or not enabled:
+                canvas.create_text(
+                    (ax + bx) / 2,
+                    (ay + by) / 2 - 8,
+                    text=f"{distance_m:.2f} m{suffix}",
+                    fill=color,
+                    font=("TkDefaultFont", 8),
+                )
 
-        for pair_index, pair in enumerate(model.plan_pairs):
-            anchor_a = model.slot_to_anchor.get(pair.initiator_slot)
-            anchor_b = model.slot_to_anchor.get(pair.responder_slot)
+        for pair_index, plan_pair in enumerate(model.plan_pairs):
+            anchor_a = model.slot_to_anchor.get(plan_pair.initiator_slot)
+            anchor_b = model.slot_to_anchor.get(plan_pair.responder_slot)
             if anchor_a is None or anchor_b is None:
                 continue
             label_a = anchor_label(anchor_a)
@@ -1349,17 +1784,28 @@ class SurveyGeometryView(ttk.Frame):
             ax, ay = project(*positions[label_a])
             bx, by = project(*positions[label_b])
             result = model.results.get(pair_index)
-            color = AMBER if result is not None else "#aeb7bb"
+            incident = (
+                self._selected_anchor_id is not None
+                and self._selected_anchor_id in (label_a, label_b)
+            )
+            color = ACCENT if incident else AMBER if result is not None else CONNECTION
             canvas.create_line(
-                ax, ay, bx, by, fill=color, width=2, dash=(5, 4)
-            )
-            canvas.create_text(
-                (ax + bx) / 2,
-                (ay + by) / 2 - 8,
-                text=f"P{pair_index}",
+                ax,
+                ay,
+                bx,
+                by,
                 fill=color,
-                font=("TkDefaultFont", 8),
+                width=3 if incident else 2,
+                dash=(5, 4),
             )
+            if height >= 180:
+                canvas.create_text(
+                    (ax + bx) / 2,
+                    (ay + by) / 2 - 8,
+                    text=f"P{pair_index}",
+                    fill=color,
+                    font=("TkDefaultFont", 8),
+                )
 
         slot_by_anchor = {
             anchor_label(anchor_id): slot
@@ -1369,6 +1815,7 @@ class SurveyGeometryView(ttk.Frame):
             x, y = project(*position)
             slot = slot_by_anchor.get(label)
             dragging = label == self._drag_anchor_id
+            selected = label == self._selected_anchor_id
             node_error = node_errors.get(label)
             node_color = (
                 node_error_color(node_error) if node_error is not None else ACCENT
@@ -1379,8 +1826,8 @@ class SurveyGeometryView(ttk.Frame):
                 x + 8,
                 y + 8,
                 fill=node_color,
-                outline=AMBER if dragging else "#083d34",
-                width=2 if dragging else 1,
+                outline=MAGENTA if selected else AMBER if dragging else CANVAS_BG,
+                width=3 if selected else 2 if dragging else 1,
             )
             short = label[-4:]
             canvas.create_text(
@@ -1391,15 +1838,16 @@ class SurveyGeometryView(ttk.Frame):
                 anchor="s",
                 font=("TkDefaultFont", 9, "bold"),
             )
-            canvas.create_text(
-                x,
-                y + 13,
-                text=f"({position[0]:.2f}, {position[1]:.2f}) m",
-                fill=MUTED,
-                anchor="n",
-                font=("TkDefaultFont", 8),
-            )
-        if node_errors:
+            if height >= 150:
+                canvas.create_text(
+                    x,
+                    y + 13,
+                    text=f"({position[0]:.2f}, {position[1]:.2f}) m",
+                    fill=MUTED,
+                    anchor="n",
+                    font=("TkDefaultFont", 8),
+                )
+        if node_errors and height >= 170:
             canvas.create_text(
                 width - 10,
                 height - 10,
@@ -1411,7 +1859,7 @@ class SurveyGeometryView(ttk.Frame):
                 anchor="se",
                 font=("TkDefaultFont", 8),
             )
-        if not self._display_positions:
+        if not self._display_positions and height >= 120:
             canvas.create_text(
                 12,
                 height - 10,
@@ -1420,13 +1868,13 @@ class SurveyGeometryView(ttk.Frame):
                 anchor="sw",
                 font=("TkDefaultFont", 8),
             )
-        else:
+        elif height >= 140:
             canvas.create_text(
                 12,
                 10,
                 text=(
-                    "Drag an anchor to keep a manual edit; "
-                    "Re-solve dragged optimizes from it"
+                    "Click a node to isolate its links · click a measured link "
+                    "to edit · drag an anchor to keep a manual layout"
                 ),
                 fill=MUTED,
                 anchor="nw",
@@ -1467,7 +1915,15 @@ def _canvas_projection(
         max_y += 0.5
     span_x = max(max_x - min_x, 1.0)
     span_y = max(max_y - min_y, 1.0)
-    scale = min((width - 100) / span_x, (height - 80) / span_y)
+    horizontal_padding = min(100.0, max(24.0, width * 0.15))
+    vertical_padding = min(80.0, max(24.0, height * 0.25))
+    scale = max(
+        min(
+            (width - horizontal_padding) / span_x,
+            (height - vertical_padding) / span_y,
+        ),
+        1e-6,
+    )
     offset_x = (width - span_x * scale) / 2.0
     offset_y = (height - span_y * scale) / 2.0
 

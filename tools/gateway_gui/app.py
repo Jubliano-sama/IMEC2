@@ -147,19 +147,24 @@ from .survey_runtime import (
     SurveyEventNotReady,
     SurveyStateError,
 )
+from .theme import (
+    ACCENT,
+    ACCENT_DARK,
+    AMBER,
+    APP_BG,
+    BORDER,
+    CANVAS_BG,
+    ERROR,
+    ERROR_BG,
+    HEADER,
+    INK,
+    MUTED,
+    PANEL_ALT_BG,
+    PANEL_BG,
+    SELECTION,
+)
 
 
-APP_BG = "#f2f4f5"
-PANEL_BG = "#ffffff"
-INK = "#20262b"
-MUTED = "#667079"
-ACCENT = "#126b5b"
-ACCENT_DARK = "#0d5548"
-AMBER = "#a56200"
-ERROR = "#a72b2b"
-ERROR_BG = "#fbe9e8"
-HEADER = "#252b30"
-SELECTION = "#d8ebe6"
 DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT = ""
 GUI_PROTOCOL_REVISION = "survey-event-v1"
 
@@ -182,9 +187,10 @@ class Tooltip:
         label = tk.Label(
             self.window,
             text=self.text,
-            background="#fffbd8",
+            background=PANEL_ALT_BG,
             foreground=INK,
             relief="solid",
+            highlightbackground=BORDER,
             borderwidth=1,
             padx=7,
             pady=4,
@@ -292,28 +298,62 @@ class GatewayGui(GatewayDiagnosticsMixin):
             style.theme_use("clam")
         style.configure(".", font=("TkDefaultFont", 10), background=APP_BG, foreground=INK)
         style.configure("TFrame", background=APP_BG)
+        style.configure("TLabel", background=APP_BG, foreground=INK)
         style.configure("Panel.TFrame", background=PANEL_BG)
+        style.configure("Panel.TLabel", background=PANEL_BG, foreground=INK)
         style.configure("Header.TFrame", background=HEADER)
-        style.configure("Header.TLabel", background=HEADER, foreground="#ffffff", font=("TkDefaultFont", 14, "bold"))
-        style.configure("HeaderMeta.TLabel", background=HEADER, foreground="#cbd1d5")
-        style.configure("Status.TLabel", background=HEADER, foreground="#ffca67", font=("TkDefaultFont", 10, "bold"))
-        style.configure("Connected.Status.TLabel", background=HEADER, foreground="#75d2b5")
+        style.configure("Header.TLabel", background=HEADER, foreground=INK, font=("TkDefaultFont", 15, "bold"))
+        style.configure("HeaderMeta.TLabel", background=HEADER, foreground=MUTED)
+        style.configure("Status.TLabel", background=HEADER, foreground=AMBER, font=("TkDefaultFont", 10, "bold"))
+        style.configure("Connected.Status.TLabel", background=HEADER, foreground=ACCENT)
         style.configure("Error.TFrame", background=ERROR_BG)
         style.configure("Error.TLabel", background=ERROR_BG, foreground=ERROR)
         style.configure("Muted.TLabel", foreground=MUTED, background=APP_BG)
         style.configure("PanelMuted.TLabel", foreground=MUTED, background=PANEL_BG)
-        style.configure("Section.TLabel", font=("TkDefaultFont", 11, "bold"), foreground=INK)
-        style.configure("Primary.TButton", background=ACCENT, foreground="#ffffff", borderwidth=0, padding=(10, 7))
-        style.map("Primary.TButton", background=[("active", ACCENT_DARK), ("disabled", "#a8b6b2")])
+        style.configure("Section.TLabel", background=PANEL_BG, font=("TkDefaultFont", 11, "bold"), foreground=INK)
+        style.configure(
+            "TButton",
+            background=PANEL_ALT_BG,
+            foreground=INK,
+            bordercolor=BORDER,
+            lightcolor=BORDER,
+            darkcolor=BORDER,
+            focuscolor=ACCENT,
+            padding=(8, 6),
+        )
+        style.map(
+            "TButton",
+            background=[("active", "#1a2b46"), ("pressed", "#102238"), ("disabled", PANEL_BG)],
+            foreground=[("disabled", "#52647a")],
+            bordercolor=[("focus", ACCENT), ("active", ACCENT_DARK)],
+        )
+        style.configure("Primary.TButton", background=ACCENT_DARK, foreground=INK, bordercolor=ACCENT, padding=(10, 7))
+        style.map("Primary.TButton", background=[("active", ACCENT), ("pressed", ACCENT_DARK), ("disabled", PANEL_BG)], foreground=[("active", HEADER), ("disabled", "#52647a")])
         style.configure("Tool.TButton", padding=(8, 6))
         style.configure("Danger.TButton", foreground=ERROR, padding=(8, 6))
-        style.configure("TLabelframe", background=APP_BG, borderwidth=1, relief="solid")
+        style.map("Danger.TButton", foreground=[("active", "#ff9aad"), ("disabled", "#6d4550")])
+        style.configure("TLabelframe", background=APP_BG, foreground=INK, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, borderwidth=1, relief="solid")
         style.configure("TLabelframe.Label", background=APP_BG, foreground=INK, font=("TkDefaultFont", 10, "bold"))
-        style.configure("Treeview", background=PANEL_BG, fieldbackground=PANEL_BG, rowheight=26, borderwidth=0)
-        style.configure("Treeview.Heading", background="#e3e7e8", foreground=INK, font=("TkDefaultFont", 9, "bold"), relief="flat")
+        style.configure("Treeview", background=PANEL_BG, fieldbackground=PANEL_BG, foreground=INK, rowheight=27, bordercolor=BORDER, borderwidth=0)
+        style.configure("Treeview.Heading", background=PANEL_ALT_BG, foreground=INK, bordercolor=BORDER, font=("TkDefaultFont", 9, "bold"), relief="flat")
+        style.map("Treeview.Heading", background=[("active", "#1a2b46")])
         style.map("Treeview", background=[("selected", SELECTION)], foreground=[("selected", INK)])
-        style.configure("TNotebook", background=APP_BG, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(12, 7))
+        style.configure("TNotebook", background=APP_BG, bordercolor=BORDER, borderwidth=0)
+        style.configure("TNotebook.Tab", background=APP_BG, foreground=MUTED, bordercolor=BORDER, padding=(12, 8))
+        style.map("TNotebook.Tab", background=[("selected", PANEL_BG), ("active", PANEL_ALT_BG)], foreground=[("selected", ACCENT), ("active", INK)])
+        style.configure("TEntry", fieldbackground=CANVAS_BG, foreground=INK, insertcolor=INK, bordercolor=BORDER)
+        style.configure("TSpinbox", fieldbackground=CANVAS_BG, foreground=INK, arrowcolor=ACCENT, bordercolor=BORDER)
+        style.configure("TCombobox", fieldbackground=CANVAS_BG, foreground=INK, arrowcolor=ACCENT, bordercolor=BORDER)
+        style.map("TCombobox", fieldbackground=[("readonly", CANVAS_BG)], foreground=[("readonly", INK)])
+        style.configure("Horizontal.TProgressbar", troughcolor=CANVAS_BG, background=ACCENT, bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT_DARK)
+        style.configure("TScrollbar", background=PANEL_ALT_BG, troughcolor=CANVAS_BG, bordercolor=BORDER, arrowcolor=ACCENT)
+        style.map("TScrollbar", background=[("active", "#1a2b46")])
+        style.configure("TPanedwindow", background=APP_BG)
+        style.configure("Sash", sashthickness=5, background=BORDER)
+        self.root.option_add("*TCombobox*Listbox.background", CANVAS_BG)
+        self.root.option_add("*TCombobox*Listbox.foreground", INK)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", SELECTION)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", INK)
 
     def _build_ui(self) -> None:
         self.root.grid_rowconfigure(3, weight=1)
@@ -325,9 +365,16 @@ class GatewayGui(GatewayDiagnosticsMixin):
         ttk.Label(header, text="IMEC2 Gateway BLE Console", style="Header.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             header,
-            text="Live packets, gateway control, and click diagnostics",
+            text="TOKYO GRID // LIVE RF · SURVEY · GEOMETRY",
             style="HeaderMeta.TLabel",
         ).grid(row=0, column=1, padx=(18, 0), sticky="w")
+        tk.Frame(header, background=ACCENT, height=2).grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            pady=(8, 0),
+        )
         self.connection_label = ttk.Label(header, textvariable=self.connection_text, style="Status.TLabel")
         self.connection_label.grid(row=0, column=2, sticky="e")
 
@@ -553,25 +600,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             justify="left",
         ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        advanced = ttk.LabelFrame(parent, text="Enumeration Timing", padding=10)
-        advanced.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        advanced.grid_columnconfigure(0, weight=1)
-        advanced.grid_columnconfigure(1, weight=1)
-
-        self._labeled_spin(advanced, 0, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
-    def _labeled_spin(
-        self,
-        parent: ttk.LabelFrame,
-        row: int,
-        label: str,
-        variable: tk.StringVar,
-        minimum: int,
-        maximum: int,
-    ) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
-        widget = ttk.Spinbox(parent, textvariable=variable, from_=minimum, to=maximum, increment=1)
-        widget.grid(row=row, column=1, sticky="ew", pady=3)
-
     def _build_workspace(self, parent: ttk.Frame) -> None:
         parent.grid_rowconfigure(0, weight=1)
         parent.grid_columnconfigure(0, weight=1)
@@ -720,10 +748,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
         ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
         self.cir_canvas = tk.Canvas(
             parent,
-            background=PANEL_BG,
+            background=CANVAS_BG,
             height=190,
             highlightthickness=1,
-            highlightbackground="#d6dcdf",
+            highlightbackground=BORDER,
         )
         self.cir_canvas.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 6))
         self.cir_canvas.bind("<Configure>", lambda _event: self._redraw_cir_plot())
@@ -2106,7 +2134,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 button.configure(state="normal" if followup_ready else "disabled")
         iterate_button = getattr(self, "survey_iterate_button", None)
         if iterate_button is not None:
-            iterate_ready = followup_ready and survey_model.layout is not None
+            iterate_ready = (
+                followup_ready
+                and survey_model is not None
+                and survey_model.layout is not None
+            )
             iterate_button.configure(
                 state="normal" if iterate_ready else "disabled"
             )
@@ -2788,7 +2820,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         for fraction in (0.0, 0.5, 1.0):
             y = plot_bottom - fraction * (plot_bottom - top)
             value = fraction * scale_max
-            canvas.create_line(left - 4, y, plot_right, y, fill="#e2e6e8", dash=(2, 3))
+            canvas.create_line(left - 4, y, plot_right, y, fill=BORDER, dash=(2, 3))
             canvas.create_text(left - 7, y, text=f"{value:.0f}", anchor="e", fill=MUTED)
 
         x_span = max(len(samples) - 1, 1)

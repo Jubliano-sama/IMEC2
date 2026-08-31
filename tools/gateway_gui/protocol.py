@@ -1208,9 +1208,13 @@ def _basis_with_row(
             (value - factor * source_value) % _RIGIDITY_PRIME
             for value, source_value in zip(reduced, source)
         ]
-    pivot = next((index for index, value in enumerate(reduced) if value), None)
-    if pivot is None:
+    new_pivot = next(
+        (index for index, value in enumerate(reduced) if value),
+        None,
+    )
+    if new_pivot is None:
         return basis, False
+    pivot = new_pivot
     inverse = pow(reduced[pivot], -1, _RIGIDITY_PRIME)
     normalized = [(value * inverse) % _RIGIDITY_PRIME for value in reduced]
     updated: dict[int, list[int]] = {}
@@ -1251,7 +1255,7 @@ def _selected_neighbors(
     selected: Iterable[tuple[int, int]],
     slots: Iterable[int],
 ) -> dict[int, set[int]]:
-    neighbors = {slot: set() for slot in slots}
+    neighbors: dict[int, set[int]] = {slot: set() for slot in slots}
     for first, second in selected:
         neighbors[first].add(second)
         neighbors[second].add(first)
