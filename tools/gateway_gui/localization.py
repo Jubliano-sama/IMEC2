@@ -10,8 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-LOCALIZATION_ALGORITHM = "Radical-axis line least squares with range-LS fallback"
-RANGE_LS_TRIGGER_RMSE_M = 0.5
+LOCALIZATION_ALGORITHM = (
+    "Radical-axis line least squares with outside-hull height-agnostic range-LS fallback"
+)
+RANGE_LS_TRIGGER_RMSE_M = 0.0
 RANGE_LS_MIN_IMPROVEMENT_M = 0.01
 
 
@@ -56,6 +58,7 @@ class LocalizationResult:
     residuals_m: dict[str, float]
     range_residuals_m: dict[str, float]
     common_height_m: float | None
+    algorithm: str
     warnings: tuple[str, ...]
 
 
@@ -80,7 +83,9 @@ def solve_position(
     common vertical height term appears in every squared range, so it cancels
     before the initial least-squares solve. If the resulting range fit is poor,
     a bounded range least-squares refinement is tried and used only when it
-    improves the range RMSE.
+    improves the range RMSE and lies outside the anchors' convex hull. The
+    refinement profiles out one shared, unknown vertical separation, so it
+    does not assume a tag or anchor height.
     """
 
     processed = _preprocess_readings(
@@ -93,6 +98,7 @@ def solve_position(
     line_residuals, line_rmse, line_warnings = _analyze_radical_axis_residuals(processed, x, y)
     range_residuals, range_rmse, common_height_m, range_warnings = _analyze_range_fit(processed, x, y)
     refinement_warnings: list[str] = []
+    algorithm = "radical_axis"
     if range_rmse >= range_ls_trigger_rmse_m:
         original_range_rmse = range_rmse
         refined_x, refined_y = _solve_range_least_squares(processed, x, y)
@@ -102,7 +108,15 @@ def solve_position(
             refined_common_height_m,
             refined_range_warnings,
         ) = _analyze_range_fit(processed, refined_x, refined_y)
-        if refined_range_rmse <= original_range_rmse - range_ls_min_improvement_m:
+        refined_outside_hull = not _point_in_convex_hull(
+            refined_x,
+            refined_y,
+            [(reading.x_m, reading.y_m) for reading in processed],
+        )
+        if (
+            refined_range_rmse <= original_range_rmse - range_ls_min_improvement_m
+            and refined_outside_hull
+        ):
             x = refined_x
             y = refined_y
             line_residuals, line_rmse, line_warnings = _analyze_radical_axis_residuals(processed, x, y)
@@ -111,12 +125,18 @@ def solve_position(
             common_height_m = refined_common_height_m
             range_warnings = refined_range_warnings
             refinement_warnings.append(
-                "Range least-squares refinement improved RMSE "
+                "Outside-hull height-agnostic range least-squares refinement improved RMSE "
                 f"from {original_range_rmse:.3f} m to {range_rmse:.3f} m."
             )
+            algorithm = "height_agnostic_range_ls"
         else:
+            reason = (
+                "its estimate is inside the anchor convex hull"
+                if not refined_outside_hull
+                else "it did not improve the range fit enough"
+            )
             refinement_warnings.append(
-                "Range least-squares refinement did not improve the range fit enough to use."
+                f"Height-agnostic range least-squares refinement was not used because {reason}."
             )
     confidence, confidence_warnings = _localization_confidence(
         line_rmse=line_rmse,
@@ -135,6 +155,7 @@ def solve_position(
         residuals_m=line_residuals,
         range_residuals_m=range_residuals,
         common_height_m=common_height_m,
+        algorithm=algorithm,
         warnings=tuple(line_warnings + range_warnings + refinement_warnings + confidence_warnings),
     )
 
@@ -387,6 +408,49 @@ def _solve_range_least_squares(
             if damping > 1e12:
                 break
     return best_x_m, best_y_m
+
+
+def _point_in_convex_hull(
+    x_m: float,
+    y_m: float,
+    points: list[tuple[float, float]],
+    *,
+    tolerance: float = 1e-9,
+) -> bool:
+    """Return true for points inside or on the boundary of a 2D convex hull."""
+
+    unique = sorted(set(points))
+    if len(unique) < 3:
+        return False
+
+    def cross(
+        origin: tuple[float, float],
+        first: tuple[float, float],
+        second: tuple[float, float],
+    ) -> float:
+        return ((first[0] - origin[0]) * (second[1] - origin[1])
+                - (first[1] - origin[1]) * (second[0] - origin[0]))
+
+    lower: list[tuple[float, float]] = []
+    for point in unique:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= tolerance:
+            lower.pop()
+        lower.append(point)
+    upper: list[tuple[float, float]] = []
+    for point in reversed(unique):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= tolerance:
+            upper.pop()
+        upper.append(point)
+    hull = lower[:-1] + upper[:-1]
+    if len(hull) < 3:
+        return False
+    signs = [
+        cross(hull[index], hull[(index + 1) % len(hull)], (x_m, y_m))
+        for index in range(len(hull))
+    ]
+    return all(value >= -tolerance for value in signs) or all(
+        value <= tolerance for value in signs
+    )
 
 
 def _range_least_squares_cost(

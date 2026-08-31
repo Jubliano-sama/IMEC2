@@ -198,6 +198,34 @@ class ClickLocationTests(unittest.TestCase):
             self.assertAlmostEqual(solved[event_id].x_m, target[0], places=3)
             self.assertAlmostEqual(solved[event_id].y_m, target[1], places=3)
 
+    def test_select_and_delete_use_the_exact_click_identity(self):
+        coordinates = {1: (0, 0), 2: (5, 0), 3: (0, 4)}
+        positions = {
+            f"0x{anchor:016x}": point for anchor, point in coordinates.items()
+        }
+        model = ClickLocationModel()
+        model.set_geometry(positions, 1)
+        targets = {10: (1.0, 1.0), 20: (4.0, 2.0)}
+        for anchor, point in coordinates.items():
+            for event_id, target in targets.items():
+                model.observe(click(anchor, math.dist(target, point), event=event_id))
+
+        states = model.event_states
+        self.assertEqual([state.identity[1] for state in states], [10, 20])
+        first_key = states[0].identity
+        assert first_key is not None
+        selected = model.select(first_key)
+        assert selected is not None and selected.result is not None
+        self.assertEqual(selected.identity, first_key)
+        self.assertAlmostEqual(selected.result.x_m, targets[10][0], places=3)
+        self.assertEqual(model.ranges_m, selected.ranges_m)
+
+        remaining = model.delete(first_key)
+        assert remaining.identity is not None and remaining.result is not None
+        self.assertEqual(remaining.identity[1], 20)
+        self.assertEqual([state.identity[1] for state in model.event_states], [20])
+        self.assertAlmostEqual(remaining.result.x_m, targets[20][0], places=3)
+
 
 class WakeAndTopologyTests(unittest.TestCase):
     def test_wake_classification_and_bounded_history(self):

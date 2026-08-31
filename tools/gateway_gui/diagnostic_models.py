@@ -199,6 +199,9 @@ class ClickLocationModel:
         self._ranges_by_key: OrderedDict[
             tuple[int, int, int], dict[str, float]
         ] = OrderedDict()
+        self._states_by_key: OrderedDict[
+            tuple[int, int, int], ClickDiagnosticState
+        ] = OrderedDict()
         self.state = ClickDiagnosticState("no_geometry", "No solved anchor geometry.", None, 0)
     def reset(self) -> None:
         self.geometry_generation = 0
@@ -207,6 +210,7 @@ class ClickLocationModel:
         self.current_key = None
         self.ranges_m.clear()
         self._ranges_by_key.clear()
+        self._states_by_key.clear()
         self.state = ClickDiagnosticState("no_geometry", "No solved anchor geometry.", None, 0)
 
     def set_geometry(
@@ -235,13 +239,15 @@ class ClickLocationModel:
                     for anchor_id in ranges_m:
                         ranges_m[anchor_id] *= scale_ratio
             if self.current_key is not None:
-                current_ranges = self._ranges_by_key.get(self.current_key)
-                if current_ranges is not None:
-                    self.ranges_m = current_ranges
-                    return self._solve_current_ranges(self.state.wake)
+                selected_key = self.current_key
+                selected_wake = self.state.wake
+                for key in tuple(self._ranges_by_key):
+                    self._solve_ranges(key, self._states_by_key.get(key, self.state).wake)
+                return self.select(selected_key) or self._solve_ranges(selected_key, selected_wake)
         self.current_key = None
         self.ranges_m.clear()
         self._ranges_by_key.clear()
+        self._states_by_key.clear()
         status = "stale" if positions else "no_geometry"
         self.state = ClickDiagnosticState(status, "Waiting for a new click event." if positions else "No solved anchor geometry.", None, generation)
         return self.state
@@ -260,7 +266,8 @@ class ClickLocationModel:
         ranges_m = self._ranges_by_key.get(key)
         if ranges_m is None:
             if len(self._ranges_by_key) >= self.MAX_TRACKED_EVENTS:
-                self._ranges_by_key.popitem(last=False)
+                expired_key, _ranges = self._ranges_by_key.popitem(last=False)
+                self._states_by_key.pop(expired_key, None)
             ranges_m = {}
             self._ranges_by_key[key] = ranges_m
         else:
@@ -269,13 +276,16 @@ class ClickLocationModel:
         self.ranges_m = ranges_m
         if not self.positions_m:
             self.state = ClickDiagnosticState("invalid", "No solved anchor geometry.", key, self.geometry_generation, wake=wake)
+            self._states_by_key[key] = self.state
             return self.state
         anchor_id = anchor_label(anchor)
         if anchor_id not in self.positions_m:
             self.state = ClickDiagnosticState("invalid", f"Anchor {anchor_id} is absent from current geometry.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
+            self._states_by_key[key] = self.state
             return self.state
         if anchor_id in self.ranges_m:
             self.state = ClickDiagnosticState("invalid", f"Duplicate range from {anchor_id}.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
+            self._states_by_key[key] = self.state
             return self.state
         distance_mm = packet.value(TLV_DISTANCE_MM)
         if (
@@ -284,60 +294,95 @@ class ClickLocationModel:
             or distance_mm <= MIN_USABLE_DISTANCE_MM
         ):
             self.state = ClickDiagnosticState("invalid", f"Invalid range from {anchor_id}.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
+            self._states_by_key[key] = self.state
             return self.state
         self.ranges_m[anchor_id] = distance_mm / 1000.0 * self.range_scale
-        return self._solve_current_ranges(wake)
+        return self._solve_ranges(key, wake)
 
-    def _solve_current_ranges(
+    @property
+    def event_states(self) -> tuple[ClickDiagnosticState, ...]:
+        """Every retained click, in first-seen order, with identity-bound data."""
+
+        return tuple(self._states_by_key.values())
+
+    def select(self, key: tuple[int, int, int]) -> ClickDiagnosticState | None:
+        state = self._states_by_key.get(key)
+        ranges = self._ranges_by_key.get(key)
+        if state is None or ranges is None:
+            return None
+        self.current_key = key
+        self.ranges_m = ranges
+        self.state = state
+        return state
+
+    def delete(self, key: tuple[int, int, int]) -> ClickDiagnosticState:
+        """Delete exactly one retained click and select the newest survivor."""
+
+        self._ranges_by_key.pop(key, None)
+        self._states_by_key.pop(key, None)
+        if self._states_by_key:
+            newest_key = next(reversed(self._states_by_key))
+            selected = self.select(newest_key)
+            assert selected is not None
+            return selected
+        self.current_key = None
+        self.ranges_m = {}
+        self.state = ClickDiagnosticState(
+            "stale",
+            "Waiting for a new click event.",
+            None,
+            self.geometry_generation,
+        )
+        return self.state
+
+    def _solve_ranges(
         self,
+        key: tuple[int, int, int],
         wake: WakeDiagnostic | None,
     ) -> ClickDiagnosticState:
-        key = self.current_key
-        if key is None:
-            self.state = ClickDiagnosticState(
-                "stale",
-                "Waiting for a new click event.",
-                None,
-                self.geometry_generation,
-                wake=wake,
-            )
-            return self.state
+        ranges_m = self._ranges_by_key[key]
+        is_selected = key == self.current_key
+        self.ranges_m = ranges_m if is_selected else self.ranges_m
+        def publish(state: ClickDiagnosticState) -> ClickDiagnosticState:
+            self._states_by_key[key] = state
+            if is_selected:
+                self.state = state
+            return state
         if not self.positions_m:
-            self.state = ClickDiagnosticState(
+            return publish(ClickDiagnosticState(
                 "invalid",
                 "No solved anchor geometry.",
                 key,
                 self.geometry_generation,
-                dict(self.ranges_m),
+                dict(ranges_m),
                 wake=wake,
-            )
-            return self.state
-        absent = sorted(set(self.ranges_m) - set(self.positions_m))
+            ))
+        absent = sorted(set(ranges_m) - set(self.positions_m))
         if absent:
-            self.state = ClickDiagnosticState(
+            return publish(ClickDiagnosticState(
                 "invalid",
                 f"Anchor {absent[0]} is absent from current geometry.",
                 key,
                 self.geometry_generation,
-                dict(self.ranges_m),
+                dict(ranges_m),
                 wake=wake,
-            )
-            return self.state
-        if len(self.ranges_m) < 3:
-            self.state = ClickDiagnosticState("pending", f"Waiting for ranges ({len(self.ranges_m)}/3).", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
-            return self.state
-        points = [self.positions_m[name] for name in self.ranges_m]
+            ))
+        if len(ranges_m) < 3:
+            return publish(ClickDiagnosticState("pending", f"Waiting for ranges ({len(ranges_m)}/3).", key, self.geometry_generation, dict(ranges_m), wake=wake))
+        points = [self.positions_m[name] for name in ranges_m]
         if not _noncollinear(points):
-            self.state = ClickDiagnosticState("invalid", "Click anchors are collinear.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
-            return self.state
-        readings = [LocalizationReading(name, *self.positions_m[name], distance) for name, distance in self.ranges_m.items()]
+            return publish(ClickDiagnosticState("invalid", "Click anchors are collinear.", key, self.geometry_generation, dict(ranges_m), wake=wake))
+        readings = [LocalizationReading(name, *self.positions_m[name], distance) for name, distance in ranges_m.items()]
         try:
             result = solve_position(readings)
         except ValueError as exc:
-            self.state = ClickDiagnosticState("invalid", str(exc), key, self.geometry_generation, dict(self.ranges_m), wake=wake)
-            return self.state
-        self.state = ClickDiagnosticState("solved", f"Solved from {len(readings)} anchors.", key, self.geometry_generation, dict(self.ranges_m), result, wake)
-        return self.state
+            return publish(ClickDiagnosticState("invalid", str(exc), key, self.geometry_generation, dict(ranges_m), wake=wake))
+        algorithm = (
+            "height-agnostic least squares"
+            if result.algorithm == "height_agnostic_range_ls"
+            else "the radical-axis theorem"
+        )
+        return publish(ClickDiagnosticState("solved", f"Solved from {len(readings)} anchors with {algorithm}.", key, self.geometry_generation, dict(ranges_m), result, wake))
 
 
 def _noncollinear(points: list[tuple[float, float]]) -> bool:

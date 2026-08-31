@@ -100,6 +100,8 @@ class GatewayDiagnosticsMixin:
             on_scale=self._nudge_layout_scale,
             on_reset=self._reset_layout_registration,
             on_mirror=self._mirror_layout_frame,
+            on_click_selected=self._select_click_location,
+            on_click_deleted=self._delete_click_location,
         )
         self.click_diagnostics_view.pack(fill="both", expand=True)
         self.survey_geometry_view = SurveyGeometryView(
@@ -114,7 +116,11 @@ class GatewayDiagnosticsMixin:
         self.mesh_diagnostics_view.pack(fill="both", expand=True)
         if self.topology_model.load_error:
             self.mesh_diagnostics_view.topology_var.set(f"[?] Baseline load failed: {self.topology_model.load_error}")
-        self.click_diagnostics_view.show(self.click_location_model.state, {})
+        self.click_diagnostics_view.show(
+            self.click_location_model.state,
+            {},
+            self.click_location_model.event_states,
+        )
         self.survey_geometry_view.show_model(self.survey_model)
 
     def _apply_survey_geometry_positions(
@@ -135,7 +141,28 @@ class GatewayDiagnosticsMixin:
         if click_view is not None:
             click_view.show_registration(registration)
             click_view.show_connections(self.survey_model.neighbor_pairs)
-            click_view.show(state, registration.positions_m)
+            click_view.show(
+                state,
+                registration.positions_m,
+                self.click_location_model.event_states,
+            )
+
+    def _select_click_location(self, key: tuple[int, int, int]) -> None:
+        state = self.click_location_model.select(key)
+        if state is not None:
+            self.click_diagnostics_view.show(
+                state,
+                self.click_location_model.positions_m,
+                self.click_location_model.event_states,
+            )
+
+    def _delete_click_location(self, key: tuple[int, int, int]) -> None:
+        state = self.click_location_model.delete(key)
+        self.click_diagnostics_view.show(
+            state,
+            self.click_location_model.positions_m,
+            self.click_location_model.event_states,
+        )
 
     def _nudge_layout_translation(self, delta_x_m: float, delta_y_m: float) -> None:
         view = getattr(self, "survey_geometry_view", None)
@@ -254,7 +281,11 @@ class GatewayDiagnosticsMixin:
                 diagnostic = update
         state = self.click_location_model.observe(packet, diagnostic)
         if state is not None:
-            self.click_diagnostics_view.show(state, self.click_location_model.positions_m)
+            self.click_diagnostics_view.show(
+                state,
+                self.click_location_model.positions_m,
+                self.click_location_model.event_states,
+            )
 
     def _expire_gateway_command(self) -> None:
         transition = self.command_orchestrator.expire()

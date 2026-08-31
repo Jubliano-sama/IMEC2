@@ -129,12 +129,16 @@ class ClickDiagnosticsView(ttk.Frame):
         on_scale: Callable[[float], None] = lambda _factor: None,
         on_reset: Callable[[], None] = lambda: None,
         on_mirror: Callable[[], None] = lambda: None,
+        on_click_selected: Callable[[tuple[int, int, int]], None] = lambda _key: None,
+        on_click_deleted: Callable[[tuple[int, int, int]], None] = lambda _key: None,
     ) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
         self._on_translate = on_translate
         self._on_scale = on_scale
         self._on_reset = on_reset
         self._on_mirror = on_mirror
+        self._on_click_selected = on_click_selected
+        self._on_click_deleted = on_click_deleted
         self._fullscreen_window: tk.Toplevel | None = None
         self._fullscreen_canvas: tk.Canvas | None = None
         self._fullscreen_registration_controls: LayoutRegistrationControls | None = None
@@ -148,6 +152,9 @@ class ClickDiagnosticsView(ttk.Frame):
         self._blueprint_path: Path | None = None
         self._blueprint_width_m = 10.0
         self._blueprint_height_m = 10.0
+        self._blueprint_drag_x_m = 0.0
+        self._blueprint_drag_y_m = 0.0
+        self._blueprint_drag_start: tuple[int, int, float, float, float] | None = None
         self._blueprint_render_cache: dict[tuple[int, int], Image.Image] = {}
         self._blueprint_photo_by_canvas: dict[int, ImageTk.PhotoImage] = {}
         self.blueprint_width_var = tk.StringVar(value="10.000")
@@ -200,10 +207,15 @@ class ClickDiagnosticsView(ttk.Frame):
         self.canvas.grid(row=3, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", lambda _event: self.redraw())
         self.canvas.bind(
-            "<Button-1>",
-            lambda event, source=self.canvas: self._select_anchor_at(source, event),  # type: ignore[misc]
+            "<ButtonPress-1>",
+            lambda event, source=self.canvas: self._press_at(source, event),  # type: ignore[misc]
         )
+        self.canvas.bind("<B1-Motion>", self._drag_blueprint)
+        self.canvas.bind("<ButtonRelease-1>", self._end_blueprint_drag)
+        self.canvas.bind("<Delete>", self._delete_selected_click)
+        self.canvas.bind("<BackSpace>", self._delete_selected_click)
         self.diagnostic_state: ClickDiagnosticState | None = None
+        self.click_states: tuple[ClickDiagnosticState, ...] = ()
         self.positions: dict[str, tuple[float, float]] = {}
         self.reference_positions: dict[str, tuple[float, float]] = {}
         self.connections: frozenset[tuple[str, str]] = frozenset()
@@ -231,8 +243,14 @@ class ClickDiagnosticsView(ttk.Frame):
                     has_positions=bool(self.positions),
                 )
 
-    def show(self, state: ClickDiagnosticState, positions: dict[str, tuple[float, float]]) -> None:
+    def show(
+        self,
+        state: ClickDiagnosticState,
+        positions: dict[str, tuple[float, float]],
+        click_states: Iterable[ClickDiagnosticState] = (),
+    ) -> None:
         self.diagnostic_state = state
+        self.click_states = tuple(click_states)
         self.positions = dict(positions)
         if self._selected_anchor_id not in self.positions:
             self._selected_anchor_id = None
@@ -247,7 +265,12 @@ class ClickDiagnosticsView(ttk.Frame):
             self.identity_var.set("No click event")
         if state.result:
             maximum = max((abs(value) for value in state.result.range_residuals_m.values()), default=0.0)
-            self.fit_var.set(f"x {state.result.x_m:.3f} m   y {state.result.y_m:.3f} m   RMSE {state.result.rmse_m:.3f} m   Max {maximum:.3f} m")
+            algorithm = (
+                "Height-agnostic LS (magenta)"
+                if state.result.algorithm == "height_agnostic_range_ls"
+                else "Radical axis (cyan)"
+            )
+            self.fit_var.set(f"{algorithm}   x {state.result.x_m:.3f} m   y {state.result.y_m:.3f} m   RMSE {state.result.rmse_m:.3f} m   Max {maximum:.3f} m")
         else:
             self.fit_var.set(f"{state.status.replace('_', ' ').title()}  •  {state.message}")
         wake = state.wake
@@ -260,6 +283,59 @@ class ClickDiagnosticsView(ttk.Frame):
                 f"Event {timestamp}   Nearby {nearby}   Window {COLLISION_WINDOW_MS} ms   {wake.reason}"
             )
         self.redraw()
+
+    def _select_at(self, canvas: tk.Canvas, event: tk.Event[tk.Misc]) -> str | None:
+        canvas.focus_set()
+        project = self._projection_for_canvas(canvas)
+        if project is not None:
+            closest: tuple[float, tuple[int, int, int]] | None = None
+            for click_state in self.click_states:
+                if click_state.identity is None or click_state.result is None:
+                    continue
+                x, y = project(click_state.result.x_m, click_state.result.y_m)
+                distance = math.hypot(float(event.x) - x, float(event.y) - y)
+                if closest is None or distance < closest[0]:
+                    closest = distance, click_state.identity
+            if closest is not None and closest[0] <= 16.0:
+                self._on_click_selected(closest[1])
+                return "break"
+        return self._select_anchor_at(canvas, event)
+
+    def _press_at(self, canvas: tk.Canvas, event: tk.Event[tk.Misc]) -> str | None:
+        selected = self._select_at(canvas, event)
+        if selected == "break" or self._blueprint_source is None:
+            self._blueprint_drag_start = None
+            return selected
+        self._blueprint_drag_start = (
+            event.x,
+            event.y,
+            self._blueprint_drag_x_m,
+            self._blueprint_drag_y_m,
+            project.scale if (project := self._projection_for_canvas(canvas)) is not None else 1.0,
+        )
+        return "break"
+
+    def _drag_blueprint(self, event: tk.Event[tk.Misc]) -> str | None:
+        start = self._blueprint_drag_start
+        if start is None or start[4] <= 0.0:
+            return None
+        self._blueprint_drag_x_m = start[2] + (event.x - start[0]) / start[4]
+        self._blueprint_drag_y_m = start[3] - (event.y - start[1]) / start[4]
+        self.redraw()
+        return "break"
+
+    def _end_blueprint_drag(self, _event: tk.Event[tk.Misc]) -> str | None:
+        if self._blueprint_drag_start is None:
+            return None
+        self._blueprint_drag_start = None
+        return "break"
+
+    def _delete_selected_click(self, _event: tk.Event[tk.Misc]) -> str | None:
+        state = self.diagnostic_state
+        if state is None or state.identity is None:
+            return None
+        self._on_click_deleted(state.identity)
+        return "break"
 
     def show_registration(self, registration: LayoutRegistration) -> None:
         self.reference_positions = dict(registration.reference_positions_m)
@@ -359,12 +435,15 @@ class ClickDiagnosticsView(ttk.Frame):
             return None
         points = list((self.reference_positions or self.positions).values())
         if self._blueprint_source is not None:
+            blueprint_x = self._registration_translate_x_m + self._blueprint_drag_x_m
+            blueprint_y = self._registration_translate_y_m + self._blueprint_drag_y_m
             points.extend(
                 (
-                    (0.0, 0.0),
-                    (self._blueprint_width_m, 0.0),
-                    (0.0, self._blueprint_height_m),
-                    (self._blueprint_width_m, self._blueprint_height_m),
+                    (blueprint_x, blueprint_y),
+                    (blueprint_x + self._blueprint_width_m * self._registration_scale, blueprint_y),
+                    (blueprint_x, blueprint_y + self._blueprint_height_m * self._registration_scale),
+                    (blueprint_x + self._blueprint_width_m * self._registration_scale,
+                     blueprint_y + self._blueprint_height_m * self._registration_scale),
                 )
             )
         points.append((0.0, 0.0))
@@ -400,8 +479,13 @@ class ClickDiagnosticsView(ttk.Frame):
         if source is None:
             self._blueprint_photo_by_canvas.pop(id(canvas), None)
             return
-        left, bottom = project(0.0, 0.0)
-        right, top = project(self._blueprint_width_m, self._blueprint_height_m)
+        blueprint_x = self._registration_translate_x_m + self._blueprint_drag_x_m
+        blueprint_y = self._registration_translate_y_m + self._blueprint_drag_y_m
+        left, bottom = project(blueprint_x, blueprint_y)
+        right, top = project(
+            blueprint_x + self._blueprint_width_m * self._registration_scale,
+            blueprint_y + self._blueprint_height_m * self._registration_scale,
+        )
         x = min(left, right)
         y = min(top, bottom)
         width_px = max(1, round(abs(right - left)))
@@ -427,7 +511,10 @@ class ClickDiagnosticsView(ttk.Frame):
         canvas.create_text(
             x + 8,
             y + 8,
-            text=f"PLAN  {self._blueprint_width_m:.2f} × {self._blueprint_height_m:.2f} m",
+            text=(
+                f"PLAN  {self._blueprint_width_m:.2f} × {self._blueprint_height_m:.2f} m"
+                "  · drag background to align"
+            ),
             fill=ACCENT,
             anchor="nw",
             font=("TkFixedFont", 8, "bold"),
@@ -514,12 +601,32 @@ class ClickDiagnosticsView(ttk.Frame):
                 anchor="sw",
                 fill=INK,
             )
-        if state and state.result:
-            x, y = project(state.result.x_m, state.result.y_m)
-            classification = state.wake.classification if state.wake else "unknown"
-            color, marker = {WAKE_NORMAL: (ACCENT, "OK"), WAKE_LATE: (ERROR, "!"), WAKE_COLLISION: (AMBER, "C")}.get(classification, (MUTED, "?"))
-            canvas.create_oval(x - 11, y - 11, x + 11, y + 11, fill=color, outline=CANVAS_BG)
-            canvas.create_text(x, y, text=marker, fill=INK, font=("TkDefaultFont", 8, "bold"))
+        for click_number, click_state in enumerate(self.click_states, 1):
+            if click_state.result is None:
+                continue
+            x, y = project(click_state.result.x_m, click_state.result.y_m)
+            selected = state is not None and click_state.identity == state.identity
+            color = (
+                MAGENTA
+                if click_state.result.algorithm == "height_agnostic_range_ls"
+                else ACCENT
+            )
+            canvas.create_oval(
+                x - 12,
+                y - 12,
+                x + 12,
+                y + 12,
+                fill=color,
+                outline=INK if selected else CANVAS_BG,
+                width=3 if selected else 1,
+            )
+            canvas.create_text(
+                x,
+                y,
+                text=str(click_number),
+                fill=INK,
+                font=("TkDefaultFont", 8, "bold"),
+            )
 
     def _open_fullscreen(self) -> None:
         window = self._fullscreen_window
@@ -591,13 +698,17 @@ class ClickDiagnosticsView(ttk.Frame):
         canvas.grid(row=3, column=0, sticky="nsew")
         canvas.bind("<Configure>", lambda _event: self.redraw())
         canvas.bind(
-            "<Button-1>",
-            lambda event, source=canvas: self._select_anchor_at(source, event),  # type: ignore[misc]
+            "<ButtonPress-1>",
+            lambda event, source=canvas: self._press_at(source, event),  # type: ignore[misc]
         )
+        canvas.bind("<B1-Motion>", self._drag_blueprint)
+        canvas.bind("<ButtonRelease-1>", self._end_blueprint_drag)
         window.bind("<KeyPress>", self._fullscreen_key_pressed)
         window.bind("<KeyRelease>", self._fullscreen_key_released)
         window.bind("<Escape>", lambda _event: self._close_fullscreen())
         window.bind("<F11>", lambda _event: self._close_fullscreen())
+        window.bind("<Delete>", self._delete_selected_click)
+        window.bind("<BackSpace>", self._delete_selected_click)
         window.protocol("WM_DELETE_WINDOW", self._close_fullscreen)
         try:
             window.attributes("-fullscreen", True)

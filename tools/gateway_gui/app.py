@@ -3209,7 +3209,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_results = {}
         self._reset_topology_timing()
         if hasattr(self, "click_diagnostics_view"):
-            self.click_diagnostics_view.show(self.click_location_model.state, {})
+            self.click_diagnostics_view.show(
+                self.click_location_model.state,
+                {},
+                self.click_location_model.event_states,
+            )
         if hasattr(self, "mesh_diagnostics_view"):
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
             self.mesh_diagnostics_view.show_topology(None, {})
