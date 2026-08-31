@@ -17,6 +17,9 @@ RTT_BENCH_CONF = (ROOT / "app/conf/mesh-clicker-rtt-bench.conf").read_text()
 TWO_ANCHOR_CONF = (
     ROOT / "app/conf/mesh-two-anchor-click-bench.conf"
 ).read_text()
+RELAY_ONLY_CONF = (
+    ROOT / "app/conf/mesh-click-relay-only-bench.conf"
+).read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 DRIVER_RADIO = (ROOT / "app/src/dwm3000_driver_radio.inc").read_text()
 MESH_ARBITRATION = (
@@ -226,8 +229,47 @@ assert "config IMEC_TWO_ANCHOR_CLICK_BENCH" in APP_KCONFIG
 assert "UWB_NORMAL_CLICK_MIN_ANCHORS=2u" in APP_CMAKE
 assert "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y" in RTT_BENCH_CONF
 assert "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y" in TWO_ANCHOR_CONF
+assert set(RELAY_ONLY_CONF.splitlines()) == {
+    "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y",
+    "CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH=y",
+}
+relay_only_kconfig = APP_KCONFIG.index(
+    "config IMEC_MESH_CLICK_RELAY_ONLY_BENCH"
+)
+relay_only_kconfig_end = APP_KCONFIG.index("endmenu", relay_only_kconfig)
+assert "depends on IMEC_TWO_ANCHOR_CLICK_BENCH" in APP_KCONFIG[
+    relay_only_kconfig:relay_only_kconfig_end
+]
 assert "UWB_NORMAL_CLICK_MIN_ANCHORS == 2u" in MAIN
 assert "UWB_NORMAL_CLICK_MIN_ANCHORS == 3u" in MAIN
+assert "click relay-only bench mode is valid only for an anchor image" in MAIN
+
+mesh_click_handoff = source_function_body(
+    ANCHOR_RADIO, "anchor_handle_mesh_click_wake_claim"
+)
+relay_only_mesh_guard = mesh_click_handoff.index(
+    "CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH"
+)
+pending_handoff = mesh_click_handoff.index(
+    "anchor_pending_click_handoff.active", relay_only_mesh_guard
+)
+assert relay_only_mesh_guard < pending_handoff
+assert (
+    "DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=mesh"
+    in mesh_click_handoff[:pending_handoff]
+)
+
+anchor_scan = source_function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
+route_dispatch = anchor_scan.index("DBG_ANCHOR_ROUTE_WAKE_DISPATCH src=")
+relay_only_scan_guard = anchor_scan.index(
+    "CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH", route_dispatch
+)
+click_claim = anchor_scan.index("anchor_handle_uwb_claim(", relay_only_scan_guard)
+assert route_dispatch < relay_only_scan_guard < click_claim
+assert (
+    "DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=scan"
+    in anchor_scan[route_dispatch:click_claim]
+)
 
 button_action = function_body("app_clicker_handle_button_action")
 normal_click = button_action.index("app_clicker_run_normal_click")

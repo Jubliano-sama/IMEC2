@@ -176,6 +176,10 @@ BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS == 2u,
 BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS == 3u,
              "production normal clicks must require three unique anchors");
 #endif
+#if defined(CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH)
+BUILD_ASSERT(DEVICE_ROLE == ROLE_ANCHOR,
+             "click relay-only bench mode is valid only for an anchor image");
+#endif
 BUILD_ASSERT(CLICK_UWB_TIMEOUT_MS + UWB_SCHEDULE_GUARD_MS <= UWB_ANCHOR_RANGE_WINDOW_MS,
              "failed clicker DS-TWR response waits must fit inside one scheduled anchor slot");
 BUILD_ASSERT(GATEWAY_COMMAND_RESULT_TIMEOUT_MS >=

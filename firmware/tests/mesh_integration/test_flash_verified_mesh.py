@@ -1221,6 +1221,47 @@ class VerifiedFlashTests(unittest.TestCase):
             json.loads(self.journal.read_text(encoding="utf-8"))["state"],
         )
 
+    def test_two_anchor_click_build_requires_nonpromotable_bench_stage(self) -> None:
+        build, _ = self._valid()
+        config = build / "zephyr" / ".config"
+        with config.open("a", encoding="utf-8") as output:
+            output.write("CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y\n")
+
+        self.target.calls.clear()
+        self.assertEqual(1, self._stage(build))
+        self.assertEqual([], self._hardware_calls())
+        self.assertFalse(self.journal.exists())
+
+        self.assertEqual(0, flash.main([
+            *self._stage_args(build), "--bench-only",
+        ]))
+        journal = json.loads(self.journal.read_text(encoding="utf-8"))
+        self.assertEqual("bench_only", journal["evidence_mode"])
+        self.assertIs(False, journal["promotion_allowed"])
+
+    def test_two_anchor_click_build_cannot_enter_promotion_verification(self) -> None:
+        build = flash.verifier.BuildEvidence(
+            build_dir=self.case.root / "two-anchor-build",
+            preset="mesh_clicker",
+            config={"CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH": True},
+        )
+        with mock.patch.object(
+            flash,
+            "verify_flash",
+            return_value=(build, "capture-id", []),
+        ):
+            verified, capture_id, issues = flash._verify_promotion_candidate(
+                build.build_dir,
+                self.case.root / "capture.json",
+                "TEST-PROBE",
+            )
+        self.assertIs(build, verified)
+        self.assertEqual("capture-id", capture_id)
+        self.assertIn(
+            "two-anchor click bench images are non-promotable; stage with --bench-only",
+            issues,
+        )
+
     def test_forcedhop_bench_completion_is_immutable_nonpromotable_and_read_only(self) -> None:
         build, capture, topology, cohort_manifest, binding = (
             self._bench_completion_fixture()

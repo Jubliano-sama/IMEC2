@@ -1773,6 +1773,14 @@ static bool anchor_handle_mesh_click_wake_claim(
         !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
         return false;
     }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH)) {
+        status_debug_printf("DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=mesh src=0x%llx evt=%u attempt=%u flags=0x%02x\n",
+                            (unsigned long long)claim->clicker_id,
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            claim->flags);
+        return false;
+    }
 
     /*
      * Make accepted handoff identity visible before claiming the radio.  A
@@ -3501,6 +3509,14 @@ scan_frame_ready:
                                     claim.flags,
                                     (unsigned int)frame_len,
                                     quality);
+                goto scan_complete;
+            }
+            if (IS_ENABLED(CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH)) {
+                status_debug_printf("DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=scan src=0x%llx evt=%u attempt=%u flags=0x%02x\n",
+                                    (unsigned long long)claim.clicker_id,
+                                    claim.click_event_id,
+                                    claim.attempt_index,
+                                    claim.flags);
                 goto scan_complete;
             }
             if (anchor_handle_uwb_claim(&claim,
