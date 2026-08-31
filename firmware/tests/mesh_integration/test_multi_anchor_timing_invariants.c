@@ -560,6 +560,34 @@ static void test_enumeration_claim_preserves_pipelined_activation_lead(void)
     }
 }
 
+static void test_enumeration_prearm_covers_complete_claim_pipeline(void)
+{
+    uint64_t maximum_required_hold_ms = 0u;
+
+    CHECK(DISCOVERY_ASSIGNMENT_MAX_HOPS == UWB_ENUM_MAX_HOPS,
+          "prearm and enumeration use different depth horizons");
+    for (uint8_t depth = 1u;
+         depth <= DISCOVERY_ASSIGNMENT_MAX_HOPS;
+         depth++) {
+        uint64_t latest_claim_arrival_ms =
+            (uint64_t)MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS +
+            FLOOD_POST_ROOT_GUARD_MS +
+            (uint64_t)depth * MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS;
+        uint64_t required_hold_ms = latest_claim_arrival_ms +
+            DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS;
+
+        CHECK((uint64_t)DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS >=
+                  required_hold_ms,
+              "a supported CLAIM depth can outlive the Here-I-Am prearm");
+        maximum_required_hold_ms = required_hold_ms;
+    }
+    CHECK((uint64_t)DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS ==
+              maximum_required_hold_ms,
+          "prearm is not derived from the complete maximum-depth CLAIM wave");
+    CHECK(DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS == 51015u,
+          "prearm bound changed without requalifying the F2F1D handoff");
+}
+
 static void test_enumeration_response_edge_follows_complete_claim_wave(void)
 {
     CHECK(MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS ==
@@ -693,6 +721,7 @@ int main(void)
     test_depth_aware_enumeration_control_listener();
     test_depth_aware_survey_control_schedule();
     test_enumeration_claim_preserves_pipelined_activation_lead();
+    test_enumeration_prearm_covers_complete_claim_pipeline();
     test_enumeration_response_edge_follows_complete_claim_wave();
     test_table_is_the_single_terminal_propagation_wave();
     test_survey_start_stays_inside_every_enumeration_handoff();

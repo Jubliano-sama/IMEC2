@@ -314,6 +314,37 @@ static bool finish_survey(struct anchor_model *anchor)
     return anchor_state_valid(anchor);
 }
 
+static bool test_prearm_survives_complete_claim_pipeline(void)
+{
+    struct anchor_model anchor;
+    const uint8_t depth = DISCOVERY_ASSIGNMENT_MAX_HOPS;
+    const uint32_t here_i_am_ms = TEST_ORIGIN_MS;
+    const uint32_t latest_claim_ms = here_i_am_ms +
+        MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS +
+        FLOOD_POST_ROOT_GUARD_MS +
+        (uint32_t)depth * MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS;
+    const uint32_t prearm_deadline_ms =
+        here_i_am_ms + DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
+
+    active_topology_depth = depth;
+    active_anchor_depth = depth;
+    anchor_init(&anchor, depth);
+    CHECK(begin_here_i_am(&anchor, here_i_am_ms, true),
+          "maximum-depth Here-I-Am failed to establish prearm");
+    CHECK(anchor.enumeration.deadline_ms == prearm_deadline_ms,
+          "Here-I-Am did not install the production prearm deadline");
+    CHECK(latest_claim_ms < anchor.enumeration.deadline_ms,
+          "maximum-depth CLAIM arrives after prearm expiry");
+    CHECK(anchor.enumeration.deadline_ms - latest_claim_ms ==
+              DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS,
+          "maximum-depth CLAIM lost its listener redundancy");
+    CHECK(apply_claim(&anchor, latest_claim_ms),
+          "maximum-depth CLAIM did not promote the live prearm");
+    CHECK(anchor_owner(&anchor) == VISIBLE_OWNER_ENUMERATION,
+          "CLAIM promotion released continuous enumeration ownership");
+    return true;
+}
+
 static bool run_ordinary_enumeration(uint8_t topology_depth)
 {
     struct anchor_model anchors[DISCOVERY_ASSIGNMENT_MAX_HOPS];
@@ -631,6 +662,9 @@ static bool test_rejected_starts_preserve_or_release_the_right_owner(void)
 
 int main(void)
 {
+    if (!test_prearm_survives_complete_claim_pipeline()) {
+        return 1;
+    }
     for (uint8_t topology_depth = 1u;
          topology_depth <= DISCOVERY_ASSIGNMENT_MAX_HOPS;
          topology_depth++) {

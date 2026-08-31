@@ -4,6 +4,7 @@
 #include "protocol.h"
 #include "mesh.h"
 #include "mesh_radio_timing.h"
+#include "mesh_relay.h"
 #include "node_comm.h"
 #include "operation_policy.h"
 #include "semantic_digest.h"
@@ -81,10 +82,17 @@ extern "C" {
      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS 150u
 #define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS 2000u
-/* Here-I-Am bridges its own bounded relay settle and the immediate CLAIM
- * dispatch. CLAIM promotes this lease to the operation budget, while an
- * abandoned preflight returns every anchor to low duty. */
-#define DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS 15000u
+/* A node can decode Here-I-Am at the beginning of its relay slot while CLAIM
+ * remains behind the gateway's complete first-hop settle and every bounded
+ * pipelined CLAIM relay. Keep that deepest-node skew plus the listener guard;
+ * CLAIM promotes the lease to the operation budget, while an abandoned
+ * preflight still returns every anchor to low duty. */
+#define DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS \
+    (MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS + \
+     FLOOD_POST_ROOT_GUARD_MS + \
+     (DISCOVERY_ASSIGNMENT_MAX_HOPS * \
+      MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS) + \
+     DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS)
 /* Keep the reserved CLAIM epoch across the complete 120 s route-refresh
  * budget plus the host's existing five-second terminal-delivery guard. */
 #define DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS 125000u
