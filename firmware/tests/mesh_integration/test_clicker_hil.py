@@ -69,7 +69,7 @@ class ClickerHilContractTest(unittest.TestCase):
             "click qualification must not reset away volatile routes",
         )
 
-    def run_with_clicker_output(self, chunks: list[bytes]):
+    def run_with_clicker_output(self, chunks: list[bytes], duration_s: float = 0.2):
         harness = load_harness()
         process = mock.Mock()
         process.wait.return_value = 0
@@ -108,7 +108,7 @@ class ClickerHilContractTest(unittest.TestCase):
             ):
                 try:
                     harness.run_click_test(
-                        "direct", duration_s=0.2, pre_click_delay_s=0.0
+                        "direct", duration_s=duration_s, pre_click_delay_s=0.0
                     )
                 except RuntimeError as error:
                     failure = error
@@ -123,11 +123,43 @@ class ClickerHilContractTest(unittest.TestCase):
         write.assert_not_called()
         self.assertIsNotNone(failure)
 
-    def test_down_channel_attachment_allows_injection_without_ready_replay(self):
+    def test_down_channel_attachment_without_firmware_ready_does_not_inject(self):
         write, failure = self.run_with_clicker_output(
             [
                 b'Reading from up channel 0 ("Terminal")\r\n',
                 b'Writing to down channel 0 ("Terminal")\r\n',
+            ]
+        )
+
+        self.assertEqual(
+            b"".join(call.args[1] for call in write.call_args_list),
+            b"READY\n",
+            "a live attachment may query readiness but must not inject a gesture",
+        )
+        self.assertIsNotNone(failure)
+
+    def test_live_clicker_ready_query_arms_without_a_reset(self):
+        write, failure = self.run_with_clicker_output(
+            [
+                b'Reading from up channel 0 ("Terminal")\r\n'
+                b'Writing to down channel 0 ("Terminal")\r\n',
+                b'DBG_CLICKER_RTT ready=1 commands=CLICK,LONG,READY\r\n',
+            ],
+            duration_s=1.0,
+        )
+
+        self.assertEqual(
+            b"".join(call.args[1] for call in write.call_args_list),
+            b"READY\n\nCLICK\n",
+        )
+        self.assertIsNone(failure)
+
+    def test_down_channel_and_firmware_ready_allow_injection(self):
+        write, failure = self.run_with_clicker_output(
+            [
+                b'Reading from up channel 0 ("Terminal")\r\n',
+                b'Writing to down channel 0 ("Terminal")\r\n'
+                b'DBG_CLICKER_RTT ready=1 commands=CLICK,LONG\r\n',
             ]
         )
 
@@ -157,6 +189,7 @@ class ClickerHilContractTest(unittest.TestCase):
         pending = [
             b'Reading from up channel 0 ("Terminal")\r\n'
             b'Writing to down channel 0 ("Terminal")\r\n'
+            b'DBG_CLICKER_RTT ready=1 commands=CLICK,LONG\r\n'
         ]
 
         def readable_fds(read_list, _write_list, _error_list, _timeout):
@@ -209,6 +242,7 @@ class ClickerHilContractTest(unittest.TestCase):
         pending = [
             b'Reading from up channel 0 ("Terminal")\r\n'
             b'Writing to down channel 0 ("Terminal")\r\n'
+            b'DBG_CLICKER_RTT ready=1 commands=CLICK,LONG\r\n'
         ]
 
         def readable_fds(read_list, _write_list, _error_list, _timeout):

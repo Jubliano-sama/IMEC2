@@ -17,5 +17,9 @@ bool clicker_rtt_command_parse(const char *line,
         *command = CLICKER_RTT_COMMAND_LONG;
         return true;
     }
+    if (length == 5u && memcmp(line, "READY", 5u) == 0) {
+        *command = CLICKER_RTT_COMMAND_READY;
+        return true;
+    }
     return false;
 }

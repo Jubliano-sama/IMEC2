@@ -911,10 +911,18 @@ static bool schedule_entry_duplicate(const struct uwb_range_schedule_frame *fram
 static int validate_range_schedule(const struct uwb_range_schedule_frame *frame)
 {
     size_t total_samples = 0u;
+    uint16_t minimum_exchange_stride_us;
 
     if (frame == NULL) {
         return PROTO_ERR_ARG;
     }
+    if (!flags_valid(frame->flags)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    minimum_exchange_stride_us =
+        (frame->flags & FLAG_COUNT_AS_CLICK) != 0u ?
+            UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US :
+            UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US;
     if (frame->network_id == 0u ||
         frame->clicker_id == 0u ||
         frame->click_event_id == 0u ||
@@ -927,15 +935,14 @@ static int validate_range_schedule(const struct uwb_range_schedule_frame *frame)
         frame->first_poll_delay_ms == 0u ||
         frame->poll_spacing_ms < UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS ||
         frame->burst_window_ms < UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS ||
-        frame->exchange_stride_us < UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US ||
+        frame->exchange_stride_us < minimum_exchange_stride_us ||
         frame->max_exchanges == 0u ||
         frame->min_successful_unique_anchors == 0u ||
         frame->min_successful_unique_anchors > frame->selected_count ||
         frame->sts_mode != UWB_RANGE_SCHEDULE_STS_DISABLED ||
         frame->diagnostics_required > UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED ||
         frame->samples_per_anchor == 0u ||
-        frame->samples_per_anchor > UWB_RANGING_REQUESTS_MAX_PER_ANCHOR ||
-        !flags_valid(frame->flags)) {
+        frame->samples_per_anchor > UWB_RANGING_REQUESTS_MAX_PER_ANCHOR) {
         return PROTO_ERR_MALFORMED;
     }
     if ((frame->flags & FLAG_RANGE_ONLY) != 0u &&

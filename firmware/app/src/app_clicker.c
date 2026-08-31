@@ -1761,7 +1761,15 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         range_request.click_timestamp_ms = session->config.click_timestamp_ms;
         range_request.click_timestamp_present =
             (session->config.flags & FLAG_COUNT_AS_CLICK) != 0u;
-        range_request.skip_responder_report = false;
+        /*
+         * The anchor owns the measurement and its retained gateway report.
+         * A normal click therefore ends at the FINAL, like survey ranging;
+         * waiting for a redundant responder REPORT only delays the next
+         * anchor slot. Diagnostic and ML callers retain their existing
+         * explicit report behavior.
+         */
+        range_request.skip_responder_report =
+            (session->config.flags & FLAG_COUNT_AS_CLICK) != 0u;
         range_request.send_clicker_diag = false;
         range_request.expect_anchor_diag = false;
         range_request.capture_rsl = false;
@@ -1871,14 +1879,13 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                 last_ret = -EINVAL;
                 break;
             }
-            LOG_INF("scheduled click DS-TWR complete: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u",
+            LOG_INF("scheduled click DS-TWR final transmitted: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u response_quality=%u",
                     (unsigned long long)range_result.responder_id,
                     step.anchor_index,
                     (unsigned int)(step.sample_index + 1u),
                     (unsigned int)total_samples,
                     step.round_index,
                     range_result.seq,
-                    range_result.distance_mm,
                     range_result.quality);
 #if defined(CONFIG_IMEC_ML_CLICKER)
             if (clicker_callbacks.ml_emit_range_sample_if_active != NULL) {

@@ -9,11 +9,14 @@ ROOT = Path(__file__).resolve().parents[2]
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 
 assert re.search(
-    r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC32\b", DRIVER
-), "the production channel-5 PHY default must use the documented PAC32"
+    r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC16\b", DRIVER
+), "the 850 kbps PLEN4096 range PHY must use the proven PAC16 default"
 assert re.search(
-    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+4073\b", DRIVER
-), "the production channel-5 PHY default must use the documented SFD timeout"
+    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+4097u?\b", DRIVER
+), "the PAC16 range PHY must use its matching SFD timeout"
+assert re.search(
+    r"#define\s+DWM3000_FIRST_PATH_NTM\s+12u?\b", DRIVER
+), "the range PHY must retain the NLOS-friendly first-path threshold"
 
 
 def function_body(name: str) -> str:

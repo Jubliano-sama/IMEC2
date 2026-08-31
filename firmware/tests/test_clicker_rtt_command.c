@@ -12,6 +12,8 @@ static void test_exact_commands(void)
     assert(command == CLICKER_RTT_COMMAND_CLICK);
     assert(clicker_rtt_command_parse("LONG", 4u, &command));
     assert(command == CLICKER_RTT_COMMAND_LONG);
+    assert(clicker_rtt_command_parse("READY", 5u, &command));
+    assert(command == CLICKER_RTT_COMMAND_READY);
 }
 
 static void test_noncanonical_input_is_rejected(void)
@@ -21,6 +23,7 @@ static void test_noncanonical_input_is_rejected(void)
     assert(!clicker_rtt_command_parse("click", 5u, &command));
     assert(!clicker_rtt_command_parse("CLICK ", 6u, &command));
     assert(!clicker_rtt_command_parse("LONG\n", 5u, &command));
+    assert(!clicker_rtt_command_parse("ready", 5u, &command));
     assert(!clicker_rtt_command_parse("", 0u, &command));
     assert(!clicker_rtt_command_parse(NULL, 0u, &command));
     assert(!clicker_rtt_command_parse("CLICK", 5u, NULL));

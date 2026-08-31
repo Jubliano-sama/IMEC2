@@ -218,13 +218,15 @@ static int validate_device_identity(const char *operation)
 static void configure_first_path_sensitivity(void)
 {
     /*
-     * Use the lower recommended CIA first-path threshold. It can increase
-     * outliers, but the ranging/report path keeps sample-level rejection.
+     * Keep Qorvo's lower recommended threshold so a weak genuine first path
+     * remains visible in NLOS. Very-close links can occasionally produce a
+     * negative calibrated ToF; the distance contract preserves those valid
+     * exchanges as 0 mm samples for the multi-sample estimator to absorb.
      */
     dwt_modify8bitoffsetreg(IP_CONFIG_LO_ID,
                             0,
                             (uint8_t)~IP_CONFIG_LO_IP_NTM_BIT_MASK,
-                            DWM3000_FIRST_PATH_NTM_LOW);
+                            DWM3000_FIRST_PATH_NTM);
 }
 
 static uint16_t short_addr_from_id(uint64_t device_id)

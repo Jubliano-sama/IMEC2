@@ -729,7 +729,7 @@ static void test_route_request_requires_full_read_only_admission(void)
                2010u) == PROTO_ERR_MALFORMED);
 }
 
-static void test_route_request_epoch_transition_and_stale_rejection(void)
+static void test_route_request_epoch_transition_and_old_request_recovery(void)
 {
     struct mesh_relay older_origin;
     struct mesh_relay ambiguous_origin;
@@ -739,7 +739,20 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
     struct mesh_relay wrap_receiver;
     struct mesh_outbound request;
     struct mesh_relay_result result;
+    struct mesh_relay_result origin_result;
+    struct route_candidate receiver_route = {
+        .next_hop_id = TEST_GATEWAY_ID,
+        .gateway_id = TEST_GATEWAY_ID,
+        .route_epoch = TEST_ROUTE_EPOCH + 1u,
+        .last_seen_ms = 2990u,
+        .hop_count = 0u,
+        .link_quality = 90u,
+        .valid = true,
+    };
     const struct mesh_downlink_entry *reverse;
+    const struct route_candidate *selected;
+    const uint8_t *value;
+    uint8_t value_len;
 
     mesh_relay_init(&older_origin,
                     MESH_RELAY_ROLE_ANCHOR,
@@ -751,10 +764,13 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
                     TEST_ANCHOR_BASE + 31u,
                     TEST_GATEWAY_ID,
                     TEST_ROUTE_EPOCH + 1u);
-    assert(mesh_relay_build_route_request(&older_origin,
-                                          TEST_GATEWAY_ID,
-                                          &request,
-                                          3000u) == PROTO_OK);
+    assert(route_upsert_candidate(&receiver.upstream,
+                                  &receiver_route) == PROTO_OK);
+    assert(mesh_relay_prepare_route_request(&older_origin,
+                                            TEST_GATEWAY_ID,
+                                            3000u,
+                                            0u,
+                                            &request) == PROTO_OK);
     receiver.gateway_route_adv_seq = 77u;
     receiver.downlinks[0] = (struct mesh_downlink_entry) {
         .target_id = TEST_ANCHOR_BASE + 32u,
@@ -771,7 +787,7 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
                request.payload,
                request.payload_len,
                older_origin.local_id,
-               3010u) == PROTO_ERR_STALE);
+               3010u) == PROTO_OK);
     assert(mesh_relay_handle_rx_with_random(
                &receiver,
                &request.packet,
@@ -782,14 +798,47 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
                3010u,
                1u,
                &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_STALE);
-    assert(result_has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(!result.route_state_changed);
+    assert(result.status == PROTO_OK);
+    assert(result_has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(!result_has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(receiver.upstream.current_epoch == TEST_ROUTE_EPOCH + 1u);
+    selected = route_selected(&receiver.upstream);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == TEST_GATEWAY_ID);
+    assert(selected->route_epoch == TEST_ROUTE_EPOCH + 1u);
     assert(receiver.gateway_route_adv_seq == 77u);
     assert(receiver.downlinks[0].valid);
-    assert(mesh_relay_find_downlink(&receiver,
-                                    older_origin.local_id) == NULL);
+    reverse = mesh_relay_find_downlink(&receiver, older_origin.local_id);
+    assert(reverse != NULL);
+    assert(reverse->route_epoch == TEST_ROUTE_EPOCH + 1u);
+    assert(tlv_find_unique(result.route_reply.payload,
+                           result.route_reply.payload_len,
+                           TLV_ROUTE_EPOCH,
+                           &value,
+                           &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint32_t));
+    assert(proto_get_u32_le(value) == TEST_ROUTE_EPOCH + 1u);
+
+    assert(mesh_relay_handle_rx_with_random(
+               &older_origin,
+               &result.route_reply.packet,
+               result.route_reply.payload,
+               result.route_reply.payload_len,
+               receiver.local_id,
+               90u,
+               3020u,
+               1u,
+               &origin_result) == PROTO_OK);
+    assert(origin_result.status == PROTO_OK);
+    assert(result_has_action(
+        &origin_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK));
+    assert(result_has_action(
+        &origin_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY));
+    assert(older_origin.upstream.current_epoch == TEST_ROUTE_EPOCH + 1u);
+    selected = route_selected(&older_origin.upstream);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == receiver.local_id);
+    assert(selected->route_epoch == TEST_ROUTE_EPOCH + 1u);
 
     mesh_relay_init(&ambiguous_origin,
                     MESH_RELAY_ROLE_ANCHOR,
@@ -806,7 +855,7 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
                request.payload,
                request.payload_len,
                ambiguous_origin.local_id,
-               3510u) == PROTO_ERR_STALE);
+               3510u) == PROTO_OK);
     assert(mesh_relay_handle_rx_with_random(
                &receiver,
                &request.packet,
@@ -1382,7 +1431,7 @@ int main(void)
     test_survey_enumeration_intent_is_forwarded_exactly();
     test_header_relevant_adv_must_pass_full_capture_admission();
     test_route_request_requires_full_read_only_admission();
-    test_route_request_epoch_transition_and_stale_rejection();
+    test_route_request_epoch_transition_and_old_request_recovery();
     test_gateway_adv_sequence_freshness_is_commit_late_and_wrap_safe();
     test_configured_route_uses_one_complete_epoch_transition();
     test_multihop_forward_preserves_exact_policy_bytes();

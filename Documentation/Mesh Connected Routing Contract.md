@@ -11,6 +11,8 @@ Otherwise the node sends a typed route wake train and route request on channel 5
 
 The retry base is `1000 ms -> 2000 ms -> 4000 ms -> 8000 keep doubling to a 60000 ms cap`, with fresh up to 10%, flatly distributed random jitter every time. Idle anchors answer when they have a usable path. Otherwise they probe the gateway and may rebroadcast when TTL and capacity allow. Replies return through protected channel 5 windows with per-hop ACKs and exact ancestry.
 
+A structurally valid route request is accepted even when its requester carries an older route epoch. The receiving anchor never downgrades its own epoch; it records the reverse path under the newer trusted epoch and returns that epoch in the route reply, allowing a restarted or newly reflashed requester to repair itself without a prior gateway advertisement.
+
 An anchor-to-anchor route becomes connected only after PROPOSE/ACCEPT negotiates one exact channel 9 timing rhythm. The successful PROPOSE transmission defines the phase. ACCEPT confirms that phase.
 
 ## **A relay interleaves two Channel 9 connection rhythms**
@@ -128,6 +130,8 @@ The complete TABLE flood is authoritative. Each reached anchor validates and dur
 This enumeration-aware Here-I-Am, wake-free CLAIM, and authoritative TABLE design is the V3 enumeration protocol. At implementation commit `c643bc276`, V3 enumeration is live-proven for F1DD on the four-board enforced-RF-scope bench: ten consecutive assignments completed with three anchors, two direct paths, and one multihop path. In every run, nodes `0xc1c2306a5138ab2d` and `0x0f6d3a3bdac0f858` were hop one, while forced node `0x9699122bd60a64e3` was hop two through `0x0f6d3a3bdac0f858`, and all three anchors committed the authoritative TABLE. This proves the F1DD enumeration and assignment boundary under enforced decode-layer isolation; it does not claim physical-distance RF isolation, survey ranging, or production stack-manifest qualification.
 
 Normal click discovery replies use only that committed enumeration slot. An anchor whose committed slot is absent, invalid, or belongs to a different advertised slot span stays silent for that discovery attempt; it never substitutes an identity hash because two anchors could choose the same slot and interfere with each other.
+
+Normal-click ranging schedules twelve 33 ms DS-TWR reservations inside the existing 400 ms burst, giving four selected anchors three round-robin opportunities. Each exchange ends after the clicker's FINAL transmission: the anchor computes and retains the measurement for reliable gateway delivery, so it does not send a redundant UWB REPORT back to the clicker. Single-anchor diagnostics retain the report-bearing 50 ms exchange stride.
 
 ## **Survey discovers the graph and measures anchor pairs**
 

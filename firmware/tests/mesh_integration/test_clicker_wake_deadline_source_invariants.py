@@ -5,6 +5,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 CLICKER = (ROOT / "app/src/app_clicker.c").read_text()
+ANCHOR_RADIO = (ROOT / "app/src/app_anchor_radio.inc").read_text()
 RADIO_RECOVERY = (
     ROOT / "app/src/app_radio_recovery.c"
 ).read_text()
@@ -439,10 +440,24 @@ assert (
     < burst_loop_end
 )
 assert "slot_deadline_budget_ms" in range_burst[target:exchange]
+assert re.search(
+    r"range_request\.skip_responder_report\s*=\s*"
+    r"\(session->config\.flags & FLAG_COUNT_AS_CLICK\) != 0u;",
+    range_burst,
+), "normal clicks must end at FINAL instead of waiting for a redundant REPORT"
 assert range_burst.count("radio_guard_uwb_claim") == 1
 assert "radio_guard_uwb_claim" not in burst_loop_body
 assert "clicker_release_radio_to_standby" not in burst_loop_body
 assert "last_ret = idle_ret;" in range_burst[idle_failure:idle_failure_end]
+
+anchor_range_burst = source_function_body(
+    ANCHOR_RADIO, "anchor_run_scheduled_uwb_ranges"
+)
+assert re.search(
+    r"expected\.skip_responder_report\s*=\s*"
+    r"\(schedule->flags & FLAG_COUNT_AS_CLICK\) != 0u;",
+    anchor_range_burst,
+), "normal-click anchors must not transmit a responder REPORT"
 assert "break;" in range_burst[idle_failure:idle_failure_end]
 assert "uwb_clicker_abort_attempt(session)" in range_burst[
     cancel_failure:cancel_failure_end

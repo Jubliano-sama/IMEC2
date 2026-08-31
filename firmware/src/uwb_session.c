@@ -3,7 +3,7 @@
 #include <string.h>
 
 _Static_assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US <= UINT16_MAX &&
-               UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US <=
+               UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US <=
                    UINT16_MAX,
                "range schedule exchange stride must fit its wire field");
 _Static_assert(UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED <= UINT8_MAX &&
@@ -465,11 +465,11 @@ static bool range_status_valid(enum range_status status)
            status != RANGE_STS_QUALITY_FAIL;
 }
 
-static uint32_t exchange_stride_for_selected_count(uint8_t selected_count)
+static uint32_t exchange_stride_for_flags(uint8_t flags)
 {
-    return selected_count == 1u ?
-           UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US :
-           UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    return (flags & FLAG_COUNT_AS_CLICK) != 0u ?
+           UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US :
+           UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US;
 }
 
 static uint16_t exchange_capacity_for_burst_window(uint16_t burst_window_ms,
@@ -768,7 +768,7 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
         selected_count < session->config.min_anchor_count) {
         return PROTO_ERR_NOT_FOUND;
     }
-    exchange_stride_us = exchange_stride_for_selected_count(selected_count);
+    exchange_stride_us = exchange_stride_for_flags(session->config.flags);
     max_exchanges = exchange_capacity_for_burst_window(
         UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
         exchange_stride_us);

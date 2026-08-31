@@ -494,7 +494,8 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         expected.round_index = round_index;
         expected.flags = schedule->flags;
         expected.capture_rsl = true;
-        expected.skip_responder_report = false;
+        expected.skip_responder_report =
+            (schedule->flags & FLAG_COUNT_AS_CLICK) != 0u;
         expected.expect_clicker_diag = false;
         expected.send_anchor_diag = false;
 

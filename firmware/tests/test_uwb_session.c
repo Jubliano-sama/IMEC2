@@ -119,7 +119,10 @@ static void set_schedule_burst_defaults(struct uwb_range_schedule_frame *schedul
     assert(schedule != NULL);
 
     schedule->burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
-    schedule->exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    schedule->exchange_stride_us =
+        (schedule->flags & FLAG_COUNT_AS_CLICK) != 0u ?
+            UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US :
+            UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US;
     schedule->max_exchanges = (uint16_t)(schedule->selected_count *
                                          schedule->samples_per_anchor);
     schedule->min_successful_unique_anchors = min_successful_unique_anchors;
@@ -488,11 +491,11 @@ static void test_clicker_runs_round_robin_until_400_ms_burst_is_full(void)
         uint8_t selected_count;
         uint8_t expected_counts[UWB_RANGE_SCHEDULE_MAX_ANCHORS];
     } cases[] = {
-        {3u, {3u, 3u, 2u}},
-        {4u, {2u, 2u, 2u, 2u}},
+        {3u, {4u, 4u, 4u}},
+        {4u, {3u, 3u, 3u, 3u}},
     };
 
-    assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 50000u);
+    assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 33000u);
     assert(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS == 400u);
     for (uint8_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); c++) {
         struct uwb_clicker_session session;
@@ -514,9 +517,12 @@ static void test_clicker_runs_round_robin_until_400_ms_burst_is_full(void)
                                                 &schedule) == PROTO_OK);
         assert(schedule.selected_count == cases[c].selected_count);
         assert(schedule.samples_per_anchor == UWB_RANGING_REQUESTS_MAX_PER_ANCHOR);
-        assert(schedule.max_exchanges == 8u);
+        assert(schedule.max_exchanges == 12u);
         assert(schedule.burst_window_ms == UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS);
-        assert((uint32_t)schedule.max_exchanges * schedule.exchange_stride_us ==
+        assert((uint32_t)schedule.max_exchanges * schedule.exchange_stride_us <=
+               (uint32_t)schedule.burst_window_ms * 1000u);
+        assert((uint32_t)(schedule.max_exchanges + 1u) *
+                   schedule.exchange_stride_us >
                (uint32_t)schedule.burst_window_ms * 1000u);
         assert(uwb_range_schedule_total_samples(&schedule) == schedule.max_exchanges);
         for (size_t i = 0u; i < uwb_range_schedule_total_samples(&schedule); i++) {
@@ -564,7 +570,6 @@ static void test_clicker_separates_single_anchor_exchanges(void)
     assert(schedule.selected_count == 1u);
     assert(schedule.exchange_stride_us ==
            UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US);
-    assert(schedule.exchange_stride_us == UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US);
     assert(schedule.exchange_stride_us == 50000u);
     assert(schedule.max_exchanges == 8u);
     assert(uwb_range_schedule_total_samples(&schedule) == schedule.max_exchanges);
@@ -1296,7 +1301,7 @@ static void test_four_anchor_click_uses_shared_400_ms_burst_window(void)
     assert(schedule.sts_mode == UWB_RANGE_SCHEDULE_STS_DISABLED);
     assert(schedule.diagnostics_required == UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
     assert(schedule.exchange_stride_us == UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US);
-    assert(schedule.max_exchanges == 8u);
+    assert(schedule.max_exchanges == 12u);
     assert(uwb_range_schedule_total_samples(&schedule) == 4u);
     assert(schedule.burst_window_ms == UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS);
 
@@ -1700,7 +1705,7 @@ static void test_anchor_accepts_range_only_schedule_without_discovery_reply(void
     schedule.first_poll_delay_ms = 5u;
     schedule.poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS;
     schedule.burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
-    schedule.exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    schedule.exchange_stride_us = UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US;
     schedule.max_exchanges = 1u;
     schedule.min_successful_unique_anchors = 1u;
     schedule.sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED;
