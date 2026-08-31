@@ -68,6 +68,16 @@ config IMEC_TWO_ANCHOR_CLICK_BENCH
       must use the same setting. Leave this disabled in production, where a
       normal click requires three unique anchors.
 
+config IMEC_MESH_CLICK_RELAY_ONLY_BENCH
+    bool "Ignore click wakes while retaining route-relay wakes"
+    default n
+    depends on IMEC_TWO_ANCHOR_CLICK_BENCH
+    help
+      Build one anchor as a route-relay-only hardware qualification node. It
+      ignores click wake claims, so it cannot join click discovery or ranging,
+      but keeps the normal low-duty listener and route-request wake handling.
+      This is an explicitly matched bench image, never a production preset.
+
 endmenu
 
 menu "IMEC ML data collection"

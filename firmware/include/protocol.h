@@ -407,6 +407,7 @@ enum tlv_type {
     TLV_SURVEY_STATUS = 0xC9,
     TLV_SURVEY_PARTIAL_REASONS = 0xCA,
     TLV_SURVEY_SKIPPED_PLAN = 0xCB,
+    TLV_SURVEY_BATCH = 0xCC,
 };
 
 enum gateway_route_adv_mode {

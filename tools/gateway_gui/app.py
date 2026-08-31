@@ -63,10 +63,14 @@ from .protocol import (
     MSG_GATEWAY_COMMAND_EVENT,
     MSG_SURVEY_EVENT,
     Packet,
+    SURVEY_EVENT_BATCH_COMPLETE,
     SURVEY_EVENT_NEIGHBOR_GRAPH,
     SURVEY_EVENT_PLAN_ACCEPTED,
     SURVEY_EVENT_RANGE_PROGRESS,
+    SURVEY_EVENT_SIGNALS,
     SURVEY_EVENT_TERMINAL,
+    SURVEY_MAX_DEGREE,
+    SURVEY_MAX_PAIRS,
     SURVEY_TERMINAL_ABORTED,
     SURVEY_TERMINAL_COMPLETE,
     SURVEY_TERMINAL_PARTIAL,
@@ -254,6 +258,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_assignment: SurveyAssignmentIdentity | None = None
         self._survey_pairs: tuple[tuple[int, int], ...] = ()
         self._survey_results: dict[int, Any] = {}
+        self._survey_pair_batches: tuple[tuple[tuple[int, int], ...], ...] = ()
+        self._survey_batch_cursor = 0
+        self._survey_batch_pair_limit = SURVEY_MAX_PAIRS
         self._survey_pending_dispatch: GatewayCommandDispatch | None = None
         self._survey_deferred_dispatch: GatewayCommandDispatch | None = None
         self._initialize_gateway_diagnostics()
@@ -266,6 +273,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.assignment_expected_anchors_text = tk.StringVar(
             value=DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
         )
+        self.survey_max_degree_text = tk.StringVar(value="4")
         self.assignment_budget_text = tk.StringVar(
             value=str(ASSIGNMENT_DEFAULT_BUDGET_MS)
         )
@@ -442,6 +450,23 @@ class GatewayGui(GatewayDiagnosticsMixin):
             "this count as a protocol requirement.",
         )
 
+        ttk.Label(operations, text="Survey max degree").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0)
+        )
+        degree_entry = ttk.Spinbox(
+            operations,
+            from_=1,
+            to=SURVEY_MAX_DEGREE,
+            textvariable=self.survey_max_degree_text,
+            width=6,
+        )
+        degree_entry.grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        Tooltip(
+            degree_entry,
+            "Maximum selected links per anchor (1..49). Plans larger than "
+            "firmware RAM are sent automatically in 100-pair batches.",
+        )
+
         self.assignment_button = ttk.Button(
             operations,
             text="1. Enumerate & Assign Slots",
@@ -449,7 +474,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._send_assign_discovery_slots,
         )
         self.assignment_button.grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0)
+            row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
         Tooltip(
             self.assignment_button,
@@ -463,7 +488,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._run_survey,
         )
         self.survey_button.grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.survey_button,
@@ -477,7 +502,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._run_all_neighbor_surveys,
         )
         self.survey_all_button.grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.survey_all_button,
@@ -492,7 +517,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=lambda: self._run_survey(SURVEY_PASS_ADDITIONAL_MERGE),
         )
         self.survey_add_button.grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.survey_add_button,
@@ -506,7 +531,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=lambda: self._run_survey(SURVEY_PASS_ADDITIONAL_ONLY),
         )
         self.survey_new_only_button.grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.survey_new_only_button,
@@ -520,7 +545,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=lambda: self._run_survey(SURVEY_PASS_CLOSEST_ONLY),
         )
         self.survey_iterate_button.grid(
-            row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.survey_iterate_button,
@@ -535,7 +560,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._cancel_survey,
         )
         self.survey_cancel_button.grid(
-            row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.survey_cancel_button,
@@ -548,7 +573,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._clear_survey_data,
         )
         self.clear_survey_button.grid(
-            row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=9, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.clear_survey_button,
@@ -1179,7 +1204,42 @@ class GatewayGui(GatewayDiagnosticsMixin):
         ):
             return
         try:
-            pairs = self.survey_model.select_plan_pairs(event)
+            degree_cap = int(self.survey_max_degree_text.get().strip())
+            if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
+                raise ValueError("Survey max degree must be in 1..49")
+            pairs = self.survey_model.select_plan_pairs(
+                event, degree_cap=degree_cap
+            )
+            batch_pair_limit = self._survey_batch_pair_limit
+            if not 1 <= batch_pair_limit <= SURVEY_MAX_PAIRS:
+                raise ValueError("Survey batch pair limit must be in 1..100")
+            batches = tuple(
+                tuple(pairs[offset : offset + batch_pair_limit])
+                for offset in range(0, len(pairs), batch_pair_limit)
+            ) or ((),)
+            self._survey_pair_batches = batches
+            self._survey_batch_cursor = 0
+            self._survey_pairs = ()
+            self._submit_next_survey_batch(event.generation, event.assignment)
+        except (ValueError, SurveyStateError) as exc:
+            self._survey_auto_all = False
+            self._survey_phase = "idle"
+            self.survey_model.fail("plan", str(exc))
+            self._show_error(str(exc))
+            self._refresh_survey_view()
+
+    def _submit_next_survey_batch(
+        self,
+        generation: int,
+        assignment: SurveyAssignmentIdentity,
+    ) -> None:
+        try:
+            if self._survey_batch_cursor >= len(self._survey_pair_batches):
+                raise SurveyStateError("survey firmware requested an extra pair batch")
+            pairs = self._survey_pair_batches[self._survey_batch_cursor]
+            final_batch = (
+                self._survey_batch_cursor + 1 == len(self._survey_pair_batches)
+            )
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
@@ -1188,9 +1248,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
-                generation=event.generation,
-                assignment=event.assignment,
+                generation=generation,
+                assignment=assignment,
                 pairs=pairs,
+                batch_index=self._survey_batch_cursor,
+                final_batch=final_batch,
             )
         except (ValueError, SurveyStateError) as exc:
             self._survey_auto_all = False
@@ -1199,7 +1261,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._show_error(str(exc))
             self._refresh_survey_view()
             return
-        self._survey_pairs = pairs
         try:
             self.survey_model.set_requested_pairs(pairs)
         except SurveyStateError as exc:
@@ -1220,8 +1281,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 label=command.label,
                 timeout_s=60.0,
                 status_text=(
-                    f"Submitting {len(pairs)} mutual pair"
-                    f"{'s' if len(pairs) != 1 else ''} for ranging..."
+                    f"Submitting survey batch {self._survey_batch_cursor + 1}/"
+                    f"{len(self._survey_pair_batches)} with {len(pairs)} pair"
+                    f"{'s' if len(pairs) != 1 else ''}..."
                 ),
             )
         )
@@ -1355,17 +1417,23 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_results = dict(self.survey_model.results)
         if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
             self._survey_phase = "planning"
+            degree_cap = self.survey_max_degree_text.get().strip()
             plan_label = {
-                SURVEY_PASS_FRESH: "rigidity-aware degree-4",
+                SURVEY_PASS_FRESH: f"rigidity-aware degree-{degree_cap}",
                 SURVEY_PASS_ADDITIONAL_MERGE: "unattempted-neighbor",
                 SURVEY_PASS_ADDITIONAL_ONLY: "unattempted-neighbor",
-                SURVEY_PASS_CLOSEST_ONLY: "layout-seeded closest-4",
+                SURVEY_PASS_CLOSEST_ONLY: f"layout-seeded closest-{degree_cap}",
             }[self.survey_model.pass_mode]
             self.status_text.set(
                 f"Neighbor graph received from {len(event.neighbor_reports)} "
                 f"anchors; building the {plan_label} mutual-edge plan..."
             )
             self.root.after_idle(lambda: self._submit_survey_plan(event))
+        elif event.kind == SURVEY_EVENT_SIGNALS:
+            self.status_text.set(
+                f"Neighbor signal data received for "
+                f"{len(event.signal_measurements)} anchor pairs."
+            )
         elif event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
             self._survey_phase = "ranging"
             self._survey_pairs = tuple(
@@ -1373,7 +1441,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 for pair in self.survey_model.plan_pairs
             )
             self.status_text.set(
-                f"Survey plan accepted: {len(self._survey_pairs)} pairs in "
+                f"Survey batch {event.batch_index + 1} accepted: "
+                f"{len(event.plan_pairs)} pairs in "
                 f"{event.wave_count} fixed wave"
                 f"{'s' if event.wave_count != 1 else ''}."
             )
@@ -1382,6 +1451,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.status_text.set(
                 f"Survey ranging: {len(self._survey_results)}/"
                 f"{len(self._survey_pairs)} pair results received."
+            )
+        elif event.kind == SURVEY_EVENT_BATCH_COMPLETE:
+            self._survey_batch_cursor += 1
+            self._survey_phase = "planning"
+            self.status_text.set(
+                f"Survey batch {event.batch_index + 1} returned; firmware "
+                "RAM is free for the next batch."
+            )
+            assert self._survey_generation is not None
+            assert self._survey_assignment is not None
+            self.root.after_idle(
+                lambda: self._submit_next_survey_batch(
+                    self._survey_generation,
+                    self._survey_assignment,
+                )
             )
         elif event.kind == SURVEY_EVENT_TERMINAL:
             usable = sum(
@@ -1783,6 +1867,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_assignment = None
         self._survey_pairs = ()
         self._survey_results.clear()
+        self._survey_pair_batches = ()
+        self._survey_batch_cursor = 0
         self.survey_command_owner.reset()
         self._survey_pending_dispatch = None
         self._survey_deferred_dispatch = None
@@ -2569,6 +2655,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 return (
                     f"survey={event.generation} pairs={len(event.plan_pairs)} "
                     f"waves={event.wave_count} skipped={len(event.skipped_pairs)}"
+                )
+            if event.kind == SURVEY_EVENT_SIGNALS:
+                return (
+                    f"survey={event.generation} signal_pairs="
+                    f"{len(event.signal_measurements)}"
                 )
             usable = sum(result.usable for result in event.range_results)
             return (

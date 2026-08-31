@@ -83,6 +83,35 @@ class FakeBleakClient:
         self.writes.append((bytes(data), response))
 
 
+class AcquiringMtuBackend:
+    def __init__(self, mtu_size: int = 247, error: Exception | None = None) -> None:
+        self.mtu_size = mtu_size
+        self.error = error
+        self.calls = 0
+
+    async def _acquire_mtu(self) -> None:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+
+
+class MtuAcquiringBleakClient(FakeBleakClient):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.services.packet_rx.max_write_without_response_size = 20
+        self._backend = AcquiringMtuBackend()
+
+    @property
+    def mtu_size(self) -> int:
+        return self._backend.mtu_size
+
+
+class MtuAcquisitionFailureBleakClient(MtuAcquiringBleakClient):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._backend = AcquiringMtuBackend(error=RuntimeError("no MTU API"))
+
+
 class BlockingBleakClient(FakeBleakClient):
     connect_started: asyncio.Event
     connect_release: asyncio.Event
@@ -155,6 +184,7 @@ def transport_model(events: list[dict[str, Any]]) -> BleTransport:
     transport._connection_generation = 0
     transport._decoder = GatewayReceiveBuffer()
     transport._write_lock = None
+    transport._write_chunk_size = None
     return transport
 
 
@@ -181,6 +211,49 @@ class BleTransportIdentityTests(unittest.TestCase):
         self.assertEqual([event["kind"] for event in events], ["connection_state", "gateway_identity", "connection_state"])
         self.assertEqual(events[1]["gateway_id"], 0xAABBCCDDEEFF0011)
         self.assertEqual(events[2]["gateway_id"], 0xAABBCCDDEEFF0011)
+
+    def test_connect_acquires_bluez_mtu_before_exposing_connection(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(ble_transport, "BleakClient", MtuAcquiringBleakClient),
+        ):
+            asyncio.run(transport._connect("AA:BB:CC:DD:EE:FF", 12.0))
+            asyncio.run(transport._send_frame(b"R" * 94, "gateway host receipt"))
+
+        client = MtuAcquiringBleakClient.instances[-1]
+        self.assertEqual(client._backend.calls, 1)
+        self.assertEqual(transport._write_chunk_size, 244)
+        self.assertEqual(client.writes, [(b"R" * 94, True)])
+        self.assertEqual(events[2]["write_chunk_size"], 244)
+        self.assertEqual(events[-1]["chunks"], 1)
+
+    def test_mtu_acquisition_failure_keeps_safe_default_chunking(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(
+                ble_transport,
+                "BleakClient",
+                MtuAcquisitionFailureBleakClient,
+            ),
+        ):
+            asyncio.run(transport._connect("AA:BB:CC:DD:EE:FF", 12.0))
+            asyncio.run(transport._send_frame(b"R" * 94, "gateway host receipt"))
+
+        client = MtuAcquisitionFailureBleakClient.instances[-1]
+        self.assertEqual(client._backend.calls, 1)
+        self.assertEqual(transport._write_chunk_size, 20)
+        self.assertEqual(
+            [len(chunk) for chunk, _response in client.writes],
+            [20, 20, 20, 20, 14],
+        )
+        self.assertEqual(events[2]["write_chunk_size"], 20)
+        self.assertEqual(events[-1]["chunks"], 5)
 
     def test_immediate_subscription_notification_is_bound_to_connecting_generation(self) -> None:
         events: list[dict[str, Any]] = []

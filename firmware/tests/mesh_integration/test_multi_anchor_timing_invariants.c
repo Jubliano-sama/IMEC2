@@ -316,16 +316,16 @@ static void test_multi_anchor_claim_and_range_schedule_invariants(void)
             CHECK(schedule.exchange_stride_us ==
                       UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
                   "multi-anchor spacing path mismatch");
-            CHECK(schedule.exchange_stride_us == 50000u,
-                  "multi-anchor exchange stride is shorter than the hardware handoff");
+            CHECK(schedule.exchange_stride_us == 33000u,
+                  "three-frame multi-anchor exchange stride changed");
             CHECK(schedule.burst_window_ms == 400u,
                   "multi-anchor schedule no longer uses the shared 400 ms burst");
-            CHECK(schedule.max_exchanges == 8u,
-                  "400 ms burst does not contain exactly eight 50 ms exchanges");
+            CHECK(schedule.max_exchanges == 12u,
+                  "400 ms burst does not contain twelve 33 ms exchanges");
             CHECK((uint32_t)schedule.max_exchanges *
                           schedule.exchange_stride_us ==
-                      (uint32_t)schedule.burst_window_ms * 1000u,
-                  "multi-anchor exchange capacity does not exactly fill its burst");
+                      396000u,
+                  "multi-anchor exchange capacity changed");
             for (uint8_t i = 0u; i < schedule.selected_count; i++) {
                 uint8_t index = (uint8_t)(schedule.entries[i].anchor_id -
                                           UINT64_C(0xa700000000000001));
@@ -511,7 +511,6 @@ static void test_depth_aware_survey_control_schedule(void)
         uint32_t schedule_ms =
             survey_control_delivery_delay_ms(hop_count);
         uint32_t required_ms =
-            NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS +
             DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
             (uint32_t)hop_count *
                 DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
@@ -519,7 +518,7 @@ static void test_depth_aware_survey_control_schedule(void)
         CHECK(schedule_ms == required_ms +
                                  DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS +
                                  SURVEY_RADIO_GUARD_MS,
-              "survey schedule lost its queue, propagation, or guard bound");
+              "survey schedule lost its RF-origin propagation or guard bound");
         CHECK(schedule_ms > required_ms,
               "survey schedule must retain explicit post-delivery margin");
         if (previous_ms != 0u) {
@@ -658,17 +657,16 @@ static void test_maintained_normal_click_phy_and_capacity_contract(void)
           "the generic schedule wire capacity must remain eight anchors");
     CHECK(UWB_NORMAL_CLICK_MAX_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
           "normal click capacity must fit the generic schedule frame");
-    CHECK(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 50000u,
-          "multi-anchor DS-TWR exchanges need a 50 ms minimum stride");
-    CHECK(UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US ==
-              UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
-          "single- and multi-anchor schedules must share the safe stride");
+    CHECK(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 33000u,
+          "three-frame multi-anchor DS-TWR exchanges need a 33 ms stride");
+    CHECK(UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US == 50000u,
+          "single-anchor diagnostic exchanges retain their report-safe stride");
     CHECK(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS == 400u,
           "normal clicks must retain the 400 ms ranging burst");
     CHECK(((uint32_t)UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS * 1000u) /
                   UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US ==
-              8u,
-          "the maintained 400 ms burst must hold eight safe exchanges");
+              12u,
+          "the maintained 400 ms burst must hold twelve exchanges");
 }
 
 int main(void)

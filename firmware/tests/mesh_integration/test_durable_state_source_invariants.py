@@ -63,8 +63,12 @@ class DurableStateSourceInvariants(unittest.TestCase):
             submit,
         )
         self.assertIn(
-            "gateway_state.stage = APP_SURVEY_GATEWAY_EXECUTING;",
+            "gateway_state.stage = APP_SURVEY_GATEWAY_WAIT_PLAN_RF;",
             submit,
+        )
+        self.assertIn(
+            "gateway_state.stage = APP_SURVEY_GATEWAY_EXECUTING;",
+            APP_SURVEY,
         )
         self.assertIn(
             "anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXECUTE;",

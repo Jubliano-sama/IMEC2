@@ -760,7 +760,6 @@ static int validate_route_request_packet(
     uint32_t now_ms,
     struct route_discovery_fields *fields)
 {
-    uint32_t selected_epoch;
     int ret;
 
     if (relay == NULL || packet == NULL || payload == NULL || fields == NULL ||
@@ -824,21 +823,6 @@ static int validate_route_request_packet(
                                  previous_hop_id) != PROTO_OK ||
         mesh_route_path_contains(&fields->path, relay->local_id)) {
         return PROTO_ERR_MALFORMED;
-    }
-    ret = route_epoch_select_newer(fields->route_epoch,
-                                   relay->upstream.current_epoch,
-                                   &selected_epoch);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (selected_epoch != fields->route_epoch) {
-        /*
-         * A reverse route learned from an older request would remain
-         * selectable after this node had committed a newer gateway
-         * generation.  The requester must first learn the current epoch;
-         * never retain or rebroadcast mixed-epoch discovery state.
-         */
-        return PROTO_ERR_STALE;
     }
     return PROTO_OK;
 }
@@ -1695,6 +1679,7 @@ static int handle_route_request(struct mesh_relay *relay,
     bool gateway_reply_available = false;
     bool install_reply_timing = false;
     bool epoch_transition_committed = false;
+    uint32_t accepted_route_epoch;
     uint32_t previous_epoch;
 #endif
     int ret;
@@ -1742,6 +1727,12 @@ static int handle_route_request(struct mesh_relay *relay,
         commit_route_epoch_transition(relay, previous_epoch, NULL);
         epoch_transition_committed = true;
         note_route_state_change(result);
+    }
+    ret = route_epoch_select_newer(fields.route_epoch,
+                                   relay->upstream.current_epoch,
+                                   &accepted_route_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
     }
     fields.quality = combined_quality(fields.quality, link_quality);
     selected = route_selected(&relay->upstream);
@@ -1813,7 +1804,7 @@ static int handle_route_request(struct mesh_relay *relay,
     ret = upsert_reactive_route(relay,
                                 fields.origin_id,
                                 previous_hop_id,
-                                fields.route_epoch,
+                                accepted_route_epoch,
                                 fields.hop_count,
                                 fields.quality,
                                 fields.relay_capacity_state,
@@ -1842,7 +1833,7 @@ static int handle_route_request(struct mesh_relay *relay,
                                            &best_updated);
 
     if (reply_available) {
-        uint32_t reply_epoch = fields.route_epoch;
+        uint32_t reply_epoch = accepted_route_epoch;
         uint32_t reply_earliest_tx_ms = route_reply_earliest_tx_ms(
             now_ms,
             fields.route_reply_rx_delay_ms,

@@ -38,7 +38,7 @@ extern "C" {
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
       0u, 8704u, true, true, true, true, false)                               \
     X(GATEWAY, "mesh_gateway", 4416u, 8512u, 8384u, 8192u, 320u, 1536u, 1536u,  \
-      1536u, 4096u, true, true, true, true, false)
+      1536u, 3072u, true, true, true, true, false)
 
 #if STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES != 1536u
 #error "gateway logging stack constant and deployable policy diverged"

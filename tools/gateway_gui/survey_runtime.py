@@ -16,9 +16,11 @@ from .protocol import (
     CMD_SURVEY_CANCEL,
     CMD_SURVEY_PLAN,
     CMD_SURVEY_START,
+    SURVEY_EVENT_BATCH_COMPLETE,
     SURVEY_EVENT_NEIGHBOR_GRAPH,
     SURVEY_EVENT_PLAN_ACCEPTED,
     SURVEY_EVENT_RANGE_PROGRESS,
+    SURVEY_EVENT_SIGNALS,
     SURVEY_EVENT_TERMINAL,
     SURVEY_TERMINAL_ABORTED,
     SURVEY_TERMINAL_COMPLETE,
@@ -28,6 +30,7 @@ from .protocol import (
     SurveyNeighborReport,
     SurveyPlanPair,
     SurveyRangeResult,
+    SurveySignalMeasurement,
     select_closest_survey_pairs,
     select_survey_pairs,
 )
@@ -214,9 +217,15 @@ class SurveyOperationModel:
         self.slot_to_anchor: dict[int, int] = {}
         self.slot_hops: dict[int, int] = {}
         self.neighbor_reports: tuple[SurveyNeighborReport, ...] = ()
+        self.signal_measurements: dict[
+            tuple[int, int], SurveySignalMeasurement
+        ] = {}
         self.requested_pairs: tuple[tuple[int, int], ...] = ()
         self.plan_pairs: tuple[SurveyPlanPair, ...] = ()
         self.results: dict[int, SurveyRangeResult] = {}
+        self.batch_plan_pairs: tuple[SurveyPlanPair, ...] = ()
+        self.batch_plan_offset = 0
+        self.next_batch_index = 0
         self.partial_reasons = 0
         self.terminal_status: int | None = None
         self.error: str | None = None
@@ -538,7 +547,9 @@ class SurveyOperationModel:
             "plan", "running", f"Submitting {len(normalized)} mutual pairs"
         )
 
-    def select_plan_pairs(self, event: SurveyEvent) -> tuple[tuple[int, int], ...]:
+    def select_plan_pairs(
+        self, event: SurveyEvent, *, degree_cap: int = 4
+    ) -> tuple[tuple[int, int], ...]:
         """Select the current pass plan from retained pass intent."""
 
         if self.pass_mode in (
@@ -553,7 +564,9 @@ class SurveyOperationModel:
                 for first, second in sorted(self._surveyed_anchor_pairs)
                 if first in slot_by_anchor and second in slot_by_anchor
             )
-            return select_survey_pairs(event, excluded_pairs=excluded)
+            return select_survey_pairs(
+                event, degree_cap=degree_cap, excluded_pairs=excluded
+            )
         if self.pass_mode == SURVEY_PASS_CLOSEST_ONLY:
             if self.layout is None:
                 raise SurveyStateError(
@@ -563,8 +576,10 @@ class SurveyOperationModel:
                 slot: self.layout.positions_m[anchor_label(anchor_id)]
                 for slot, anchor_id in self.slot_to_anchor.items()
             }
-            return select_closest_survey_pairs(event, positions)
-        return select_survey_pairs(event)
+            return select_closest_survey_pairs(
+                event, positions, degree_cap=degree_cap
+            )
+        return select_survey_pairs(event, degree_cap=degree_cap)
 
     def observe_survey_event(
         self,
@@ -612,13 +627,39 @@ class SurveyOperationModel:
         self.partial_reasons |= event.partial_reasons
         if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
             self._observe_neighbor_graph(event)
+        elif event.kind == SURVEY_EVENT_SIGNALS:
+            self._observe_signals(event)
         elif event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
             self._observe_plan(event)
-        elif event.kind in (SURVEY_EVENT_RANGE_PROGRESS, SURVEY_EVENT_TERMINAL):
+        elif event.kind in (
+            SURVEY_EVENT_RANGE_PROGRESS,
+            SURVEY_EVENT_BATCH_COMPLETE,
+            SURVEY_EVENT_TERMINAL,
+        ):
             self._observe_ranges(event)
         else:  # The decoder rejects this, but the model remains fail closed.
             raise SurveyStateError(f"unsupported survey event kind {event.kind}")
         return True
+
+    def _observe_signals(self, event: SurveyEvent) -> None:
+        if not self.neighbor_reports:
+            raise SurveyStateError("survey signals arrived before the neighbor graph")
+        for measurement in event.signal_measurements:
+            if (
+                measurement.observer_slot not in self.slot_to_anchor
+                or measurement.target_slot not in self.slot_to_anchor
+                or measurement.target_slot >= measurement.observer_slot
+            ):
+                raise SurveyStateError(
+                    "survey signal measurement references an invalid anchor pair"
+                )
+            key = (measurement.observer_slot, measurement.target_slot)
+            previous = self.signal_measurements.get(key)
+            if previous is not None and previous != measurement:
+                raise SurveyStateError(
+                    "survey signal measurement changed after host acceptance"
+                )
+            self.signal_measurements[key] = measurement
 
     def _validate_first_event(self, event: SurveyEvent) -> None:
         occupied = set(event.occupied_slots)
@@ -682,6 +723,8 @@ class SurveyOperationModel:
             raise SurveyEventNotReady(
                 "survey plan event is waiting for the exact PLAN command result"
             )
+        if event.batch_index != self.next_batch_index:
+            raise SurveyStateError("survey plan batch arrived out of order")
         accepted: set[tuple[int, int]] = set()
         requested = set(self.requested_pairs)
         for pair in event.plan_pairs:
@@ -699,8 +742,9 @@ class SurveyOperationModel:
             ):
                 raise SurveyStateError("gateway plan references an unknown slot")
             accepted.add(key)
-        self.plan_pairs = event.plan_pairs
-        self.results.clear()
+        self.batch_plan_offset = len(self.plan_pairs)
+        self.batch_plan_pairs = event.plan_pairs
+        self.plan_pairs = self.plan_pairs + event.plan_pairs
         self._geometry_changed()
         skipped = len(event.skipped_pairs)
         state = "warning" if skipped or not event.plan_pairs else "done"
@@ -730,30 +774,45 @@ class SurveyOperationModel:
             raise SurveyStateError("range results arrived before an accepted plan")
         changed = False
         for result in event.range_results:
-            if result.pair_index >= len(self.plan_pairs):
+            if result.pair_index >= len(self.batch_plan_pairs):
                 raise SurveyStateError("range result has no accepted plan pair")
-            pair = self.plan_pairs[result.pair_index]
+            pair = self.batch_plan_pairs[result.pair_index]
             if result.responder_slot != pair.responder_slot:
                 raise SurveyStateError(
                     "range result responder contradicts its accepted plan pair"
                 )
-            previous = self.results.get(result.pair_index)
+            global_index = self.batch_plan_offset + result.pair_index
+            previous = self.results.get(global_index)
             if previous is not None and previous != result:
                 raise SurveyStateError(
                     "range result changed after its first accepted value"
                 )
             if previous is None:
-                self.results[result.pair_index] = result
+                self.results[global_index] = result
                 changed = True
         if changed:
             self._geometry_changed()
-        usable = sum(result.usable for result in self.results.values())
-        total = len(self.plan_pairs)
+        total = len(self.batch_plan_pairs)
+        received = sum(
+            index in self.results
+            for index in range(
+                self.batch_plan_offset,
+                self.batch_plan_offset + total,
+            )
+        )
+        usable = sum(
+            self.results[index].usable
+            for index in range(
+                self.batch_plan_offset,
+                self.batch_plan_offset + total,
+            )
+            if index in self.results
+        )
         self._set_step(
             "ranging",
             "running",
-            f"Received {len(self.results)}/{total} results; {usable} usable medians",
-            current=len(self.results),
+            f"Received {received}/{total} batch results; {usable} usable medians",
+            current=received,
             total=total,
         )
         if self.geometry_solve_pending:
@@ -762,8 +821,20 @@ class SurveyOperationModel:
                 "running",
                 f"Solving from {len(self.geometry_pairs)} usable distances",
             )
+        if event.kind == SURVEY_EVENT_BATCH_COMPLETE:
+            if event.final_batch:
+                raise SurveyStateError("a final batch cannot request another PLAN")
+            self.next_batch_index += 1
+            self.plan_accepted = False
+            self.phase = "planning"
+            self._set_step(
+                "plan", "running", "Firmware RAM is free; submitting the next batch"
+            )
+            return
         if event.kind != SURVEY_EVENT_TERMINAL:
             return
+        total = len(self.plan_pairs)
+        usable = sum(result.usable for result in self.results.values())
         self.terminal_status = event.status
         self.active = False
         self.phase = "terminal"

@@ -1099,6 +1099,13 @@ def _verify_promotion_candidate(
     probe_id: str,
 ) -> tuple[verifier.BuildEvidence | None, str | None, list[str]]:
     build, capture_id, issues = verify_flash(build_dir, manifest, probe_id)
+    if (
+        build is not None
+        and build.config.get("CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH") is True
+    ):
+        issues.append(
+            "two-anchor click bench images are non-promotable; stage with --bench-only"
+        )
     if not PYOCD_EXECUTABLE.is_file():
         issues.append(f"repository pyOCD is missing: {PYOCD_EXECUTABLE}")
     if not issues:
@@ -1131,13 +1138,23 @@ def _verify_stage_candidate(
         build.preset in verifier.DEPLOYABLE_PRESETS and
         policy is not None and policy.deployable
     )
-    bench_preset = build.preset in verifier.WATCHDOG_BYPASS_BENCH_PRESETS
-    if bench_only and not bench_preset:
+    matched_click_bench = (
+        build.config.get("CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH") is True
+    )
+    bench_variant = (
+        build.preset in verifier.WATCHDOG_BYPASS_BENCH_PRESETS
+        or matched_click_bench
+    )
+    if bench_only and not bench_variant:
         issues.append(
             f"{build.preset or '<missing>'} is not an allowed bench-only preset"
         )
+    elif not bench_only and matched_click_bench:
+        issues.append(
+            "two-anchor click bench images require --bench-only non-promotable staging"
+        )
     elif not bench_only and not deployable:
-        suffix = "; pass --bench-only for verified non-promotable staging" if bench_preset else ""
+        suffix = "; pass --bench-only for verified non-promotable staging" if bench_variant else ""
         issues.append(
             f"{build.preset or '<missing>'} is not an allowed deployment preset{suffix}"
         )

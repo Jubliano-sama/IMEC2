@@ -10,6 +10,9 @@ from tools.gateway_gui.protocol import (
     FLAG_GATEWAY_ACK_REQUIRED,
     MSG_SURVEY_EVENT,
     SURVEY_EVENT_HEADER_WIRE_LEN,
+    SURVEY_EVENT_SIGNALS,
+    SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN,
+    SURVEY_PROTOCOL_VERSION,
     TLV_COMMAND_ID,
     TLV_SURVEY_ASSIGNMENT_IDENTITY,
     TLV_SURVEY_GENERATION,
@@ -57,7 +60,7 @@ def event_payload(
     received_mask: int = 0,
 ) -> bytes:
     raw = bytearray(SURVEY_EVENT_HEADER_WIRE_LEN)
-    raw[0] = 1
+    raw[0] = SURVEY_PROTOCOL_VERSION
     raw[1] = kind
     raw[2] = 1
     raw[3] = graph_count
@@ -112,6 +115,27 @@ def complete_neighbor_event(count: int = 6) -> SurveyEvent:
 
 
 class SurveyCommandTests(unittest.TestCase):
+    def test_compact_signal_event_decodes_four_bit_rsl(self) -> None:
+        raw = bytearray(SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN)
+        raw[0] = SURVEY_PROTOCOL_VERSION
+        raw[1] = SURVEY_EVENT_SIGNALS
+        raw[2] = 0
+        raw[3] = 2
+        raw[4:8] = (9).to_bytes(4, "little")
+        raw[8:50] = assignment().encode()
+        raw.extend(bytes((50, 0x07, 0, 0, 0, 0, 0, 0)))
+        raw.extend(bytes((51, 0x5A, 0, 0, 0, 0, 0, 0)))
+
+        event = decode_survey_event(bytes(raw))
+
+        self.assertEqual(
+            tuple(
+                (item.observer_slot, item.target_slot, item.level, item.rsl_dbm)
+                for item in event.signal_measurements
+            ),
+            ((1, 0, 7, -75), (2, 0, 10, -60), (2, 1, 5, -85)),
+        )
+
     def test_assignment_identity_covers_every_mesh_hop(self) -> None:
         depth_eight = SurveyAssignmentIdentity(
             7, 8, bytes((0x5A,)) * 32, 8, 8

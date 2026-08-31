@@ -14,15 +14,19 @@ extern "C" {
 
 #define SURVEY_TLV_CHUNK_MAX_LEN UINT8_MAX
 #define SURVEY_EVENT_HEADER_WIRE_LEN 72u
+#define SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN 50u
 #define SURVEY_EVENT_SKIP_WIRE_LEN 4u
 #define SURVEY_EVENT_MAX_WIRE_LEN \
-    (SURVEY_EVENT_HEADER_WIRE_LEN + SURVEY_RESULTS_MAX_WIRE_LEN)
+    (SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN + \
+     (SURVEY_MAX_SIGNAL_RECORDS * SURVEY_SIGNAL_RECORD_WIRE_LEN))
 
 enum survey_event_kind {
     SURVEY_EVENT_NEIGHBOR_GRAPH = 1,
     SURVEY_EVENT_PLAN_ACCEPTED = 2,
     SURVEY_EVENT_RANGE_PROGRESS = 3,
     SURVEY_EVENT_TERMINAL = 4,
+    SURVEY_EVENT_BATCH_COMPLETE = 5,
+    SURVEY_EVENT_SIGNALS = 6,
 };
 
 struct survey_control {
@@ -40,6 +44,8 @@ struct survey_host_plan_request {
     struct survey_identity identity;
     struct survey_pair_request pairs[SURVEY_MAX_PAIRS];
     uint8_t pair_count;
+    uint8_t batch_index;
+    bool final_batch;
 };
 
 struct survey_event {
@@ -48,11 +54,17 @@ struct survey_event {
     struct survey_identity identity;
     struct survey_graph graph;
     struct survey_plan plan;
-    struct survey_range_result results[SURVEY_MAX_PAIRS];
+    union {
+        struct survey_range_result results[SURVEY_MAX_PAIRS];
+        struct survey_signal_record signals[SURVEY_MAX_SIGNAL_RECORDS];
+    } records;
     struct survey_plan_skip skipped[SURVEY_MAX_PAIRS];
     uint16_t partial_reasons;
     uint8_t result_count;
+    uint8_t signal_count;
     uint8_t skipped_count;
+    uint8_t batch_index;
+    bool final_batch;
 };
 
 int survey_control_append_tlvs(uint8_t *payload,

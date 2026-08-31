@@ -494,7 +494,8 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         expected.round_index = round_index;
         expected.flags = schedule->flags;
         expected.capture_rsl = true;
-        expected.skip_responder_report = false;
+        expected.skip_responder_report =
+            (schedule->flags & FLAG_COUNT_AS_CLICK) != 0u;
         expected.expect_clicker_diag = false;
         expected.send_anchor_diag = false;
 
@@ -1772,6 +1773,14 @@ static bool anchor_handle_mesh_click_wake_claim(
         !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
         return false;
     }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH)) {
+        status_debug_printf("DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=mesh src=0x%llx evt=%u attempt=%u flags=0x%02x\n",
+                            (unsigned long long)claim->clicker_id,
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            claim->flags);
+        return false;
+    }
 
     /*
      * Make accepted handoff identity visible before claiming the radio.  A
@@ -3039,12 +3048,14 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool compact_enumeration_window = false;
     bool local_protocol_response_active = false;
     bool protocol_owned_work_due = false;
+    bool survey_radio_work_pending = false;
     bool protocol_flood_pending = false;
     bool post_ch9_recovery_scan = false;
     bool ch9_receive_prepare_pending = false;
     uint32_t ch9_retry_ms = 0u;
     uint32_t ch9_receive_prepare_delay_ms = 0u;
     uint32_t compact_lane_start_wait_ms = 0u;
+    uint32_t survey_radio_work_wait_ms = 0u;
     uint32_t relay_tx_retry_ms = 0u;
     uint32_t scan_rx_ms = ANCHOR_UWB_SCAN_RX_MS;
     uint32_t mesh_rx_queue_depth = 0u;
@@ -3286,6 +3297,17 @@ protocol_rx_window:
         survey_continuous_rx = app_survey_anchor_rx_continuous();
         protocol_continuous_rx = enumeration_continuous_rx ||
                                  survey_continuous_rx;
+        survey_radio_work_pending = survey_continuous_rx &&
+            app_survey_anchor_radio_work_pending(
+                (uint64_t)k_uptime_get(), &survey_radio_work_wait_ms);
+        if (survey_radio_work_pending) {
+            if (survey_radio_work_wait_ms == 0u) {
+                goto scan_complete;
+            }
+            if (scan_rx_ms > survey_radio_work_wait_ms) {
+                scan_rx_ms = survey_radio_work_wait_ms;
+            }
+        }
         if (enumeration_continuous_rx) {
             uint64_t enumeration_now_ms = (uint64_t)k_uptime_get();
 
@@ -3352,8 +3374,14 @@ protocol_rx_window:
                 mesh_report_next_channel9_activity_prepare_delay_ms(
                     k_uptime_get_32(), &receive_prepare_delay_ms) &&
                 receive_prepare_delay_ms <= scan_reserve_ms;
+            bool survey_radio_work_due = survey_continuous_rx &&
+                app_survey_anchor_radio_work_pending(
+                    (uint64_t)k_uptime_get(),
+                    &survey_radio_work_wait_ms) &&
+                survey_radio_work_wait_ms == 0u;
 
             protocol_owned_work_due =
+                survey_radio_work_due ||
                 mesh_relay_tx_active(&mesh_runtime) ||
                 mesh_c5_protocol_flood_work_pending() ||
                 mesh_rx_pending_count() > 0u ||
@@ -3481,6 +3509,14 @@ scan_frame_ready:
                                     claim.flags,
                                     (unsigned int)frame_len,
                                     quality);
+                goto scan_complete;
+            }
+            if (IS_ENABLED(CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH)) {
+                status_debug_printf("DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=scan src=0x%llx evt=%u attempt=%u flags=0x%02x\n",
+                                    (unsigned long long)claim.clicker_id,
+                                    claim.click_event_id,
+                                    claim.attempt_index,
+                                    claim.flags);
                 goto scan_complete;
             }
             if (anchor_handle_uwb_claim(&claim,

@@ -9,11 +9,14 @@ ROOT = Path(__file__).resolve().parents[2]
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 
 assert re.search(
-    r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC32\b", DRIVER
-), "the production channel-5 PHY default must use the documented PAC32"
+    r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC16\b", DRIVER
+), "the 850 kbps PLEN4096 range PHY must use the proven PAC16 default"
 assert re.search(
-    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+4073\b", DRIVER
-), "the production channel-5 PHY default must use the documented SFD timeout"
+    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+4097u?\b", DRIVER
+), "the PAC16 range PHY must use its matching SFD timeout"
+assert re.search(
+    r"#define\s+DWM3000_FIRST_PATH_NTM\s+12u?\b", DRIVER
+), "the range PHY must retain the NLOS-friendly first-path threshold"
 
 
 def function_body(name: str) -> str:
@@ -157,6 +160,38 @@ assert "ret == -EMSGSIZE ? RANGE_BAD_FRAME" in responder[
 assert "RANGE_RX_ERROR" in responder[poll_failure:poll_timeout_return], (
     "a non-timeout pre-POLL receive failure must be reported as an RX error"
 )
+
+response_prestage = responder.index("ret = uwb_encode_response(")
+response_write = responder.index("ret = write_tx_frame(", response_prestage)
+response_receive = responder.index("ret = receive_frame(", response_write)
+response_reencode = responder.index(
+    "ret = uwb_encode_response(", response_receive
+)
+response_patch = responder.index("ret = patch_tx_frame(", response_reencode)
+response_delayed_time = responder.index(
+    "dwt_setdelayedtrxtime(resp_tx_time)", response_patch
+)
+response_start = responder.index(
+    "ret = start_prepared_range_frame(", response_delayed_time
+)
+assert (
+    response_prestage
+    < response_write
+    < response_receive
+    < response_reencode
+    < response_patch
+    < response_delayed_time
+    < response_start
+), (
+    "the responder must stage its invariant RESPONSE before POLL RX, then "
+    "patch only timestamps before the delayed-TX command"
+)
+assert "2u * sizeof(uint32_t)" in responder[
+    response_patch:response_delayed_time
+], "the prepared RESPONSE path must patch exactly its two timestamp fields"
+assert "send_range_frame(tx_buffer, tx_len" not in responder[
+    response_receive:response_start
+], "the post-POLL deadline must not contain a full RESPONSE frame write"
 
 fatal_mask_start = DRIVER.index("#define DWM3000_SYS_STATUS_HI_FATAL_MASK")
 fatal_mask_end = DRIVER.index("#define RX_TERMINAL_STATUS_MASK", fatal_mask_start)

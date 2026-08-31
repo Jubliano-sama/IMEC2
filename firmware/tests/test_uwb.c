@@ -915,7 +915,7 @@ static void test_control_frames_reject_bad_crc(void)
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
         .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
-        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US,
         .max_exchanges = 1u,
         .min_successful_unique_anchors = 1u,
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
@@ -1162,7 +1162,7 @@ static void test_range_schedule_decode_rejects_valid_crc_malformed_fields(void)
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
         .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
-        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US,
         .max_exchanges = 1u,
         .min_successful_unique_anchors = 1u,
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
@@ -1239,13 +1239,19 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
     uint8_t buf[UWB_RANGE_SCHEDULE_MAX_LEN];
     size_t written = 0u;
 
-    assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 50000u);
+    assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 33000u);
     assert(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS == 400u);
     assert(((uint32_t)UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS * 1000u) /
                UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US ==
-           8u);
+           12u);
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     schedule.entries[1].anchor_id = 11u;
+    schedule.flags = FLAG_DIAGNOSTIC;
+    assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+    schedule.exchange_stride_us = UWB_RANGE_SCHEDULE_REPORT_EXCHANGE_STRIDE_US;
+    assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_OK);
+    schedule.flags = FLAG_COUNT_AS_CLICK;
     schedule.exchange_stride_us =
         UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US - 1u;
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) ==

@@ -16,10 +16,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LOGS_DIR = REPO_ROOT / "logs" / "clicker_three_anchor_qualification_20260827"
 
-CLICKER_PROBE = "E4645C15CB0F3B37"
+CLICKER_PROBE = "E46070D247233537"
 ANCHOR_DIRECT_PROBE = "E4645C15CB365D30"
 ANCHOR_B_PROBE = "E46070D247394D36"
-ANCHOR_C_PROBE = "E46070D247233537"
+ANCHOR_C_PROBE = "E4645C15CB0F3B37"
 
 PROBES = {
     "clicker": CLICKER_PROBE,
@@ -32,6 +32,7 @@ RTT_INPUT_CHAR_DELAY_S = 0.05
 DEFAULT_GATEWAY_NAME = "IMEC Mesh Test Gateway"
 BLE_CONSUMER_CONNECTED_MARKER = b"BLE_CONNECTED "
 BLE_CONSUMER_MONITOR_MARKER = b"command=monitor"
+CLICKER_RTT_READY_MARKER = "DBG_CLICKER_RTT ready=1"
 BLE_CONSUMER_SHUTDOWN_TIMEOUT_S = 5.0
 
 
@@ -243,6 +244,8 @@ def run_click_test(
         last_command_sent_at: float | None = None
         connected_roles: set[str] = set()
         clicker_down_channel_ready = False
+        clicker_firmware_ready = False
+        clicker_ready_query_sent = False
         injection_ready_at: float | None = None
         start_time = time.time()
         
@@ -282,12 +285,23 @@ def run_click_test(
                                     for line in text.splitlines():
                                         if "DBG_CLICKER_RTT" in line or "DBG_CLICK" in line or "DBG_DS" in line:
                                             print(f"[{role}] {line}")
+                                    if CLICKER_RTT_READY_MARKER in scan_tails[role]:
+                                        clicker_firmware_ready = True
                                     if "Writing to down channel 0" in scan_tails[role]:
                                         clicker_down_channel_ready = True
                         except OSError:
                             pass
+
+            if (not clicker_ready_query_sent and
+                    not clicker_firmware_ready and
+                    clicker_down_channel_ready and
+                    connected_roles == set(PROBES)):
+                write_rtt_command(fds["clicker"], b"READY\n")
+                clicker_ready_query_sent = True
+                print("All four RTT readers attached; querying clicker firmware readiness")
             
             if (injection_ready_at is None and
+                    clicker_firmware_ready and
                     clicker_down_channel_ready and
                     connected_roles == set(PROBES)):
                 injection_ready_at = time.time()

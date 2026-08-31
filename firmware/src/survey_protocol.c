@@ -267,6 +267,7 @@ int survey_host_plan_request_append_tlvs(
     if (payload == NULL || payload_len == NULL || request == NULL ||
         request->identity.generation == 0u ||
         request->pair_count > SURVEY_MAX_PAIRS ||
+        request->batch_index >= SURVEY_MAX_BATCHES ||
         survey_assignment_identity_encode(&request->identity.assignment,
                                           assignment) != sizeof(assignment)) {
         return PROTO_ERR_ARG;
@@ -282,6 +283,15 @@ int survey_host_plan_request_append_tlvs(
         ret = tlv_append_bytes(payload, payload_cap, payload_len,
                                TLV_SURVEY_ASSIGNMENT_IDENTITY,
                                assignment, sizeof(assignment));
+    }
+    if (ret == PROTO_OK) {
+        const uint8_t batch[2] = {
+            request->batch_index,
+            request->final_batch ? 1u : 0u,
+        };
+
+        ret = tlv_append_bytes(payload, payload_cap, payload_len,
+                               TLV_SURVEY_BATCH, batch, sizeof(batch));
     }
     if (ret == PROTO_OK && request->pair_count != 0u) {
         ret = append_chunked(payload, payload_cap, payload_len,
@@ -322,6 +332,14 @@ int survey_host_plan_request_extract_tlvs(
     if (ret != PROTO_OK || request->identity.generation == 0u) {
         return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
     }
+    ret = find_unique(payload, payload_len, TLV_SURVEY_BATCH,
+                      &value, &value_len, true);
+    if (ret != PROTO_OK || value_len != 2u ||
+        value[0] >= SURVEY_MAX_BATCHES || value[1] > 1u) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+    request->batch_index = value[0];
+    request->final_batch = value[1] != 0u;
     ret = extract_chunks(payload, payload_len, TLV_SURVEY_PLAN,
                          pairs, sizeof(pairs), &pairs_len);
     if (ret == PROTO_ERR_NOT_FOUND) {
@@ -343,10 +361,11 @@ static bool event_shape_valid(const struct survey_event *event)
     if (event == NULL || event->identity.generation == 0u ||
         !survey_assignment_identity_valid(&event->identity.assignment) ||
         event->kind < SURVEY_EVENT_NEIGHBOR_GRAPH ||
-        event->kind > SURVEY_EVENT_TERMINAL ||
+        event->kind > SURVEY_EVENT_SIGNALS ||
         event->status > SURVEY_TERMINAL_BUSY ||
         event->result_count > SURVEY_MAX_PAIRS ||
-        event->skipped_count > SURVEY_MAX_PAIRS) {
+        event->skipped_count > SURVEY_MAX_PAIRS ||
+        event->signal_count > SURVEY_MAX_SIGNAL_RECORDS) {
         return false;
     }
     switch (event->kind) {
@@ -355,12 +374,18 @@ static bool event_shape_valid(const struct survey_event *event)
     case SURVEY_EVENT_PLAN_ACCEPTED:
         return event->result_count == 0u &&
                event->plan.pair_count <= SURVEY_MAX_PAIRS &&
+               event->batch_index == event->plan.batch_index &&
+               event->final_batch == event->plan.final_batch &&
                survey_identity_equal(&event->identity,
                                      &event->plan.identity) &&
                survey_plan_commitment_valid(&event->plan);
     case SURVEY_EVENT_RANGE_PROGRESS:
+    case SURVEY_EVENT_BATCH_COMPLETE:
     case SURVEY_EVENT_TERMINAL:
-        return event->skipped_count == 0u;
+        return event->skipped_count == 0u && event->signal_count == 0u;
+    case SURVEY_EVENT_SIGNALS:
+        return event->result_count == 0u && event->skipped_count == 0u &&
+               event->signal_count != 0u;
     default:
         return false;
     }
@@ -379,6 +404,27 @@ size_t survey_event_encode(const struct survey_event *event,
         survey_assignment_identity_encode(&event->identity.assignment,
                                           assignment) != sizeof(assignment)) {
         return 0u;
+    }
+    if (event->kind == SURVEY_EVENT_SIGNALS) {
+        body_len = (size_t)event->signal_count *
+                   SURVEY_SIGNAL_RECORD_WIRE_LEN;
+        if (out_cap < SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN + body_len) {
+            return 0u;
+        }
+        memset(out, 0, SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN + body_len);
+        out[0] = SURVEY_PROTOCOL_VERSION;
+        out[1] = (uint8_t)event->kind;
+        out[2] = (uint8_t)event->status;
+        out[3] = event->signal_count;
+        proto_put_u32_le(&out[4], event->identity.generation);
+        memcpy(&out[8], assignment, sizeof(assignment));
+        offset = SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN;
+        for (uint8_t i = 0u; i < event->signal_count; i++) {
+            memcpy(&out[offset], event->records.signals[i].bytes,
+                   SURVEY_SIGNAL_RECORD_WIRE_LEN);
+            offset += SURVEY_SIGNAL_RECORD_WIRE_LEN;
+        }
+        return offset;
     }
     if (event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
         graph_count = (uint8_t)__builtin_popcountll(
@@ -400,7 +446,8 @@ size_t survey_event_encode(const struct survey_event *event,
     out[0] = SURVEY_PROTOCOL_VERSION;
     out[1] = (uint8_t)event->kind;
     out[2] = (uint8_t)event->status;
-    out[3] = graph_count;
+    out[3] = event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH ?
+        graph_count : event->batch_index;
     proto_put_u32_le(&out[4], event->identity.generation);
     proto_put_u16_le(&out[8], event->partial_reasons);
     out[10] = event->result_count;
@@ -412,6 +459,9 @@ size_t survey_event_encode(const struct survey_event *event,
     memcpy(&out[14], assignment, sizeof(assignment));
     proto_put_u64_le(&out[56], event->graph.occupied_slot_mask);
     proto_put_u64_le(&out[64], event->graph.received_report_mask);
+    if (event->kind != SURVEY_EVENT_NEIGHBOR_GRAPH) {
+        out[64] = event->final_batch ? 1u : 0u;
+    }
 
     if (event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
         for (uint8_t slot = 0u; slot < SURVEY_MAX_ANCHORS; slot++) {
@@ -439,7 +489,7 @@ size_t survey_event_encode(const struct survey_event *event,
         }
     } else {
         for (uint8_t i = 0u; i < event->result_count; i++) {
-            if (survey_range_result_encode(&event->results[i],
+            if (survey_range_result_encode(&event->records.results[i],
                                            &out[offset]) == 0u) {
                 return 0u;
             }
@@ -460,8 +510,7 @@ int survey_event_decode(const uint8_t *data,
     size_t offset = SURVEY_EVENT_HEADER_WIRE_LEN;
     int ret;
 
-    if (data == NULL || event == NULL ||
-        data_len < SURVEY_EVENT_HEADER_WIRE_LEN) {
+    if (data == NULL || event == NULL || data_len < 2u) {
         return PROTO_ERR_ARG;
     }
     if (data[0] != SURVEY_PROTOCOL_VERSION) {
@@ -469,8 +518,53 @@ int survey_event_decode(const uint8_t *data,
     }
     memset(event, 0, sizeof(*event));
     event->kind = (enum survey_event_kind)data[1];
+    if (event->kind == SURVEY_EVENT_SIGNALS) {
+        if (data_len < SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN ||
+            data[2] > SURVEY_TERMINAL_BUSY || data[3] == 0u ||
+            data[3] > SURVEY_MAX_SIGNAL_RECORDS ||
+            data_len != SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN +
+                (size_t)data[3] * SURVEY_SIGNAL_RECORD_WIRE_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+        event->status = (enum survey_terminal_status)data[2];
+        event->signal_count = data[3];
+        event->identity.generation = proto_get_u32_le(&data[4]);
+        ret = survey_assignment_identity_decode(
+            &data[8], SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN,
+            &event->identity.assignment);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        offset = SURVEY_SIGNAL_EVENT_HEADER_WIRE_LEN;
+        for (uint8_t i = 0u; i < event->signal_count; i++) {
+            uint8_t owner;
+            uint8_t base;
+            uint8_t levels[SURVEY_SIGNAL_LEVELS_PER_RECORD];
+
+            memcpy(event->records.signals[i].bytes, &data[offset],
+                   SURVEY_SIGNAL_RECORD_WIRE_LEN);
+            if (survey_signal_record_decode(&event->records.signals[i],
+                                            &owner, &base, levels) !=
+                PROTO_OK) {
+                return PROTO_ERR_MALFORMED;
+            }
+            offset += SURVEY_SIGNAL_RECORD_WIRE_LEN;
+        }
+        return event_shape_valid(event) ? PROTO_OK : PROTO_ERR_MALFORMED;
+    }
+    if (data_len < SURVEY_EVENT_HEADER_WIRE_LEN) {
+        return PROTO_ERR_ARG;
+    }
     event->status = (enum survey_terminal_status)data[2];
-    graph_count = data[3];
+    graph_count = event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH ? data[3] : 0u;
+    event->batch_index = event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH ?
+        0u : data[3];
+    event->final_batch = event->kind != SURVEY_EVENT_NEIGHBOR_GRAPH &&
+                         data[64] != 0u;
+    if (event->batch_index >= SURVEY_MAX_BATCHES ||
+        (event->kind != SURVEY_EVENT_NEIGHBOR_GRAPH && data[64] > 1u)) {
+        return PROTO_ERR_MALFORMED;
+    }
     event->identity.generation = proto_get_u32_le(&data[4]);
     event->partial_reasons = proto_get_u16_le(&data[8]);
     event->result_count = data[10];
@@ -527,6 +621,8 @@ int survey_event_decode(const uint8_t *data,
             return PROTO_ERR_BAD_LENGTH;
         }
         event->plan.identity = event->identity;
+        event->plan.batch_index = event->batch_index;
+        event->plan.final_batch = event->final_batch;
         event->plan.pair_count = pair_count;
         for (uint8_t i = 0u; i < pair_count; i++) {
             event->plan.pairs[i].initiator_slot = data[offset++];
@@ -544,6 +640,7 @@ int survey_event_decode(const uint8_t *data,
         return event->kind == SURVEY_EVENT_PLAN_ACCEPTED ?
             PROTO_OK : PROTO_ERR_MALFORMED;
     } else if (event->kind == SURVEY_EVENT_RANGE_PROGRESS ||
+               event->kind == SURVEY_EVENT_BATCH_COMPLETE ||
                event->kind == SURVEY_EVENT_TERMINAL) {
         if (event->result_count > SURVEY_MAX_PAIRS || graph_count != 0u ||
             pair_count != 0u || event->skipped_count != 0u) {
@@ -558,7 +655,7 @@ int survey_event_decode(const uint8_t *data,
         for (uint8_t i = 0u; i < event->result_count; i++) {
             ret = survey_range_result_decode(&data[offset],
                                              SURVEY_RANGE_RESULT_WIRE_LEN,
-                                             &event->results[i]);
+                                             &event->records.results[i]);
             if (ret != PROTO_OK) {
                 return ret;
             }

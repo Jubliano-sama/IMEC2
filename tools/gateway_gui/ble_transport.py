@@ -29,6 +29,10 @@ else:
 
 EventSink = Callable[[dict[str, Any]], None]
 
+DEFAULT_ATT_WRITE_PAYLOAD_SIZE = 20
+MAX_ATT_WRITE_PAYLOAD_SIZE = 244
+MTU_ACQUIRE_TIMEOUT_S = 3.0
+
 
 @dataclass(frozen=True)
 class BleDeviceInfo:
@@ -57,6 +61,7 @@ class BleTransport:
         self._connection_generation = 0
         self._decoder = GatewayReceiveBuffer()
         self._write_lock: asyncio.Lock | None = None
+        self._write_chunk_size: int | None = None
         self._auto_reconnect = True
         self._last_target: str | None = None
         self._reconnect_task: asyncio.Task[Any] | None = None
@@ -188,6 +193,14 @@ class BleTransport:
             if missing:
                 raise RuntimeError("connected device lacks required IMEC GATT UUIDs: " + ", ".join(missing))
 
+            packet_rx_characteristic = services.get_characteristic(PACKET_RX_UUID)
+            if packet_rx_characteristic is None:  # Covered by required UUID validation above.
+                raise RuntimeError("packet RX characteristic disappeared")
+            write_chunk_size = await self._resolve_write_chunk_size(
+                client,
+                packet_rx_characteristic,
+            )
+
             gateway_id = decode_gateway_identity(bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID)))
             if not self._connection_is_current(client, generation):
                 await self._disconnect_client_quietly(client)
@@ -206,7 +219,14 @@ class BleTransport:
             self._client = client
             self._connecting_client = None
             self._decoder = decoder
-            self._emit("connection_state", state="connected", target=target, gateway_id=gateway_id)
+            self._write_chunk_size = write_chunk_size
+            self._emit(
+                "connection_state",
+                state="connected",
+                target=target,
+                gateway_id=gateway_id,
+                write_chunk_size=write_chunk_size,
+            )
         except Exception:
             if not self._connection_is_current(client, generation):
                 await self._disconnect_client_quietly(client)
@@ -229,6 +249,47 @@ class BleTransport:
             if will_reconnect:
                 self._schedule_reconnect(target)
             raise
+
+    @staticmethod
+    def _characteristic_write_chunk_size(characteristic: Any) -> int:
+        reported = int(
+            getattr(
+                characteristic,
+                "max_write_without_response_size",
+                DEFAULT_ATT_WRITE_PAYLOAD_SIZE,
+            )
+            or DEFAULT_ATT_WRITE_PAYLOAD_SIZE
+        )
+        return max(1, min(reported, MAX_ATT_WRITE_PAYLOAD_SIZE))
+
+    async def _resolve_write_chunk_size(
+        self,
+        client: Any,
+        characteristic: Any,
+    ) -> int:
+        """Acquire BlueZ's ATT MTU before exposing a writable connection."""
+        reported = self._characteristic_write_chunk_size(characteristic)
+        if reported > DEFAULT_ATT_WRITE_PAYLOAD_SIZE:
+            return reported
+
+        backend = getattr(client, "_backend", None)
+        acquire_mtu = getattr(backend, "_acquire_mtu", None)
+        if not callable(acquire_mtu):
+            return reported
+        try:
+            await asyncio.wait_for(
+                acquire_mtu(),
+                timeout=MTU_ACQUIRE_TIMEOUT_S,
+            )
+        except Exception:
+            # MTU acquisition is an optimization. The Bluetooth default remains
+            # a complete, safe transport when a backend cannot provide it.
+            return reported
+
+        mtu_size = int(getattr(client, "mtu_size", 23) or 23)
+        acquired = max(1, mtu_size - 3)
+        return max(reported, min(acquired, MAX_ATT_WRITE_PAYLOAD_SIZE))
+
     def _connection_is_current(self, client: Any, generation: int) -> bool:
         return (
             generation == self._connection_generation
@@ -303,6 +364,7 @@ class BleTransport:
             return
         self._client = None
         self._connecting_client = None
+        self._write_chunk_size = None
         self._connection_generation += 1
         self._decoder = GatewayReceiveBuffer()
         target = getattr(self, "_last_target", None)
@@ -333,6 +395,7 @@ class BleTransport:
         self._connection_generation += 1
         self._client = None
         self._connecting_client = None
+        self._write_chunk_size = None
         self._decoder = GatewayReceiveBuffer()
         if client is None:
             self._emit("connection_state", state="disconnected", target="")
@@ -359,8 +422,9 @@ class BleTransport:
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
         if characteristic is None:
             raise RuntimeError("packet RX characteristic disappeared")
-        chunk_size = int(getattr(characteristic, "max_write_without_response_size", 20) or 20)
-        chunk_size = max(1, min(chunk_size, 244))
+        chunk_size = self._write_chunk_size
+        if chunk_size is None:
+            chunk_size = self._characteristic_write_chunk_size(characteristic)
         async with self._write_lock:
             if (
                 generation != self._connection_generation

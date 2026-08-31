@@ -29,6 +29,8 @@ static struct survey_plan maximum_plan(void)
         .self_stop_delay_ms = 1200000u,
         .pair_count = SURVEY_MAX_PAIRS,
         .wave_count = SURVEY_MAX_PAIRS,
+        .batch_index = SURVEY_MAX_BATCHES - 1u,
+        .final_batch = true,
     };
 
     for (uint8_t i = 0u; i < plan.pair_count; i++) {
@@ -85,6 +87,8 @@ static void test_host_plan_and_event_round_trip(void)
     struct survey_host_plan_request request = {
         .identity = identity(),
         .pair_count = SURVEY_MAX_PAIRS,
+        .batch_index = 3u,
+        .final_batch = true,
     };
     struct survey_host_plan_request decoded_request;
     struct survey_event event = {
@@ -109,6 +113,8 @@ static void test_host_plan_and_event_round_trip(void)
     assert(survey_host_plan_request_extract_tlvs(
         payload, payload_len, &decoded_request) == PROTO_OK);
     assert(decoded_request.pair_count == SURVEY_MAX_PAIRS);
+    assert(decoded_request.batch_index == request.batch_index);
+    assert(decoded_request.final_batch);
     assert(decoded_request.pairs[99].first_slot == request.pairs[99].first_slot);
 
     event.graph.occupied_slot_mask = UINT64_C(0x7);
@@ -143,7 +149,7 @@ static void test_all_results_fit_one_event(void)
     size_t wire_len;
 
     for (uint8_t i = 0u; i < event.result_count; i++) {
-        event.results[i] = (struct survey_range_result) {
+        event.records.results[i] = (struct survey_range_result) {
             .median_mm = 1000 + i,
             .pair_index = i,
             .success_count = (uint8_t)(1u + (i % 5u)),
@@ -151,11 +157,48 @@ static void test_all_results_fit_one_event(void)
         };
     }
     wire_len = survey_event_encode(&event, wire, sizeof(wire));
-    assert(wire_len == SURVEY_EVENT_MAX_WIRE_LEN);
+    assert(wire_len == SURVEY_EVENT_HEADER_WIRE_LEN +
+                       SURVEY_MAX_PAIRS * SURVEY_RANGE_RESULT_WIRE_LEN);
     assert(wire_len <= PACKET_EXT_MAX_PAYLOAD_LEN);
     assert(survey_event_decode(wire, wire_len, &decoded) == PROTO_OK);
     assert(decoded.result_count == SURVEY_MAX_PAIRS);
-    assert(decoded.results[99].pair_index == 99u);
+    assert(decoded.records.results[99].pair_index == 99u);
+}
+
+static void test_all_signal_records_fit_one_event(void)
+{
+    struct survey_event event = {
+        .kind = SURVEY_EVENT_SIGNALS,
+        .status = SURVEY_TERMINAL_COMPLETE,
+        .identity = identity(),
+    };
+    struct survey_event decoded;
+    uint8_t levels[SURVEY_MAX_ANCHORS] = {0};
+    uint8_t wire[SURVEY_EVENT_MAX_WIRE_LEN];
+    size_t wire_len;
+
+    for (uint8_t owner = 0u; owner < SURVEY_MAX_ANCHORS; owner++) {
+        for (uint8_t target = 0u; target < owner; target++) {
+            levels[target] = (uint8_t)(1u + target % 15u);
+        }
+        for (uint8_t chunk = 0u;
+             chunk < survey_signal_record_count_for_slot(owner); chunk++) {
+            assert(event.signal_count < SURVEY_MAX_SIGNAL_RECORDS);
+            assert(survey_signal_record_encode(
+                       owner, chunk, levels,
+                       &event.records.signals[event.signal_count++]) ==
+                   SURVEY_SIGNAL_RECORD_WIRE_LEN);
+        }
+    }
+    assert(event.signal_count == SURVEY_MAX_SIGNAL_RECORDS);
+    wire_len = survey_event_encode(&event, wire, sizeof(wire));
+    assert(wire_len == SURVEY_EVENT_MAX_WIRE_LEN);
+    assert(wire_len == 946u);
+    assert(wire_len <= PACKET_EXT_MAX_PAYLOAD_LEN);
+    assert(survey_event_decode(wire, wire_len, &decoded) == PROTO_OK);
+    assert(decoded.signal_count == SURVEY_MAX_SIGNAL_RECORDS);
+    assert(memcmp(decoded.records.signals, event.records.signals,
+                  sizeof(event.records.signals)) == 0);
 }
 
 int main(void)
@@ -163,6 +206,7 @@ int main(void)
     test_chunked_plan_control();
     test_host_plan_and_event_round_trip();
     test_all_results_fit_one_event();
+    test_all_signal_records_fit_one_event();
     puts("survey protocol tests passed");
     return 0;
 }

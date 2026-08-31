@@ -5,6 +5,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 CLICKER = (ROOT / "app/src/app_clicker.c").read_text()
+ANCHOR_RADIO = (ROOT / "app/src/app_anchor_radio.inc").read_text()
 RADIO_RECOVERY = (
     ROOT / "app/src/app_radio_recovery.c"
 ).read_text()
@@ -15,6 +16,9 @@ APP_KCONFIG = (ROOT / "app/Kconfig").read_text()
 RTT_BENCH_CONF = (ROOT / "app/conf/mesh-clicker-rtt-bench.conf").read_text()
 TWO_ANCHOR_CONF = (
     ROOT / "app/conf/mesh-two-anchor-click-bench.conf"
+).read_text()
+RELAY_ONLY_CONF = (
+    ROOT / "app/conf/mesh-click-relay-only-bench.conf"
 ).read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 DRIVER_RADIO = (ROOT / "app/src/dwm3000_driver_radio.inc").read_text()
@@ -225,8 +229,47 @@ assert "config IMEC_TWO_ANCHOR_CLICK_BENCH" in APP_KCONFIG
 assert "UWB_NORMAL_CLICK_MIN_ANCHORS=2u" in APP_CMAKE
 assert "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y" in RTT_BENCH_CONF
 assert "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y" in TWO_ANCHOR_CONF
+assert set(RELAY_ONLY_CONF.splitlines()) == {
+    "CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH=y",
+    "CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH=y",
+}
+relay_only_kconfig = APP_KCONFIG.index(
+    "config IMEC_MESH_CLICK_RELAY_ONLY_BENCH"
+)
+relay_only_kconfig_end = APP_KCONFIG.index("endmenu", relay_only_kconfig)
+assert "depends on IMEC_TWO_ANCHOR_CLICK_BENCH" in APP_KCONFIG[
+    relay_only_kconfig:relay_only_kconfig_end
+]
 assert "UWB_NORMAL_CLICK_MIN_ANCHORS == 2u" in MAIN
 assert "UWB_NORMAL_CLICK_MIN_ANCHORS == 3u" in MAIN
+assert "click relay-only bench mode is valid only for an anchor image" in MAIN
+
+mesh_click_handoff = source_function_body(
+    ANCHOR_RADIO, "anchor_handle_mesh_click_wake_claim"
+)
+relay_only_mesh_guard = mesh_click_handoff.index(
+    "CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH"
+)
+pending_handoff = mesh_click_handoff.index(
+    "anchor_pending_click_handoff.active", relay_only_mesh_guard
+)
+assert relay_only_mesh_guard < pending_handoff
+assert (
+    "DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=mesh"
+    in mesh_click_handoff[:pending_handoff]
+)
+
+anchor_scan = source_function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
+route_dispatch = anchor_scan.index("DBG_ANCHOR_ROUTE_WAKE_DISPATCH src=")
+relay_only_scan_guard = anchor_scan.index(
+    "CONFIG_IMEC_MESH_CLICK_RELAY_ONLY_BENCH", route_dispatch
+)
+click_claim = anchor_scan.index("anchor_handle_uwb_claim(", relay_only_scan_guard)
+assert route_dispatch < relay_only_scan_guard < click_claim
+assert (
+    "DBG_ANCHOR_CLICK_WAKE_IGNORED_RELAY_ONLY path=scan"
+    in anchor_scan[route_dispatch:click_claim]
+)
 
 button_action = function_body("app_clicker_handle_button_action")
 normal_click = button_action.index("app_clicker_run_normal_click")
@@ -439,10 +482,24 @@ assert (
     < burst_loop_end
 )
 assert "slot_deadline_budget_ms" in range_burst[target:exchange]
+assert re.search(
+    r"range_request\.skip_responder_report\s*=\s*"
+    r"\(session->config\.flags & FLAG_COUNT_AS_CLICK\) != 0u;",
+    range_burst,
+), "normal clicks must end at FINAL instead of waiting for a redundant REPORT"
 assert range_burst.count("radio_guard_uwb_claim") == 1
 assert "radio_guard_uwb_claim" not in burst_loop_body
 assert "clicker_release_radio_to_standby" not in burst_loop_body
 assert "last_ret = idle_ret;" in range_burst[idle_failure:idle_failure_end]
+
+anchor_range_burst = source_function_body(
+    ANCHOR_RADIO, "anchor_run_scheduled_uwb_ranges"
+)
+assert re.search(
+    r"expected\.skip_responder_report\s*=\s*"
+    r"\(schedule->flags & FLAG_COUNT_AS_CLICK\) != 0u;",
+    anchor_range_burst,
+), "normal-click anchors must not transmit a responder REPORT"
 assert "break;" in range_burst[idle_failure:idle_failure_end]
 assert "uwb_clicker_abort_attempt(session)" in range_burst[
     cancel_failure:cancel_failure_end

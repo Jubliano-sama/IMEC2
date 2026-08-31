@@ -33,6 +33,22 @@ static struct survey_response_record range_record(uint8_t pair,
     return record;
 }
 
+static struct survey_response_record signal_record(uint8_t owner,
+                                                    uint8_t chunk)
+{
+    uint8_t levels[SURVEY_MAX_ANCHORS] = {0};
+    struct survey_signal_record signal;
+    struct survey_response_record record = {0};
+
+    for (uint8_t target = 0u; target < owner; target++) {
+        levels[target] = (uint8_t)(1u + target % 15u);
+    }
+    assert(survey_signal_record_encode(owner, chunk, levels, &signal) ==
+           sizeof(signal.bytes));
+    memcpy(record.bytes, signal.bytes, sizeof(signal.bytes));
+    return record;
+}
+
 static void test_lane_custody_and_ack(void)
 {
     struct survey_response_lane child;
@@ -113,6 +129,34 @@ static void test_max_result_bundles(void)
     }
 }
 
+static void test_max_neighbor_and_signal_bundles(void)
+{
+    struct survey_response_lane lane;
+    bool added;
+
+    assert(survey_response_lane_begin(&lane, 9u, 8u, 0x22u, 0x11u,
+                                      SURVEY_RESPONSE_NEIGHBORS,
+                                      2u, 5u, 1000u) == PROTO_OK);
+    for (uint8_t slot = 0u; slot < SURVEY_MAX_ANCHORS; slot++) {
+        struct survey_response_record record = neighbor_record(
+            slot, (uint8_t)((slot + 1u) % SURVEY_MAX_ANCHORS));
+
+        assert(survey_response_lane_add_record(&lane, &record,
+                                               &added) == PROTO_OK);
+        assert(added);
+        for (uint8_t chunk = 0u;
+             chunk < survey_signal_record_count_for_slot(slot); chunk++) {
+            record = signal_record(slot, chunk);
+            assert(survey_response_lane_add_record(&lane, &record,
+                                                   &added) == PROTO_OK);
+            assert(added);
+        }
+    }
+    assert(lane.record_count == SURVEY_RESPONSE_MAX_RECORDS);
+    assert(lane.record_count == 162u);
+    assert(survey_response_lane_bundle_count(&lane) == 9u);
+}
+
 static void test_raw_codecs_and_generation_binding(void)
 {
     struct survey_presence_frame presence = {
@@ -173,6 +217,7 @@ int main(void)
 {
     test_lane_custody_and_ack();
     test_max_result_bundles();
+    test_max_neighbor_and_signal_bundles();
     test_raw_codecs_and_generation_binding();
     puts("survey response lane tests passed");
     return 0;

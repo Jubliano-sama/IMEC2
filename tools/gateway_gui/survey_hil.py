@@ -18,8 +18,10 @@ from .protocol import (
     MSG_COMMAND_RESULT,
     MSG_SURVEY_EVENT,
     SURVEY_EVENT_NEIGHBOR_GRAPH,
+    SURVEY_EVENT_BATCH_COMPLETE,
     SURVEY_EVENT_PLAN_ACCEPTED,
     SURVEY_EVENT_RANGE_PROGRESS,
+    SURVEY_EVENT_SIGNALS,
     SURVEY_EVENT_TERMINAL,
     TLV_COMMAND_ID,
     TLV_COMMAND_STATUS,
@@ -34,12 +36,15 @@ class SurveyHilEvidence:
     """Protocol evidence required before one GUI survey may pass."""
 
     command_status: dict[int, int] = field(default_factory=dict)
+    plan_command_successes: int = 0
     neighbor_reports: int | None = None
-    planned_pairs: int | None = None
+    planned_pairs_by_batch: dict[int, int] = field(default_factory=dict)
+    completed_batches: set[int] = field(default_factory=set)
     terminal_results: int | None = None
     terminal_usable: int | None = None
     partial_reasons: int = 0
     terminal_seen: bool = False
+    signal_measurements: int = 0
 
     def qualifies(
         self,
@@ -47,18 +52,27 @@ class SurveyHilEvidence:
         expected_anchors: int,
         expected_pairs: int,
         expected_samples: int,
+        batch_pairs: int,
         gui_pairs: tuple[tuple[int, int], ...],
         gui_results: dict[int, Any],
         gui_error: str,
     ) -> bool:
+        expected_batches = (expected_pairs + batch_pairs - 1) // batch_pairs
+        expected_batch_sizes = {
+            index: min(batch_pairs, expected_pairs - index * batch_pairs)
+            for index in range(expected_batches)
+        }
         return (
             self.command_status.get(CMD_SURVEY_START) == 0
             and self.command_status.get(CMD_SURVEY_PLAN) == 0
+            and self.plan_command_successes == expected_batches
             and self.neighbor_reports == expected_anchors
-            and self.planned_pairs == expected_pairs
+            and self.signal_measurements >= expected_pairs
+            and self.planned_pairs_by_batch == expected_batch_sizes
+            and self.completed_batches == set(range(expected_batches - 1))
             and self.terminal_seen
-            and self.terminal_results == expected_pairs
-            and self.terminal_usable == expected_pairs
+            and self.terminal_results == expected_batch_sizes[expected_batches - 1]
+            and self.terminal_usable == expected_batch_sizes[expected_batches - 1]
             and self.partial_reasons == 0
             and len(gui_pairs) == expected_pairs
             and len(gui_results) == expected_pairs
@@ -91,6 +105,8 @@ class SurveyHilGui(GatewayGui):
                 reason = packet.value(TLV_REASON)
                 if isinstance(command_id, int) and isinstance(status, int):
                     self.hil_evidence.command_status[command_id] = status
+                    if command_id == CMD_SURVEY_PLAN and status == 0:
+                        self.hil_evidence.plan_command_successes += 1
                 print(
                     f"HOST_PACKET command={COMMAND_NAMES.get(command_id, command_id)} "
                     f"status={status} ({COMMAND_STATUS_NAMES.get(status, status)}) "
@@ -111,11 +127,31 @@ class SurveyHilGui(GatewayGui):
                         flush=True,
                     )
                 elif event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
-                    self.hil_evidence.planned_pairs = len(event.plan_pairs)
+                    self.hil_evidence.planned_pairs_by_batch[event.batch_index] = len(
+                        event.plan_pairs
+                    )
                     print(
                         f"HOST_PACKET survey={event.generation} "
                         f"pairs={len(event.plan_pairs)} waves={event.wave_count} "
                         f"skipped={len(event.skipped_pairs)}",
+                        flush=True,
+                    )
+                elif event.kind == SURVEY_EVENT_SIGNALS:
+                    self.hil_evidence.signal_measurements = len(
+                        event.signal_measurements
+                    )
+                    print(
+                        f"HOST_PACKET survey={event.generation} "
+                        f"signal_pairs={len(event.signal_measurements)}",
+                        flush=True,
+                    )
+                elif event.kind == SURVEY_EVENT_BATCH_COMPLETE:
+                    self.hil_evidence.completed_batches.add(event.batch_index)
+                    usable = sum(result.usable for result in event.range_results)
+                    print(
+                        f"HOST_PACKET survey={event.generation} "
+                        f"batch_complete={event.batch_index} "
+                        f"results={len(event.range_results)} usable={usable}",
                         flush=True,
                     )
                 elif event.kind in (
@@ -157,6 +193,7 @@ def run(args: argparse.Namespace) -> int:
         root.withdraw()
     evidence = SurveyHilEvidence()
     gui = SurveyHilGui(root, evidence)
+    gui._survey_batch_pair_limit = args.batch_pairs
     _configure_expected_anchors(gui, args.expected_anchors)
     started_at = time.monotonic()
     run_started_at: float | None = None
@@ -174,6 +211,7 @@ def run(args: argparse.Namespace) -> int:
             expected_anchors=args.expected_anchors,
             expected_pairs=args.expected_pairs,
             expected_samples=args.expected_samples,
+            batch_pairs=args.batch_pairs,
             gui_pairs=pairs,
             gui_results=results,
             gui_error=error,
@@ -196,7 +234,11 @@ def run(args: argparse.Namespace) -> int:
             },
             command_status=evidence.command_status,
             neighbor_reports=evidence.neighbor_reports,
+            plan_command_successes=evidence.plan_command_successes,
+            planned_pairs_by_batch=evidence.planned_pairs_by_batch,
+            completed_batches=sorted(evidence.completed_batches),
             partial_reasons=evidence.partial_reasons,
+            signal_measurements=evidence.signal_measurements,
             status=gui.status_text.get(),
             error=error,
             success=success,
@@ -275,6 +317,15 @@ def main() -> None:
     parser.add_argument("--expected-anchors", type=int, default=3)
     parser.add_argument("--expected-pairs", type=int, default=3)
     parser.add_argument("--expected-samples", type=int, default=5)
+    parser.add_argument(
+        "--batch-pairs",
+        type=int,
+        default=100,
+        help=(
+            "test-only maximum pairs per PLAN; use 1 to exercise repeated "
+            "PLAN/range/offload handoffs"
+        ),
+    )
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--settle", type=float, default=5.0)
     parser.add_argument(
@@ -291,6 +342,8 @@ def main() -> None:
         parser.error("expected counts must be positive")
     if args.timeout <= 0 or args.settle < 0:
         parser.error("timeout must be positive and settle must be nonnegative")
+    if not 1 <= args.batch_pairs <= 100:
+        parser.error("batch-pairs must be in 1..100")
     raise SystemExit(run(args))
 
 

@@ -37,6 +37,11 @@ static void app_clicker_rtt_dispatch_line(void)
         return;
     }
 
+    if (command == CLICKER_RTT_COMMAND_READY) {
+        status_debug_printf("DBG_CLICKER_RTT ready=1 commands=CLICK,LONG,READY");
+        return;
+    }
+
     if (command == CLICKER_RTT_COMMAND_CLICK) {
         gesture = APP_CLICKER_TEST_GESTURE_SHORT;
         name = "CLICK";
@@ -111,6 +116,6 @@ int app_clicker_rtt_control_start(void)
         return ret;
     }
     app_clicker_rtt_started = true;
-    status_debug_printf("DBG_CLICKER_RTT ready=1 commands=CLICK,LONG");
+    status_debug_printf("DBG_CLICKER_RTT ready=1 commands=CLICK,LONG,READY");
     return 0;
 }

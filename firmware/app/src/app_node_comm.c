@@ -76,6 +76,7 @@ struct app_node_comm_delivery_record {
     uint32_t reservation_token;
     uint8_t reservation_owner_kind;
     bool delivery_reserved;
+    uint64_t first_rf_started_at_ms;
 };
 
 static struct node_comm node_comm_policy;
@@ -3423,6 +3424,10 @@ int app_node_comm_service_deliveries(void)
     }
     now_ms = app_node_comm_now_ms();
     record = app_node_comm_delivery_record_for_handle(lease.handle);
+    if (record != NULL && observation.rf_started &&
+        record->first_rf_started_at_ms == 0u) {
+        record->first_rf_started_at_ms = observation.rf_started_at_ms;
+    }
     if (record != NULL && durable_complete_ret < 0) {
         record->backend_attempt_outstanding = true;
         record->backend_attempt_completion_pending = true;
@@ -4278,6 +4283,33 @@ int app_node_comm_delivery_attempts_started(uint32_t handle,
     }
     (void)app_node_comm_service_policy_locked(app_node_comm_now_ms());
     ret = node_comm_attempts_started(&node_comm_policy, handle, attempts_out);
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+int app_node_comm_delivery_first_rf_started_at(
+    uint32_t handle,
+    uint64_t *rf_started_at_ms_out)
+{
+    struct app_node_comm_delivery_record *record;
+    int ret;
+
+    if (handle == 0u || rf_started_at_ms_out == NULL) {
+        return -EINVAL;
+    }
+    ret = app_node_comm_sync_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    record = app_node_comm_delivery_record_for_handle(handle);
+    if (record == NULL) {
+        ret = -ENOENT;
+    } else if (record->first_rf_started_at_ms == 0u) {
+        ret = -EAGAIN;
+    } else {
+        *rf_started_at_ms_out = record->first_rf_started_at_ms;
+        ret = 0;
+    }
     app_node_comm_sync_unlock();
     return ret;
 }

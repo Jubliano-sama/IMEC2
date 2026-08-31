@@ -3503,7 +3503,7 @@ static int gateway_survey_emit_event(const struct survey_event *event)
 
 static int gateway_survey_send_control(
     const struct survey_control *control,
-    uint64_t *origin_ms)
+    uint32_t *delivery_handle)
 {
     struct mesh_outbound outbound = {0};
     uint32_t command_seq;
@@ -3511,10 +3511,11 @@ static int gateway_survey_send_control(
     uint32_t handle = 0u;
     size_t payload_len = 0u;
     enum command_id command_id;
-    uint64_t origin;
+    uint64_t admission_ms;
+    uint64_t rf_deadline_ms;
     int ret;
 
-    if (control == NULL || origin_ms == NULL) {
+    if (control == NULL || delivery_handle == NULL) {
         return -EINVAL;
     }
     command_id = control->phase == SURVEY_PHASE_PLAN ?
@@ -3576,34 +3577,54 @@ static int gateway_survey_send_control(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
-    origin = (uint64_t)k_uptime_get();
-    outbound.queued_at_ms = (uint32_t)origin;
-    outbound.queued_at_valid = true;
+    admission_ms = (uint64_t)k_uptime_get();
+    rf_deadline_ms = admission_ms + NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS;
+    /* This compact control has no wake train. Its packet-age origin is the
+     * first real command transmission, not admission into generic custody. */
+    outbound.queued_at_ms = 0u;
+    outbound.queued_at_valid = false;
     ret = app_node_comm_submit_delivery(
         &outbound,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
-        origin + NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS,
+        rf_deadline_ms,
         ((uint32_t)command_id << 16) ^ outbound.packet.seq,
         &handle);
     if (ret < 0) {
         return ret;
     }
-    ret = app_node_comm_auto_reap_delivery(handle);
-    if (ret < 0) {
-        (void)app_node_comm_abandon_delivery(handle);
-        return ret;
-    }
-    *origin_ms = origin;
+    *delivery_handle = handle;
     status_debug_printf(
-        "DBG_SURVEY_CONTROL phase=%u gen=%u handle=%u origin=%llu "
+        "DBG_SURVEY_CONTROL_ADMIT phase=%u gen=%u handle=%u admit=%llu "
         "delay=%u bytes=%u\n",
         (unsigned int)control->phase, control->identity.generation,
-        handle, (unsigned long long)origin,
+        handle, (unsigned long long)admission_ms,
         control->phase == SURVEY_PHASE_PLAN ?
             control->plan.execution_start_delay_ms :
             (control->start_delay_present ? control->start_delay_ms : 0u),
         (unsigned int)payload_len);
     return 0;
+}
+
+static int gateway_survey_control_origin(uint32_t delivery_handle,
+                                         uint64_t *origin_ms)
+{
+    int ret = app_node_comm_delivery_first_rf_started_at(delivery_handle,
+                                                         origin_ms);
+
+    if (ret == 0) {
+        ret = app_node_comm_auto_reap_delivery(delivery_handle);
+    }
+    return ret;
+}
+
+static int gateway_survey_control_detach(uint32_t delivery_handle)
+{
+    return app_node_comm_auto_reap_delivery(delivery_handle);
+}
+
+static int gateway_survey_control_abandon(uint32_t delivery_handle)
+{
+    return app_node_comm_abandon_delivery(delivery_handle);
 }
 
 static void gateway_survey_wake_rx(void)
@@ -4072,6 +4093,19 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
 
     if (packet != NULL && packet->msg_type == MSG_COMMAND) {
         ret = gateway_command_extract_id(payload, payload_len, &command_id);
+        if (ret == PROTO_OK && app_survey_gateway_active() &&
+            command_id != CMD_SURVEY_START &&
+            command_id != CMD_SURVEY_PLAN &&
+            command_id != CMD_SURVEY_CANCEL &&
+            command_id != CMD_SURVEY_GET_STATUS) {
+            /*
+             * Keep ordinary host commands in the bounded ingress retry path
+             * until survey cleanup has released both gateway and anchor
+             * ownership. Survey-local commands remain available so the host
+             * can inspect, plan, or cancel the active generation.
+             */
+            return -EBUSY;
+        }
         if (ret == PROTO_OK &&
             command_id == CMD_FORCE_REDISCOVERY &&
             packet->dst_id == DEVICE_ID) {
