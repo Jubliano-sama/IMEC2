@@ -2284,6 +2284,13 @@ class ArtifactCohortTests(unittest.TestCase):
         build = self.root / "out" / preset
         zephyr = build / "zephyr"
         zephyr.mkdir(parents=True)
+        git_version = subprocess.run(
+            ["git", "-C", str(self.root), "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        build_identity = f"imec-stack-v1:{preset}:{'a' * 64}"
         compiler = self.root / "toolchain" / "bin" / "fake-gcc"
         compiler.parent.mkdir(parents=True, exist_ok=True)
         compiler.write_text("#!/bin/sh\necho 'fake gcc 1'\n", encoding="utf-8")
@@ -2293,6 +2300,13 @@ class ArtifactCohortTests(unittest.TestCase):
             "#!/bin/sh\necho 'ninja: no work to do.'\n", encoding="utf-8",
         )
         ninja.chmod(0o755)
+        (build / "build.ninja").write_text(
+            "build fixture: phony\n"
+            "  DEFINES = "
+            f"-DIMEC_GIT_VERSION=\\\"{git_version}\\\" "
+            f"-DIMEC_STACK_DIAG_BUILD_ID=\\\"{build_identity}\\\"\n",
+            encoding="utf-8",
+        )
         (build / "CMakeCache.txt").write_text(
             f"IMEC_BUILD_PRESET:STRING={preset}\n"
             "BOARD:STRING=nrf52833dk/nrf52833\n"
@@ -2303,10 +2317,12 @@ class ArtifactCohortTests(unittest.TestCase):
             encoding="utf-8",
         )
         (zephyr / "zephyr.elf").write_bytes(
-            f"ELF imec-stack-v1:{preset}:{'a' * 64}".encode("ascii")
+            f"ELF {build_identity}".encode("ascii")
         )
         image = IntelHex()
         image[0] = len(preset)
+        for offset, value in enumerate(build_identity.encode("ascii"), 0x100):
+            image[offset] = value
         image[0x1000] = len(preset) ^ 0x5a
         image.write_hex_file(str(zephyr / "zephyr.hex"))
         (zephyr / ".config").write_text(
@@ -2424,6 +2440,37 @@ class ArtifactCohortTests(unittest.TestCase):
         self.assertNotEqual(
             config_artifact["artifact_id"], toolchain_artifact["artifact_id"],
         )
+
+    def test_committed_source_change_rejects_stale_build_graph(self) -> None:
+        build = self._build("mesh_anchor")
+        cohort.create_manifest(self.root, [build], self.output)
+
+        source = self.root / "firmware" / "app" / "src" / "main.c"
+        source.write_text("int cohort_source = 2;\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.root), "add", "firmware"], check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.root), "commit", "-qm", "new source"],
+            check=True,
+        )
+
+        with self.assertRaisesRegex(
+            cohort.CohortError, "does not match workspace HEAD",
+        ):
+            cohort.create_manifest(self.root, [build], self.output)
+
+    def test_artifact_identity_must_match_build_graph(self) -> None:
+        build = self._build("mesh_anchor")
+        elf = build / "zephyr" / "zephyr.elf"
+        elf.write_bytes(
+            f"ELF imec-stack-v1:mesh_anchor:{'b' * 64}".encode("ascii")
+        )
+
+        with self.assertRaisesRegex(
+            cohort.CohortError, "build graph, ELF, and HEX identities differ",
+        ):
+            cohort.create_manifest(self.root, [build], self.output)
 
     def test_topology_validator_requires_one_source_snapshot(self) -> None:
         presets = ("mesh_gateway", "mesh_anchor", "mesh_anchor_forcedhop")

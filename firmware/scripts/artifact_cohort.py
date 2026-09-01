@@ -47,6 +47,9 @@ SOURCE_PATHS = (
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _BUILD_ID_RE = re.compile(rb"imec-stack-v1:[A-Za-z0-9_.-]+:[0-9a-f]{64}")
+_NINJA_DEFINE_VALUE_RE_TEMPLATE = (
+    r"-D{key}=(?:\\\"|\")?([^ \r\n\"\\]+)(?:\\\"|\")?"
+)
 _DEPENDENCY_CACHE_KEYS = frozenset({
     "DWM3000_SDK_DIR", "NRF_DIR", "NRFXLIB_DIR", "NRFX_DIR", "ZEPHYR_BASE",
 })
@@ -281,6 +284,82 @@ def _require_clean_build_graph(build_dir: Path, cache: Mapping[str, str]) -> Non
         )
 
 
+def _single_ninja_define(build_dir: Path, key: str) -> str:
+    build_graph = build_dir / "build.ninja"
+    if not build_graph.is_file():
+        raise CohortError(f"build lacks build.ninja: {build_dir}")
+    values = set(re.findall(
+        _NINJA_DEFINE_VALUE_RE_TEMPLATE.format(key=re.escape(key)),
+        build_graph.read_text(encoding="utf-8"),
+    ))
+    if len(values) != 1:
+        raise CohortError(
+            f"build graph does not contain one unambiguous {key}: {build_dir}"
+        )
+    return values.pop()
+
+
+def _single_embedded_build_identity(data: bytes, label: str) -> str:
+    identities = {
+        match.group(0).decode("ascii") for match in _BUILD_ID_RE.finditer(data)
+    }
+    if len(identities) != 1:
+        raise CohortError(
+            f"{label} does not contain one unambiguous embedded build identity"
+        )
+    return identities.pop()
+
+
+def _require_build_source_binding(
+    build_dir: Path,
+    source_git_head: str,
+    elf: Path,
+    hex_path: Path,
+) -> str:
+    build_git_version = _single_ninja_define(build_dir, "IMEC_GIT_VERSION")
+    build_identity = _single_ninja_define(
+        build_dir, "IMEC_STACK_DIAG_BUILD_ID",
+    )
+    expected_git_version = (
+        "unknown" if source_git_head == "unversioned" else source_git_head
+    )
+    if expected_git_version == "unknown":
+        git_version_matches = build_git_version == "unknown"
+    else:
+        git_version_matches = (
+            build_git_version != "unknown" and
+            expected_git_version.startswith(build_git_version)
+        )
+    if not git_version_matches:
+        raise CohortError(
+            "build graph Git version "
+            f"{build_git_version!r} does not match workspace HEAD "
+            f"{source_git_head!r}; reconfigure and rebuild before cohort creation"
+        )
+
+    elf_identity = _single_embedded_build_identity(
+        elf.read_bytes(), f"build ELF {elf}",
+    )
+    try:
+        image = IntelHex(str(hex_path))
+        hex_bytes = bytes(image.tobinarray(
+            start=image.minaddr(), end=image.maxaddr(),
+        ))
+    except Exception as exc:
+        raise CohortError(
+            f"artifact HEX cannot be parsed for build identity: {hex_path}: {exc}"
+        ) from exc
+    hex_identity = _single_embedded_build_identity(
+        hex_bytes, f"build HEX {hex_path}",
+    )
+    if elf_identity != build_identity or hex_identity != build_identity:
+        raise CohortError(
+            "build graph, ELF, and HEX identities differ; rebuild before "
+            f"cohort creation: {build_dir}"
+        )
+    return build_identity
+
+
 def _dependency_records(
     repo_root: Path,
     build_dirs: Sequence[Path],
@@ -483,7 +562,11 @@ def programmed_sector_hashes(hex_path: Path) -> dict[str, str]:
     }
 
 
-def _artifact_record(build_dir: Path, source_id: str) -> dict[str, object]:
+def _artifact_record(
+    build_dir: Path,
+    source_id: str,
+    source_git_head: str,
+) -> dict[str, object]:
     cache = _parse_cache(build_dir)
     _require_clean_build_graph(build_dir, cache)
     toolchain = _toolchain_record(cache)
@@ -495,13 +578,13 @@ def _artifact_record(build_dir: Path, source_id: str) -> dict[str, object]:
     for path in (elf, hex_path, config):
         if not path.is_file():
             raise CohortError(f"build artifact is missing: {path}")
-    identity_match = _BUILD_ID_RE.search(elf.read_bytes())
+    build_identity = _require_build_source_binding(
+        build_dir, source_git_head, elf, hex_path,
+    )
     record: dict[str, object] = {
         "preset": preset,
         "source_id": source_id,
-        "legacy_build_identity": (
-            identity_match.group(0).decode("ascii") if identity_match else ""
-        ),
+        "legacy_build_identity": build_identity,
         "elf_sha256": _sha256(elf),
         "hex_sha256": _sha256(hex_path),
         "config_sha256": _sha256(config),
@@ -528,7 +611,14 @@ def create_manifest(
     resolved = [path.resolve() for path in build_dirs]
     source = source_snapshot(repo_root, resolved)
     artifacts = sorted(
-        (_artifact_record(path, str(source["source_id"])) for path in resolved),
+        (
+            _artifact_record(
+                path,
+                str(source["source_id"]),
+                str(source["git_head"]),
+            )
+            for path in resolved
+        ),
         key=lambda item: str(item["preset"]),
     )
     presets = [str(item["preset"]) for item in artifacts]
@@ -684,7 +774,11 @@ def validate_build(path: Path, repo_root: Path, build_dir: Path) -> dict[str, ob
     cache = _parse_cache(build_dir)
     preset = cache.get("IMEC_BUILD_PRESET", "")
     expected = artifact_for_preset(data, preset)
-    current = _artifact_record(build_dir.resolve(), str(source["source_id"]))
+    current = _artifact_record(
+        build_dir.resolve(),
+        str(source["source_id"]),
+        str(source["git_head"]),
+    )
     if current != expected:
         raise CohortError(f"{preset} build artifacts or configuration differ from cohort")
     return {
