@@ -153,6 +153,16 @@ def _git_head(root: Path) -> str:
     return result.stdout.decode("ascii", errors="strict").strip()
 
 
+def _git_firmware_head(root: Path) -> str:
+    result = _git(
+        root, "log", "-1", "--format=%H", "--", *SOURCE_PATHS,
+    )
+    if result.returncode:
+        return _git_head(root)
+    head = result.stdout.decode("ascii", errors="strict").strip()
+    return head or _git_head(root)
+
+
 def _git_paths(root: Path, paths: Sequence[str]) -> list[str]:
     arguments = [
         "ls-files", "-z", "--cached", "--others", "--exclude-standard",
@@ -313,6 +323,7 @@ def _single_embedded_build_identity(data: bytes, label: str) -> str:
 def _require_build_source_binding(
     build_dir: Path,
     source_git_head: str,
+    firmware_git_head: str,
     elf: Path,
     hex_path: Path,
 ) -> str:
@@ -320,21 +331,23 @@ def _require_build_source_binding(
     build_identity = _single_ninja_define(
         build_dir, "IMEC_STACK_DIAG_BUILD_ID",
     )
-    expected_git_version = (
-        "unknown" if source_git_head == "unversioned" else source_git_head
-    )
-    if expected_git_version == "unknown":
+    expected_git_versions = {source_git_head, firmware_git_head}
+    if source_git_head == "unversioned":
         git_version_matches = build_git_version == "unknown"
     else:
         git_version_matches = (
             build_git_version != "unknown" and
-            expected_git_version.startswith(build_git_version)
+            any(
+                version.startswith(build_git_version)
+                for version in expected_git_versions
+            )
         )
     if not git_version_matches:
         raise CohortError(
             "build graph Git version "
-            f"{build_git_version!r} does not match workspace HEAD "
-            f"{source_git_head!r}; reconfigure and rebuild before cohort creation"
+            f"{build_git_version!r} matches neither workspace HEAD "
+            f"{source_git_head!r} nor firmware-input HEAD {firmware_git_head!r}; "
+            "reconfigure and rebuild before cohort creation"
         )
 
     elf_identity = _single_embedded_build_identity(
@@ -566,6 +579,7 @@ def _artifact_record(
     build_dir: Path,
     source_id: str,
     source_git_head: str,
+    firmware_git_head: str,
 ) -> dict[str, object]:
     cache = _parse_cache(build_dir)
     _require_clean_build_graph(build_dir, cache)
@@ -579,7 +593,7 @@ def _artifact_record(
         if not path.is_file():
             raise CohortError(f"build artifact is missing: {path}")
     build_identity = _require_build_source_binding(
-        build_dir, source_git_head, elf, hex_path,
+        build_dir, source_git_head, firmware_git_head, elf, hex_path,
     )
     record: dict[str, object] = {
         "preset": preset,
@@ -610,12 +624,14 @@ def create_manifest(
         raise CohortError("a cohort requires at least one build directory")
     resolved = [path.resolve() for path in build_dirs]
     source = source_snapshot(repo_root, resolved)
+    firmware_git_head = _git_firmware_head(repo_root.resolve())
     artifacts = sorted(
         (
             _artifact_record(
                 path,
                 str(source["source_id"]),
                 str(source["git_head"]),
+                firmware_git_head,
             )
             for path in resolved
         ),
@@ -774,10 +790,12 @@ def validate_build(path: Path, repo_root: Path, build_dir: Path) -> dict[str, ob
     cache = _parse_cache(build_dir)
     preset = cache.get("IMEC_BUILD_PRESET", "")
     expected = artifact_for_preset(data, preset)
+    firmware_git_head = _git_firmware_head(repo_root.resolve())
     current = _artifact_record(
         build_dir.resolve(),
         str(source["source_id"]),
         str(source["git_head"]),
+        firmware_git_head,
     )
     if current != expected:
         raise CohortError(f"{preset} build artifacts or configuration differ from cohort")

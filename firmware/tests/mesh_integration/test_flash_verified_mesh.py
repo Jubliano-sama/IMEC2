@@ -2456,9 +2456,38 @@ class ArtifactCohortTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            cohort.CohortError, "does not match workspace HEAD",
+            cohort.CohortError, "matches neither workspace HEAD",
         ):
             cohort.create_manifest(self.root, [build], self.output)
+
+    def test_host_only_commit_does_not_stale_firmware_artifact(self) -> None:
+        build = self._build("mesh_anchor")
+        first = cohort.create_manifest(self.root, [build], self.output)
+
+        host_tool = self.root / "firmware" / "scripts" / "host_tool.py"
+        host_tool.parent.mkdir(parents=True)
+        host_tool.write_text("HOST_ONLY = True\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.root), "add", "firmware/scripts"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.root), "commit", "-qm", "host tool"],
+            check=True,
+        )
+
+        second = cohort.create_manifest(self.root, [build], self.output)
+        self.assertNotEqual(first, second)
+        second_data = cohort.load_manifest(second)
+        second_artifact = cohort.artifact_for_preset(
+            second_data, "mesh_anchor",
+        )
+        self.assertEqual(
+            second_artifact["hex_sha256"],
+            hashlib.sha256(
+                (build / "zephyr" / "zephyr.hex").read_bytes()
+            ).hexdigest(),
+        )
 
     def test_artifact_identity_must_match_build_graph(self) -> None:
         build = self._build("mesh_anchor")
