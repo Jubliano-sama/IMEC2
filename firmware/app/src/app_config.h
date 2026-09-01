@@ -207,7 +207,7 @@
 #endif
 #define ANCHOR_UWB_STARTUP_US 2500u
 #define ANCHOR_UWB_PLL_US 170u
-#define ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S 13000u
+#define ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S 26000u
 #define ANCHOR_UWB_IDLE_SCAN_DUTY_US ANCHOR_UWB_SCAN_RX_US
 #define ANCHOR_UWB_IDLE_SCAN_AWAKE_US \
     (ANCHOR_UWB_STARTUP_US + ANCHOR_UWB_PLL_US + ANCHOR_UWB_SCAN_RX_US)
@@ -228,6 +228,11 @@
 #define ANCHOR_CLAIM_COLLECTION_MS 15u
 #define ANCHOR_FALSE_WAKE_COOLDOWN_MS 100u
 #define ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS 15u
+/* Once the DW3000 reports a preamble or malformed frame on the standard wake
+ * PHY, keep rearming long enough to catch a later clean copy from the same
+ * 500 ms train. A valid click frame returns immediately and preempts mesh
+ * work; this is only the malformed/no-decode ceiling. */
+#define ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS 1000u
 #define ANCHOR_UWB_SCAN_ACTIVITY_MIN_COMPLETION_MS 8u
 #define ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS 25u
 #define ANCHOR_UWB_SCAN_BUSY_RETRY_MS 5u
@@ -312,14 +317,13 @@ BUILD_ASSERT(OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS ==
                  UWB_CONTROL_TX_TIMEOUT_MS,
              "response timing model must match the control TX timeout");
 #define ANCHOR_BATTERY_MV_UNKNOWN 0u
-#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 8192u
+#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 9984u
 /*
- * The route-test anchor path measured 6472 bytes. Keep the full 8192-byte
- * queue for every anchor preset so the runtime
- * watermark retains the required 20 percent reserve without splitting radio
- * ownership across another worker.
+ * A complete forced-hop survey measured 7824 bytes after route activation,
+ * enumeration, and ranging all used this owner. Keep the same queue for every
+ * anchor preset with the required 20 percent runtime reserve.
  */
-#define ANCHOR_UWB_SCAN_WORKQUEUE_HARDWARE_WATERMARK_BYTES 6472u
+#define ANCHOR_UWB_SCAN_WORKQUEUE_HARDWARE_WATERMARK_BYTES 7824u
 BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
              (ANCHOR_UWB_SCAN_WORKQUEUE_HARDWARE_WATERMARK_BYTES * 5u + 3u) / 4u,
              "anchor radio recovery needs measured stack plus safety margin");

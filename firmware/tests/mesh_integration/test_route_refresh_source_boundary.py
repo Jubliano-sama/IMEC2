@@ -95,7 +95,7 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
 
     def test_route_refresh_uses_resumable_flood_progress(self):
         self.assertIn("struct app_mesh_flood_progress flood", self.refresh)
-        self.assertIn("app_mesh_flood_send_bounded_resume(", self.refresh)
+        self.assertIn("app_mesh_flood_send_opportunity_resume(", self.refresh)
         self.assertIn("app_mesh_flood_progress_rebase(", self.refresh)
         self.assertNotIn("app_mesh_flood_send_bounded(", self.refresh)
         self.assertIn("struct app_mesh_flood_progress", self.flood_header)
@@ -134,7 +134,7 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         acquired = worker.index("radio_control_started = true", acquire)
         stop_scan = worker.index("config->stop_role_scan(config->ctx)", acquired)
         wake = worker.index("config->send_wake(config->ctx", stop_scan)
-        flood = worker.index("app_mesh_flood_send_bounded_resume(", wake)
+        flood = worker.index("app_mesh_flood_send_opportunity_resume(", wake)
         finish = worker.index("\nfinish:", flood)
         self.assertLess(acquire, acquired)
         self.assertLess(acquired, stop_scan)
@@ -338,6 +338,39 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
                 r"result_reservation_token\)\s*{\s*"
                 r"gateway_route_refresh_result_token = 0u;"
             ),
+        )
+
+    def test_local_gateway_reboot_never_enters_the_rf_route_path(self):
+        route_host = function_body(self.anchor, "gateway_route_host_packet")
+        local_reboot = route_host.index("command_id == CMD_REBOOT")
+        local_handler = route_host.index(
+            "gateway_accept_local_reboot_command(packet)", local_reboot
+        )
+        mesh_route = route_host.rindex("gateway_route_mesh_host_packet(")
+        accept = function_body(
+            self.anchor, "gateway_accept_local_reboot_command"
+        )
+        reboot_worker = function_body(
+            self.anchor, "anchor_reboot_work_handler"
+        )
+        reboot_schedule = function_body(
+            self.anchor, "anchor_schedule_reboot_after_command_result"
+        )
+        gateway_start = function_body(
+            self.anchor, "app_anchor_start_gateway_role"
+        )
+
+        self.assertLess(local_reboot, local_handler)
+        self.assertLess(local_handler, mesh_route)
+        self.assertIn("anchor_schedule_reboot_after_command_result()", accept)
+        self.assertIn("gateway_commit_host_command_result_reserved(", accept)
+        self.assertIn("k_work_cancel_delayable(&anchor_reboot_work)", accept)
+        self.assertIn("DEVICE_ROLE != ROLE_GATEWAY", reboot_worker)
+        self.assertIn("DEVICE_ROLE != ROLE_GATEWAY", reboot_schedule)
+        self.assertIn(
+            "k_work_init_delayable(&anchor_reboot_work, "
+            "anchor_reboot_work_handler)",
+            gateway_start,
         )
 
 

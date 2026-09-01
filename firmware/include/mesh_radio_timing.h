@@ -2,14 +2,21 @@
 #define MESH_RADIO_TIMING_H
 
 /* Production-candidate connected-routing defaults. */
-#define MESH_RADIO_ANCHOR_SCAN_RX_US 3500u
+#define MESH_RADIO_ANCHOR_SCAN_RX_US 10000u
 #define MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS 380u
 #define MESH_RADIO_ACTIVITY_COMPLETION_US 15000u
 #define MESH_RADIO_WAKE_TRAIN_MS 500u
-/* Enumeration Here-I-Am root activation; matching CLAIM stays wake-free. */
-#define MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS 1000u
+/* Here-I-Am is the ordinary 500 ms wake train with an activation suffix;
+ * matching CLAIM stays wake-free. The separate malformed-frame listener may
+ * remain armed for 1,000 ms, but it must not lengthen the transmitted train. */
+#define MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS \
+    MESH_RADIO_WAKE_TRAIN_MS
 /* Keep activation dense while avoiding a fixed transmitter/receiver cadence. */
 #define MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US 1000u
+/* A real DW3000 send has bounded host/SPI/status work between the modeled
+ * frame airtime and the following random gap. The low-duty acquisition slice
+ * must span that complete start-to-start gap, not just airtime plus jitter. */
+#define MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US 5000u
 #define MESH_RADIO_DISCOVERY_SLOT_US 12000u
 #define MESH_RADIO_EVENT_WINDOW_MS 120u
 #define MESH_RADIO_EVENT_GUARD_MS 60u

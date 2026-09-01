@@ -263,8 +263,12 @@ class GatewayCommandOrchestrator:
                 return expired
         current = self.current
         # Successful command results can precede the typed lifecycle terminal,
-        # so only a negative result may terminate an operation here.
-        if current is None or command_status == 0:
+        # so only the local reboot command treats its result as terminal.  A
+        # reboot has no post-reset typed event; its following BLE disconnect is
+        # the physical completion proof.
+        if current is None or (
+            command_status == 0 and current.command_id != CMD_REBOOT
+        ):
             return GatewayCommandTransition()
         if (
             command_id != current.command_id

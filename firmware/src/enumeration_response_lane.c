@@ -10,12 +10,21 @@ _Static_assert(UWB_ENUM_MAX_HOPS == 8u,
                "the qualified lane covers every production mesh hop depth");
 _Static_assert(ENUMERATION_RESPONSE_DEPTH_MS == 1500u,
                "one-hop source responses must occupy 1500 ms");
-_Static_assert(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 5470u,
-               "pipelined CLAIM relay bound changed");
-_Static_assert(ENUMERATION_RESPONSE_START_DELAY_MS == 43950u,
-               "response edge must follow every pipelined CLAIM relay");
+_Static_assert(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 365u,
+               "compact CLAIM relay bound changed");
+_Static_assert(ENUMERATION_RESPONSE_START_DELAY_MS == 4510u,
+               "response edge must follow every compact CLAIM relay");
 _Static_assert(ENUMERATION_RESPONSE_LANE_MS == 19000u,
                "eight response depths plus ordered relay tails occupy 19 s");
+_Static_assert(ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS <= 100u,
+               "HIA pipeline drift margin must stay within 100 ms");
+_Static_assert(MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS %
+                   ENUMERATION_RESPONSE_ROUND_MS == 0u,
+               "the HIA depth clock must contain whole compact rounds");
+_Static_assert(ENUMERATION_RESPONSE_HIA_FIRST_DEPTH_START_DELAY_MS == 13600u,
+               "H1 compact identity must trail HIA by two hop depths");
+_Static_assert(ENUMERATION_RESPONSE_HIA_LOCAL_START_DELAY_MS == 9100u,
+               "each anchor starts compact identity two depth blocks later");
 _Static_assert(sizeof(struct enumeration_response_lane) == 456u,
                "the persistent response lane must remain compact");
 
@@ -70,15 +79,29 @@ bool enumeration_response_claim_start(
     uint64_t *start_ms,
     int64_t *starts_in_ms)
 {
-    uint64_t origin_ms;
+    uint64_t magnitude_ms;
 
-    if (start_ms == NULL || starts_in_ms == NULL || packet_age_ms > now_ms) {
+    if (start_ms == NULL || starts_in_ms == NULL) {
         return false;
     }
-    origin_ms = now_ms - packet_age_ms;
-    *start_ms = origin_ms + advertised_start_delay_ms;
     *starts_in_ms = (int64_t)advertised_start_delay_ms -
                     (int64_t)packet_age_ms;
+    if (*starts_in_ms >= 0) {
+        magnitude_ms = (uint64_t)*starts_in_ms;
+        if (magnitude_ms > UINT64_MAX - now_ms) {
+            return false;
+        }
+        *start_ms = now_ms + magnitude_ms;
+        return true;
+    }
+
+    magnitude_ms = (uint64_t)(-*starts_in_ms);
+    if (magnitude_ms >= now_ms) {
+        /* The shared edge predates this boot and cannot be represented in
+         * the receiver's monotonic uptime domain. */
+        return false;
+    }
+    *start_ms = now_ms - magnitude_ms;
     return true;
 }
 
@@ -215,6 +238,60 @@ bool enumeration_response_lane_complete_depth(
         return false;
     }
     return now_ms >= start_ms &&
+           now_ms - start_ms >= duration_ms;
+}
+
+uint32_t enumeration_response_hia_duration_ms(uint8_t first_hop_count,
+                                              uint8_t max_hop_count)
+{
+    if (first_hop_count == 0u || first_hop_count > UWB_ENUM_MAX_HOPS ||
+        max_hop_count < first_hop_count ||
+        max_hop_count > UWB_ENUM_MAX_HOPS) {
+        return 0u;
+    }
+    return (uint32_t)(max_hop_count - first_hop_count + 1u) *
+           MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS;
+}
+
+bool enumeration_response_hia_timing_at_depth(
+    uint64_t start_ms,
+    uint64_t now_ms,
+    uint8_t first_hop_count,
+    uint8_t max_hop_count,
+    struct enumeration_response_timing *timing)
+{
+    uint32_t duration_ms = enumeration_response_hia_duration_ms(
+        first_hop_count, max_hop_count);
+    uint64_t elapsed_ms;
+    uint32_t within_depth_ms;
+
+    if (timing == NULL || duration_ms == 0u || now_ms < start_ms) {
+        return false;
+    }
+    elapsed_ms = now_ms - start_ms;
+    if (elapsed_ms >= duration_ms) {
+        return false;
+    }
+    timing->depth = (uint8_t)(
+        first_hop_count + elapsed_ms / MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+    within_depth_ms =
+        (uint32_t)(elapsed_ms % MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+    timing->round =
+        (uint8_t)(within_depth_ms / ENUMERATION_RESPONSE_ROUND_MS);
+    timing->round_offset_ms =
+        (uint8_t)(within_depth_ms % ENUMERATION_RESPONSE_ROUND_MS);
+    return true;
+}
+
+bool enumeration_response_hia_complete_depth(uint64_t start_ms,
+                                             uint64_t now_ms,
+                                             uint8_t first_hop_count,
+                                             uint8_t max_hop_count)
+{
+    uint32_t duration_ms = enumeration_response_hia_duration_ms(
+        first_hop_count, max_hop_count);
+
+    return duration_ms != 0u && now_ms >= start_ms &&
            now_ms - start_ms >= duration_ms;
 }
 

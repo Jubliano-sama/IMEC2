@@ -119,8 +119,8 @@ source of truth for their accepted arguments and local checks.
 ## Timing, Power, and Low-Level Details
 
 Current key constants (as of the latest implementation):
-- Anchor low-duty scan: 380 ms interval, 3 ms normal RX window (≈0.78–0.79% duty).
-- Ordinary wake train: 500 ms; the initial gateway enumeration activation remains 1,000 ms.
+- Anchor low-duty scan: 380 ms interval, 10 ms normal RX window (≈2.55% RX duty).
+- Every wake train, including the combined Here-I-Am activation, is 500 ms; malformed-frame activity can extend only the receiver's listener to 1,000 ms. Here-I-Am relays hold TX continuously for that 500 ms and perform no click checks, while ordinary click-capable wake paths retain their click preemption behavior.
 - UWB PHY: 850 kbps, long preamble for wake/range, 1024-symbol for mesh control.
 - Clicker politeness: requires ≥100 ms quiet channel-5 time before wake train.
 - Status polling overhead is modeled separately from radio duty.
@@ -131,7 +131,7 @@ Clicker idle paths:
 
 Detailed power budget calculations, scan duty guards, and awake-time accounting are in `Documentation/UWB+BLE Architecture 0.6.6.md`.
 
-The app enforces build-time and runtime guards so that anchor scan duty stays inside the calibrated budget (currently 13,000 µs/s).
+The app enforces build-time and runtime guards so that anchor scan duty stays inside the calibrated budget (currently 26,000 µs/s). The 10 ms acquisition slice covers the measured worst-case start-to-start cadence of the combined wake/Here-I-Am frames; a shorter slice can fall entirely between two valid frames even during a 500 ms train.
 
 ---
 

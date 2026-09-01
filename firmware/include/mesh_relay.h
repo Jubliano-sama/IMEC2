@@ -17,6 +17,8 @@
 extern "C" {
 #endif
 
+struct uwb_wake_claim_frame;
+
 #define MESH_BROADCAST_ID 0u
 #define MESH_RELAY_DOWNLINK_ROUTES 16u
 #define MESH_RELAY_ANCHOR_DOWNLINK_ROUTES MESH_CONNECTED_MAX_ANCHORS
@@ -81,50 +83,52 @@ extern "C" {
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 4200u
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
-/* Here-I-Am is a short route refresh, not a general discovery wave. Each
- * relay yields the background receiver, sends one ordinary activation train,
- * then sends three advertisement copies. Relays choose one of 32 node-mixed
- * start slots before the wake train and defer a complete wake+advertisement
- * wave when another relay is already active. This prevents two direct
- * parents of the same low-duty child from remaining collision-locked for the
- * whole activation wave. Every participant and the gateway settle
- * calculation use this one bounded timing profile. */
-#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS 25u
-#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_COUNT 32u
-#define MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS \
-    ((MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_COUNT - 1u) * \
-     MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS)
-#define MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS 25u
+/* Here-I-Am advances on one shared depth clock. Every sender at a depth
+ * chooses a uniform start in a 2.5 s activation window and transmits a 500 ms
+ * combined wake/activation train. Once every possible train has ended, the
+ * same senders advertise identity and local depth exactly three times across
+ * a 1.5 s route-selection window. The following depth cannot start until
+ * that complete 4.5 s block has closed. */
+#define MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS 2500u
+#define MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS 500u
+#define MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS \
+    (MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS + \
+     MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS)
+#define MESH_GATEWAY_ROUTE_ADV_WINDOW_MS 1500u
+#define MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS \
+    (MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS + \
+     MESH_GATEWAY_ROUTE_ADV_WINDOW_MS)
+#define MESH_GATEWAY_ROUTE_MAX_DEPTH 8u
+/* A weak candidate at the deepest supported depth is usable only after one
+ * additional empty depth block proves there is no stronger next hop. */
+#define MESH_GATEWAY_ROUTE_SELECTION_SETTLE_BLOCKS \
+    (MESH_GATEWAY_ROUTE_MAX_DEPTH + 2u)
+#define MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS \
+    ((MESH_GATEWAY_ROUTE_SELECTION_SETTLE_BLOCKS * \
+      MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS) + FLOOD_POST_ROOT_GUARD_MS)
+#define MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS 500u
 #define MESH_GATEWAY_ROUTE_ADV_COPY_COUNT (FLOOD_DEFAULT_RETRY_COUNT + 1u)
-#define MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS 600u
+#define MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS \
+    (MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS - \
+     OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS)
 #define MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS \
-    ((MESH_GATEWAY_ROUTE_ADV_COPY_COUNT * \
-      OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
-     ((MESH_GATEWAY_ROUTE_ADV_COPY_COUNT - 1u) * \
-      MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS))
-#define MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS \
-    (MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
-     MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS)
-#define MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MAX_MS \
-    (MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS + 200u)
-#define MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES 2u
-#define MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS \
-    (MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
-     MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MAX_MS)
-#define MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS \
-    (MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES * \
-     MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS)
+    MESH_GATEWAY_ROUTE_ADV_WINDOW_MS
 #define MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS \
-    (MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS + \
-     MESH_RADIO_POLITE_RELAY_WAKE_ENVELOPE_MS + \
-     MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS + \
-     MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS + \
-     MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS)
-/* CLAIM follows the enumeration Here-I-Am as a pipelined wave. Its first
- * downstream copy waits for one complete Here-I-Am hop; the full bound also
- * contains CLAIM's diversified first-copy delay and remaining copy burst. */
-#define MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS \
-    MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
+    MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS
+_Static_assert(MESH_GATEWAY_ROUTE_ADV_WINDOW_MS ==
+                   MESH_GATEWAY_ROUTE_ADV_COPY_COUNT *
+                       MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS,
+               "route advertisements must fill three equal strata");
+_Static_assert(OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+                   MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS,
+               "one route advertisement must fit its stratum");
+#define MESH_GATEWAY_ROUTE_ACTIVATION_MAGIC0 0x4du
+#define MESH_GATEWAY_ROUTE_ACTIVATION_MAGIC1 0x57u
+#define MESH_GATEWAY_ROUTE_ACTIVATION_VERSION 1u
+#define MESH_GATEWAY_ROUTE_ACTIVATION_LEN 25u
+/* CLAIM starts only after the complete route-selection wave. Relays need no
+ * per-hop activation lead inside CLAIM itself. */
+#define MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS 0u
 #define MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS \
     (MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS + \
      MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS + \
@@ -384,7 +388,13 @@ struct mesh_outbound {
      * following 64-bit custody IDs do not leave a repeated alignment hole in
      * every queued outbound record.
      */
-    uint32_t handoff_owner_generation;
+    union {
+        uint32_t handoff_owner_generation;
+        /* Gateway route advertisements never carry handoff provenance, so
+         * reuse that word for the root-relative start of this sender's depth
+         * block instead of enlarging every queued outbound record. */
+        uint32_t route_wave_start_ms;
+    };
     uint64_t next_hop_id;
     /*
      * Physical child that handed this transit packet to the local relay.
@@ -395,6 +405,15 @@ struct mesh_outbound {
     uint64_t ingress_previous_hop_id;
     uint32_t queued_at_ms;
     uint32_t earliest_tx_ms;
+};
+
+struct mesh_gateway_route_activation {
+    uint64_t gateway_id;
+    uint32_t gateway_route_seq;
+    uint16_t gateway_epoch;
+    uint16_t relay_window_starts_in_ms;
+    uint16_t route_adv_starts_in_ms;
+    uint8_t sender_depth;
 };
 
 struct mesh_gateway_route_adv_snapshot {
@@ -999,6 +1018,31 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     const struct mesh_relay *relay,
     const struct mesh_gateway_route_adv_snapshot *snapshot,
     struct mesh_outbound *out);
+int mesh_gateway_route_activation_encode(
+    const struct mesh_gateway_route_activation *activation,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *written);
+int mesh_gateway_route_activation_decode(
+    const uint8_t *data,
+    size_t len,
+    struct mesh_gateway_route_activation *activation);
+int mesh_gateway_route_activation_wake_decode(
+    const uint8_t *data,
+    size_t len,
+    struct uwb_wake_claim_frame *claim,
+    struct mesh_gateway_route_activation *activation);
+int mesh_relay_gateway_route_activation_for_outbound(
+    const struct mesh_outbound *route_adv,
+    uint32_t now_ms,
+    struct mesh_gateway_route_activation *activation);
+uint32_t mesh_gateway_route_activation_start_offset_ms(uint64_t sender_id,
+                                                       uint32_t route_seq,
+                                                       uint8_t sender_depth);
+uint32_t mesh_gateway_route_adv_copy_offset_ms(uint64_t sender_id,
+                                               uint32_t route_seq,
+                                               uint8_t sender_depth,
+                                               uint8_t copy_index);
 int mesh_relay_prepare_route_request(struct mesh_relay *relay,
                                      uint64_t target_id,
                                      uint32_t now_ms,
@@ -1337,6 +1381,18 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                      uint32_t now_ms,
                                      uint32_t random_value,
                                      struct mesh_relay_result *result);
+int mesh_relay_handle_rx_with_random_radio(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint8_t link_quality,
+    int8_t link_rsl_dbm,
+    bool link_rsl_valid,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_relay_result *result);
 
 #ifdef __cplusplus
 }

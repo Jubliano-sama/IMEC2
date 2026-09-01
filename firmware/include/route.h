@@ -28,6 +28,17 @@ extern "C" {
 /* Kept for compatibility; route age alone no longer invalidates candidates. */
 #define ROUTE_CANDIDATE_MAX_AGE_MS 30000u
 #define ROUTE_DEDUP_WINDOW_MS 60000u
+/* The production Channel-5 route PHY is 850 kbps with a 1024-symbol
+ * preamble.  Treat the published -101 dBm sensitivity as the decode edge and
+ * require 3 dB of margin before a parent is immediately usable.  A decoded
+ * link below this threshold may still advertise the next discovery depth,
+ * but route selection defers it through the following depth round. */
+#define ROUTE_DWM3000_CH5_850K_SENSITIVITY_DBM (-101)
+#define ROUTE_LINK_REQUIRED_MARGIN_DB 3
+#define ROUTE_LINK_MIN_IMMEDIATE_RSL_DBM \
+    (ROUTE_DWM3000_CH5_850K_SENSITIVITY_DBM + \
+     ROUTE_LINK_REQUIRED_MARGIN_DB)
+#define ROUTE_LINK_QUALITY_FLOOR_RSL_DBM (-108)
 
 enum route_failure_kind {
     ROUTE_FAILURE_GATEWAY_ACK = 1,
@@ -54,6 +65,7 @@ struct route_candidate {
     uint32_t last_seen_ms;
     uint32_t last_success_ms;
     uint32_t hold_down_until_ms;
+    uint32_t provisional_until_ms;
     uint16_t route_cost;
     uint16_t queue_free_hint;
     uint8_t hop_count;
@@ -61,10 +73,13 @@ struct route_candidate {
     uint8_t failure_count;
     uint8_t relay_capacity_state;
     uint8_t channel9_busy_hint;
+    int8_t link_rsl_dbm;
     uint32_t capacity_observed_at_ms;
     uint32_t capacity_valid_until_ms;
     bool capacity_hint_valid;
     bool hold_down_valid;
+    bool provisional_valid;
+    bool link_rsl_valid;
     bool channel9_timing_valid;
     bool valid;
 };
@@ -78,6 +93,8 @@ struct route_table {
 void route_table_init(struct route_table *table, uint32_t current_epoch);
 bool route_epoch_strictly_newer(uint32_t candidate, uint32_t current);
 uint16_t route_candidate_cost(uint8_t hop_count, uint8_t link_quality);
+bool route_link_rsl_immediately_usable(int8_t rsl_dbm);
+uint8_t route_link_quality_from_rsl(int8_t rsl_dbm);
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate);
 int route_select_best(struct route_table *table);

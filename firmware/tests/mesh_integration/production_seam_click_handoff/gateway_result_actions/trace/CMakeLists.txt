@@ -25,6 +25,7 @@ set(TRACE_COMMON_SOURCES
     ${FIRMWARE_ROOT}/src/protocol.c
     ${FIRMWARE_ROOT}/src/route.c
     ${FIRMWARE_ROOT}/src/semantic_digest.c
+    ${FIRMWARE_ROOT}/src/uwb.c
 )
 
 add_library(gateway_trace_common OBJECT ${TRACE_COMMON_SOURCES})

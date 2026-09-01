@@ -78,6 +78,15 @@ def braced_block(source: str, start: int) -> str:
 
 
 class EnumerationRxLifecycleSourceTests(unittest.TestCase):
+    def test_route_capable_anchor_scan_has_no_artificial_startup_blind_period(
+        self,
+    ) -> None:
+        start_scan = function_body(RADIO, "anchor_start_uwb_scan")
+
+        self.assertIn("uint32_t startup_delay_ms = 0u;", start_scan)
+        self.assertNotIn("? 2000u", start_scan)
+        self.assertIn("anchor_uwb_scan_schedule_ms(startup_delay_ms)", start_scan)
+
     def test_gateway_survey_terminal_waits_for_cleanup_ownership(self) -> None:
         cleanup = function_body(APP_SURVEY, "gateway_begin_cleanup_locked")
         due = function_body(
@@ -426,6 +435,15 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("app_survey_anchor_radio_work_pending(", scan)
         self.assertIn("scan_rx_ms = survey_radio_work_wait_ms", scan)
         self.assertIn("survey_radio_work_wait_ms == 0u", scan)
+        self.assertIn(
+            "scan_activity_deadline_ms =\n"
+            "                k_uptime_get() + survey_radio_work_wait_ms",
+            scan,
+        )
+        self.assertIn(
+            "dwm3000_driver_receive_frame_continuous_extend_on_activity_until(",
+            scan,
+        )
         self.assertIn("survey_radio_work_due ||", scan)
 
     def test_relayed_claim_cannot_replace_here_i_am_gateway_parent(self) -> None:
@@ -622,7 +640,12 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT)") :
             apply.index("if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM)")
         ]
-        bind = function_body(RADIO, "anchor_enumeration_rx_bind_claim")
+        bind_definition = RADIO.rindex(
+            "static bool anchor_enumeration_rx_bind_claim("
+        )
+        bind = function_body(
+            RADIO[bind_definition:], "anchor_enumeration_rx_bind_claim"
+        )
         terminate = function_body(
             RADIO, "anchor_enumeration_rx_terminate_claim"
         )
@@ -1208,7 +1231,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         loop = send.index("attempt < attempt_count", attempts)
         select = send.index(
-            "(single_opportunity || compact_primary_control)", loop
+            "ret = (single_opportunity || compact_primary_control)", loop
         )
         one_copy = send.index(
             "app_mesh_flood_send_opportunity", select
@@ -1333,7 +1356,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
         attempts = send.index("attempt_count = 1u + tx.flood_retry_count")
         physical = send.index(
-            "(single_opportunity || compact_primary_control)", attempts
+            "ret = (single_opportunity || compact_primary_control)", attempts
         )
         one_copy = send.index("app_mesh_flood_send_opportunity", physical)
         self.assertLess(attempts, physical)
@@ -1346,19 +1369,22 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         root_classification = send.index(
             "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
         )
-        copy_gap = send.index(
-            "tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV ||",
-            root_classification,
+        route_copy = send.index(
+            "mesh_gateway_route_adv_copy_offset_ms(", root_classification
+        )
+        route_deadline = send.index(
+            "route_adv_copy_deadline_ms =", route_copy
         )
         short_gap = send.index(
-            "MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS + 1u",
-            copy_gap,
+            "MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS + 1u", physical
         )
         relay_guard = send.index(
             "MESH_ENUMERATION_RELAY_COPY_GUARD_MS", short_gap
         )
-        self.assertLess(root_classification, copy_gap)
-        self.assertLess(copy_gap, short_gap)
+        self.assertLess(root_classification, route_copy)
+        self.assertLess(route_copy, route_deadline)
+        self.assertLess(route_deadline, physical)
+        self.assertLess(physical, short_gap)
         self.assertLess(short_gap, relay_guard)
 
         upstream_burst = forward.index(
@@ -1571,7 +1597,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "struct app_mesh_flood_progress attempt_progress = {0}", loop
         )
         enumeration_path = send.index(
-            "(single_opportunity || compact_primary_control)", progress
+            "ret = (single_opportunity || compact_primary_control)", progress
         )
         atomic_path = send.index("atomic_gateway_control ?", enumeration_path)
         bounded = send.index(
@@ -1649,14 +1675,20 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             boost_expression,
         )
 
-        pre = wake.index("if (!atomic_gateway_control)", wake_atomic)
+        pre = wake.index(
+            "if (!atomic_gateway_control && !gateway_route_adv_relay)",
+            wake_atomic,
+        )
         pre_sniff = wake.index(
             'mesh_route_wake_sniff_activity("pre"', pre
         )
         train = wake.index(
-            "if (!atomic_gateway_control && local_can_range_clicks", pre_sniff
+            "if (!atomic_gateway_control && !gateway_route_adv_relay &&",
+            pre_sniff,
         )
         train_listen = wake.index("mesh_route_wake_listen_for_click", train)
+        train_condition = wake[train : wake.index(") {", train)]
+        self.assertIn("local_can_range_clicks", train_condition)
         post = wake.index(
             "if (!atomic_gateway_control && !gateway_route_adv_relay &&",
             train_listen,
@@ -1674,10 +1706,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         retry_limit_expression = wake[
             retry_limit : wake.index(";", retry_limit) + 1
         ]
-        self.assertIn("gateway_route_adv_relay ?", retry_limit_expression)
         self.assertIn(
-            "MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES", retry_limit_expression
+            "APP_WAKE_TRAIN_POLITE_MAX_RETRIES", retry_limit_expression
         )
+        self.assertNotIn("gateway_route_adv_relay", retry_limit_expression)
         retry = wake.index("if (ret == -EAGAIN && c5_activity &&", post_sniff)
         retry_condition = wake[retry : wake.index("{", retry)]
         retry_block = braced_block(wake, retry)
@@ -1763,13 +1795,18 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         scanner = function_body(REPORT_RX, "mesh_uwb_rx_work_handler")
         gateway = scanner[scanner.index("if (mesh_gateway_route_test_role())") :]
 
-        self.assertIn(
-            "gateway_discovery_assignment_state.active", pending
+        collection_live = function_body(
+            GATEWAY_CONTROL,
+            "gateway_enumeration_collection_live_locked",
         )
+
+        self.assertIn("gateway_enumeration_collection_live_locked()", pending)
         self.assertIn(
             "gateway_discovery_assignment_state.response_lane_active",
-            pending,
+            collection_live,
         )
+        self.assertIn("gateway_discovery_assignment_state.active", collection_live)
+        self.assertIn("gateway_enumeration_prearm_valid_locked()", collection_live)
         self.assertEqual(
             unsigned_define(
                 ENUMERATION_LANE, "ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS"
@@ -2610,6 +2647,22 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(bounded_gap, wait)
         self.assertNotIn("PHASE_WALK", wake)
         self.assertNotIn("phase_walk", wake)
+
+    def test_low_duty_scan_admits_combined_route_activation_wake(self) -> None:
+        scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
+        ordinary_decode = scan.index(
+            "decode_ret = uwb_decode_wake_claim(frame, frame_len, &claim)"
+        )
+        combined_decode = scan.index(
+            "mesh_gateway_route_activation_wake_decode(", ordinary_decode
+        )
+        dispatch = scan.index("route_wake_handoff = true", combined_decode)
+
+        # The DWM low-duty owner sees the complete 74-byte combined frame.
+        # It must validate the 49-byte wake prefix plus activation suffix
+        # before deciding whether to hand the frame to the mesh route owner.
+        self.assertLess(ordinary_decode, combined_decode)
+        self.assertLess(combined_decode, dispatch)
 
 
 if __name__ == "__main__":

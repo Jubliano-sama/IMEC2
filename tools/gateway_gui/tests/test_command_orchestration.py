@@ -20,6 +20,7 @@ from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_CLEAR_ROUTE,
     CMD_FORCE_REDISCOVERY,
+    CMD_REBOOT,
     GATEWAY_COMMAND_EVENT_FLAG_REPLAY,
     GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
 )
@@ -357,6 +358,26 @@ class GatewayCommandOrchestratorTests(unittest.TestCase):
         self.assertTrue(negative.completed)
         self.assertEqual(negative.phase, "preflight")
         self.assertFalse(self.orchestrator.active)
+
+    def test_reboot_success_result_is_terminal_without_typed_event(self) -> None:
+        reboot = dispatch(CMD_REBOOT, 3, 0x202, 4)
+        plan = GatewayCommandPlan.user_triggered(reboot)
+
+        self.assertEqual(self.orchestrator.begin(plan, now=0.0), reboot)
+        completed = self.orchestrator.observe_command_result(
+            command_id=CMD_REBOOT,
+            host_session_id=reboot.session_id,
+            host_sequence=reboot.sequence,
+            command_status=0,
+            now=0.5,
+        )
+
+        self.assertTrue(completed.matched)
+        self.assertTrue(completed.completed)
+        self.assertEqual(completed.outcome, "complete")
+        self.assertEqual(completed.phase, "target")
+        self.assertFalse(self.orchestrator.active)
+        self.assertIsNone(self.tracker.pending)
 
     def test_timeout_and_disconnect_clear_the_whole_operation(self) -> None:
         self.orchestrator.begin(self.plan, now=0.0)

@@ -168,7 +168,7 @@ static bool wake_train_has_contained_claim(uint64_t phase_us,
                 }
             }
         }
-        tx_us += airtime_us + jitter_us;
+        tx_us += airtime_us + MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US + jitter_us;
     }
     return false;
 }
@@ -176,16 +176,18 @@ static bool wake_train_has_contained_claim(uint64_t phase_us,
 static bool enumeration_activation_contains_claim_and_followup(
     uint64_t phase_us)
 {
-    const uint64_t claim_airtime_us = dwm3000_timing_airtime_us_ceil(
-        DWM3000_TIMING_PHY_CH5_WAKE, UWB_WAKE_CLAIM_LEN);
+    const uint64_t activation_airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE,
+        UWB_WAKE_CLAIM_LEN + MESH_GATEWAY_ROUTE_ACTIVATION_LEN);
     const uint64_t claim_preamble_us = dwm3000_timing_rctu_to_us_ceil(
         dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
     const uint64_t control_airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_MESH_CONTROL, UWB_MESH_MAX_FRAME_LEN);
     const uint64_t control_prepare_us = runtime_prepare_rx_us(
         DWM3000_TIMING_PHY_CH5_MESH_CONTROL);
-    const uint64_t claim_spacing_us = claim_airtime_us +
-        UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US;
+    const uint64_t claim_spacing_us = activation_airtime_us +
+        MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+        MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US;
     const uint64_t train_end_us =
         (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS * 1000u;
     const struct interval control = {
@@ -223,9 +225,9 @@ static bool enumeration_activation_contains_claim_and_followup(
                 preamble.start_us < rx.end_us &&
                 preamble.end_us > rx.start_us) {
                 const struct interval listener = {
-                    .start_us = claim_start_us + claim_airtime_us +
+                    .start_us = claim_start_us + activation_airtime_us +
                                 control_prepare_us,
-                    .end_us = claim_start_us + claim_airtime_us +
+                    .end_us = claim_start_us + activation_airtime_us +
                               (uint64_t)
                                   discovery_assignment_control_listener_duration_ms(
                                       1u) * 1000u,
@@ -428,12 +430,14 @@ static void test_claim_phase_sweep(void)
 
 static void test_enumeration_activation_phase_sweep(void)
 {
-    CHECK(2u * ENUMERATION_SCAN_START_TO_START_US <
+    CHECK(ENUMERATION_SCAN_START_TO_START_US <
               (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS *
                   1000u,
-          "enumeration activation train no longer covers two delayed scans");
-    CHECK(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS == 1000u,
-          "enumeration activation no longer uses the protocol maximum");
+          "enumeration activation train no longer covers every scan phase");
+    CHECK(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS ==
+              MESH_RADIO_WAKE_TRAIN_MS &&
+              MESH_RADIO_WAKE_TRAIN_MS == 500u,
+          "Here-I-Am and ordinary wake trains no longer share 500 ms");
 
     for (uint64_t phase_us = 0u;
          phase_us < ENUMERATION_SCAN_START_TO_START_US;
@@ -448,13 +452,13 @@ static void test_depth_aware_enumeration_control_listener(void)
     const uint32_t old_fixed_listener_ms = 2000u;
     uint32_t previous_ms = 0u;
 
-    CHECK(discovery_assignment_control_listener_duration_ms(1u) == 3750u,
+    CHECK(discovery_assignment_control_listener_duration_ms(1u) == 3250u,
           "direct control listener lost its two-second safety margin");
-    CHECK(discovery_assignment_control_listener_duration_ms(2u) == 4290u,
+    CHECK(discovery_assignment_control_listener_duration_ms(2u) == 3790u,
           "one-relay control listener does not cover its route depth");
-    CHECK(discovery_assignment_control_listener_duration_ms(3u) == 4830u,
+    CHECK(discovery_assignment_control_listener_duration_ms(3u) == 4330u,
           "two-relay control listener does not cover F2F1D");
-    CHECK(discovery_assignment_control_listener_duration_ms(0u) == 7530u,
+    CHECK(discovery_assignment_control_listener_duration_ms(0u) == 7030u,
           "unknown route depth did not fail safe to the maximum window");
     CHECK(old_fixed_listener_ms <
               MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
@@ -530,34 +534,53 @@ static void test_depth_aware_survey_control_schedule(void)
     }
 }
 
-static void test_enumeration_claim_preserves_pipelined_activation_lead(void)
+static void test_route_wave_depths_are_non_overlapping(void)
 {
-    const uint32_t root_lead_ms =
-        MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
-        FLOOD_POST_ROOT_GUARD_MS;
+    CHECK(MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS == 2500u,
+          "activation start window changed");
+    CHECK(MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS == 500u,
+          "activation train changed");
+    CHECK(MESH_GATEWAY_ROUTE_ADV_WINDOW_MS == 1500u,
+          "Here-I-Am selection window changed");
+    CHECK(MESH_GATEWAY_ROUTE_ADV_COPY_COUNT == 3u,
+          "Here-I-Am must have exactly three short copies");
+    CHECK(MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS == 4500u,
+          "one depth no longer owns exactly 4.5 seconds");
+    CHECK(MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS == 480u,
+          "Here-I-Am jitter no longer leaves airtime inside each stratum");
+    CHECK(MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS +
+              ((MESH_GATEWAY_ROUTE_ADV_COPY_COUNT - 1u) *
+               MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS) +
+              OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+              MESH_GATEWAY_ROUTE_ADV_WINDOW_MS,
+          "the final Here-I-Am can interfere with the next depth");
+    for (uint8_t depth = 0u;
+         depth <= MESH_GATEWAY_ROUTE_MAX_DEPTH;
+         depth++) {
+        uint32_t block_start_ms =
+            (uint32_t)depth * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS;
+        uint32_t latest_activation_end_ms = block_start_ms +
+            MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS +
+            MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS;
+        uint32_t latest_adv_end_ms = block_start_ms +
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+            MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS +
+            ((MESH_GATEWAY_ROUTE_ADV_COPY_COUNT - 1u) *
+             MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS) +
+            OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS;
 
-    CHECK(MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS == 1510u,
-          "one failed Here-I-Am contention attempt lost its full wake bound");
-    CHECK(MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS == 3020u,
-          "Here-I-Am contention no longer charges both failed attempts");
-    CHECK(MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS == 5105u,
-          "Here-I-Am relay-hop bound changed without requalification");
-    CHECK(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 1u,
-          "enumeration root waits for more than one pipelined relay hop");
-    CHECK(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == root_lead_ms,
-          "enumeration root lost its one-hop activation lead");
-    for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
-        uint32_t here_i_am_relay_complete_ms =
-            (uint32_t)depth * MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS;
-        uint32_t earliest_claim_arrival_ms =
-            root_lead_ms +
-            (uint32_t)(depth - 1u) *
-                MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS;
-
-        CHECK(earliest_claim_arrival_ms >=
-                  here_i_am_relay_complete_ms + FLOOD_POST_ROOT_GUARD_MS,
-              "CLAIM overtakes the Here-I-Am relay at a deeper anchor");
+        CHECK(latest_activation_end_ms <=
+                  block_start_ms +
+                      MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS,
+              "activation train escaped its depth envelope");
+        CHECK(latest_adv_end_ms <=
+                  block_start_ms + MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+              "Here-I-Am copies escaped their depth block");
     }
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 10u,
+          "route selection lost the empty weak-link fallback round");
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 45150u,
+          "gateway can advance before every route depth is quiet");
 }
 
 static void test_enumeration_prearm_covers_complete_claim_pipeline(void)
@@ -570,9 +593,9 @@ static void test_enumeration_prearm_covers_complete_claim_pipeline(void)
          depth <= DISCOVERY_ASSIGNMENT_MAX_HOPS;
          depth++) {
         uint64_t latest_claim_arrival_ms =
-            (uint64_t)MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS +
-            FLOOD_POST_ROOT_GUARD_MS +
-            (uint64_t)depth * MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS;
+            (uint64_t)MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS +
+            (uint64_t)depth *
+                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
         uint64_t required_hold_ms = latest_claim_arrival_ms +
             DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS;
 
@@ -584,24 +607,23 @@ static void test_enumeration_prearm_covers_complete_claim_pipeline(void)
     CHECK((uint64_t)DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS ==
               maximum_required_hold_ms,
           "prearm is not derived from the complete maximum-depth CLAIM wave");
-    CHECK(DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS == 51015u,
-          "prearm bound changed without requalifying the F2F1D handoff");
+    CHECK(DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS == 51470u,
+          "prearm bound changed without requalifying the complete route wave");
 }
 
 static void test_enumeration_response_edge_follows_complete_claim_wave(void)
 {
-    CHECK(MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS ==
-              MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS,
-          "CLAIM no longer preserves one complete Here-I-Am hop");
-    CHECK(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 5470u,
+    CHECK(MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS == 0u,
+          "wake-free CLAIM retained a redundant activation delay");
+    CHECK(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 365u,
           "CLAIM relay bound changed without requalifying the response edge");
-    CHECK(ENUMERATION_RESPONSE_START_DELAY_MS == 43950u,
+    CHECK(ENUMERATION_RESPONSE_START_DELAY_MS == 4510u,
           "shared enumeration response edge changed without requalification");
     for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
         uint32_t worst_claim_complete_ms =
             DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
             (uint32_t)depth *
-                MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS;
+                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
 
         CHECK(worst_claim_complete_ms +
                   ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS <=
@@ -709,7 +731,7 @@ int main(void)
           "test is not using the production low-duty scan period");
     CHECK(MESH_RADIO_WAKE_TRAIN_MS == 500u,
           "ordinary production wake trains must remain at least 500 ms");
-    CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 3500u,
+    CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 10000u,
           "test is not using the production scan window");
     CHECK(dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,
                                          UWB_WAKE_CLAIM_LEN) > 0u,
@@ -720,7 +742,7 @@ int main(void)
     test_enumeration_activation_phase_sweep();
     test_depth_aware_enumeration_control_listener();
     test_depth_aware_survey_control_schedule();
-    test_enumeration_claim_preserves_pipelined_activation_lead();
+    test_route_wave_depths_are_non_overlapping();
     test_enumeration_prearm_covers_complete_claim_pipeline();
     test_enumeration_response_edge_follows_complete_claim_wave();
     test_table_is_the_single_terminal_propagation_wave();

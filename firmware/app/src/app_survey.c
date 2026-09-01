@@ -2083,10 +2083,9 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
         anchor_state.action = APP_SURVEY_ANCHOR_ACTION_NEIGHBORS;
         status_debug_printf(
             "DBG_SURVEY_TIMING ph=1 g=%u sl=%u h=%u n=%llu age=%u "
-            "o=%llu d=%u s=%llu in=%lld\n",
+            "d=%u s=%llu in=%lld\n",
             control->identity.generation, own_slot, hop_count,
             (unsigned long long)now_ms, packet->message_age_ms,
-            (unsigned long long)(now_ms - packet->message_age_ms),
             control->start_delay_ms, (unsigned long long)start_ms,
             (long long)starts_in_ms);
         ret = anchor_work_reschedule(start_ms > APP_SURVEY_ANCHOR_PREPARE_MS ?
@@ -2162,10 +2161,9 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
         anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXECUTE;
         status_debug_printf(
             "DBG_SURVEY_TIMING ph=2 g=%u sl=%u h=%u n=%llu age=%u "
-            "o=%llu d=%u s=%llu in=%lld p=%u w=%u\n",
+            "d=%u s=%llu in=%lld p=%u w=%u\n",
             control->identity.generation, anchor_state.own_slot, hop_count,
             (unsigned long long)now_ms, packet->message_age_ms,
-            (unsigned long long)(now_ms - packet->message_age_ms),
             control->plan.execution_start_delay_ms,
             (unsigned long long)start_ms, (long long)starts_in_ms,
             control->plan.pair_count, control->plan.wave_count);

@@ -88,10 +88,9 @@ extern "C" {
  * CLAIM promotes the lease to the operation budget, while an abandoned
  * preflight still returns every anchor to low duty. */
 #define DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS \
-    (MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS + \
-     FLOOD_POST_ROOT_GUARD_MS + \
+    (MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS + \
      (DISCOVERY_ASSIGNMENT_MAX_HOPS * \
-      MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS) + \
+      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS) + \
      DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS)
 /* Keep the reserved CLAIM epoch across the complete 120 s route-refresh
  * budget plus the host's existing five-second terminal-delivery guard. */

@@ -784,7 +784,6 @@ static int test_two_here_i_am_relays_do_not_collision_lock_hidden_child(void)
     struct mesh_relay_result result_b;
     struct mesh_relay_result result_a_repeat;
     const struct mesh_outbound *forwards[2];
-    const uint64_t relay_ids[2] = {RELAY_A_ID, RELAY_B_ID};
     uint8_t encoded[2][PACKET_EXT_MAX_LEN];
     size_t encoded_len[2] = {0u, 0u};
     uint32_t frame_duration_us[2] = {0u, 0u};
@@ -887,21 +886,21 @@ static int test_two_here_i_am_relays_do_not_collision_lock_hidden_child(void)
                 result_a_repeat.gateway_route_adv.earliest_tx_ms,
             "same node/packet/random input produced a different relay slot");
     REQUIRE(result_a.gateway_route_adv.earliest_tx_ms >=
-                ROUTE_ADV_RECEIVED_AT_MS + MESH_RADIO_WAKE_TRAIN_MS &&
+                    result_a.gateway_route_adv.route_wave_start_ms +
+                        MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS &&
                 result_b.gateway_route_adv.earliest_tx_ms >=
-                ROUTE_ADV_RECEIVED_AT_MS + MESH_RADIO_WAKE_TRAIN_MS,
-            "first typed Here-I-Am starts before a complete relay wake train");
+                    result_b.gateway_route_adv.route_wave_start_ms +
+                        MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS,
+            "first typed Here-I-Am starts before the relay activation envelope");
     delay_a_ms = result_a.gateway_route_adv.earliest_tx_ms -
-                 ROUTE_ADV_RECEIVED_AT_MS - MESH_RADIO_WAKE_TRAIN_MS;
+                 result_a.gateway_route_adv.route_wave_start_ms -
+                 MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS;
     delay_b_ms = result_b.gateway_route_adv.earliest_tx_ms -
-                 ROUTE_ADV_RECEIVED_AT_MS - MESH_RADIO_WAKE_TRAIN_MS;
-    REQUIRE(delay_a_ms <= MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS &&
-                delay_b_ms <= MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS &&
-                delay_a_ms % MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS ==
-                    0u &&
-                delay_b_ms % MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS ==
-                    0u,
-            "Here-I-Am relay deadlines escaped the production slot grid");
+                 result_b.gateway_route_adv.route_wave_start_ms -
+                 MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS;
+    REQUIRE(delay_a_ms <= MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS &&
+                delay_b_ms <= MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS,
+            "Here-I-Am relay deadlines escaped the 1.5-second window");
     REQUIRE(delay_a_ms != delay_b_ms,
             "distinct relay IDs remained in the same deterministic wake slot");
 
@@ -945,11 +944,17 @@ static int test_two_here_i_am_relays_do_not_collision_lock_hidden_child(void)
             "start RF-hidden low-duty listener");
 
     wake_start_a =
-        (uint64_t)(result_a.gateway_route_adv.earliest_tx_ms -
-                   MESH_RADIO_WAKE_TRAIN_MS) * 1000u;
+        (uint64_t)(result_a.gateway_route_adv.route_wave_start_ms +
+            mesh_gateway_route_activation_start_offset_ms(
+                RELAY_A_ID,
+                result_a.gateway_route_adv.packet.session_id,
+                1u)) * 1000u;
     wake_start_b =
-        (uint64_t)(result_b.gateway_route_adv.earliest_tx_ms -
-                   MESH_RADIO_WAKE_TRAIN_MS) * 1000u;
+        (uint64_t)(result_b.gateway_route_adv.route_wave_start_ms +
+            mesh_gateway_route_activation_start_offset_ms(
+                RELAY_B_ID,
+                result_b.gateway_route_adv.packet.session_id,
+                1u)) * 1000u;
     REQUIRE(schedule_route_adv_wake_train(
                 &world, relay_a, wake_start_a, &wake_end_a) == MESH_SIM_OK,
             "schedule relay A activation train");
@@ -1020,19 +1025,26 @@ static int test_two_here_i_am_relays_do_not_collision_lock_hidden_child(void)
             MESH_SIM_PHY_CHANNEL5_MESH_CONTROL, encoded_len[relay]);
         REQUIRE(frame_duration_us[relay] > 0u,
                 "forwarded Here-I-Am has no modeled airtime relay=%u", relay);
-        control_starts[relay][0] = FIRST_COMMAND_TX_US +
-            (uint64_t)(forwards[relay]->earliest_tx_ms - first_due_ms) *
-                1000u;
-        for (uint8_t copy = 1u;
+        for (uint8_t copy = 0u;
              copy < MESH_GATEWAY_ROUTE_ADV_COPY_COUNT;
              copy++) {
-            uint32_t copy_gap_ms = mesh_flood_copy_diversification_ms(
-                relay_ids[relay], &forwards[relay]->packet, copy) %
-                (MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS + 1u);
+            uint32_t copy_due_ms =
+                forwards[relay]->route_wave_start_ms +
+                MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                mesh_gateway_route_adv_copy_offset_ms(
+                    relay == 0u ? RELAY_A_ID : RELAY_B_ID,
+                    forwards[relay]->packet.session_id,
+                    1u,
+                    copy);
 
-            control_starts[relay][copy] =
-                control_starts[relay][copy - 1u] +
-                frame_duration_us[relay] + (uint64_t)copy_gap_ms * 1000u;
+            control_starts[relay][copy] = FIRST_COMMAND_TX_US +
+                (uint64_t)(copy_due_ms - first_due_ms) * 1000u;
+            REQUIRE(copy_due_ms + OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+                        forwards[relay]->route_wave_start_ms +
+                            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                            ((uint32_t)copy + 1u) *
+                                MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS,
+                    "Here-I-Am copy escaped its 500 ms stratum");
         }
         if (control_starts[relay][0] < rx_start_us) {
             rx_start_us = control_starts[relay][0];

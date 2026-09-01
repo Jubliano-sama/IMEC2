@@ -59,6 +59,9 @@ receive_response = function_body("receive_response")
 continuous_activity = function_body(
     "receive_frame_continuous_extend_on_activity"
 )
+bounded_continuous_activity = function_body(
+    "dwm3000_driver_receive_frame_continuous_extend_on_activity_until"
+)
 finish_abortible_continuous_receive = function_body(
     "finish_abortible_continuous_receive"
 )
@@ -88,6 +91,12 @@ send_anchor_diag_fragment_block = function_body(
 range_initiator = function_body("dwm3000_driver_range_initiator")
 
 assert "DBG_DWM_CH5_RX_HUNT_EMPTY s=%u e=%u" in continuous_activity
+assert continuous_activity.count(
+    "completion_deadline_ms > activity_deadline_ms"
+) == 2
+assert "completion_deadline_ms = activity_deadline_ms" in continuous_activity
+assert "remaining_timeout_ms(activity_deadline_ms)" in bounded_continuous_activity
+assert "acquire_timeout_ms = remaining_ms" in bounded_continuous_activity
 assert_order(
     continuous_activity,
     "hunt_started_ms = k_uptime_get_32()",

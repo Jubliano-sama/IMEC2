@@ -294,6 +294,19 @@ int app_mesh_flood_send_opportunity(
     return app_mesh_flood_send_resume_limit(out, ops, &progress, result, 1u);
 }
 
+int app_mesh_flood_send_opportunity_resume(
+    const struct mesh_outbound *out,
+    const struct app_mesh_flood_ops *ops,
+    struct app_mesh_flood_progress *progress,
+    struct app_mesh_flood_result *result)
+{
+    return app_mesh_flood_send_resume_limit(out,
+                                            ops,
+                                            progress,
+                                            result,
+                                            1u);
+}
+
 void app_mesh_flood_progress_rebase(struct app_mesh_flood_progress *progress,
                                     uint32_t paused_ms)
 {

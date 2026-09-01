@@ -398,13 +398,16 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     size_t raw_len = 0u;
     size_t payload_len;
     uint8_t rx_quality = 0u;
-    int8_t rx_rsl_dbm = 0;
+    int8_t rx_rsl_dbm = DWM3000_RSL_INVALID_DBM;
     int ret;
 
     if (frame == NULL || frame_len == NULL || frame_cap == 0u || timeout_ms == 0u) {
         return -EINVAL;
     }
     *frame_len = 0u;
+    if (rsl_dbm != NULL) {
+        *rsl_dbm = DWM3000_RSL_INVALID_DBM;
+    }
     if (failure != NULL) {
         *failure = DWM3000_RX_FAILURE_NONE;
     }
@@ -534,6 +537,7 @@ static int finish_abortible_continuous_receive(int ret)
 
 static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_ms,
                                                        uint32_t completion_timeout_ms,
+                                                       int64_t activity_deadline_ms,
                                                        uint8_t *frame,
                                                        size_t frame_cap,
                                                        size_t *frame_len,
@@ -548,7 +552,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     size_t raw_len = 0u;
     size_t payload_len;
     uint8_t rx_quality = 0u;
-    int8_t rx_rsl_dbm = 0;
+    int8_t rx_rsl_dbm = DWM3000_RSL_INVALID_DBM;
     int64_t acquire_deadline_ms;
     int64_t completion_deadline_ms = 0;
     uint32_t remaining_ms;
@@ -565,6 +569,9 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
         return -EINVAL;
     }
     *frame_len = 0u;
+    if (rsl_dbm != NULL) {
+        *rsl_dbm = DWM3000_RSL_INVALID_DBM;
+    }
     if (failure != NULL) {
         *failure = DWM3000_RX_FAILURE_NONE;
     }
@@ -642,6 +649,10 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     if (activity_seen) {
         completion_active = true;
         completion_deadline_ms = k_uptime_get() + completion_timeout_ms;
+        if (activity_deadline_ms > 0 &&
+            completion_deadline_ms > activity_deadline_ms) {
+            completion_deadline_ms = activity_deadline_ms;
+        }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=%d status=0x%08x complete=%u\n",
                                 ret,
@@ -706,6 +717,10 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                     completion_active = true;
                     completion_deadline_ms =
                         k_uptime_get() + completion_timeout_ms;
+                    if (activity_deadline_ms > 0 &&
+                        completion_deadline_ms > activity_deadline_ms) {
+                        completion_deadline_ms = activity_deadline_ms;
+                    }
                 }
                 continue;
             }
@@ -739,8 +754,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                          NULL,
                                          NULL,
                                          NULL)) {
-                    dwt_forcetrxoff();
-                    return finish_abortible_continuous_receive(-EIO);
+                    rx_rsl_dbm = DWM3000_RSL_INVALID_DBM;
                 }
             }
             if (quality != NULL) {
@@ -1049,6 +1063,37 @@ int dwm3000_driver_receive_frame_continuous_extend_on_activity(
 {
     return receive_frame_continuous_extend_on_activity(acquire_timeout_ms,
                                                        completion_timeout_ms,
+                                                       0,
+                                                       frame,
+                                                       frame_cap,
+                                                       frame_len,
+                                                       quality,
+                                                       rsl_dbm,
+                                                       failure);
+}
+
+int dwm3000_driver_receive_frame_continuous_extend_on_activity_until(
+    uint32_t acquire_timeout_ms,
+    uint32_t completion_timeout_ms,
+    int64_t activity_deadline_ms,
+    uint8_t *frame,
+    size_t frame_cap,
+    size_t *frame_len,
+    uint8_t *quality,
+    int8_t *rsl_dbm,
+    enum dwm3000_rx_failure *failure)
+{
+    uint32_t remaining_ms = remaining_timeout_ms(activity_deadline_ms);
+
+    if (remaining_ms == 0u) {
+        return -ETIMEDOUT;
+    }
+    if (acquire_timeout_ms > remaining_ms) {
+        acquire_timeout_ms = remaining_ms;
+    }
+    return receive_frame_continuous_extend_on_activity(acquire_timeout_ms,
+                                                       completion_timeout_ms,
+                                                       activity_deadline_ms,
                                                        frame,
                                                        frame_cap,
                                                        frame_len,

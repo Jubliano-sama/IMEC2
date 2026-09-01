@@ -2937,12 +2937,14 @@ static void anchor_reboot_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
-    if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_reboot_pending) {
+    if ((DEVICE_ROLE != ROLE_ANCHOR && DEVICE_ROLE != ROLE_GATEWAY) ||
+        !anchor_reboot_pending) {
         return;
     }
 
     now_ms = k_uptime_get_32();
-    if (mesh_relay_tx_active(&mesh_runtime) &&
+    if (DEVICE_ROLE == ROLE_ANCHOR &&
+        mesh_relay_tx_active(&mesh_runtime) &&
         !uptime_deadline_reached(now_ms, anchor_reboot_deadline_ms)) {
         (void)anchor_ram_owner_work_reschedule(
             &anchor_reboot_work,
@@ -2951,14 +2953,14 @@ static void anchor_reboot_work_handler(struct k_work *work)
         return;
     }
 
-    LOG_INF("anchor rebooting after command-result drain");
+    LOG_INF("device rebooting after command-result drain");
     LOG_PANIC();
     sys_reboot(SYS_REBOOT_COLD);
 }
 
 static int anchor_schedule_reboot_after_command_result(void)
 {
-    if (DEVICE_ROLE != ROLE_ANCHOR) {
+    if (DEVICE_ROLE != ROLE_ANCHOR && DEVICE_ROLE != ROLE_GATEWAY) {
         return -ENOTSUP;
     }
 
@@ -2969,6 +2971,46 @@ static int anchor_schedule_reboot_after_command_result(void)
         K_MSEC(ANCHOR_REBOOT_RESULT_DRAIN_MS),
         "post-result-reboot");
 }
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+static int gateway_accept_local_reboot_command(
+    const struct proto_packet *host_command)
+{
+    uint32_t result_reservation_token;
+    int ret;
+
+    if (host_command == NULL || host_command->dst_id != DEVICE_ID) {
+        return -EINVAL;
+    }
+    result_reservation_token = gateway_command_result_get_dispatch_token();
+    if (result_reservation_token == 0u) {
+        return -EINVAL;
+    }
+
+    /* Arm the delayed reset before publishing success, then cancel that owner
+     * if the reserved result cannot be converted.  The delay gives the BLE
+     * stream a chance to notify the host; the physical disconnect/reconnect is
+     * also the terminal proof of this command. */
+    ret = anchor_schedule_reboot_after_command_result();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gateway_commit_host_command_result_reserved(
+        result_reservation_token,
+        host_command,
+        CMD_REBOOT,
+        COMMAND_OK,
+        0u);
+    if (ret < 0) {
+        anchor_reboot_pending = false;
+        anchor_reboot_deadline_ms = 0u;
+        (void)k_work_cancel_delayable(&anchor_reboot_work);
+        return ret;
+    }
+    LOG_INF("gateway accepted local reboot after host result drain");
+    return 0;
+}
+#endif
 
 static uint16_t anchor_next_heartbeat_seq(void)
 {

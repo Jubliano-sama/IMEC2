@@ -45,6 +45,19 @@ extern "C" {
 #define ENUMERATION_RESPONSE_NO_OFFSET 0xffu
 #define ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS 10u
 #define ENUMERATION_RESPONSE_TX_LATE_GUARD_MS 4u
+#define ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS 100u
+#define ENUMERATION_RESPONSE_HIA_LEAD_DEPTHS 2u
+/* The gateway wake is depth zero.  A depth-one anchor may start its compact
+ * identity block when the HIA front is logically at depth three, and every
+ * deeper source follows the same gateway-relative 4.5 s depth clock. */
+#define ENUMERATION_RESPONSE_HIA_FIRST_DEPTH_START_DELAY_MS \
+    (((ENUMERATION_RESPONSE_HIA_LEAD_DEPTHS + 1u) * \
+      MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS) + \
+     ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS)
+#define ENUMERATION_RESPONSE_HIA_LOCAL_START_DELAY_MS \
+    ((ENUMERATION_RESPONSE_HIA_LEAD_DEPTHS * \
+      MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS) + \
+     ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS)
 /* CLAIM creation is the shared clock edge. The control flood and every
  * pipelined forward must be clear before the first response band starts. */
 /* CLAIM is wake-free, but it follows the Here-I-Am activation wave with one
@@ -53,7 +66,7 @@ extern "C" {
 #define ENUMERATION_RESPONSE_START_DELAY_MS \
     (DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS + \
      (UWB_ENUM_MAX_HOPS * \
-      MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS) + \
+      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS) + \
      ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS)
 
 struct enumeration_response_timing {
@@ -86,10 +99,11 @@ bool enumeration_response_timing_at(
     uint64_t now_ms,
     struct enumeration_response_timing *timing);
 /*
- * Translate the gateway-originated CLAIM schedule into the receiver's uptime
- * domain. packet_age_ms includes every gateway/relay hold. starts_in_ms is
- * deliberately signed: a late deeper-hop CLAIM joins the lane already in
- * progress instead of treating a negative countdown as stale.
+ * Translate the gateway-originated CLAIM schedule into the receiver's local
+ * uptime domain. packet_age_ms includes every gateway/relay hold but is never
+ * compared with local uptime: separately rebooted devices have unrelated
+ * clocks. starts_in_ms is deliberately signed so a late deeper-hop CLAIM can
+ * join a representable lane already in progress.
  */
 bool enumeration_response_claim_start(
     uint64_t now_ms,
@@ -116,6 +130,22 @@ bool enumeration_response_lane_complete_depth(
     uint64_t start_ms,
     uint64_t now_ms,
     uint8_t max_hop_count);
+/* HIA-triggered enumeration uses the same compact BUNDLE/ACK lane, but each
+ * source depth is pinned to the gateway's 4.5 s route-wave clock. start_ms is
+ * the local-time start of first_hop_count's compact source block. Once an
+ * anchor has sent its own identity, the intervening quiet time remains RX. */
+bool enumeration_response_hia_timing_at_depth(
+    uint64_t start_ms,
+    uint64_t now_ms,
+    uint8_t first_hop_count,
+    uint8_t max_hop_count,
+    struct enumeration_response_timing *timing);
+uint32_t enumeration_response_hia_duration_ms(uint8_t first_hop_count,
+                                              uint8_t max_hop_count);
+bool enumeration_response_hia_complete_depth(uint64_t start_ms,
+                                             uint64_t now_ms,
+                                             uint8_t first_hop_count,
+                                             uint8_t max_hop_count);
 
 int enumeration_response_lane_begin(
     struct enumeration_response_lane *lane,

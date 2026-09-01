@@ -129,9 +129,9 @@ class MeshRouteWakeBoostSourceInvariants(unittest.TestCase):
         wake = function_body(
             ROUTE_CONTROL, "mesh_send_route_wake_train_with_duration"
         )
-        self.assertEqual(wake.count("last_claim_sent_ms = k_uptime_get_32()"), 2)
+        self.assertEqual(wake.count("last_claim_sent_ms = k_uptime_get_32()"), 3)
         self.assertEqual(
-            wake.count("first_claim_sent_ms = last_claim_sent_ms"), 2
+            wake.count("first_claim_sent_ms = last_claim_sent_ms"), 3
         )
         trace = wake.index("DBG_WAKE_TRAIN_TIMING")
         release = wake.index("mesh_transport_radio_finish(")

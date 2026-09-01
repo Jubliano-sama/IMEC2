@@ -92,6 +92,95 @@ static void test_same_hop_uses_link_quality(void)
     assert(selected->next_hop_id == 0x03u);
 }
 
+static void test_borderline_direct_waits_for_stronger_relay(void)
+{
+    struct route_table table;
+    struct route_candidate weak_direct =
+        candidate(0x02u, 9u, 0u,
+                  route_link_quality_from_rsl(-99), 1000u);
+    struct route_candidate strong_relay =
+        candidate(0x03u, 9u, 1u,
+                  route_link_quality_from_rsl(-90), 5000u);
+    const struct route_candidate *selected;
+
+    weak_direct.link_rsl_dbm = -99;
+    weak_direct.link_rsl_valid = true;
+    weak_direct.provisional_until_ms = 9000u;
+    weak_direct.provisional_valid = true;
+    strong_relay.link_rsl_dbm = -90;
+    strong_relay.link_rsl_valid = true;
+
+    route_table_init(&table, 9u);
+    assert(route_upsert_candidate(&table, &weak_direct) == PROTO_OK);
+    assert(route_selected(&table) == NULL);
+    assert(route_upsert_candidate(&table, &strong_relay) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == strong_relay.next_hop_id);
+
+    assert(route_select_best_at(&table, 9000u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == strong_relay.next_hop_id);
+}
+
+static void test_borderline_relay_becomes_fallback_after_next_depth(void)
+{
+    struct route_table table;
+    struct route_candidate weak_relay =
+        candidate(0x04u, 11u, 2u,
+                  route_link_quality_from_rsl(-99), UINT32_MAX - 1000u);
+    const struct route_candidate *selected;
+
+    weak_relay.link_rsl_dbm = -99;
+    weak_relay.link_rsl_valid = true;
+    weak_relay.provisional_until_ms = 100u;
+    weak_relay.provisional_valid = true;
+
+    route_table_init(&table, 11u);
+    assert(route_upsert_candidate(&table, &weak_relay) == PROTO_OK);
+    assert(route_selected(&table) == NULL);
+    assert(route_select_best_at(&table, 99u) == PROTO_ERR_NOT_FOUND);
+    assert(route_select_best_at(&table, 100u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == weak_relay.next_hop_id);
+    assert(!selected->provisional_valid);
+}
+
+static void test_strong_direct_still_beats_strong_relay(void)
+{
+    struct route_table table;
+    struct route_candidate direct =
+        candidate(0x05u, 12u, 0u,
+                  route_link_quality_from_rsl(-94), 1000u);
+    struct route_candidate relay =
+        candidate(0x06u, 12u, 1u,
+                  route_link_quality_from_rsl(-85), 1000u);
+    const struct route_candidate *selected;
+
+    direct.link_rsl_dbm = -94;
+    direct.link_rsl_valid = true;
+    relay.link_rsl_dbm = -85;
+    relay.link_rsl_valid = true;
+
+    route_table_init(&table, 12u);
+    assert(route_upsert_candidate(&table, &relay) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &direct) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == direct.next_hop_id);
+}
+
+static void test_rsl_margin_boundary_is_inclusive(void)
+{
+    assert(ROUTE_LINK_MIN_IMMEDIATE_RSL_DBM == -98);
+    assert(route_link_rsl_immediately_usable(-98));
+    assert(!route_link_rsl_immediately_usable(-99));
+    assert(route_link_quality_from_rsl(-108) == 0u);
+    assert(route_link_quality_from_rsl(-98) == 10u);
+}
+
 static void test_epoch_change_invalidates_old_routes(void)
 {
     struct route_table table;
@@ -653,6 +742,10 @@ int main(void)
     test_weighted_cost_prefers_useful_direct_route();
     test_weighted_cost_avoids_unusable_direct_route();
     test_same_hop_uses_link_quality();
+    test_borderline_direct_waits_for_stronger_relay();
+    test_borderline_relay_becomes_fallback_after_next_depth();
+    test_strong_direct_still_beats_strong_relay();
+    test_rsl_margin_boundary_is_inclusive();
     test_epoch_change_invalidates_old_routes();
     test_epoch_serial_order_accepts_wrap_and_rejects_ambiguity();
     test_last_success_tie_break_survives_uptime_wrap();

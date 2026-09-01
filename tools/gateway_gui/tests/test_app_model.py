@@ -26,6 +26,7 @@ from tools.gateway_gui.diagnostic_models import CommandTimelineModel
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
+    CMD_REBOOT,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     FLAG_GATEWAY_ACK_REQUIRED,
@@ -112,6 +113,27 @@ def assignment_phase_packet(phase: int, epoch: int):
         payload=bytes(payload),
     )
     return parse_cobs_packet(frame)
+
+
+def reboot_result_packet(
+    *, session_id: int, seq: int, status: int = 0, reason: int = 0
+) -> Packet:
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_REBOOT.to_bytes(2, "little"))
+    append_tlv(payload, TLV_COMMAND_STATUS, status.to_bytes(2, "little"))
+    append_tlv(payload, TLV_REASON, bytes((reason,)))
+    return parse_cobs_packet(
+        encode_cobs_packet(
+            msg_type=MSG_COMMAND_RESULT,
+            flags=0,
+            src_id=0x9999888877776666,
+            dst_id=DEFAULT_HOST_ID,
+            session_id=session_id,
+            seq=seq,
+            ttl=1,
+            payload=bytes(payload),
+        )
+    )
 
 
 class AppModelTests(unittest.TestCase):
@@ -1228,6 +1250,126 @@ class AppModelTests(unittest.TestCase):
         frame, label = gui.transport.send_frame.call_args[0]
         self.assertEqual(label, "Reboot gateway board")
         self.assertIn("reboot command to gateway board", gui.status_text.get())
+        self.assertIsNotNone(gui.command_request_tracker.pending)
+        assert gui.command_request_tracker.pending is not None
+        self.assertEqual(
+            gui._expected_gateway_reboot_identity,
+            (
+                gui.command_request_tracker.pending.host_session_id,
+                gui.command_request_tracker.pending.host_sequence,
+            ),
+        )
+
+    def test_reboot_result_completes_command_without_typed_event(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.command_request_tracker = GatewayCommandRequestTracker()
+        gui.command_orchestrator = GatewayCommandOrchestrator(
+            gui.command_request_tracker
+        )
+        dispatch = GatewayCommandDispatch(
+            command_kind=3,
+            command_id=CMD_REBOOT,
+            session_id=0x12345,
+            sequence=7,
+            frame=b"reboot",
+            label="Reboot gateway board",
+            timeout_s=5.0,
+            status_text="Rebooting...",
+        )
+        gui.command_orchestrator.begin(
+            GatewayCommandPlan.user_triggered(dispatch), now=0.0
+        )
+        gui._expected_gateway_reboot_identity = (
+            dispatch.session_id,
+            dispatch.sequence,
+        )
+        gui.status_text = FakeVariable("Running")  # type: ignore[assignment]
+        gui._show_error = Mock()  # type: ignore[method-assign]
+        gui._apply_gateway_command_transition = Mock()  # type: ignore[method-assign]
+
+        gui._observe_gateway_command_result(
+            reboot_result_packet(
+                session_id=dispatch.session_id,
+                seq=dispatch.sequence,
+            )
+        )
+
+        self.assertFalse(gui.command_orchestrator.active)
+        gui._show_error.assert_not_called()
+        transition = gui._apply_gateway_command_transition.call_args.args[0]
+        self.assertTrue(transition.completed)
+        self.assertEqual(transition.outcome, "complete")
+        self.assertIn("waiting for its BLE reconnect", gui.status_text.get())
+
+    def test_successful_local_reboot_result_does_not_race_reset_with_receipt(
+        self,
+    ) -> None:
+        gateway_id = 0x9999888877776666
+        session_id = 0x12345
+        sequence = 7
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = gateway_id
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui._append_log = Mock()  # type: ignore[method-assign]
+        gui._expected_gateway_reboot_identity = (session_id, sequence)
+        packet = replace(
+            reboot_result_packet(session_id=session_id, seq=sequence),
+            transport="gateway-stream-v1",
+            raw_transport=b"reboot-result-stream",
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=gateway_id,
+            dst_id=gateway_id,
+            ttl=None,
+            age_ms=0,
+            age_kind="gateway_queue_age_ms",
+        )
+        delivery = SimpleNamespace(
+            disposition=gateway_app.PacketDisposition.NEW,
+            cached=True,
+        )
+
+        receipt = gui._maybe_send_gateway_host_receipt(packet, delivery)
+
+        self.assertIsNone(receipt)
+        gui.transport.send_frame.assert_not_called()
+        self.assertIn(
+            "physical reset",
+            gui._append_log.call_args.args[1],
+        )
+
+    def test_requested_reboot_disconnect_is_logged_not_reported_as_error(
+        self,
+    ) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui._expected_gateway_reboot_identity = (0x12345, 7)
+        gui.connection_state = "reconnecting"
+        gui.status_text = FakeVariable("Running")  # type: ignore[assignment]
+        gui._append_log = Mock()  # type: ignore[method-assign]
+
+        handled = gui._handle_expected_gateway_reboot_transport_error(
+            "Gateway link dropped; auto-reconnecting to AA:BB:CC:DD:EE:FF..."
+        )
+
+        self.assertTrue(handled)
+        gui._append_log.assert_called_once()
+        self.assertEqual(gui._append_log.call_args.args[0], "info")
+        self.assertIn("waiting for BLE reconnection", gui.status_text.get())
+        self.assertEqual(gui._expected_gateway_reboot_identity, (0x12345, 7))
+
+        handled = gui._handle_expected_gateway_reboot_transport_error(
+            "Attempting automatic reconnect to AA:BB:CC:DD:EE:FF..."
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(gui._expected_gateway_reboot_identity, (0x12345, 7))
+        self.assertEqual(
+            gui._append_log.call_args_list[-1].args,
+            (
+                "info",
+                "Attempting automatic reconnect to AA:BB:CC:DD:EE:FF...",
+            ),
+        )
 
     def test_anchor_count_hint_defaults_to_unknown(self) -> None:
         self.assertEqual(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT, "")

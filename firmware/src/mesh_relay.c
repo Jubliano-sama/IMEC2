@@ -6,6 +6,7 @@
 #include "gateway_command.h"
 #include "mesh.h"
 #include "semantic_digest.h"
+#include "uwb.h"
 
 #include <string.h>
 
@@ -31,6 +32,124 @@ _Static_assert(MESH_RELAY_GATEWAY_ACK_CONFIRM_REPLAY_MS +
                    MESH_RELAY_GATEWAY_ACK_RECOVERY_QUARANTINE_MS <=
                    INT32_MAX,
                "gateway ACK-confirm recovery must remain wrap-safe");
+
+int mesh_gateway_route_activation_encode(
+    const struct mesh_gateway_route_activation *activation,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *written)
+{
+    uint16_t crc;
+
+    if (activation == NULL || out == NULL || written == NULL ||
+        out_cap < MESH_GATEWAY_ROUTE_ACTIVATION_LEN) {
+        return PROTO_ERR_ARG;
+    }
+    if (activation->gateway_id == 0u ||
+        activation->gateway_route_seq == 0u ||
+        activation->gateway_epoch == 0u ||
+        activation->sender_depth >= MESH_ROUTE_PATH_MAX_NODES ||
+        activation->route_adv_starts_in_ms >
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS ||
+        activation->relay_window_starts_in_ms >
+            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS ||
+        activation->relay_window_starts_in_ms <
+            activation->route_adv_starts_in_ms) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    out[0] = MESH_GATEWAY_ROUTE_ACTIVATION_MAGIC0;
+    out[1] = MESH_GATEWAY_ROUTE_ACTIVATION_MAGIC1;
+    out[2] = MESH_GATEWAY_ROUTE_ACTIVATION_VERSION;
+    out[3] = MESH_GATEWAY_ROUTE_ACTIVATION_LEN;
+    proto_put_u64_le(&out[4], activation->gateway_id);
+    proto_put_u32_le(&out[12], activation->gateway_route_seq);
+    proto_put_u16_le(&out[16], activation->gateway_epoch);
+    out[18] = activation->sender_depth;
+    proto_put_u16_le(&out[19], activation->relay_window_starts_in_ms);
+    proto_put_u16_le(&out[21], activation->route_adv_starts_in_ms);
+    crc = proto_crc16_ccitt_false(out,
+                                  MESH_GATEWAY_ROUTE_ACTIVATION_LEN -
+                                      sizeof(uint16_t));
+    proto_put_u16_le(&out[23], crc);
+    *written = MESH_GATEWAY_ROUTE_ACTIVATION_LEN;
+    return PROTO_OK;
+}
+
+int mesh_gateway_route_activation_decode(
+    const uint8_t *data,
+    size_t len,
+    struct mesh_gateway_route_activation *activation)
+{
+    struct mesh_gateway_route_activation decoded;
+    uint16_t expected_crc;
+
+    if (data == NULL || activation == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (len != MESH_GATEWAY_ROUTE_ACTIVATION_LEN ||
+        data[0] != MESH_GATEWAY_ROUTE_ACTIVATION_MAGIC0 ||
+        data[1] != MESH_GATEWAY_ROUTE_ACTIVATION_MAGIC1 ||
+        data[2] != MESH_GATEWAY_ROUTE_ACTIVATION_VERSION ||
+        data[3] != MESH_GATEWAY_ROUTE_ACTIVATION_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+    expected_crc = proto_get_u16_le(&data[23]);
+    if (expected_crc !=
+        proto_crc16_ccitt_false(data, len - sizeof(uint16_t))) {
+        return PROTO_ERR_BAD_CRC;
+    }
+
+    memset(&decoded, 0, sizeof(decoded));
+    decoded.gateway_id = proto_get_u64_le(&data[4]);
+    decoded.gateway_route_seq = proto_get_u32_le(&data[12]);
+    decoded.gateway_epoch = proto_get_u16_le(&data[16]);
+    decoded.sender_depth = data[18];
+    decoded.relay_window_starts_in_ms = proto_get_u16_le(&data[19]);
+    decoded.route_adv_starts_in_ms = proto_get_u16_le(&data[21]);
+    if (decoded.gateway_id == 0u || decoded.gateway_route_seq == 0u ||
+        decoded.gateway_epoch == 0u ||
+        decoded.sender_depth >= MESH_ROUTE_PATH_MAX_NODES ||
+        decoded.route_adv_starts_in_ms >
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS ||
+        decoded.relay_window_starts_in_ms >
+            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS ||
+        decoded.relay_window_starts_in_ms <
+            decoded.route_adv_starts_in_ms) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *activation = decoded;
+    return PROTO_OK;
+}
+
+int mesh_gateway_route_activation_wake_decode(
+    const uint8_t *data,
+    size_t len,
+    struct uwb_wake_claim_frame *claim,
+    struct mesh_gateway_route_activation *activation)
+{
+    int ret;
+
+    if (data == NULL || claim == NULL || activation == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (len < UWB_WAKE_CLAIM_LEN +
+                  MESH_GATEWAY_ROUTE_ACTIVATION_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = uwb_decode_wake_claim(data, UWB_WAKE_CLAIM_LEN, claim);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if ((claim->flags & FLAG_ROUTE_SETUP) == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return mesh_gateway_route_activation_decode(
+        &data[UWB_WAKE_CLAIM_LEN],
+        MESH_GATEWAY_ROUTE_ACTIVATION_LEN,
+        activation);
+}
 
 #define LEGACY_MSG_ROUTE_STATUS 0x34u
 #define MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION 1u
@@ -766,6 +885,58 @@ static uint32_t gateway_route_adv_slot_seed(uint64_t gateway_id,
     seed ^= (uint32_t)gateway_id;
     seed ^= (uint32_t)(gateway_id >> 32);
     return seed == 0u ? 1u : seed;
+}
+
+static uint32_t gateway_route_sender_seed(uint64_t sender_id,
+                                          uint32_t route_seq,
+                                          uint8_t sender_depth)
+{
+    uint32_t seed = route_seq ^ ((uint32_t)sender_depth << 24);
+
+    seed ^= (uint32_t)sender_id;
+    seed ^= (uint32_t)(sender_id >> 32);
+    return mix32(seed == 0u ? 1u : seed);
+}
+
+uint32_t mesh_gateway_route_activation_start_offset_ms(uint64_t sender_id,
+                                                       uint32_t route_seq,
+                                                       uint8_t sender_depth)
+{
+    if (!id_is_unicast(sender_id) || route_seq == 0u ||
+        sender_depth >= MESH_ROUTE_PATH_MAX_NODES) {
+        return 0u;
+    }
+    /* The gateway's first activation frame is the shared timing origin.
+     * Relaying anchors still diversify uniformly inside their depth block. */
+    if (sender_depth == 0u) {
+        return 0u;
+    }
+    return gateway_route_sender_seed(sender_id, route_seq, sender_depth) %
+           (MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS + 1u);
+}
+
+uint32_t mesh_gateway_route_adv_copy_offset_ms(uint64_t sender_id,
+                                               uint32_t route_seq,
+                                               uint8_t sender_depth,
+                                               uint8_t copy_index)
+{
+    uint32_t copy_seed;
+
+    if (!id_is_unicast(sender_id) || route_seq == 0u ||
+        sender_depth >= MESH_ROUTE_PATH_MAX_NODES ||
+        copy_index >= MESH_GATEWAY_ROUTE_ADV_COPY_COUNT) {
+        return 0u;
+    }
+
+    /* Each short copy owns one 500 ms stratum. Mix the copy identity before
+     * reducing it into that stratum so two senders that collide once do not
+     * inherit the same spacing for the remaining copies. */
+    copy_seed = gateway_route_sender_seed(sender_id, route_seq, sender_depth);
+    copy_seed ^= UINT32_C(0x9e3779b9) * ((uint32_t)copy_index + 1u);
+    return ((uint32_t)copy_index *
+            MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS) +
+           (mix32(copy_seed) %
+            (MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS + 1u));
 }
 
 static uint32_t flood_forward_delay_ms(uint64_t local_id,

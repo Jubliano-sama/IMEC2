@@ -103,7 +103,7 @@ class MeshRamRebootContractSourceInvariantTests(unittest.TestCase):
         self.assertIn("mesh_relay_result_bundle_pending", args)
         self.assertNotIn("deferred", args)
 
-    def test_preboot_route_adv_gate_precedes_queue_admission(self) -> None:
+    def test_route_adv_requires_current_local_activation_before_queue_admission(self) -> None:
         declaration = REPORT.index(
             "static bool mesh_queue_from_frame_at_internal("
         )
@@ -115,23 +115,29 @@ class MeshRamRebootContractSourceInvariantTests(unittest.TestCase):
         )
         queue = REPORT[queue_start:queue_end]
         envelope = queue.index("mesh_packet_rx_envelope_validate(")
-        expand = queue.index("received_uptime_ms = mesh_expand_uptime32(")
-        gate = queue.index("app_mesh_rx_policy_postboot_route_adv_fresh(")
+        gate = queue.index("mesh_route_activation_allows_route_adv(")
         valid = queue.index("*valid_mesh_frame = true")
         enqueue = queue.index("k_msgq_put(")
-        self.assertLess(envelope, expand)
-        self.assertLess(expand, gate)
+        self.assertLess(envelope, gate)
         self.assertLess(gate, valid)
         self.assertLess(valid, enqueue)
-        self.assertIn("uint64_t received_uptime_ms", queue)
+        self.assertNotIn("app_mesh_rx_policy_postboot_route_adv_fresh", queue)
+        self.assertNotIn("message_age_ms <=", queue)
 
-    def test_route_adv_age_policy_is_64_bit_and_fail_closed(self) -> None:
-        policy = function_body(
-            RX_POLICY, "app_mesh_rx_policy_postboot_route_adv_fresh"
+    def test_route_adv_activation_gate_uses_local_receipt_and_sender_depth(self) -> None:
+        start = REPORT.rindex(
+            "\nstatic bool mesh_route_activation_allows_route_adv("
         )
-        self.assertIn("uint64_t received_uptime_ms", RX_POLICY)
-        self.assertIn("msg_type != MSG_GATEWAY_ROUTE_ADV", policy)
-        self.assertIn("(uint64_t)message_age_ms <= received_uptime_ms", policy)
+        end = REPORT.index(
+            "\nstatic bool mesh_route_activation_apply_forward_timing(",
+            start,
+        )
+        gate = REPORT[start:end]
+        self.assertIn("mesh_route_activation_find(sender_id", gate)
+        self.assertIn("gateway_route_seq", gate)
+        self.assertIn("received_at_ms", gate)
+        self.assertIn("entry->activation.sender_depth == observed_sender_depth", gate)
+        self.assertNotIn("message_age_ms", gate)
 
     def test_snapshot_helpers_are_explicitly_model_only(self) -> None:
         self.assertIn("Serialization-neutral RAM-model helper", RELAY)

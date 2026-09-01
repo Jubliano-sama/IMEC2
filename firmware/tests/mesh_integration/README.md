@@ -60,7 +60,7 @@ no direct-delivery fallback.
 - a normal click taking an anchor radio slot while transit is attempted,
   followed by origin retry on the still-live negotiated connection without
   route reacquisition;
-- a 3 ms low-duty channel-5 scan observing preamble activity but timing out;
+- a 10 ms low-duty channel-5 scan observing preamble activity but timing out;
 - a fully contained frame decoding successfully;
 - two overlapping transmissions colliding instead of decoding;
 - one joined click chain carrying wake ownership, discovery, schedule, exact-
@@ -81,7 +81,7 @@ no direct-delivery fallback.
 - a safe-boundary runtime ordering check: gateway command, local click, event
   repair, then transit; plus a DS-TWR-owned receiver causing a dropped transit
   opportunity and origin retry on the same negotiated route;
-- a 500 ms channel-5 wake train over four scan phases. The real 3 ms / 380 ms
+- a 500 ms channel-5 wake train over four scan phases. The real 10 ms / 380 ms
   low-duty schedule must see enough preamble to extend that same RX operation
   and accept a valid first-attempt wake claim;
 - 50 deterministic anchor claims, one extended-packet assignment table,

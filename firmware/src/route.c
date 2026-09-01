@@ -33,6 +33,24 @@ uint16_t route_candidate_cost(uint8_t hop_count, uint8_t link_quality)
                       (uint16_t)(100u - link_quality));
 }
 
+bool route_link_rsl_immediately_usable(int8_t rsl_dbm)
+{
+    return rsl_dbm >= ROUTE_LINK_MIN_IMMEDIATE_RSL_DBM;
+}
+
+uint8_t route_link_quality_from_rsl(int8_t rsl_dbm)
+{
+    int16_t quality = (int16_t)rsl_dbm - ROUTE_LINK_QUALITY_FLOOR_RSL_DBM;
+
+    if (quality <= 0) {
+        return 0u;
+    }
+    if (quality >= 100) {
+        return 100u;
+    }
+    return (uint8_t)quality;
+}
+
 static uint16_t candidate_effective_cost(const struct route_candidate *candidate)
 {
     return candidate->route_cost != 0u ?
@@ -46,6 +64,20 @@ static bool candidate_in_hold_down(const struct route_candidate *candidate, uint
            !deadline_reached(now_ms, candidate->hold_down_until_ms);
 }
 
+static bool candidate_is_provisional(const struct route_candidate *candidate,
+                                     uint32_t now_ms)
+{
+    return candidate->provisional_valid &&
+           !deadline_reached(now_ms, candidate->provisional_until_ms);
+}
+
+static bool candidate_link_immediately_usable(
+    const struct route_candidate *candidate)
+{
+    return !candidate->link_rsl_valid ||
+           route_link_rsl_immediately_usable(candidate->link_rsl_dbm);
+}
+
 static void normalize_candidate_hold_down(struct route_candidate *candidate,
                                           uint32_t now_ms)
 {
@@ -53,6 +85,16 @@ static void normalize_candidate_hold_down(struct route_candidate *candidate,
         deadline_reached(now_ms, candidate->hold_down_until_ms)) {
         candidate->hold_down_until_ms = 0u;
         candidate->hold_down_valid = false;
+    }
+}
+
+static void normalize_candidate_provisional(struct route_candidate *candidate,
+                                            uint32_t now_ms)
+{
+    if (candidate->provisional_valid &&
+        deadline_reached(now_ms, candidate->provisional_until_ms)) {
+        candidate->provisional_until_ms = 0u;
+        candidate->provisional_valid = false;
     }
 }
 
@@ -116,9 +158,16 @@ static bool candidate_is_better(const struct route_candidate *candidate,
     bool selected_held;
     uint8_t candidate_capacity;
     uint8_t selected_capacity;
+    bool candidate_link_usable;
+    bool selected_link_usable;
 
     if (selected == NULL) {
         return true;
+    }
+    candidate_link_usable = candidate_link_immediately_usable(candidate);
+    selected_link_usable = candidate_link_immediately_usable(selected);
+    if (candidate_link_usable != selected_link_usable) {
+        return candidate_link_usable;
     }
     candidate_cost = candidate_effective_cost(candidate);
     selected_cost = candidate_effective_cost(selected);
@@ -238,10 +287,14 @@ int route_select_best_at(struct route_table *table, uint32_t now_ms)
         struct route_candidate *candidate = &table->candidates[i];
 
         normalize_candidate_hold_down(candidate, now_ms);
+        normalize_candidate_provisional(candidate, now_ms);
         if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
             continue;
         }
         if (candidate_in_hold_down(candidate, now_ms)) {
+            continue;
+        }
+        if (candidate_is_provisional(candidate, now_ms)) {
             continue;
         }
         if (candidate_is_better(candidate, selected, now_ms)) {
@@ -326,7 +379,12 @@ int route_upsert_candidate(struct route_table *table,
     }
 
     table->candidates[index] = stored;
-    return route_select_best_at(table, now_ms);
+    /* A below-margin candidate is valid evidence even while selection defers
+     * it through the following depth round. Storing that fallback must not be
+     * reported as a malformed route advertisement merely because no parent
+     * is selectable yet. */
+    (void)route_select_best_at(table, now_ms);
+    return PROTO_OK;
 }
 
 const struct route_candidate *route_selected(const struct route_table *table)

@@ -249,5 +249,6 @@ int app_anchor_start_gateway_role(void)
         LOG_ERR("gateway ACK store attach failed: %d", ret);
         return ret;
     }
+    k_work_init_delayable(&anchor_reboot_work, anchor_reboot_work_handler);
     return 0;
 }

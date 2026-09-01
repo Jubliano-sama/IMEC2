@@ -2022,20 +2022,61 @@ static void anchor_enumeration_rx_clear_phase_identities(void)
     anchor_enumeration_rx_clear_table_identity();
 }
 
+static int anchor_enumeration_rx_begin(uint32_t epoch,
+                                       uint32_t operation_budget_ms,
+                                       bool allow_supersede);
+static bool anchor_enumeration_rx_bind_claim(uint32_t epoch,
+                                             uint32_t claim_session_id,
+                                             uint32_t claim_command_seq);
+
 static int anchor_enumeration_rx_prearm(uint32_t epoch,
                                         uint32_t hold_ms,
                                         uint32_t operation_budget_ms,
-                                        bool survey_follows)
+                                        bool survey_follows,
+                                        uint32_t local_depth_block_start_ms,
+                                        uint8_t observed_hop_count)
 {
+    const struct route_candidate *selected;
     enum protocol_rx_begin_result result;
+    uint64_t local_depth_block_start_64;
+    uint64_t deepest_source_start_ms;
+    uint64_t provisional_source_start_ms;
+    int32_t block_starts_in_ms;
+    uint8_t selected_hop_count = 0u;
     uint32_t now_ms;
+    uint64_t now_ms_64;
     k_spinlock_key_t key;
+    int ret;
 
     if (epoch == 0u || hold_ms == 0u || hold_ms > INT32_MAX ||
-        operation_budget_ms == 0u || operation_budget_ms > INT32_MAX) {
+        operation_budget_ms == 0u || operation_budget_ms > INT32_MAX ||
+        observed_hop_count == 0u ||
+        observed_hop_count > UWB_ENUM_MAX_HOPS) {
         return -EINVAL;
     }
     now_ms = k_uptime_get_32();
+    now_ms_64 = (uint64_t)k_uptime_get();
+    block_starts_in_ms =
+        (int32_t)(local_depth_block_start_ms - now_ms);
+    if (block_starts_in_ms >= 0) {
+        local_depth_block_start_64 =
+            now_ms_64 + (uint32_t)block_starts_in_ms;
+    } else {
+        uint32_t elapsed_ms = (uint32_t)(-block_starts_in_ms);
+
+        if ((uint64_t)elapsed_ms > now_ms_64) {
+            return -ESTALE;
+        }
+        local_depth_block_start_64 = now_ms_64 - elapsed_ms;
+    }
+    deepest_source_start_ms = local_depth_block_start_64 +
+        ((uint32_t)(UWB_ENUM_MAX_HOPS - observed_hop_count) +
+         ENUMERATION_RESPONSE_HIA_LEAD_DEPTHS) *
+            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS +
+        ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS;
+    provisional_source_start_ms = deepest_source_start_ms -
+        (uint32_t)(UWB_ENUM_MAX_HOPS - observed_hop_count) *
+            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS;
     key = k_spin_lock(&anchor_enumeration_rx_lock);
     /* Enumeration epochs correlate one exchange; they do not order gateway
      * authority. Any different nonzero epoch replaces the active prearm,
@@ -2073,13 +2114,54 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
         result != PROTOCOL_RX_BEGIN_DUPLICATE) {
         return result == PROTOCOL_RX_BEGIN_BUSY ? -EBUSY : -EINVAL;
     }
+    ret = anchor_enumeration_rx_begin(epoch, operation_budget_ms, true);
+    if (ret < 0 ||
+        !anchor_enumeration_rx_bind_claim(epoch, epoch, epoch)) {
+        return ret < 0 ? ret : -ESTALE;
+    }
+    selected = mesh_relay_current_gateway_route(&mesh_runtime, now_ms);
+    if (selected != NULL && selected->next_hop_id != 0u &&
+        selected->hop_count < UWB_ENUM_MAX_HOPS) {
+        selected_hop_count = (uint8_t)(selected->hop_count + 1u);
+    }
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    if (anchor_enumeration_response_config.active &&
+        anchor_enumeration_response_config.epoch == epoch &&
+        anchor_enumeration_response_config.hia_pipeline &&
+        anchor_enumeration_response_config.hia_deepest_source_start_ms !=
+            deepest_source_start_ms) {
+        k_mutex_unlock(&anchor_discovery_claim_mutex);
+        return -ESTALE;
+    }
+    anchor_enumeration_response_config =
+        (struct anchor_enumeration_response_config) {
+            .start_ms = selected_hop_count == 0u ?
+                provisional_source_start_ms :
+                deepest_source_start_ms -
+                    (uint32_t)(UWB_ENUM_MAX_HOPS - selected_hop_count) *
+                        MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+            .hia_deepest_source_start_ms = deepest_source_start_ms,
+            .parent_id = selected_hop_count == 0u ? 0u :
+                selected->next_hop_id,
+            .epoch = epoch,
+            .hop_count = selected_hop_count == 0u ? observed_hop_count :
+                selected_hop_count,
+            .max_hop_count = UWB_ENUM_MAX_HOPS,
+            .hia_pipeline = true,
+            .active = true,
+        };
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
     status_debug_printf(
-        "DBG_ENUM_RX_PREARM epoch=%u hold=%u budget=%u survey=%u duplicate=%u\n",
+        "DBG_ENUM_RX_PREARM epoch=%u hold=%u budget=%u survey=%u duplicate=%u observed_hop=%u selected_hop=%u compact_start=%llu deepest_start=%llu\n",
         epoch,
         hold_ms,
         operation_budget_ms,
         survey_follows ? 1u : 0u,
-        result == PROTOCOL_RX_BEGIN_DUPLICATE ? 1u : 0u);
+        result == PROTOCOL_RX_BEGIN_DUPLICATE ? 1u : 0u,
+        observed_hop_count,
+        selected_hop_count,
+        (unsigned long long)anchor_enumeration_response_config.start_ms,
+        (unsigned long long)deepest_source_start_ms);
     (void)anchor_uwb_scan_schedule_ms(0u);
     return 0;
 }
@@ -2610,20 +2692,37 @@ static bool anchor_compact_enumeration_window(
          anchor_enumeration_response_config.parent_id == expected->parent_id &&
          anchor_enumeration_response_config.hop_count == expected->hop_count &&
          anchor_enumeration_response_config.max_hop_count ==
-             expected->max_hop_count);
+             expected->max_hop_count &&
+         anchor_enumeration_response_config.hia_pipeline ==
+             expected->hia_pipeline &&
+         anchor_enumeration_response_config.hia_deepest_source_start_ms ==
+             expected->hia_deepest_source_start_ms);
     if (anchor_enumeration_response_config.active && matches &&
-        enumeration_response_lane_complete_depth(
-            anchor_enumeration_response_config.start_ms,
-            now_ms,
-            anchor_enumeration_response_config.max_hop_count)) {
+        (anchor_enumeration_response_config.hia_pipeline ?
+            enumeration_response_hia_complete_depth(
+                anchor_enumeration_response_config.start_ms,
+                now_ms,
+                anchor_enumeration_response_config.hop_count,
+                anchor_enumeration_response_config.max_hop_count) :
+            enumeration_response_lane_complete_depth(
+                anchor_enumeration_response_config.start_ms,
+                now_ms,
+                anchor_enumeration_response_config.max_hop_count))) {
         anchor_enumeration_response_config.active = false;
     }
     active = anchor_enumeration_response_config.active && matches &&
-        enumeration_response_timing_at_depth(
-            anchor_enumeration_response_config.start_ms,
-            now_ms,
-            anchor_enumeration_response_config.max_hop_count,
-            &timing);
+        (anchor_enumeration_response_config.hia_pipeline ?
+            enumeration_response_hia_timing_at_depth(
+                anchor_enumeration_response_config.start_ms,
+                now_ms,
+                anchor_enumeration_response_config.hop_count,
+                anchor_enumeration_response_config.max_hop_count,
+                &timing) :
+            enumeration_response_timing_at_depth(
+                anchor_enumeration_response_config.start_ms,
+                now_ms,
+                anchor_enumeration_response_config.max_hop_count,
+                &timing));
     if (active && timing_out != NULL) {
         *timing_out = timing;
     }
@@ -2674,13 +2773,40 @@ static int anchor_compact_enumeration_lane_resume(
 }
 #endif
 
+static void anchor_compact_enumeration_refresh_hia_route_locked(
+    uint64_t now_ms)
+{
+    const struct route_candidate *selected;
+    uint8_t hop_count;
+
+    if (!anchor_enumeration_response_config.active ||
+        !anchor_enumeration_response_config.hia_pipeline) {
+        return;
+    }
+    selected = mesh_relay_current_gateway_route(
+        &mesh_runtime, (uint32_t)now_ms);
+    if (selected == NULL || selected->next_hop_id == 0u ||
+        selected->hop_count >= UWB_ENUM_MAX_HOPS) {
+        return;
+    }
+    hop_count = (uint8_t)(selected->hop_count + 1u);
+    anchor_enumeration_response_config.parent_id = selected->next_hop_id;
+    anchor_enumeration_response_config.hop_count = hop_count;
+    anchor_enumeration_response_config.start_ms =
+        anchor_enumeration_response_config.hia_deepest_source_start_ms -
+        (uint32_t)(UWB_ENUM_MAX_HOPS - hop_count) *
+            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS;
+}
+
 static bool anchor_compact_enumeration_prepare_window(uint64_t now_ms)
 {
     uint64_t prepare_start_ms;
     bool active = false;
 
     k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    anchor_compact_enumeration_refresh_hia_route_locked(now_ms);
     if (anchor_enumeration_response_config.active &&
+        anchor_enumeration_response_config.parent_id != 0u &&
         now_ms < anchor_enumeration_response_config.start_ms) {
         prepare_start_ms =
             anchor_enumeration_response_config.start_ms >
@@ -2700,7 +2826,9 @@ static uint32_t anchor_compact_enumeration_ms_until_prepare(uint64_t now_ms)
     uint32_t remaining_ms = 0u;
 
     k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    anchor_compact_enumeration_refresh_hia_route_locked(now_ms);
     if (anchor_enumeration_response_config.active &&
+        anchor_enumeration_response_config.parent_id != 0u &&
         now_ms < anchor_enumeration_response_config.start_ms) {
         prepare_start_ms =
             anchor_enumeration_response_config.start_ms >
@@ -2900,6 +3028,8 @@ static int anchor_run_compact_enumeration_lane(
     int ret;
 
     k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    anchor_compact_enumeration_refresh_hia_route_locked(
+        (uint64_t)k_uptime_get());
     config = anchor_enumeration_response_config;
     k_mutex_unlock(&anchor_discovery_claim_mutex);
     if (!config.active) {
@@ -3021,6 +3151,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint8_t *frame = anchor_uwb_scan_frame;
     size_t frame_len = 0u;
     uint8_t quality = 0u;
+    int8_t rsl_dbm = DWM3000_RSL_INVALID_DBM;
+    bool rsl_valid = false;
     uint32_t next_scan_delay_ms = anchor_uwb_scan_interval_ms;
     uint32_t retained_sleep_us = 0u;
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
@@ -3065,6 +3197,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint32_t scan_rx_elapsed_us = 0u;
     uint32_t scan_rx_attempt_elapsed_us = 0u;
     uint32_t scan_extra_awake_us = 0u;
+    int64_t scan_activity_deadline_ms = 0;
     struct radio_guard_uwb_lease radio_lease = {0};
     /* A rejected/stale release must never qualify the scan as radio progress. */
     int low_power_ret = -EIO;
@@ -3293,6 +3426,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     }
     if (ret == 0) {
 protocol_rx_window:
+        scan_activity_deadline_ms = 0;
         enumeration_continuous_rx = anchor_enumeration_rx_active();
         survey_continuous_rx = app_survey_anchor_rx_continuous();
         protocol_continuous_rx = enumeration_continuous_rx ||
@@ -3304,6 +3438,8 @@ protocol_rx_window:
             if (survey_radio_work_wait_ms == 0u) {
                 goto scan_complete;
             }
+            scan_activity_deadline_ms =
+                k_uptime_get() + survey_radio_work_wait_ms;
             if (scan_rx_ms > survey_radio_work_wait_ms) {
                 scan_rx_ms = survey_radio_work_wait_ms;
             }
@@ -3338,6 +3474,18 @@ protocol_rx_window:
             compact_lane_start_wait_ms =
                 anchor_compact_enumeration_ms_until_prepare(
                     enumeration_now_ms);
+            if (compact_lane_start_wait_ms != 0u) {
+                int64_t compact_prepare_deadline_ms =
+                    (int64_t)enumeration_now_ms +
+                    compact_lane_start_wait_ms;
+
+                if (scan_activity_deadline_ms == 0 ||
+                    compact_prepare_deadline_ms <
+                        scan_activity_deadline_ms) {
+                    scan_activity_deadline_ms =
+                        compact_prepare_deadline_ms;
+                }
+            }
             if (compact_lane_start_wait_ms != 0u &&
                 scan_rx_ms > compact_lane_start_wait_ms) {
                 scan_rx_ms = compact_lane_start_wait_ms;
@@ -3345,15 +3493,27 @@ protocol_rx_window:
         }
         scan_rx_start_cycles = k_cycle_get_32();
         rx_attempted = true;
-        ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
-            scan_rx_ms,
-            ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
-            frame,
-            UWB_MESH_MAX_FRAME_LEN,
-            &frame_len,
-            &quality,
-            NULL,
-            &rx_failure);
+        ret = scan_activity_deadline_ms == 0 ?
+            dwm3000_driver_receive_frame_continuous_extend_on_activity(
+                scan_rx_ms,
+                ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
+                frame,
+                UWB_MESH_MAX_FRAME_LEN,
+                &frame_len,
+                &quality,
+                &rsl_dbm,
+                &rx_failure) :
+            dwm3000_driver_receive_frame_continuous_extend_on_activity_until(
+                scan_rx_ms,
+                ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
+                scan_activity_deadline_ms,
+                frame,
+                UWB_MESH_MAX_FRAME_LEN,
+                &frame_len,
+                &quality,
+                &rsl_dbm,
+                &rx_failure);
+        rsl_valid = ret == 0 && rsl_dbm != DWM3000_RSL_INVALID_DBM;
         scan_rx_attempt_elapsed_us = (uint32_t)k_cyc_to_us_floor64(
             (uint32_t)(k_cycle_get_32() - scan_rx_start_cycles));
         if (scan_rx_attempt_elapsed_us < scan_rx_ms * 1000u) {
@@ -3429,7 +3589,7 @@ scan_frame_ready:
                             preamble_detected ? 1u : 0u,
                             quality,
                             scan_rx_elapsed_us,
-                            ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS);
+                            ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS);
     }
     uwb_anchor_note_idle_scan(&anchor_uwb_session,
                               ANCHOR_UWB_STARTUP_US,
@@ -3439,10 +3599,15 @@ scan_frame_ready:
 
     if (ret == 0) {
         struct uwb_wake_claim_frame claim;
+        struct mesh_gateway_route_activation route_activation;
         int decode_ret;
 
         status_debug_uwb_rx_channel_pulse(UWB_CHANNEL_WAKE_CONTACT);
         decode_ret = uwb_decode_wake_claim(frame, frame_len, &claim);
+        if (decode_ret != PROTO_OK) {
+            decode_ret = mesh_gateway_route_activation_wake_decode(
+                frame, frame_len, &claim, &route_activation);
+        }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ANCHOR_CH5_FRAME len=%u q=%u wake_ret=%d\n",
                                 (unsigned int)frame_len,
@@ -3539,12 +3704,15 @@ scan_frame_ready:
             bool valid_mesh_frame = false;
             bool queued;
 
-            queued = mesh_queue_from_frame_deferred(frame,
-                                                    frame_len,
-                                                    quality,
-                                                    UWB_CHANNEL_WAKE_CONTACT,
-                                                    &valid_mesh_frame,
-                                                    NULL);
+            queued = mesh_queue_from_frame_deferred_radio(
+                frame,
+                frame_len,
+                rsl_valid ? route_link_quality_from_rsl(rsl_dbm) : quality,
+                rsl_dbm,
+                rsl_valid,
+                UWB_CHANNEL_WAKE_CONTACT,
+                &valid_mesh_frame,
+                NULL);
             if (queued || valid_mesh_frame) {
                 if (queued) {
                     deferred_mesh_rx_queued = true;
@@ -3784,7 +3952,10 @@ scan_complete:
 
 static int anchor_start_uwb_scan(void)
 {
-    uint32_t startup_delay_ms = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ? 2000u : 0u;
+    /* The workqueue and radio owner are initialized before this call. A
+     * route-capable production anchor must not remain RF-blind for an extra
+     * two seconds merely because route diagnostics are compiled in. */
+    uint32_t startup_delay_ms = 0u;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR) {
@@ -3846,6 +4017,8 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
 #if DEVICE_ROLE == ROLE_GATEWAY
     .gateway_route_refresh_event = gateway_route_refresh_observe,
     .gateway_route_refresh_prearm = gateway_route_refresh_prearm_snapshot,
+    .gateway_enumeration_pipeline_start =
+        gateway_enumeration_pipeline_start,
 #endif
 };
 

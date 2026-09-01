@@ -1287,9 +1287,8 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
                                                    fields.gateway_route_seq,
                                                    fields.gateway_epoch);
     fields.random_backoff_max_ms =
-        MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS;
-    fields.random_backoff_slot_ms =
-        MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS;
+        MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS;
+    fields.random_backoff_slot_ms = 1u;
     fields.flood_retry_count = FLOOD_DEFAULT_RETRY_COUNT;
 
     ret = append_gateway_route_adv_tlvs(out->payload,
@@ -1312,7 +1311,13 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->queued_at_ms = snapshot->queued_at_ms;
-    out->earliest_tx_ms = snapshot->queued_at_ms;
+    out->route_wave_start_ms = snapshot->queued_at_ms;
+    out->earliest_tx_ms = snapshot->queued_at_ms +
+        MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+        mesh_gateway_route_adv_copy_offset_ms(relay->local_id,
+                                              snapshot->gateway_route_seq,
+                                              0u,
+                                              0u);
     out->flood_retry_count = fields.flood_retry_count;
     out->queued_at_valid = true;
     out->earliest_tx_valid = true;
@@ -1506,6 +1511,10 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                 relay->upstream.current_epoch,
                                 0u,
                                 100u,
+                                0,
+                                false,
+                                0u,
+                                false,
                                 RELAY_CAP_UNKNOWN,
                                 0u,
                                 0u,

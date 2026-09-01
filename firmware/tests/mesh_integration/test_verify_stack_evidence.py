@@ -1397,7 +1397,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         required = verifier._required_threads(build, policy)
 
-        self.assertEqual(required["anchor_uwb_scan"], 8192)
+        self.assertEqual(required["anchor_uwb_scan"], 9984)
         rows = {
             name: (size - verifier._required_free(size),
                    verifier._required_free(size), size)
@@ -1423,7 +1423,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         self.assertIsNotNone(match)
         configured = int(match.group(1))
-        observed_used = 6472
+        observed_used = 7824
 
         for preset in ("mesh_anchor", "mesh_anchor_forcedhop"):
             with self.subTest(preset=preset):
@@ -1451,7 +1451,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                     observed_free,
                     verifier._required_free(runtime_size),
                     "the configured anchor scan queue does not retain the "
-                    "20 percent policy reserve above the 6472-byte DDD "
+                    "20 percent policy reserve above the 7824-byte survey "
                     "hardware watermark",
                 )
 

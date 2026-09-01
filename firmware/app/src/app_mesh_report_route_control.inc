@@ -133,6 +133,7 @@ enum mesh_standard_wake_probe_result {
     MESH_STANDARD_WAKE_PROBE_NONE = 0,
     MESH_STANDARD_WAKE_PROBE_CLICK,
     MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL,
+    MESH_STANDARD_WAKE_PROBE_ROUTE_ACTIVATION,
 };
 
 static int mesh_probe_standard_wake_claim(
@@ -164,7 +165,7 @@ static int mesh_probe_standard_wake_claim(
 
     ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
         MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS,
-        ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
+        ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
         frame,
         frame_cap,
         &frame_len,
@@ -183,6 +184,25 @@ static int mesh_probe_standard_wake_claim(
                             quality);
         mesh_log_standard_click_probe_done(started_ms, "capture", 0);
         return MESH_STANDARD_WAKE_PROBE_CLICK;
+    }
+    if (ret == 0 &&
+        mesh_decode_gateway_route_activation_frame(
+            frame,
+            frame_len,
+            &candidate,
+            &(struct mesh_gateway_route_activation){0}) &&
+        mesh_handle_channel5_wake_claim(frame,
+                                        frame_len,
+                                        quality,
+                                        NULL,
+                                        NULL)) {
+        ret = dwm3000_driver_configure_wake_mesh_control_mode();
+        if (ret < 0) {
+            mesh_log_standard_click_probe_done(started_ms, "fail", ret);
+            return ret;
+        }
+        mesh_log_standard_click_probe_done(started_ms, "activation", 0);
+        return MESH_STANDARD_WAKE_PROBE_ROUTE_ACTIVATION;
     }
     if (ret == 0 && allow_relayed_gateway_control &&
         uwb_decode_wake_claim(frame, frame_len, &candidate) == PROTO_OK &&
@@ -1927,16 +1947,12 @@ static bool mesh_route_wake_backoff(uint64_t target_id,
                                     uint8_t retry_index,
                                     bool gateway_route_adv_relay)
 {
-    uint8_t retry_limit = gateway_route_adv_relay ?
-        MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES :
-        APP_WAKE_TRAIN_POLITE_MAX_RETRIES;
+    uint8_t retry_limit = APP_WAKE_TRAIN_POLITE_MAX_RETRIES;
     uint32_t random_value = sys_rand32_get();
-    uint32_t delay_ms = gateway_route_adv_relay ?
-        MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS +
-            random_value %
-                (MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MAX_MS -
-                 MESH_GATEWAY_ROUTE_ADV_BUSY_BACKOFF_MIN_MS + 1u) :
+    uint32_t delay_ms =
         app_wake_train_politeness_backoff_ms(retry_index, random_value);
+
+    ARG_UNUSED(gateway_route_adv_relay);
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_MESH_WAKE_POLITE_BACKOFF phase=%s target=0x%llx retry=%u/%u delay=%u reason=%s\n",
@@ -1977,7 +1993,7 @@ static int mesh_route_wake_listen_for_click(
     *activity = false;
     ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
         ANCHOR_UWB_SCAN_RX_MS,
-        ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
+        ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
         frame,
         MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN,
         &frame_len,
@@ -2071,15 +2087,12 @@ static int mesh_send_route_wake_train_with_duration(
     uint8_t polite_retry = 0u;
     uint8_t click_quality = 0u;
     bool c5_activity = false;
-    bool gateway_route_adv_relay =
-        DEVICE_ROLE == ROLE_ANCHOR && authorization_candidate != NULL &&
+    bool gateway_route_adv_relay = authorization_candidate != NULL &&
         authorization_candidate->packet.msg_type == MSG_GATEWAY_ROUTE_ADV;
     bool atomic_gateway_control =
         purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD &&
         !gateway_route_adv_relay;
-    uint8_t polite_retry_limit = gateway_route_adv_relay ?
-        MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES :
-        APP_WAKE_TRAIN_POLITE_MAX_RETRIES;
+    uint8_t polite_retry_limit = APP_WAKE_TRAIN_POLITE_MAX_RETRIES;
     bool boost_single_shot = false;
     bool click_captured = false;
     bool local_can_range_clicks =
@@ -2151,7 +2164,8 @@ static int mesh_send_route_wake_train_with_duration(
      * its PROPOSE/ACCEPT frames; reserve CONTROL_FOLLOWUP for actual command
      * and other control-flood wakes.
      */
-    if (purpose != C5_CONTACT_PURPOSE_ROUTE_SOLICIT &&
+    if (!gateway_route_adv_relay &&
+        purpose != C5_CONTACT_PURPOSE_ROUTE_SOLICIT &&
         purpose != C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION) {
         config->flags |= FLAG_CONTROL_FOLLOWUP;
     }
@@ -2263,7 +2277,7 @@ wake_train_attempt:
     }
     status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
 
-    if (!atomic_gateway_control) {
+    if (!atomic_gateway_control && !gateway_route_adv_relay) {
         ret = mesh_route_wake_sniff_activity("pre",
                                              target_id,
                                              reason,
@@ -2359,6 +2373,61 @@ wake_train_attempt:
                     ret);
             ret = -EINVAL;
             break;
+        }
+
+        if (gateway_route_adv_relay) {
+            struct mesh_gateway_route_activation activation;
+
+            if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+                    reason == NULL ? "route-wake-train" : reason,
+                    authorization_candidate,
+                    authorization,
+                    c5_tx_intent)) {
+                ret = -EBUSY;
+                break;
+            }
+            ret = mesh_relay_gateway_route_activation_for_outbound(
+                authorization_candidate,
+                k_uptime_get_32(),
+                &activation);
+            if (ret != PROTO_OK) {
+                ret = -EINVAL;
+                break;
+            }
+            ret = mesh_gateway_route_activation_encode(
+                &activation,
+                route_suffix,
+                MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_LEN,
+                &route_suffix_len);
+            if (ret != PROTO_OK ||
+                frame_len + route_suffix_len >
+                    MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN) {
+                ret = -EMSGSIZE;
+                break;
+            }
+            memcpy(&frame[frame_len], route_suffix, route_suffix_len);
+            frame_len += route_suffix_len;
+            ret = dwm3000_driver_send_frame(
+                frame,
+                frame_len,
+                wake_train_config.control_tx_timeout_ms);
+            if (ret < 0) {
+                break;
+            }
+            status_debug_tx_wake_claim_sent_pulse();
+            last_claim_sent_ms = k_uptime_get_32();
+            if (sent_count == 0u) {
+                first_claim_sent_ms = last_claim_sent_ms;
+            }
+            if (rf_started_out != NULL && !*rf_started_out) {
+                *rf_started_out = true;
+                if (rf_started_at_ms_out != NULL) {
+                    *rf_started_at_ms_out = (uint64_t)k_uptime_get();
+                }
+            }
+            sent_count++;
+            uwb_clicker_note_wake_claim_tx(session, 1u);
+            goto route_wake_claim_sent;
         }
 
         if (embed_route &&
@@ -2461,7 +2530,9 @@ wake_train_attempt:
         sent_count++;
         uwb_clicker_note_wake_claim_tx(session, 1u);
 
-        if (!atomic_gateway_control && local_can_range_clicks &&
+route_wake_claim_sent:
+        if (!atomic_gateway_control && !gateway_route_adv_relay &&
+            local_can_range_clicks &&
             uptime_deadline_reached(k_uptime_get_32(), next_click_rx_ms)) {
             bool rx_activity = false;
             int listen_ret;
@@ -2478,7 +2549,7 @@ wake_train_attempt:
                 ret = -ECANCELED;
                 goto out;
             }
-            if (rx_activity) {
+            if (rx_activity && !gateway_route_adv_relay) {
                 c5_activity = true;
                 activity_phase = "train";
                 ret = -EAGAIN;
@@ -2831,6 +2902,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             uint32_t remaining_ms;
             size_t frame_len = 0u;
             uint8_t quality = 0u;
+            int8_t rsl_dbm = DWM3000_RSL_INVALID_DBM;
+            bool rsl_valid = false;
 
             if (uptime_deadline_reached(now_ms, deadline_ms)) {
                 break;
@@ -2871,7 +2944,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                                           UWB_MESH_MAX_FRAME_LEN,
                                                           &frame_len,
                                                           &quality,
-                                                          NULL,
+                                                          &rsl_dbm,
                                                           &rx_failure);
             last_ret = ret;
             if (ret == -ETIMEDOUT) {
@@ -2899,6 +2972,20 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         last_ret = -EAGAIN;
                         status_debug_note("DBG_ROUTE_REPLY_CLICK_PREEMPT_PROBE\n");
                         break;
+                    }
+                    if (probe_ret ==
+                        MESH_STANDARD_WAKE_PROBE_ROUTE_ACTIVATION) {
+                        uint32_t activation_deadline_ms =
+                            k_uptime_get_32() +
+                            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS;
+
+                        if ((int32_t)(activation_deadline_ms - deadline_ms) >
+                            0) {
+                            deadline_ms = activation_deadline_ms;
+                        }
+                        status_debug_note(
+                            "DBG_ROUTE_REPLY_ACTIVATION_RETAIN\n");
+                        continue;
                     }
                     if (probe_ret < 0) {
                         last_ret = probe_ret;
@@ -3004,6 +3091,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
 
             received_at_valid =
                 dwm3000_driver_last_rx_host_uptime(&received_at_ms) == 0;
+            rsl_valid = rsl_dbm != DWM3000_RSL_INVALID_DBM;
             if (!received_at_valid) {
                 received_at_ms = k_uptime_get_32();
             }
@@ -3449,7 +3537,15 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
 
             if (!mesh_queue_from_frame_at_internal(frame,
                                                    frame_len,
-                                                   quality,
+                                                   parsed.packet.msg_type ==
+                                                           MSG_GATEWAY_ROUTE_ADV &&
+                                                       rsl_valid ?
+                                                       route_link_quality_from_rsl(
+                                                           rsl_dbm) : quality,
+                                                   rsl_dbm,
+                                                   parsed.packet.msg_type ==
+                                                           MSG_GATEWAY_ROUTE_ADV &&
+                                                       rsl_valid,
                                                    UWB_CHANNEL_WAKE_CONTACT,
                                                    received_at_ms,
                                                    0u,

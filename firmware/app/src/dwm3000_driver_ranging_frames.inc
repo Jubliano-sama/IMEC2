@@ -431,8 +431,20 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                                      carrier_integrator,
                                      carrier_integrator_sampled,
                                      ipatov_rx_timestamp)) {
-                dwt_forcetrxoff();
-                return -EIO;
+                bool diagnostics_required = cir_sample != NULL ||
+                    cir_sampled != NULL || clock_offset_raw != NULL ||
+                    clock_offset_sampled != NULL ||
+                    carrier_integrator != NULL ||
+                    carrier_integrator_sampled != NULL ||
+                    ipatov_rx_timestamp != NULL;
+
+                if (diagnostics_required) {
+                    dwt_forcetrxoff();
+                    return -EIO;
+                }
+                if (rsl_dbm != NULL) {
+                    *rsl_dbm = DWM3000_RSL_INVALID_DBM;
+                }
             }
         }
         ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,

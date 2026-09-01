@@ -74,6 +74,55 @@ static void test_perceived_depth_expands_by_exactly_one_next_hop_band(void)
         start_ms, start_ms + enumeration_response_duration_ms(2u), 2u));
 }
 
+static void test_hia_pipeline_is_gateway_relative_and_two_depths_behind(void)
+{
+    struct enumeration_response_timing timing = {0};
+    const uint64_t gateway_wake_start_ms = 1000u;
+    const uint64_t gateway_lane_start_ms = gateway_wake_start_ms +
+        ENUMERATION_RESPONSE_HIA_FIRST_DEPTH_START_DELAY_MS;
+
+    assert(ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS == 100u);
+    assert(ENUMERATION_RESPONSE_HIA_FIRST_DEPTH_START_DELAY_MS == 13600u);
+    assert(ENUMERATION_RESPONSE_HIA_LOCAL_START_DELAY_MS == 9100u);
+    assert(enumeration_response_hia_duration_ms(1u, 3u) == 13500u);
+    assert(enumeration_response_hia_duration_ms(3u, 8u) == 27000u);
+    assert(enumeration_response_hia_duration_ms(0u, 3u) == 0u);
+    assert(enumeration_response_hia_duration_ms(4u, 3u) == 0u);
+
+    assert(!enumeration_response_hia_timing_at_depth(
+        gateway_lane_start_ms, gateway_lane_start_ms - 1u, 1u, 3u,
+        &timing));
+    assert(enumeration_response_hia_timing_at_depth(
+        gateway_lane_start_ms, gateway_lane_start_ms, 1u, 3u, &timing));
+    assert(timing.depth == 1u && timing.round == 0u &&
+           timing.round_offset_ms == 0u);
+
+    /* H2 is tied to the next 4.5 s HIA depth edge, not packed directly after
+     * H1's shorter source and forwarding traffic. The quiet tail remains a
+     * valid RX part of H1's block. */
+    assert(enumeration_response_hia_timing_at_depth(
+        gateway_lane_start_ms,
+        gateway_lane_start_ms + MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS - 1u,
+        1u, 3u, &timing));
+    assert(timing.depth == 1u && timing.round == 35u &&
+           timing.round_offset_ms == 124u);
+    assert(enumeration_response_hia_timing_at_depth(
+        gateway_lane_start_ms,
+        gateway_lane_start_ms + MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+        1u, 3u, &timing));
+    assert(timing.depth == 2u && timing.round == 0u &&
+           timing.round_offset_ms == 0u);
+
+    /* A hop-three anchor can use its own locally representable source edge;
+     * it need not represent a gateway origin that predates this boot. */
+    assert(enumeration_response_hia_timing_at_depth(
+        500u, 500u, 3u, 8u, &timing));
+    assert(timing.depth == 3u);
+    assert(enumeration_response_hia_complete_depth(
+        500u, 500u + enumeration_response_hia_duration_ms(3u, 8u),
+        3u, 8u));
+}
+
 static void test_claim_start_tlv_remains_valid_after_countdown_becomes_negative(void)
 {
     uint8_t payload[sizeof(uint32_t) + 2u];
@@ -111,9 +160,30 @@ static void test_claim_start_tlv_remains_valid_after_countdown_becomes_negative(
     assert(start_ms == now_ms - 250u);
     assert(!enumeration_response_lane_complete_depth(start_ms, now_ms, 1u));
 
-    /* A packet cannot predate the receiver's own uptime domain. */
-    assert(!enumeration_response_claim_start(now_ms,
-                                             (uint32_t)now_ms + 1u,
+    /* The packet origin may predate this boot. Only the scheduled edge has
+     * to be representable on the receiver's local monotonic clock. */
+    assert(enumeration_response_claim_start(now_ms,
+                                            (uint32_t)now_ms + 1u,
+                                            advertised_start_delay_ms,
+                                            &start_ms,
+                                            &starts_in_ms));
+    assert(starts_in_ms == -1001);
+    assert(start_ms == now_ms - 1001u);
+
+    /* A freshly rebooted receiver must accept an older packet while its
+     * advertised countdown still points to a future local deadline. */
+    assert(enumeration_response_claim_start(200u,
+                                            1000u,
+                                            advertised_start_delay_ms,
+                                            &start_ms,
+                                            &starts_in_ms));
+    assert(starts_in_ms == 3510);
+    assert(start_ms == 3710u);
+
+    /* If the scheduled edge itself predates boot, this API cannot represent
+     * the already elapsed phase and rejects it explicitly. */
+    assert(!enumeration_response_claim_start(200u,
+                                             5000u,
                                              advertised_start_delay_ms,
                                              &start_ms,
                                              &starts_in_ms));
@@ -573,6 +643,7 @@ int main(void)
 {
     test_fixed_schedule_is_shallowest_first_with_forwarding_tails();
     test_perceived_depth_expands_by_exactly_one_next_hop_band();
+    test_hia_pipeline_is_gateway_relative_and_two_depths_behind();
     test_claim_start_tlv_remains_valid_after_countdown_becomes_negative();
     test_claim_lane_timing_crosses_uptime32_wrap_without_truncation();
     test_bounded_claim_relay_reaches_every_depth_before_its_band_closes();

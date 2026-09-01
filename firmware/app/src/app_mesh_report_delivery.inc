@@ -3946,7 +3946,10 @@ after_gateway_ack:
                 result->enumeration_prearm_epoch,
                 result->enumeration_prearm_hold_ms,
                 result->operation_policy.assignment.operation_budget_ms,
-                result->enumeration_survey_follows);
+                result->enumeration_survey_follows,
+                result->gateway_route_adv.route_wave_start_ms,
+                (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL -
+                          result->gateway_route_adv.packet.ttl));
 
         if (ret < 0) {
             LOG_WRN("enumeration Here-I-Am prearm rejected: epoch=%u ret=%d",
@@ -3961,6 +3964,20 @@ after_gateway_ack:
                 C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD :
                 C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH;
         int ret;
+
+        if (mesh_route_activation_apply_forward_timing(
+                &result->gateway_route_adv, rx)) {
+            result->gateway_route_adv.earliest_tx_ms =
+                result->gateway_route_adv.route_wave_start_ms +
+                MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                mesh_gateway_route_adv_copy_offset_ms(
+                    DEVICE_ID,
+                    result->gateway_route_adv.packet.session_id,
+                    (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL -
+                              result->gateway_route_adv.packet.ttl),
+                    0u);
+            result->gateway_route_adv.earliest_tx_valid = true;
+        }
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ROUTE_ADV_FORWARD_BEGIN ttl=%u seq=%u earliest=%u\n",
@@ -5337,15 +5354,18 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 pending->first_received_at_ms);
         }
 #endif
-        ret = mesh_relay_handle_rx_with_random(&mesh_runtime,
-                                               &pending->packet,
-                                               pending->payload,
-                                               pending->payload_len,
-                                               pending->previous_hop_id,
-                                               pending->link_quality,
-                                               now_ms,
-                                               sys_rand32_get(),
-                                               result);
+        ret = mesh_relay_handle_rx_with_random_radio(
+            &mesh_runtime,
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            pending->previous_hop_id,
+            pending->link_quality,
+            pending->link_rsl_dbm,
+            pending->link_rsl_valid,
+            now_ms,
+            sys_rand32_get(),
+            result);
         if (ret != PROTO_OK) {
             LOG_WRN("mesh RX rejected: %d", ret);
             goto mesh_rx_item_cleanup;

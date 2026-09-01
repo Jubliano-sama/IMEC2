@@ -104,6 +104,8 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS >=
              "anchor scan activity extension must cover a clipped wake packet");
 #if DEVICE_ROLE == ROLE_ANCHOR && \
     !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)
+BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_US >= MESH_RADIO_ANCHOR_SCAN_RX_US,
+             "anchor scan must cover the qualified combined wake-frame cadence");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_INTERVAL_MS >= ANCHOR_UWB_SCAN_MIN_INTERVAL_MS,
              "anchor wake scan interval must keep channel-5 idle scan inside the calibrated RX budget");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_US_PER_S <= ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S,

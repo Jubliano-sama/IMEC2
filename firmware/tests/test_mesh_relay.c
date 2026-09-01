@@ -9968,7 +9968,12 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(adv.next_hop_id == MESH_BROADCAST_ID);
     assert(adv.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
     assert(adv.queued_at_ms == 1000u);
-    assert(adv.earliest_tx_ms == 1000u);
+    assert(adv.route_wave_start_ms == 1000u);
+    assert(adv.earliest_tx_ms >=
+           1000u + MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS);
+    assert(adv.earliest_tx_ms <=
+           1000u + MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+               MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS);
     assert(require_tlv_u64(adv.payload, adv.payload_len, TLV_GATEWAY_ID) == GATEWAY);
     assert(require_tlv_u16(adv.payload, adv.payload_len, TLV_GATEWAY_EPOCH) == 9u);
     assert(require_tlv_u32(adv.payload, adv.payload_len, TLV_GATEWAY_ROUTE_SEQ) == 77u);
@@ -9989,11 +9994,11 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(require_tlv_u32(adv.payload,
                            adv.payload_len,
                            TLV_FLOOD_RANDOM_BACKOFF_MAX_MS) ==
-           MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS);
+           MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS);
     assert(require_tlv_u16(adv.payload,
                            adv.payload_len,
                            TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
-           MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS);
+           1u);
     assert(require_tlv_u8(adv.payload, adv.payload_len, TLV_FLOOD_RETRY_COUNT) ==
            FLOOD_DEFAULT_RETRY_COUNT);
 
@@ -10021,9 +10026,15 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(result_a.gateway_route_adv.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL - 1u);
     assert(result_a.gateway_route_adv.next_hop_id == MESH_BROADCAST_ID);
     assert(result_a.gateway_route_adv.queued_at_ms == 1010u);
-    assert(result_a.gateway_route_adv.earliest_tx_ms >= 1010u);
+    assert(result_a.gateway_route_adv.route_wave_start_ms ==
+           1010u + MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+    assert(result_a.gateway_route_adv.earliest_tx_ms >=
+           result_a.gateway_route_adv.route_wave_start_ms +
+               MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS);
     assert(result_a.gateway_route_adv.earliest_tx_ms <=
-           1010u + MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS);
+           result_a.gateway_route_adv.route_wave_start_ms +
+               MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+               MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS);
     assert(require_tlv_u32(result_a.gateway_route_adv.payload,
                            result_a.gateway_route_adv.payload_len,
                            TLV_FLOOD_EPOCH_ID) == flood_epoch_id);
@@ -10033,11 +10044,11 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(require_tlv_u32(result_a.gateway_route_adv.payload,
                            result_a.gateway_route_adv.payload_len,
                            TLV_FLOOD_RANDOM_BACKOFF_MAX_MS) ==
-           MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS);
+           MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS);
     assert(require_tlv_u16(result_a.gateway_route_adv.payload,
                            result_a.gateway_route_adv.payload_len,
                            TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
-           MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS);
+           1u);
     assert(require_tlv_u8(result_a.gateway_route_adv.payload,
                           result_a.gateway_route_adv.payload_len,
                           TLV_FLOOD_RETRY_COUNT) ==
@@ -21214,6 +21225,254 @@ static void test_direct_gateway_history_survives_lost_ack_and_confirm_ack(void)
 }
 
 
+static void test_gateway_route_activation_wire_round_trip_and_crc(void)
+{
+    const struct mesh_gateway_route_activation expected = {
+        .gateway_id = GATEWAY,
+        .gateway_route_seq = UINT32_C(0x12345678),
+        .gateway_epoch = 9u,
+        .relay_window_starts_in_ms = 3500u,
+        .route_adv_starts_in_ms = 2000u,
+        .sender_depth = 2u,
+    };
+    struct mesh_gateway_route_activation decoded = {0};
+    uint8_t wire[MESH_GATEWAY_ROUTE_ACTIVATION_LEN];
+    size_t written = 0u;
+
+    assert(mesh_gateway_route_activation_encode(
+               &expected, wire, sizeof(wire), &written) == PROTO_OK);
+    assert(written == sizeof(wire));
+    assert(mesh_gateway_route_activation_decode(
+               wire, written, &decoded) == PROTO_OK);
+    assert(decoded.gateway_id == expected.gateway_id);
+    assert(decoded.gateway_route_seq == expected.gateway_route_seq);
+    assert(decoded.gateway_epoch == expected.gateway_epoch);
+    assert(decoded.relay_window_starts_in_ms ==
+           expected.relay_window_starts_in_ms);
+    assert(decoded.route_adv_starts_in_ms ==
+           expected.route_adv_starts_in_ms);
+    assert(decoded.sender_depth == expected.sender_depth);
+
+    wire[12] ^= 0x40u;
+    assert(mesh_gateway_route_activation_decode(
+               wire, written, &decoded) == PROTO_ERR_BAD_CRC);
+}
+
+static void test_gateway_route_activation_wake_round_trip_and_crc(void)
+{
+    const struct uwb_wake_claim_frame expected_claim = {
+        .network_id = NETWORK_ID,
+        .clicker_id = GATEWAY,
+        .click_event_id = 17u,
+        .attempt_index = 1u,
+        .priority_id = GATEWAY,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .wake_train_ends_in_ms = 500u,
+        .discovery_starts_in_ms = 500u,
+        .claimed_duration_ms = 2000u,
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .nonce = UINT64_C(0x123456789abcdef0),
+        .flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+    };
+    const struct mesh_gateway_route_activation expected_activation = {
+        .gateway_id = GATEWAY,
+        .gateway_route_seq = UINT32_C(0x12345678),
+        .gateway_epoch = 9u,
+        .relay_window_starts_in_ms = 3500u,
+        .route_adv_starts_in_ms = 2000u,
+        .sender_depth = 0u,
+    };
+    struct uwb_wake_claim_frame decoded_claim = {0};
+    struct mesh_gateway_route_activation decoded_activation = {0};
+    uint8_t wire[UWB_WAKE_CLAIM_LEN +
+                 MESH_GATEWAY_ROUTE_ACTIVATION_LEN + 3u] = {0};
+    size_t wake_written = 0u;
+    size_t activation_written = 0u;
+
+    assert(uwb_encode_wake_claim(&expected_claim,
+                                 wire,
+                                 sizeof(wire),
+                                 &wake_written) == PROTO_OK);
+    assert(mesh_gateway_route_activation_encode(
+               &expected_activation,
+               &wire[wake_written],
+               sizeof(wire) - wake_written,
+               &activation_written) == PROTO_OK);
+    assert(wake_written + activation_written ==
+           UWB_WAKE_CLAIM_LEN + MESH_GATEWAY_ROUTE_ACTIVATION_LEN);
+    assert(mesh_gateway_route_activation_wake_decode(
+               wire,
+               wake_written + activation_written,
+               &decoded_claim,
+               &decoded_activation) == PROTO_OK);
+    assert(decoded_claim.clicker_id == expected_claim.clicker_id);
+    assert(decoded_claim.flags == expected_claim.flags);
+    assert(decoded_activation.gateway_id == expected_activation.gateway_id);
+    assert(decoded_activation.gateway_route_seq ==
+           expected_activation.gateway_route_seq);
+
+    /* A receiver that understands this prefix must remain compatible with a
+     * later sender that appends a separately protected extension. */
+    wire[wake_written + activation_written] = 0xa5u;
+    wire[wake_written + activation_written + 1u] = 0x5au;
+    wire[wake_written + activation_written + 2u] = 0x01u;
+    assert(mesh_gateway_route_activation_wake_decode(
+               wire,
+               sizeof(wire),
+               &decoded_claim,
+               &decoded_activation) == PROTO_OK);
+    assert(mesh_gateway_route_activation_wake_decode(
+               wire,
+               wake_written + activation_written - 1u,
+               &decoded_claim,
+               &decoded_activation) == PROTO_ERR_MALFORMED);
+
+    wire[UWB_WAKE_CLAIM_LEN + 12u] ^= 0x40u;
+    assert(mesh_gateway_route_activation_wake_decode(
+               wire,
+               wake_written + activation_written,
+               &decoded_claim,
+               &decoded_activation) == PROTO_ERR_BAD_CRC);
+}
+
+static void test_gateway_route_activation_countdowns_share_wave_clock(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_outbound adv;
+    struct mesh_gateway_route_activation activation;
+    uint64_t first_collision_id = 0u;
+    uint64_t second_collision_id = 0u;
+    uint64_t first_copy_slots[MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS +
+                              1u] = {0};
+    uint32_t first_offset;
+
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    9u);
+    assert(mesh_relay_build_gateway_route_adv(
+               &gateway, 77u, 1000u, &adv) == PROTO_OK);
+    assert(mesh_relay_gateway_route_activation_for_outbound(
+               &adv, 2000u, &activation) == PROTO_OK);
+    assert(activation.gateway_id == GATEWAY);
+    assert(activation.gateway_route_seq == 77u);
+    assert(activation.sender_depth == 0u);
+    assert(activation.route_adv_starts_in_ms == 2000u);
+    assert(activation.relay_window_starts_in_ms == 3500u);
+
+    first_offset = mesh_gateway_route_activation_start_offset_ms(
+        GATEWAY, 77u, 0u);
+    assert(first_offset == 0u);
+    assert(first_offset == mesh_gateway_route_activation_start_offset_ms(
+                               GATEWAY, 77u, 0u));
+    assert(mesh_gateway_route_activation_start_offset_ms(
+               0u, 77u, 0u) == 0u);
+
+    for (uint8_t copy = 0u;
+         copy < MESH_GATEWAY_ROUTE_ADV_COPY_COUNT;
+         copy++) {
+        uint32_t offset = mesh_gateway_route_adv_copy_offset_ms(
+            ANCHOR_A, 77u, 1u, copy);
+
+        assert(offset >=
+               (uint32_t)copy * MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS);
+        assert(offset + OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+               ((uint32_t)copy + 1u) *
+                   MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS);
+        assert(offset == mesh_gateway_route_adv_copy_offset_ms(
+                             ANCHOR_A, 77u, 1u, copy));
+    }
+    assert(mesh_gateway_route_adv_copy_offset_ms(
+               ANCHOR_A,
+               77u,
+               1u,
+               MESH_GATEWAY_ROUTE_ADV_COPY_COUNT) == 0u);
+
+    /* A first-copy collision must not force fixed-spacing collisions for the
+     * other two copies. Pigeonhole 482 valid IDs into 481 first-copy slots. */
+    for (uint64_t sender_id = 1u;
+         sender_id <=
+             MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS + 2u;
+         sender_id++) {
+        uint32_t slot = mesh_gateway_route_adv_copy_offset_ms(
+            sender_id, 77u, 1u, 0u);
+
+        assert(slot <= MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS);
+        if (first_copy_slots[slot] != 0u) {
+            first_collision_id = first_copy_slots[slot];
+            second_collision_id = sender_id;
+            break;
+        }
+        first_copy_slots[slot] = sender_id;
+    }
+    assert(first_collision_id != 0u && second_collision_id != 0u);
+    assert(mesh_gateway_route_adv_copy_offset_ms(
+               first_collision_id, 77u, 1u, 1u) !=
+               mesh_gateway_route_adv_copy_offset_ms(
+                   second_collision_id, 77u, 1u, 1u) ||
+           mesh_gateway_route_adv_copy_offset_ms(
+               first_collision_id, 77u, 1u, 2u) !=
+               mesh_gateway_route_adv_copy_offset_ms(
+                   second_collision_id, 77u, 1u, 2u));
+}
+
+static void test_weak_direct_route_is_retained_until_fallback_round(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct mesh_outbound adv;
+    struct mesh_relay_result result;
+    const struct route_candidate *candidate;
+    const uint32_t root_wave_start_ms = 1000u;
+    const uint32_t received_at_ms = 4000u;
+    const uint32_t fallback_ms = root_wave_start_ms +
+        (2u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    9u);
+    mesh_relay_init(&anchor,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_A,
+                    GATEWAY,
+                    9u);
+    assert(mesh_relay_build_gateway_route_adv(
+               &gateway, 77u, root_wave_start_ms, &adv) == PROTO_OK);
+    adv.packet.message_age_ms = received_at_ms - root_wave_start_ms;
+
+    assert(mesh_relay_handle_rx_with_random_radio(
+               &anchor,
+               &adv.packet,
+               adv.payload,
+               adv.payload_len,
+               GATEWAY,
+               route_link_quality_from_rsl(-99),
+               -99,
+               true,
+               received_at_ms,
+               UINT32_C(0x55aa55aa),
+               &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert((result.actions &
+            MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) != 0u);
+    assert(route_selected(&anchor.upstream) == NULL);
+    candidate = find_route_candidate(&anchor, GATEWAY);
+    assert(candidate != NULL);
+    assert(candidate->link_rsl_valid);
+    assert(candidate->link_rsl_dbm == -99);
+    assert(candidate->provisional_valid);
+    assert(candidate->provisional_until_ms == fallback_ms);
+    assert(route_select_best_at(&anchor.upstream, fallback_ms - 1u) ==
+           PROTO_ERR_NOT_FOUND);
+    assert(route_select_best_at(&anchor.upstream, fallback_ms) == PROTO_OK);
+    assert(route_selected(&anchor.upstream)->next_hop_id == GATEWAY);
+}
+
 int main(void)
 {
     test_mesh_relay_result_preserves_required_simultaneous_outputs();
@@ -21331,6 +21590,10 @@ int main(void)
     test_route_request_expires_stale_channel9_before_capacity_check();
     test_parent_relay_rejects_unrelated_child_route_request_while_connected();
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
+    test_gateway_route_activation_wire_round_trip_and_crc();
+    test_gateway_route_activation_wake_round_trip_and_crc();
+    test_gateway_route_activation_countdowns_share_wave_clock();
+    test_weak_direct_route_is_retained_until_fallback_round();
     test_gateway_route_advertisement_retains_distinct_parent_copy();
     test_gateway_route_epoch_serial_wrap_and_ambiguity();
     test_route_ancestry_blocks_three_node_cycle_and_accepts_churn();

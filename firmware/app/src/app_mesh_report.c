@@ -243,7 +243,7 @@ BUILD_ASSERT(MESH_GATEWAY_RX_REARM_GUARD_MS +
     MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS
 #define MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS \
     (MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS + \
-     ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS + \
+     ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS + \
      MESH_ROUTE_REPLY_CLICK_PROBE_STANDARD_RETUNE_GUARD_MS + \
      MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS)
 BUILD_ASSERT(MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS +
@@ -357,8 +357,8 @@ BUILD_ASSERT(MESH_ROUTE_DISCOVERY_MIN_PAYLOAD_LEN >
              "mandatory route ancestry requires the standalone control frame");
 BUILD_ASSERT(MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS < WAKE_ADV_MS,
              "route wake TX gaps must leave a click receive opportunity inside one wake train");
-BUILD_ASSERT(MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS < WAKE_ADV_MS,
-             "route reply PHY probe must fit inside the repeated click wake train");
+BUILD_ASSERT(MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS < WAKE_ADV_MS,
+             "a valid repeated click claim must reach the standard-PHY probe");
 BUILD_ASSERT(MESH_CONTROL_FOLLOWUP_TURNAROUND_MS >=
              MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS,
              "control follow-up must leave time to restore the extended-PHR PHY");
@@ -402,7 +402,9 @@ struct mesh_rx_pending {
     uint32_t result_validation_token;
     struct mesh_event_plan current_channel9_plan;
     uint8_t link_quality;
+    int8_t link_rsl_dbm;
     uint8_t radio_channel;
+    bool link_rsl_valid;
     bool received_at_valid;
     bool current_channel9_plan_valid;
 };
@@ -427,6 +429,21 @@ struct mesh_route_embedded_rx_state {
     struct proto_packet packet;
     uint32_t received_at_ms;
 };
+
+#define MESH_ROUTE_ACTIVATION_RX_SLOTS 4u
+struct mesh_route_activation_rx_entry {
+    struct mesh_gateway_route_activation activation;
+    uint64_t sender_id;
+    uint32_t route_adv_start_ms;
+    uint32_t relay_window_start_ms;
+    uint32_t expires_at_ms;
+    bool valid;
+};
+
+#if DEVICE_ROLE == ROLE_ANCHOR
+static struct mesh_route_activation_rx_entry
+    mesh_route_activation_rx[MESH_ROUTE_ACTIVATION_RX_SLOTS];
+#endif
 
 struct mesh_event_control_record {
     struct proto_packet packet;
@@ -1199,6 +1216,19 @@ static bool mesh_decode_channel5_wake_claim(
     size_t frame_len,
     struct uwb_wake_claim_frame *claim,
     bool *embedded_route_frame_out);
+static bool mesh_decode_gateway_route_activation_frame(
+    const uint8_t *frame,
+    size_t frame_len,
+    struct uwb_wake_claim_frame *claim,
+    struct mesh_gateway_route_activation *activation);
+static bool mesh_route_activation_allows_route_adv(
+    uint64_t sender_id,
+    uint32_t gateway_route_seq,
+    uint8_t ttl,
+    uint32_t received_at_ms);
+static bool mesh_route_activation_apply_forward_timing(
+    struct mesh_outbound *route_adv,
+    const struct mesh_rx_pending *rx);
 static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
                                             size_t frame_len,
                                             uint8_t link_quality,
@@ -1297,6 +1327,8 @@ static bool mesh_queue_from_frame_at_internal(
     const uint8_t *frame,
     size_t frame_len,
     uint8_t link_quality,
+    int8_t link_rsl_dbm,
+    bool link_rsl_valid,
     uint8_t radio_channel,
     uint32_t received_at_ms,
     uint32_t protocol_validation_token,

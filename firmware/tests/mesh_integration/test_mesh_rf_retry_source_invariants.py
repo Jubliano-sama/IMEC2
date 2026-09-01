@@ -1136,7 +1136,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
     def test_rx_drain_applies_ack_to_core_before_route_repair_rearm(self):
         body = function_body(REPORT, "mesh_drain_rx_queue_locked")
         tracked_ack = body.index("mesh_ch9_tx_pending_handle_ack(")
-        core = body.index("mesh_relay_handle_rx_with_random(", tracked_ack)
+        core = body.index(
+            "mesh_relay_handle_rx_with_random_radio(", tracked_ack
+        )
         repair_action = body.index(
             "MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_ROUTE_REPAIR", core
         )
@@ -2294,7 +2296,8 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
         self.assertRegex(
             classification,
-            r"if\s*\(\s*purpose\s*!=\s*"
+            r"if\s*\(\s*!gateway_route_adv_relay\s*&&\s*"
+            r"purpose\s*!=\s*"
             r"C5_CONTACT_PURPOSE_ROUTE_SOLICIT\s*&&\s*"
             r"purpose\s*!=\s*"
             r"C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION\s*\)\s*\{\s*"
@@ -3341,14 +3344,14 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         )
         self.assertLess(standard_config, receive)
         self.assertLess(receive, control_config)
-        self.assertIn("ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS",
+        self.assertIn("ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS",
                       helper[receive:control_config])
 
         budget = REPORT_UNIT[REPORT_UNIT.index(
             "#define MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS"
         ):]
         self.assertIn("MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS", budget)
-        self.assertIn("ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS", budget)
+        self.assertIn("ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS", budget)
         self.assertIn(
             "MESH_ROUTE_REPLY_CLICK_PROBE_STANDARD_RETUNE_GUARD_MS", budget
         )
@@ -3367,7 +3370,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
                       REPORT_UNIT[control_guard:control_guard + 180])
         self.assertRegex(
             REPORT_UNIT,
-            r"BUILD_ASSERT\(MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS\s*<\s*"
+            r"BUILD_ASSERT\(MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS\s*<\s*"
             r"WAKE_ADV_MS,",
         )
 

@@ -20,7 +20,8 @@
 #define FORCED_ID UINT64_C(0xa200000000000001)
 #define RX_GUARD_US UINT64_C(100)
 #define CONTROL_TURNAROUND_US UINT64_C(60000)
-#define WAKE_GAP_US UINT64_C(500)
+#define WAKE_GAP_US \
+    ((uint64_t)MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US + UINT64_C(500))
 #define PIPELINE_BASE_US UINT64_C(10000000)
 #define CHAIN_ANCHOR_ID_BASE UINT64_C(0xa000000000000000)
 
@@ -498,21 +499,18 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
         PIPELINE_BASE_US +
         (uint64_t)(depth - 1u) *
             MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS * 1000u;
-    uint64_t busy_retry_delay_us = production_timing ?
-        (uint64_t)MESH_GATEWAY_ROUTE_ADV_BUSY_RETRIES *
-            MESH_GATEWAY_ROUTE_ADV_BUSY_ATTEMPT_MAX_MS * 1000u :
-        0u;
     uint64_t activation_start_us = activation_hop_start_us;
     uint32_t activation_wake_ms = production_timing ?
-        MESH_RADIO_WAKE_TRAIN_MS :
+        MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS :
         MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS;
     uint32_t claim_hop_delay_ms = production_timing ?
         MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS :
         DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS;
     uint64_t claim_start_us =
         PIPELINE_BASE_US +
-        (uint64_t)(MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
-                   FLOOD_POST_ROOT_GUARD_MS) * 1000u +
+        (uint64_t)(production_timing ?
+            MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS :
+            FLOOD_POST_ROOT_GUARD_MS) * 1000u +
         (uint64_t)(depth - 1u) * claim_hop_delay_ms * 1000u;
     uint64_t activation_end_us = 0u;
     uint16_t tx_index = UINT16_MAX;
@@ -527,19 +525,11 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
     *ownership_conflict = false;
     if (production_timing) {
         activation_start_us +=
-            (uint64_t)(MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS +
-                       MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS) *
-                1000u +
-            busy_retry_delay_us;
-        CHECK(busy_retry_delay_us ==
-                  (uint64_t)MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS * 1000u,
-              "pipeline did not charge both worst-case busy retries");
+            (uint64_t)MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS * 1000u;
         CHECK(activation_start_us - activation_hop_start_us ==
-                  (uint64_t)(MESH_GATEWAY_ROUTE_ADV_RELAY_HANDOFF_MAX_MS +
-                             MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS +
-                             MESH_GATEWAY_ROUTE_ADV_CONTENTION_MAX_MS) *
+                  (uint64_t)MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS *
                       1000u,
-              "pipeline omitted pre-wake relay delay");
+              "production activation escaped its uniform start window");
     }
     CHECK(setup_depth_fixture(&fixture, depth),
           "depth fixture setup failed");
@@ -557,11 +547,12 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
     if (production_timing) {
         CHECK(activation_end_us <=
                   activation_hop_start_us +
-                      (uint64_t)(
-                          MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS -
-                          MESH_GATEWAY_ROUTE_ADV_RELAY_BURST_MAX_MS) *
-                          1000u,
-              "busy-retried wake leaves no room for the Here-I-Am burst");
+                      (uint64_t)MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS *
+                          1000u +
+                      mesh_sim_frame_duration_us(
+                          MESH_SIM_PHY_CHANNEL5_WAKE,
+                          UWB_WAKE_CLAIM_LEN),
+              "activation train leaves its depth activation envelope");
     } else {
         CHECK(activation_end_us <=
                   activation_start_us +
@@ -620,10 +611,9 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
     }
     CHECK(ret == MESH_SIM_OK,
           "pipelined CLAIM receiver overlaps activation ownership");
-    CHECK(claim_start_us >= activation_hop_start_us +
-              (uint64_t)MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS * 1000u +
-              (uint64_t)FLOOD_POST_ROOT_GUARD_MS * 1000u,
-          "production CLAIM lost the local activation lead");
+    CHECK(claim_start_us >= PIPELINE_BASE_US +
+              (uint64_t)MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS * 1000u,
+          "production CLAIM started before the complete route wave settled");
     CHECK(run_until_ok(
               &fixture.world,
               fixture.world.transmissions[tx_index].end_us +
@@ -640,13 +630,11 @@ static bool pipelined_enumeration_claim_depth(uint8_t depth,
     return true;
 }
 
-static bool enumeration_pipeline_is_safe_at_all_depths(void)
+static bool route_wave_then_claim_is_safe_at_all_depths(void)
 {
     for (uint8_t depth = 1u; depth <= UWB_ENUM_MAX_HOPS; depth++) {
         bool production_decoded = false;
         bool production_conflict = false;
-        bool legacy_decoded = false;
-        bool legacy_conflict = false;
 
         CHECK(pipelined_enumeration_claim_depth(
                   depth,
@@ -656,21 +644,6 @@ static bool enumeration_pipeline_is_safe_at_all_depths(void)
               "production pipeline depth simulation failed");
         CHECK(production_decoded && !production_conflict,
               "production CLAIM did not follow activation safely");
-        CHECK(pipelined_enumeration_claim_depth(
-                  depth,
-                  false,
-                  &legacy_decoded,
-                  &legacy_conflict),
-              "legacy pipeline depth simulation failed");
-        if (depth == 1u) {
-            CHECK(legacy_decoded && !legacy_conflict,
-                  "legacy direct CLAIM should remain reproducibly safe");
-        } else {
-            CHECK(!legacy_decoded,
-                  "legacy CLAIM unexpectedly reached a deeper anchor");
-            CHECK(depth != 2u || legacy_conflict,
-                  "legacy depth-two radio-ownership collision was not exposed");
-        }
     }
     return true;
 }
@@ -854,7 +827,7 @@ int main(void)
     bool with_relay_wake = enumeration_reaches_forced_anchor(true);
     bool survey_without_wake =
         survey_start_reuses_retained_enumeration_handoff();
-    bool pipeline_all_depths = enumeration_pipeline_is_safe_at_all_depths();
+    bool pipeline_all_depths = route_wave_then_claim_is_safe_at_all_depths();
     bool survey_all_depths =
         survey_start_follows_enumeration_handoff_at_all_depths();
 

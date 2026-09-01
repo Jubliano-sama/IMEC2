@@ -646,6 +646,8 @@ static bool mesh_queue_from_frame_at_internal(
     const uint8_t *frame,
     size_t frame_len,
     uint8_t link_quality,
+    int8_t link_rsl_dbm,
+    bool link_rsl_valid,
     uint8_t radio_channel,
     uint32_t received_at_ms,
     uint32_t protocol_validation_token,
@@ -657,7 +659,6 @@ static bool mesh_queue_from_frame_at_internal(
 {
     struct mesh_frame_parse_context context = {0};
     struct mesh_rx_pending pending = {0};
-    uint64_t received_uptime_ms;
     int ret;
 
     if (valid_mesh_frame != NULL) {
@@ -702,16 +703,19 @@ static bool mesh_queue_from_frame_at_internal(
         }
         return false;
     }
-    received_uptime_ms = mesh_expand_uptime32(received_at_ms);
-    if (!app_mesh_rx_policy_postboot_route_adv_fresh(
-            context.packet.msg_type,
-            context.packet.message_age_ms,
-            received_uptime_ms)) {
+    if (context.packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
+        !mesh_route_activation_allows_route_adv(
+            context.previous_hop_id,
+            context.packet.session_id,
+            context.packet.ttl,
+            received_at_ms)) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf(
-                "DBG_ROUTE_ADV_PREBOOT_REJECT age=%u received_uptime=%llu seq=%u\n",
+                "DBG_ROUTE_ADV_ACTIVATION_REJECT prev=0x%llx session=%u ttl=%u age=%u seq=%u\n",
+                (unsigned long long)context.previous_hop_id,
+                context.packet.session_id,
+                context.packet.ttl,
                 context.packet.message_age_ms,
-                (unsigned long long)received_uptime_ms,
                 context.packet.seq);
         }
         return false;
@@ -810,8 +814,10 @@ static bool mesh_queue_from_frame_at_internal(
     pending.payload_len = (uint16_t)context.payload_len;
     pending.previous_hop_id = context.previous_hop_id;
     pending.link_quality = link_quality;
+    pending.link_rsl_dbm = link_rsl_dbm;
+    pending.link_rsl_valid = link_rsl_valid;
     pending.radio_channel = radio_channel;
-    pending.first_received_at_ms = received_uptime_ms;
+    pending.first_received_at_ms = mesh_expand_uptime32(received_at_ms);
     pending.received_at_ms = received_at_ms;
     pending.received_at_valid = true;
     pending.result_validation_token = protocol_validation_token;
@@ -928,6 +934,8 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
     return mesh_queue_from_frame_at_internal(frame,
                                              frame_len,
                                              link_quality,
+                                             0,
+                                             false,
                                              radio_channel,
                                              received_at_ms,
                                              protocol_validation_token,
@@ -967,6 +975,32 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
     return mesh_queue_from_frame_at_internal(frame,
                                              frame_len,
                                              link_quality,
+                                             0,
+                                             false,
+                                             radio_channel,
+                                             k_uptime_get_32(),
+                                             0u,
+                                             NULL,
+                                             0u,
+                                             false,
+                                             valid_mesh_frame,
+                                             previous_hop_id);
+}
+
+bool mesh_queue_from_frame_deferred_radio(const uint8_t *frame,
+                                          size_t frame_len,
+                                          uint8_t link_quality,
+                                          int8_t link_rsl_dbm,
+                                          bool link_rsl_valid,
+                                          uint8_t radio_channel,
+                                          bool *valid_mesh_frame,
+                                          uint64_t *previous_hop_id)
+{
+    return mesh_queue_from_frame_at_internal(frame,
+                                             frame_len,
+                                             link_quality,
+                                             link_rsl_dbm,
+                                             link_rsl_valid,
                                              radio_channel,
                                              k_uptime_get_32(),
                                              0u,
@@ -1076,6 +1110,194 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
     return true;
 }
 
+static bool mesh_decode_gateway_route_activation_frame(
+    const uint8_t *frame,
+    size_t frame_len,
+    struct uwb_wake_claim_frame *claim,
+    struct mesh_gateway_route_activation *activation)
+{
+    if (frame == NULL || claim == NULL || activation == NULL ||
+        mesh_gateway_route_activation_wake_decode(
+            frame, frame_len, claim, activation) != PROTO_OK ||
+        activation->gateway_id != GATEWAY_ID ||
+        (claim->flags & FLAG_ROUTE_SETUP) == 0u) {
+        return false;
+    }
+    return true;
+}
+
+#if DEVICE_ROLE == ROLE_ANCHOR
+static uint32_t mesh_route_activation_abs_delta(uint32_t a, uint32_t b)
+{
+    uint32_t forward = a - b;
+    uint32_t reverse = b - a;
+
+    return forward < reverse ? forward : reverse;
+}
+#endif
+
+static bool mesh_route_activation_note(
+    const struct uwb_wake_claim_frame *claim,
+    const struct mesh_gateway_route_activation *activation,
+    uint32_t observed_ms)
+{
+#if DEVICE_ROLE != ROLE_ANCHOR
+    ARG_UNUSED(claim);
+    ARG_UNUSED(activation);
+    ARG_UNUSED(observed_ms);
+    return true;
+#else
+    struct mesh_route_activation_rx_entry *slot = NULL;
+    uint32_t route_adv_start_ms;
+    uint32_t relay_window_start_ms;
+
+    if (claim == NULL || activation == NULL ||
+        claim->clicker_id == 0u || activation->gateway_id != GATEWAY_ID) {
+        return false;
+    }
+    route_adv_start_ms = observed_ms + activation->route_adv_starts_in_ms;
+    relay_window_start_ms = observed_ms +
+                            activation->relay_window_starts_in_ms;
+
+    for (uint8_t i = 0u; i < MESH_ROUTE_ACTIVATION_RX_SLOTS; i++) {
+        struct mesh_route_activation_rx_entry *entry =
+            &mesh_route_activation_rx[i];
+
+        if (entry->valid && entry->sender_id == claim->clicker_id &&
+            entry->activation.gateway_route_seq ==
+                activation->gateway_route_seq) {
+            if (entry->activation.gateway_epoch !=
+                    activation->gateway_epoch ||
+                entry->activation.sender_depth !=
+                    activation->sender_depth ||
+                mesh_route_activation_abs_delta(entry->route_adv_start_ms,
+                                                 route_adv_start_ms) >
+                    UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS ||
+                mesh_route_activation_abs_delta(entry->relay_window_start_ms,
+                                                 relay_window_start_ms) >
+                    UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS) {
+                return false;
+            }
+            slot = entry;
+            break;
+        }
+        if (slot == NULL &&
+            (!entry->valid ||
+             uptime_deadline_reached(observed_ms,
+                                     entry->expires_at_ms))) {
+            slot = entry;
+        }
+    }
+    if (slot == NULL) {
+        slot = &mesh_route_activation_rx[0];
+        for (uint8_t i = 1u; i < MESH_ROUTE_ACTIVATION_RX_SLOTS; i++) {
+            if ((int32_t)(mesh_route_activation_rx[i].expires_at_ms -
+                          slot->expires_at_ms) < 0) {
+                slot = &mesh_route_activation_rx[i];
+            }
+        }
+    }
+    *slot = (struct mesh_route_activation_rx_entry) {
+        .activation = *activation,
+        .sender_id = claim->clicker_id,
+        .route_adv_start_ms = route_adv_start_ms,
+        .relay_window_start_ms = relay_window_start_ms,
+        .expires_at_ms = relay_window_start_ms +
+                         MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+        .valid = true,
+    };
+    return true;
+#endif
+}
+
+static const struct mesh_route_activation_rx_entry *
+mesh_route_activation_find(uint64_t sender_id,
+                           uint32_t gateway_route_seq,
+                           uint32_t now_ms)
+{
+#if DEVICE_ROLE != ROLE_ANCHOR
+    ARG_UNUSED(sender_id);
+    ARG_UNUSED(gateway_route_seq);
+    ARG_UNUSED(now_ms);
+    return NULL;
+#else
+    for (uint8_t i = 0u; i < MESH_ROUTE_ACTIVATION_RX_SLOTS; i++) {
+        struct mesh_route_activation_rx_entry *entry =
+            &mesh_route_activation_rx[i];
+
+        if (entry->valid &&
+            uptime_deadline_reached(now_ms, entry->expires_at_ms)) {
+            entry->valid = false;
+        }
+        if (entry->valid && entry->sender_id == sender_id &&
+            entry->activation.gateway_route_seq == gateway_route_seq) {
+            return entry;
+        }
+    }
+    return NULL;
+#endif
+}
+
+static bool mesh_route_activation_allows_route_adv(
+    uint64_t sender_id,
+    uint32_t gateway_route_seq,
+    uint8_t ttl,
+    uint32_t received_at_ms)
+{
+#if DEVICE_ROLE != ROLE_ANCHOR
+    ARG_UNUSED(sender_id);
+    ARG_UNUSED(gateway_route_seq);
+    ARG_UNUSED(ttl);
+    ARG_UNUSED(received_at_ms);
+    return true;
+#else
+    const struct mesh_route_activation_rx_entry *entry;
+    uint8_t observed_sender_depth;
+
+    if (ttl > FLOOD_EPOCH_GLOBAL_TTL) {
+        return false;
+    }
+    entry = mesh_route_activation_find(sender_id,
+                                       gateway_route_seq,
+                                       received_at_ms);
+    observed_sender_depth =
+        (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL - ttl);
+    return entry != NULL &&
+           entry->activation.sender_depth == observed_sender_depth;
+#endif
+}
+
+static bool mesh_route_activation_apply_forward_timing(
+    struct mesh_outbound *route_adv,
+    const struct mesh_rx_pending *rx)
+{
+#if DEVICE_ROLE != ROLE_ANCHOR
+    ARG_UNUSED(route_adv);
+    ARG_UNUSED(rx);
+    return false;
+#else
+    const struct mesh_route_activation_rx_entry *entry;
+    uint8_t observed_sender_depth;
+
+    if (route_adv == NULL || rx == NULL ||
+        rx->packet.msg_type != MSG_GATEWAY_ROUTE_ADV ||
+        rx->packet.ttl > FLOOD_EPOCH_GLOBAL_TTL) {
+        return false;
+    }
+    entry = mesh_route_activation_find(rx->previous_hop_id,
+                                       rx->packet.session_id,
+                                       rx->received_at_ms);
+    observed_sender_depth =
+        (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL - rx->packet.ttl);
+    if (entry == NULL ||
+        entry->activation.sender_depth != observed_sender_depth) {
+        return false;
+    }
+    route_adv->route_wave_start_ms = entry->relay_window_start_ms;
+    return true;
+#endif
+}
+
 static bool mesh_decode_channel5_wake_claim(
     const uint8_t *frame,
     size_t frame_len,
@@ -1083,6 +1305,7 @@ static bool mesh_decode_channel5_wake_claim(
     bool *embedded_route_frame_out)
 {
     bool embedded_route_frame = false;
+    struct mesh_gateway_route_activation activation;
     int ret;
 
     if (embedded_route_frame_out != NULL) {
@@ -1094,6 +1317,9 @@ static bool mesh_decode_channel5_wake_claim(
 
     if (frame_len == UWB_WAKE_CLAIM_LEN) {
         ret = uwb_decode_wake_claim(frame, frame_len, claim);
+    } else if (mesh_decode_gateway_route_activation_frame(
+                   frame, frame_len, claim, &activation)) {
+        ret = PROTO_OK;
     } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                frame_len > UWB_WAKE_CLAIM_LEN) {
         ret = uwb_decode_wake_claim(frame, UWB_WAKE_CLAIM_LEN, claim);
@@ -1176,6 +1402,7 @@ static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
                                             bool *click_priority_out)
 {
     struct uwb_wake_claim_frame claim;
+    struct mesh_gateway_route_activation activation;
     uint32_t contact_expires_at_ms;
     bool embedded_route_candidate = false;
     bool embedded_route_frame = false;
@@ -1187,6 +1414,15 @@ static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
                                          frame_len,
                                          &claim,
                                          &embedded_route_candidate)) {
+        return false;
+    }
+    if (mesh_decode_gateway_route_activation_frame(frame,
+                                                   frame_len,
+                                                   &claim,
+                                                   &activation) &&
+        !mesh_route_activation_note(&claim,
+                                    &activation,
+                                    k_uptime_get_32())) {
         return false;
     }
 
@@ -1324,6 +1560,27 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
     }
     if (listen_ms > WAKE_ADV_MS + MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS) {
         listen_ms = WAKE_ADV_MS + MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS;
+    }
+    {
+        struct mesh_gateway_route_activation route_activation;
+        const struct mesh_route_activation_rx_entry *activation_entry =
+            mesh_decode_gateway_route_activation_frame(
+                frame, frame_len, &claim, &route_activation) ?
+                mesh_route_activation_find(
+                    claim.clicker_id,
+                    route_activation.gateway_route_seq,
+                    k_uptime_get_32()) : NULL;
+
+        if (activation_entry != NULL) {
+            uint32_t route_window_end_ms =
+                activation_entry->route_adv_start_ms +
+                MESH_GATEWAY_ROUTE_ADV_WINDOW_MS;
+            uint32_t now_ms = k_uptime_get_32();
+
+            listen_ms = uptime_deadline_reached(now_ms,
+                                                route_window_end_ms) ? 1u :
+                        route_window_end_ms - now_ms;
+        }
     }
     if (control_followup) {
         /*
@@ -2119,6 +2376,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                         frame,
                         frame_len,
                         quality,
+                        0,
+                        false,
                         UWB_CHANNEL_MESH_PAYLOAD,
                         observed_packet_ms,
                         protocol_validation_token,
@@ -2352,6 +2611,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     frame,
                     frame_len,
                     quality,
+                    0,
+                    false,
                     UWB_CHANNEL_MESH_PAYLOAD,
                     observed_packet_ms,
                     protocol_validation_token,
@@ -3176,6 +3437,12 @@ static int mesh_route_refresh_build(void *ctx,
             snapshot->enumeration_prearm_hold_ms = prearm_hold_ms;
             snapshot->enumeration_prearm_present = true;
             snapshot->enumeration_survey_follows = survey_follows;
+            if (mesh_report_callbacks != NULL &&
+                mesh_report_callbacks->gateway_enumeration_pipeline_start !=
+                    NULL) {
+                mesh_report_callbacks->gateway_enumeration_pipeline_start(
+                    prearm_epoch, snapshot->queued_at_ms);
+            }
         }
     }
     return mesh_relay_build_gateway_route_adv_from_snapshot(&mesh_runtime,
@@ -3185,12 +3452,13 @@ static int mesh_route_refresh_build(void *ctx,
 
 static int mesh_route_refresh_send_wake(void *ctx,
                                         const char *reason,
-                                        uint32_t duration_ms)
+                                        uint32_t duration_ms,
+                                        const struct mesh_outbound *route_adv)
 {
     ARG_UNUSED(ctx);
     return mesh_send_route_wake_train_with_duration(
         MESH_BROADCAST_ID, NULL, NULL,
-        C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH, reason, NULL, NULL,
+        C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH, reason, route_adv, NULL,
         FW_C5_TX_INTENT_BACKGROUND, duration_ms, NULL, NULL);
 }
 

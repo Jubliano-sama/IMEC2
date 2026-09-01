@@ -46,6 +46,7 @@ from .operation_policy import (
 from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
+    CMD_REBOOT,
     CMD_SURVEY_CANCEL,
     CMD_SURVEY_GET_STATUS,
     CMD_SURVEY_PLAN,
@@ -263,6 +264,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_batch_pair_limit = SURVEY_MAX_PAIRS
         self._survey_pending_dispatch: GatewayCommandDispatch | None = None
         self._survey_deferred_dispatch: GatewayCommandDispatch | None = None
+        self._expected_gateway_reboot_identity: tuple[int, int] | None = None
         self._initialize_gateway_diagnostics()
 
         self.connection_text = tk.StringVar(value="Disconnected")
@@ -1617,6 +1619,61 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._refresh_survey_view()
         self._update_command_state()
 
+    def _observe_gateway_command_result(self, packet: Packet) -> None:
+        command_id = packet.value(TLV_COMMAND_ID)
+        status = packet.value(TLV_COMMAND_STATUS)
+        if not isinstance(command_id, int) or not isinstance(status, int):
+            return
+        transition = self.command_orchestrator.observe_command_result(
+            command_id=command_id,
+            host_session_id=packet.session_id,
+            host_sequence=packet.seq,
+            command_status=status,
+        )
+        if not transition.matched:
+            return
+        if status == 0 and command_id == CMD_REBOOT:
+            self.status_text.set(
+                "Gateway accepted reboot; waiting for its BLE reconnect..."
+            )
+        elif status != 0:
+            if self._expected_gateway_reboot_identity == (
+                packet.session_id,
+                packet.seq,
+            ):
+                self._expected_gateway_reboot_identity = None
+            status_name = COMMAND_STATUS_NAMES.get(status, str(status))
+            self._show_error(
+                f"{COMMAND_NAMES.get(command_id, 'Gateway command')} was "
+                f"rejected with {status_name}"
+            )
+        self._apply_gateway_command_transition(transition)
+
+    def _handle_expected_gateway_reboot_transport_error(
+        self, message: str
+    ) -> bool:
+        if self._expected_gateway_reboot_identity is None:
+            return False
+        if message.startswith("Attempting automatic reconnect"):
+            self._append_log("info", message)
+            return True
+        if not (
+            message.startswith("Gateway link dropped; auto-reconnecting")
+            or message == "Gateway disconnected unexpectedly"
+        ):
+            return False
+        self._append_log(
+            "info",
+            "Gateway disconnected for the requested reboot; waiting for its "
+            "BLE service to return.",
+        )
+        self.status_text.set(
+            "Gateway reboot observed; waiting for BLE reconnection..."
+        )
+        if self.connection_state == "disconnected":
+            self._expected_gateway_reboot_identity = None
+        return True
+
     def _expire_survey_command(self) -> None:
         transition = self.survey_command_owner.expire()
         if not transition.matched or transition.request is None:
@@ -1980,6 +2037,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._set_connection_state(state)
             target = event.get("target") or ""
             self._append_log("event", f"BLE state: {event.get('state')} {target}".rstrip())
+            if state == "connected" and self._expected_gateway_reboot_identity is not None:
+                self._append_log(
+                    "info", "Gateway reboot completed and BLE reconnected."
+                )
+                self._expected_gateway_reboot_identity = None
             if identity_error is not None:
                 self._show_error(identity_error)
         elif kind == "gateway_identity":
@@ -1991,7 +2053,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 self._show_error(identity_error)
         elif kind == "transport_error":
             message = str(event.get("message", "Unknown transport error"))
-            self._show_error(message)
+            if not self._handle_expected_gateway_reboot_transport_error(message):
+                self._show_error(message)
         elif kind == "packet":
             packet = event.get("packet")
             if isinstance(packet, Packet):
@@ -2052,6 +2115,25 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _set_connection_state(self, state: str) -> None:
         self.connection_state = state
         self.connected = state == "connected"
+        expected_reboot = getattr(
+            self, "_expected_gateway_reboot_identity", None
+        )
+        current_command = getattr(
+            getattr(self, "command_orchestrator", None), "current", None
+        )
+        if (
+            expected_reboot is not None
+            and not self.connected
+            and state in ("reconnecting", "disconnected")
+            and current_command is not None
+            and current_command.command_id == CMD_REBOOT
+            and (current_command.session_id, current_command.sequence)
+            == expected_reboot
+        ):
+            # The requested board reset may drop BLE before Tk drains the
+            # success result.  That exact disconnect is physical completion,
+            # so it must release the host command owner instead of timing out.
+            self.command_orchestrator.reset()
         if (
             not self.connected
             and state not in ("connecting", "reconnecting")
@@ -2347,6 +2429,25 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return None
         if not delivery.cached or not self._is_receiptable_gateway_packet(packet):
             return None
+        expected_reboot = getattr(
+            self, "_expected_gateway_reboot_identity", None
+        )
+        if (
+            expected_reboot == (packet.session_id, packet.seq)
+            and packet.msg_type == MSG_COMMAND_RESULT
+            and packet.value(TLV_COMMAND_ID) == CMD_REBOOT
+            and packet.value(TLV_COMMAND_STATUS) == 0
+            and packet.src_id == packet.dst_id
+        ):
+            # A successful local reboot result is followed by the physical
+            # reset that clears its publisher custody.  Do not race that reset
+            # with a receipt write which cannot provide any stronger commit.
+            self._log_gateway_receipt(
+                "info",
+                "Gateway reboot result accepted; the physical reset is its "
+                "terminal acknowledgement, so no host receipt is required.",
+            )
+            return None
 
         if gateway_scope is None:
             configured_gateway_id = getattr(self, "gateway_id", None)
@@ -2498,6 +2599,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     received_at=received_at,
                 )
             elif packet.msg_type == MSG_COMMAND_RESULT:
+                self._observe_gateway_command_result(packet)
                 self._observe_survey_command_result(packet)
             self._observe_diagnostic_packet(packet, received_at=received_at)
         self.packet_counter += 1
@@ -3244,7 +3346,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     timeout_s=5.0,
                     status_text="Rebooting gateway board to clear board RAM...",
                 )
-                self._submit_gateway_command(GatewayCommandPlan.user_triggered(target))
+                if not self._submit_gateway_command(
+                    GatewayCommandPlan.user_triggered(target)
+                ):
+                    raise RuntimeError("a gateway command is already active")
+                self._expected_gateway_reboot_identity = (session_id, seq)
                 self._append_log("info", "Sent reboot command to gateway board; board RAM cleared and reconnecting...")
                 self.status_text.set("Cleared host RAM and sent reboot command to gateway board.")
                 return

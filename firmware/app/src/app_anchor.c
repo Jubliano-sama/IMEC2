@@ -78,7 +78,7 @@ BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS +
 BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS >=
                  DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
                  (UWB_ENUM_MAX_HOPS *
-                  MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS) +
+                  DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS) +
                  ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS,
              "response edge must follow every pipelined CLAIM hop");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
@@ -128,7 +128,7 @@ BUILD_ASSERT(DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES > 0u &&
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
              "post-wake route RX buffer must still fit normal ranging schedules");
-BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 8192u,
+BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 9984u,
              "mesh-route anchor scan must retain its measured safety margin");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_PRIORITY < ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
              "mesh route work must preempt low-duty anchor scan handoff");
@@ -178,10 +178,12 @@ struct anchor_discovery_claim_pending {
 
 struct anchor_enumeration_response_config {
     uint64_t start_ms;
+    uint64_t hia_deepest_source_start_ms;
     uint64_t parent_id;
     uint32_t epoch;
     uint8_t hop_count;
     uint8_t max_hop_count;
+    bool hia_pipeline;
     bool active;
 };
 
@@ -270,6 +272,7 @@ struct gateway_discovery_assignment_state {
     bool ram_only_iteration;
     bool replay;
     bool response_lane_active;
+    bool response_lane_hia_pipeline;
     bool table_propagation_pending;
     bool survey_follows;
     bool active;
@@ -460,7 +463,9 @@ static int anchor_enumeration_rx_begin(uint32_t epoch,
 static int anchor_enumeration_rx_prearm(uint32_t epoch,
                                         uint32_t hold_ms,
                                         uint32_t operation_budget_ms,
-                                        bool survey_follows);
+                                        bool survey_follows,
+                                        uint32_t local_depth_block_start_ms,
+                                        uint8_t observed_hop_count);
 static int anchor_enumeration_rx_consume_survey_handoff(
     uint32_t assignment_epoch);
 static int anchor_enumeration_rx_begin_table(

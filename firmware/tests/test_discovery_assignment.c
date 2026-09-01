@@ -728,14 +728,14 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
     assert(discovery_assignment_activation_propagation_hold_ms(2u) == 2350u);
     assert(discovery_assignment_activation_propagation_hold_ms(UINT8_MAX) ==
            8950u);
-    assert(discovery_assignment_control_listener_duration_ms(1u) == 3750u);
-    assert(discovery_assignment_control_listener_duration_ms(2u) == 4290u);
-    assert(discovery_assignment_control_listener_duration_ms(3u) == 4830u);
-    assert(discovery_assignment_control_listener_duration_ms(0u) == 7530u);
+    assert(discovery_assignment_control_listener_duration_ms(1u) == 3250u);
+    assert(discovery_assignment_control_listener_duration_ms(2u) == 3790u);
+    assert(discovery_assignment_control_listener_duration_ms(3u) == 4330u);
+    assert(discovery_assignment_control_listener_duration_ms(0u) == 7030u);
     assert(discovery_assignment_control_listener_duration_ms(UINT8_MAX) ==
-           7530u);
-    assert(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS == 3750u);
-    assert(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MAX_MS == 7530u);
+           7030u);
+    assert(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS == 3250u);
+    assert(DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MAX_MS == 7030u);
     assert(DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS >=
            DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S * 1000u + 5000u);
     assert(DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS == 850u);

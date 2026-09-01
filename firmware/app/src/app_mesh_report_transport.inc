@@ -2139,6 +2139,8 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
                 mesh_uwb_rx_frame,
                 frame_len,
                 quality,
+                0,
+                false,
                 UWB_CHANNEL_WAKE_CONTACT,
                 k_uptime_get_32(),
                 0u,
@@ -2859,19 +2861,58 @@ static int mesh_send_c5_flood_now_until(
     for (uint16_t attempt = 0u; attempt < attempt_count; attempt++) {
         struct app_mesh_flood_result attempt_result = {0};
         struct app_mesh_flood_progress attempt_progress = {0};
+        bool gateway_route_adv =
+            tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV;
+        uint8_t gateway_route_depth = gateway_route_adv ?
+            (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL - tx.packet.ttl) : 0u;
+        uint32_t route_adv_copy_deadline_ms = 0u;
         bool one_activation_per_wave =
             enumeration_control || compact_scheduled_control ||
-            tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV;
+            gateway_route_adv;
         uint32_t wake_train_ms =
             !send_wake_train || (one_activation_per_wave && attempt != 0u) ?
                 0u :
             long_gateway_activation ?
                 MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS :
                 WAKE_ADV_MS;
-        uint32_t first_tx_ms = tx.earliest_tx_valid ? tx.earliest_tx_ms :
-                               k_uptime_get_32();
+        uint32_t first_tx_ms;
         uint32_t wake_start_ms = wake_train_ms != 0u ?
+            0u : k_uptime_get_32();
+
+        if (gateway_route_adv) {
+            tx.earliest_tx_ms = tx.route_wave_start_ms +
+                MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                mesh_gateway_route_adv_copy_offset_ms(
+                    DEVICE_ID,
+                    tx.packet.session_id,
+                    gateway_route_depth,
+                    (uint8_t)attempt);
+            tx.earliest_tx_valid = true;
+            route_adv_copy_deadline_ms = tx.route_wave_start_ms +
+                MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                ((uint32_t)attempt + 1u) *
+                    MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS;
+            ops.absolute_deadline_ms = route_adv_copy_deadline_ms;
+            ops.absolute_deadline_valid = true;
+            if (uptime_deadline_reached(k_uptime_get_32(),
+                                        route_adv_copy_deadline_ms)) {
+                ret = -ETIMEDOUT;
+                continue;
+            }
+        }
+        first_tx_ms = tx.earliest_tx_valid ? tx.earliest_tx_ms :
+                      k_uptime_get_32();
+        wake_start_ms = wake_train_ms != 0u ?
             first_tx_ms - wake_train_ms : first_tx_ms;
+
+        if (wake_train_ms != 0u &&
+            gateway_route_adv) {
+            wake_start_ms = tx.route_wave_start_ms +
+                mesh_gateway_route_activation_start_offset_ms(
+                    DEVICE_ID,
+                    tx.packet.session_id,
+                    gateway_route_depth);
+        }
         if (!uptime_deadline_reached(k_uptime_get_32(), wake_start_ms)) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_C5_FLOOD_WAIT now=%u wake=%u first=%u msg=%02x attempt=%u/%u reason=%s\n",
@@ -2908,20 +2949,28 @@ static int mesh_send_c5_flood_now_until(
                                                          log_reason);
         }
 
-        ret = (single_opportunity || compact_primary_control) ?
-            app_mesh_flood_send_opportunity(&tx, &ops, &attempt_result) :
-            atomic_gateway_control ?
-            app_mesh_flood_send_bounded_resume(&tx,
-                                                &ops,
-                                                &attempt_progress,
-                                                &attempt_result) :
-            command_orchestrator == NULL ?
-            app_mesh_command_orchestrator_serialize_flood(&tx,
-                                                          &ops,
-                                                          &attempt_result) :
-            app_mesh_command_orchestrator_send_flood(command_orchestrator,
-                                                      &ops,
-                                                      &attempt_result);
+        if (gateway_route_adv) {
+            do {
+                ret = app_mesh_flood_send_opportunity_resume(
+                    &tx, &ops, &attempt_progress, &attempt_result);
+            } while (ret == -EAGAIN && !attempt_progress.complete &&
+                     attempt_result.deferred_count == 0u &&
+                     !uptime_deadline_reached(k_uptime_get_32(),
+                                              route_adv_copy_deadline_ms));
+        } else {
+            ret = (single_opportunity || compact_primary_control) ?
+                app_mesh_flood_send_opportunity(&tx, &ops, &attempt_result) :
+                atomic_gateway_control ?
+                app_mesh_flood_send_bounded_resume(&tx,
+                                                    &ops,
+                                                    &attempt_progress,
+                                                    &attempt_result) :
+                command_orchestrator == NULL ?
+                app_mesh_command_orchestrator_serialize_flood(
+                    &tx, &ops, &attempt_result) :
+                app_mesh_command_orchestrator_send_flood(
+                    command_orchestrator, &ops, &attempt_result);
+        }
         aggregate_result.sent_count =
             UINT8_MAX - aggregate_result.sent_count < attempt_result.sent_count ?
             UINT8_MAX : aggregate_result.sent_count + attempt_result.sent_count;
@@ -2935,6 +2984,10 @@ static int mesh_send_c5_flood_now_until(
             aggregate_result.first_due_ms = attempt_result.first_due_ms;
         }
         aggregate_result.last_due_ms = attempt_result.last_due_ms;
+        if (gateway_route_adv && ret == -ETIMEDOUT) {
+            ret = 0;
+            continue;
+        }
         if (ret != 0) {
             if (!atomic_gateway_control &&
                 !gateway_enumeration_quick_copies &&
@@ -2943,16 +2996,15 @@ static int mesh_send_c5_flood_now_until(
             }
             break;
         }
-        if (attempt + 1u < attempt_count) {
+        if (attempt + 1u < attempt_count && !gateway_route_adv) {
             uint32_t diversification_ms =
                 mesh_flood_copy_diversification_ms(
                     DEVICE_ID, &tx.packet, (uint8_t)(attempt + 1u));
             uint32_t copy_gap_ms;
 
-            if (tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV ||
-                gateway_enumeration_quick_copies) {
+            if (gateway_enumeration_quick_copies) {
                 copy_gap_ms = diversification_ms %
-                    (MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS + 1u);
+                    (MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS + 1u);
             } else {
                 copy_gap_ms =
                     (compact_primary_control ?
@@ -2963,6 +3015,11 @@ static int mesh_send_c5_flood_now_until(
             tx.earliest_tx_ms = k_uptime_get_32() + copy_gap_ms;
             tx.earliest_tx_valid = true;
         }
+    }
+
+    if (tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
+        aggregate_result.sent_count == 0u && ret == 0) {
+        ret = -ETIMEDOUT;
     }
 
     if (gateway_enumeration_quick_copies && ret == 0 &&

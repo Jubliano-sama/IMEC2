@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define DWM3000_RSL_INVALID_DBM INT8_MIN
+
 #include "uwb.h"
 
 #define DWM3000_RX_DIAG_RAW_LEN 108u
@@ -249,6 +251,16 @@ int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
 int dwm3000_driver_receive_frame_continuous_extend_on_activity(
     uint32_t acquire_timeout_ms,
     uint32_t completion_timeout_ms,
+    uint8_t *frame,
+    size_t frame_cap,
+    size_t *frame_len,
+    uint8_t *quality,
+    int8_t *rsl_dbm,
+    enum dwm3000_rx_failure *failure);
+int dwm3000_driver_receive_frame_continuous_extend_on_activity_until(
+    uint32_t acquire_timeout_ms,
+    uint32_t completion_timeout_ms,
+    int64_t activity_deadline_ms,
     uint8_t *frame,
     size_t frame_cap,
     size_t *frame_len,

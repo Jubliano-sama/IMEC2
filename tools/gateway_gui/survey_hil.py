@@ -16,6 +16,7 @@ from .protocol import (
     COMMAND_NAMES,
     COMMAND_STATUS_NAMES,
     MSG_COMMAND_RESULT,
+    MSG_GATEWAY_COMMAND_EVENT,
     MSG_SURVEY_EVENT,
     SURVEY_EVENT_NEIGHBOR_GRAPH,
     SURVEY_EVENT_BATCH_COMPLETE,
@@ -28,6 +29,7 @@ from .protocol import (
     TLV_REASON,
     Packet,
     decode_survey_event,
+    validate_gateway_command_event_packet,
 )
 
 
@@ -113,6 +115,20 @@ class SurveyHilGui(GatewayGui):
                     f"reason={reason}",
                     flush=True,
                 )
+            elif packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
+                event = validate_gateway_command_event_packet(packet)
+                print(
+                    f"HOST_PACKET gateway_event stage={event.stage} "
+                    f"status={event.command_status} reason={event.reason} "
+                    f"anchor=0x{event.anchor_id:016x} "
+                    f"previous=0x{event.previous_hop_id:016x} "
+                    f"hop={event.hop_count} slot={event.discovery_slot} "
+                    f"progress={event.progress_count}/{event.total_count} "
+                    f"success={event.success_count} "
+                    f"failure={event.failure_count} "
+                    f"duplicates={event.duplicate_count}",
+                    flush=True,
+                )
             elif packet.msg_type == MSG_SURVEY_EVENT:
                 event = decode_survey_event(packet)
                 self.hil_evidence.partial_reasons |= event.partial_reasons
@@ -120,9 +136,34 @@ class SurveyHilGui(GatewayGui):
                     self.hil_evidence.neighbor_reports = len(
                         event.neighbor_reports
                     )
+                    occupied_slots = ",".join(
+                        str(slot) for slot in sorted(event.occupied_slots)
+                    ) or "none"
+                    report_slots = ",".join(
+                        str(report.own_slot)
+                        for report in sorted(
+                            event.neighbor_reports,
+                            key=lambda report: report.own_slot,
+                        )
+                    ) or "none"
+                    heard_by_slot = ";".join(
+                        f"{report.own_slot}:" + (
+                            ",".join(
+                                str(slot)
+                                for slot in sorted(report.heard_slots)
+                            ) or "none"
+                        )
+                        for report in sorted(
+                            event.neighbor_reports,
+                            key=lambda report: report.own_slot,
+                        )
+                    ) or "none"
                     print(
                         f"HOST_PACKET survey={event.generation} "
                         f"neighbor_reports={len(event.neighbor_reports)} "
+                        f"occupied_slots={occupied_slots} "
+                        f"report_slots={report_slots} "
+                        f"heard_by_slot={heard_by_slot} "
                         f"partial=0x{event.partial_reasons:04x}",
                         flush=True,
                     )
@@ -199,6 +240,8 @@ def run(args: argparse.Namespace) -> int:
     run_started_at: float | None = None
     terminal_seen_at: float | None = None
     last_state: tuple[object, ...] | None = None
+    reboot_requested = False
+    reboot_disconnect_seen = False
     started = False
     exit_code = 1
 
@@ -247,7 +290,8 @@ def run(args: argparse.Namespace) -> int:
         root.destroy()
 
     def poll() -> None:
-        nonlocal last_state, started, run_started_at, terminal_seen_at
+        nonlocal last_state, reboot_requested, reboot_disconnect_seen
+        nonlocal started, run_started_at, terminal_seen_at
         elapsed = time.monotonic() - started_at
         command_active = gui.command_orchestrator.active
         state = (
@@ -268,14 +312,38 @@ def run(args: argparse.Namespace) -> int:
                 error=state[4],
             )
             last_state = state
+        if (
+            args.reboot_before_survey
+            and reboot_requested
+            and not reboot_disconnect_seen
+            and gui.connection_state in ("reconnecting", "disconnected")
+        ):
+            reboot_disconnect_seen = True
+            print("GUI_REBOOT_DISCONNECT_OBSERVED", flush=True)
         if not started and gui.connection_state == "connected":
-            started = True
-            run_started_at = time.monotonic()
-            print(
-                f"GUI_ONE_SURVEY_STARTED gateway=0x{gui.gateway_id:016x}",
-                flush=True,
-            )
-            gui._run_survey()
+            if args.reboot_before_survey and not reboot_requested:
+                reboot_requested = True
+                print(
+                    f"GUI_REBOOT_REQUESTED gateway=0x{gui.gateway_id:016x}",
+                    flush=True,
+                )
+                gui._clear_gateway_memory()
+            elif (
+                not args.reboot_before_survey
+                or (
+                    reboot_disconnect_seen
+                    and gui._expected_gateway_reboot_identity is None
+                )
+            ):
+                if args.reboot_before_survey:
+                    print("GUI_REBOOT_RECONNECTED", flush=True)
+                started = True
+                run_started_at = time.monotonic()
+                print(
+                    f"GUI_ONE_SURVEY_STARTED gateway=0x{gui.gateway_id:016x}",
+                    flush=True,
+                )
+                gui._run_survey()
         if (
             started
             and evidence.terminal_seen
@@ -293,6 +361,14 @@ def run(args: argparse.Namespace) -> int:
             time.monotonic() - run_started_at >= args.timeout
         ):
             finish("run-timeout")
+            return
+        if (
+            args.reboot_before_survey
+            and reboot_requested
+            and not started
+            and elapsed >= args.reboot_timeout
+        ):
+            finish("reboot-timeout")
             return
         root.after(100, poll)
 
@@ -327,6 +403,15 @@ def main() -> None:
         ),
     )
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument(
+        "--reboot-before-survey",
+        action="store_true",
+        help=(
+            "invoke the production GUI gateway-reboot action and require its "
+            "BLE disconnect/reconnect before starting the survey"
+        ),
+    )
+    parser.add_argument("--reboot-timeout", type=float, default=30.0)
     parser.add_argument("--settle", type=float, default=5.0)
     parser.add_argument(
         "--show-window",
@@ -340,8 +425,10 @@ def main() -> None:
         args.expected_samples,
     ) <= 0:
         parser.error("expected counts must be positive")
-    if args.timeout <= 0 or args.settle < 0:
-        parser.error("timeout must be positive and settle must be nonnegative")
+    if args.timeout <= 0 or args.reboot_timeout <= 0 or args.settle < 0:
+        parser.error(
+            "timeouts must be positive and settle must be nonnegative"
+        )
     if not 1 <= args.batch_pairs <= 100:
         parser.error("batch-pairs must be in 1..100")
     raise SystemExit(run(args))

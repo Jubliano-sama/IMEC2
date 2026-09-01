@@ -3151,11 +3151,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
         mesh_enumeration_relay_delay_ms(relay->local_id, packet);
     if (enumeration_control &&
         assignment_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
-        /* Here-I-Am is the activation wave and CLAIM is its pipelined
-         * follower. Preserve one complete activation-relay hop at every
-         * depth instead of waiting for the entire network wave at the root. */
         compact_initial_delay_ms =
-            MESH_ENUMERATION_CLAIM_PIPELINE_LEAD_MS +
             mesh_enumeration_relay_delay_ms(relay->local_id, packet);
     }
     out->earliest_tx_ms = now_ms +
@@ -3425,6 +3421,10 @@ static int upsert_reactive_route(struct mesh_relay *relay,
                                  uint32_t route_epoch,
                                  uint8_t advertised_hop_count,
                                  uint8_t quality,
+                                 int8_t link_rsl_dbm,
+                                 bool link_rsl_valid,
+                                 uint32_t provisional_until_ms,
+                                 bool provisional_valid,
                                  uint8_t relay_capacity_state,
                                  uint16_t queue_free_hint,
                                  uint8_t channel9_busy_hint,
@@ -3466,6 +3466,10 @@ static int upsert_reactive_route(struct mesh_relay *relay,
             .last_seen_ms = now_ms,
             .hop_count = advertised_hop_count,
             .link_quality = quality,
+            .link_rsl_dbm = link_rsl_dbm,
+            .link_rsl_valid = link_rsl_valid,
+            .provisional_until_ms = provisional_until_ms,
+            .provisional_valid = provisional_valid,
             .relay_capacity_state = relay_capacity_state,
             .queue_free_hint = queue_free_hint,
             .channel9_busy_hint = channel9_busy_hint,

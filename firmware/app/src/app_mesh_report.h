@@ -92,7 +92,9 @@ struct app_mesh_report_callbacks {
     int (*anchor_enumeration_prearm)(uint32_t epoch,
                                      uint32_t hold_ms,
                                      uint32_t operation_budget_ms,
-                                     bool survey_follows);
+                                     bool survey_follows,
+                                     uint32_t local_depth_block_start_ms,
+                                     uint8_t observed_hop_count);
     void (*gateway_note_anchor_boot_observation)(
         const struct proto_packet *packet,
         const uint8_t *payload,
@@ -114,6 +116,8 @@ struct app_mesh_report_callbacks {
                                          uint32_t *hold_ms,
                                          struct operation_policy_set *policy,
                                          bool *survey_follows);
+    void (*gateway_enumeration_pipeline_start)(uint32_t epoch,
+                                               uint32_t gateway_wake_start_ms);
 };
 
 struct app_mesh_outbound_view {
@@ -326,6 +330,14 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                     uint8_t radio_channel,
                                     bool *valid_mesh_frame,
                                     uint64_t *previous_hop_id);
+bool mesh_queue_from_frame_deferred_radio(const uint8_t *frame,
+                                          size_t frame_len,
+                                          uint8_t link_quality,
+                                          int8_t link_rsl_dbm,
+                                          bool link_rsl_valid,
+                                          uint8_t radio_channel,
+                                          bool *valid_mesh_frame,
+                                          uint64_t *previous_hop_id);
 /* BLE completion boundary for a gateway-local ACK-required host item. */
 void mesh_gateway_host_receipt_ingress_queued(void);
 void mesh_gateway_host_receipt_ready(void);

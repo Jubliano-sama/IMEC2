@@ -1089,9 +1089,8 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
         fields->flood_profile_version !=
             MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION ||
         fields->random_backoff_max_ms !=
-            MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS ||
-        fields->random_backoff_slot_ms !=
-            MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS ||
+            MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS ||
+        fields->random_backoff_slot_ms != 1u ||
         fields->flood_retry_count != FLOOD_DEFAULT_RETRY_COUNT ||
         fields->path_quality_min > 100u ||
         fields->gateway_capacity_state > RELAY_CAP_BLACK ||
@@ -1125,6 +1124,59 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
         return false;
     }
     return true;
+}
+
+static uint16_t gateway_route_activation_countdown_ms(uint32_t now_ms,
+                                                      uint32_t target_ms)
+{
+    uint32_t remaining_ms;
+
+    if (deadline_reached(now_ms, target_ms)) {
+        return 0u;
+    }
+    remaining_ms = target_ms - now_ms;
+    return remaining_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)remaining_ms;
+}
+
+int mesh_relay_gateway_route_activation_for_outbound(
+    const struct mesh_outbound *route_adv,
+    uint32_t now_ms,
+    struct mesh_gateway_route_activation *activation)
+{
+    struct gateway_route_adv_fields fields = {0};
+    uint32_t route_adv_start_ms;
+    uint32_t relay_window_start_ms;
+    int ret;
+
+    if (route_adv == NULL || activation == NULL ||
+        route_adv->packet.msg_type != MSG_GATEWAY_ROUTE_ADV ||
+        route_adv->packet.payload_len != route_adv->payload_len) {
+        return PROTO_ERR_ARG;
+    }
+    ret = parse_gateway_route_adv_tlvs(route_adv->payload,
+                                       route_adv->payload_len,
+                                       &fields);
+    if (ret != PROTO_OK || !gateway_route_adv_fields_valid(&fields)) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+
+    route_adv_start_ms = route_adv->route_wave_start_ms +
+                         MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS;
+    relay_window_start_ms = route_adv->route_wave_start_ms +
+                            MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS;
+    *activation = (struct mesh_gateway_route_activation) {
+        .gateway_id = fields.gateway_id,
+        .gateway_route_seq = fields.gateway_route_seq,
+        .gateway_epoch = fields.gateway_epoch,
+        .relay_window_starts_in_ms =
+            gateway_route_activation_countdown_ms(now_ms,
+                                                  relay_window_start_ms),
+        .route_adv_starts_in_ms =
+            gateway_route_activation_countdown_ms(now_ms,
+                                                  route_adv_start_ms),
+        .sender_depth = fields.hop_count,
+    };
+    return PROTO_OK;
 }
 
 static bool gateway_route_adv_sequence_strictly_newer(uint32_t candidate,
@@ -1280,7 +1332,8 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
                                            struct mesh_outbound *out)
 {
     struct gateway_route_adv_fields fields = {0};
-    struct flood_control_fields flood_control;
+    uint32_t root_wave_start_ms;
+    uint32_t route_wave_start_ms;
     size_t out_payload_len = 0u;
     int ret;
 
@@ -1295,6 +1348,9 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     if (!gateway_route_adv_fields_valid(&fields) ||
         fields.hop_count == UINT8_MAX) {
         return PROTO_ERR_MALFORMED;
+    }
+    if (fields.hop_count >= MESH_GATEWAY_ROUTE_MAX_DEPTH) {
+        return PROTO_ERR_STALE;
     }
 
     fields.path_quality_min = combined_quality(fields.path_quality_min, link_quality);
@@ -1321,22 +1377,17 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     out->queued_at_ms = now_ms;
     out->queued_at_valid = true;
     out->flood_retry_count = fields.flood_retry_count;
-    flood_control.random_backoff_max_ms = fields.random_backoff_max_ms;
-    flood_control.random_backoff_slot_ms = fields.random_backoff_slot_ms;
-    flood_control.retry_count = fields.flood_retry_count;
-    /* earliest_tx_ms names the first typed advertisement, while the adapter
-     * starts the preceding activation train one wake duration earlier. Keep
-     * that wake start in the future so the node-mixed relay slot actually
-     * staggers competing parents; the former now+0..1 ms value had already
-     * expired when the adapter subtracted the 500 ms wake duration, making
-     * every relay start immediately. */
-    random_value = mix32(random_value ^ (uint32_t)local_id ^
-                         (uint32_t)(local_id >> 32) ^ packet->session_id ^
-                         ((uint32_t)packet->seq << 16));
-    out->earliest_tx_ms = now_ms + MESH_RADIO_WAKE_TRAIN_MS +
-        flood_random_slotted_delay_ms(flood_control.random_backoff_max_ms,
-                                      flood_control.random_backoff_slot_ms,
-                                      random_value);
+    (void)random_value;
+    root_wave_start_ms = now_ms - packet->message_age_ms;
+    route_wave_start_ms = root_wave_start_ms +
+        ((uint32_t)fields.hop_count * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+    out->route_wave_start_ms = route_wave_start_ms;
+    out->earliest_tx_ms = route_wave_start_ms +
+        MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+        mesh_gateway_route_adv_copy_offset_ms(local_id,
+                                              fields.gateway_route_seq,
+                                              fields.hop_count,
+                                              0u);
     out->earliest_tx_valid = true;
     return PROTO_OK;
 }
@@ -1347,6 +1398,8 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                     size_t payload_len,
                                     uint64_t previous_hop_id,
                                     uint8_t link_quality,
+                                    int8_t link_rsl_dbm,
+                                    bool link_rsl_valid,
                                     uint32_t now_ms,
                                     uint32_t random_value,
                                     struct mesh_relay_result *result)
@@ -1357,7 +1410,9 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     const struct route_candidate *candidate;
     uint32_t previous_gateway_epoch;
     uint32_t route_epoch;
-    uint8_t path_quality;
+    uint32_t root_wave_start_ms;
+    uint32_t provisional_until_ms = 0u;
+    bool provisional_valid = false;
     bool alternate_path;
     bool forward_valid = false;
     int ret;
@@ -1396,7 +1451,14 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
         }
     }
 
-    path_quality = combined_quality(fields.path_quality_min, link_quality);
+    if (link_rsl_valid &&
+        !route_link_rsl_immediately_usable(link_rsl_dbm)) {
+        root_wave_start_ms = now_ms - packet->message_age_ms;
+        provisional_until_ms = root_wave_start_ms +
+            (((uint32_t)fields.hop_count + 2u) *
+             MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+        provisional_valid = true;
+    }
     candidate_path = fields.path;
     ret = mesh_route_path_append(&candidate_path, relay->local_id);
     if (ret != PROTO_OK) {
@@ -1407,7 +1469,11 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                       previous_hop_id,
                                       route_epoch,
                                       fields.hop_count,
-                                      path_quality,
+                                      link_quality,
+                                      link_rsl_dbm,
+                                      link_rsl_valid,
+                                      provisional_until_ms,
+                                      provisional_valid,
                                       fields.gateway_capacity_state,
                                       UINT16_MAX,
                                       0u,
@@ -1437,7 +1503,9 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                       previous_gateway_epoch,
                                       &route_rollback);
     }
-    if (route_ret == PROTO_OK && relay->route_discovery.active &&
+    if (route_ret == PROTO_OK &&
+        route_selected(&relay->upstream) != NULL &&
+        relay->route_discovery.active &&
         relay->route_discovery.target_id == fields.gateway_id) {
         mesh_relay_note_route_discovery_ready(relay, fields.gateway_id);
         result->route_discovery_target_id = fields.gateway_id;
@@ -1816,6 +1884,10 @@ static int handle_route_request(struct mesh_relay *relay,
                                 accepted_route_epoch,
                                 fields.hop_count,
                                 fields.quality,
+                                0,
+                                false,
+                                0u,
+                                false,
                                 fields.relay_capacity_state,
                                 fields.queue_free_hint,
                                 fields.channel9_busy_hint,
@@ -2040,6 +2112,10 @@ static int handle_route_reply(struct mesh_relay *relay,
                                 fields.route_epoch,
                                 fields.hop_count,
                                 fields.quality,
+                                0,
+                                false,
+                                0u,
+                                false,
                                 fields.relay_capacity_state,
                                 fields.queue_free_hint,
                                 fields.channel9_busy_hint,

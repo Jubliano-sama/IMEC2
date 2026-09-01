@@ -1601,6 +1601,32 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                      uint32_t random_value,
                                      struct mesh_relay_result *result)
 {
+    return mesh_relay_handle_rx_with_random_radio(relay,
+                                                  packet,
+                                                  payload,
+                                                  payload_len,
+                                                  previous_hop_id,
+                                                  link_quality,
+                                                  0,
+                                                  false,
+                                                  now_ms,
+                                                  random_value,
+                                                  result);
+}
+
+int mesh_relay_handle_rx_with_random_radio(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint8_t link_quality,
+    int8_t link_rsl_dbm,
+    bool link_rsl_valid,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_relay_result *result)
+{
     enum duplicate_classification duplicate = DUPLICATE_CLASS_NEW;
     int ret;
 
@@ -1618,6 +1644,8 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
 
     result_reset(result);
 #if IMEC_MESH_RELAY_GATEWAY_ONLY
+    (void)link_rsl_dbm;
+    (void)link_rsl_valid;
     if (relay->role != MESH_RELAY_ROLE_GATEWAY ||
         relay->local_id != relay->gateway_id ||
         relay->pending.state != MESH_RELAY_TX_IDLE) {
@@ -2136,6 +2164,8 @@ clicker_leaf_rx_allowed:
                                        payload_len,
                                        previous_hop_id,
                                        link_quality,
+                                       link_rsl_dbm,
+                                       link_rsl_valid,
                                        now_ms,
                                        random_value,
                                        result);

@@ -320,9 +320,9 @@ static bool test_prearm_survives_complete_claim_pipeline(void)
     const uint8_t depth = DISCOVERY_ASSIGNMENT_MAX_HOPS;
     const uint32_t here_i_am_ms = TEST_ORIGIN_MS;
     const uint32_t latest_claim_ms = here_i_am_ms +
-        MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS +
-        FLOOD_POST_ROOT_GUARD_MS +
-        (uint32_t)depth * MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS;
+        MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS +
+        (uint32_t)depth *
+            DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
     const uint32_t prearm_deadline_ms =
         here_i_am_ms + DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
 
@@ -660,6 +660,38 @@ static bool test_rejected_starts_preserve_or_release_the_right_owner(void)
     return true;
 }
 
+static bool test_independently_rebooted_receiver_uses_relative_countdown(void)
+{
+    const uint64_t receiver_uptimes_ms[] = {25u, 200u, 750u};
+    const uint32_t packet_age_ms = 1000u;
+    const uint32_t advertised_delay_ms = 4510u;
+    const uint64_t remaining_ms = advertised_delay_ms - packet_age_ms;
+
+    active_topology_depth = 2u;
+    active_anchor_depth = 2u;
+    for (size_t i = 0u;
+         i < sizeof(receiver_uptimes_ms) / sizeof(receiver_uptimes_ms[0]);
+         i++) {
+        uint64_t start_ms = 0u;
+        int64_t starts_in_ms = 0;
+
+        CHECK(packet_age_ms > receiver_uptimes_ms[i],
+              "reboot regression does not cross the receiver uptime");
+        CHECK(enumeration_response_claim_start(
+                  receiver_uptimes_ms[i],
+                  packet_age_ms,
+                  advertised_delay_ms,
+                  &start_ms,
+                  &starts_in_ms),
+              "valid future countdown was rejected after an independent reboot");
+        CHECK(starts_in_ms == (int64_t)remaining_ms,
+              "packet age was not converted to a relative countdown");
+        CHECK(start_ms - receiver_uptimes_ms[i] == remaining_ms,
+              "local deadline changed with receiver uptime");
+    }
+    return true;
+}
+
 int main(void)
 {
     if (!test_prearm_survives_complete_claim_pipeline()) {
@@ -674,6 +706,9 @@ int main(void)
         }
     }
     if (!test_rejected_starts_preserve_or_release_the_right_owner()) {
+        return 1;
+    }
+    if (!test_independently_rebooted_receiver_uses_relative_countdown()) {
         return 1;
     }
     if (failures != 0) {

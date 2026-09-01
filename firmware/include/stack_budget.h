@@ -36,9 +36,9 @@ extern "C" {
     X(CLICKER, "mesh_clicker", 4096u, 6144u, 6784u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
-      0u, 8704u, true, true, true, true, false)                               \
+      0u, 6912u, true, true, true, true, false)                               \
     X(GATEWAY, "mesh_gateway", 4416u, 8512u, 8384u, 8192u, 320u, 1536u, 1536u,  \
-      1536u, 3072u, true, true, true, true, false)
+      1792u, 2816u, true, true, true, true, false)
 
 #if STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES != 1536u
 #error "gateway logging stack constant and deployable policy diverged"
@@ -46,7 +46,7 @@ extern "C" {
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
     X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 5376u, 9472u, 8192u, \
-      320u, 2048u, 0u, 0u, 8704u, true, true, true, true, false)              \
+      320u, 2048u, 0u, 0u, 6912u, true, true, true, true, false)              \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 9216u, 8192u, 320u, 0u, 0u, \
       0u, 18432u, true, true, true, true, false)                              \
     X(TRANSMITTER_FORCEDHOP, "mesh_transmitter_forcedhop", 4096u, 8192u, \

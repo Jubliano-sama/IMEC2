@@ -424,13 +424,10 @@ static int refresh_prepare_outer(struct route_refresh_operation *operation,
         return ret < 0 ? ret : -EIO;
     }
     if (first_build) {
-        /*
-         * The gateway originates one Here-I-Am wave. Its four physical
-         * copies cover independent CRC outcomes, while each accepting anchor
-         * owns the advertised retry count for downstream propagation. A
-         * second gateway wake train would only repeat the same root wave.
-         */
-        operation->burst_count = 1u;
+        /* One activation train opens the depth-zero wave. The three short
+         * advertisements then occupy independent 500 ms strata in its 1.5 s
+         * route-selection window. */
+        operation->burst_count = MESH_GATEWAY_ROUTE_ADV_COPY_COUNT;
     } else if (outbound->packet.session_id != operation->sequence ||
                outbound->packet.seq != operation->snapshot.packet_seq ||
                outbound->queued_at_ms != operation->snapshot.queued_at_ms) {
@@ -581,19 +578,50 @@ static void refresh_work_handler(struct k_work *work)
 
     while (operation.burst_index < operation.burst_count) {
         struct app_mesh_flood_result result = {0};
+        uint32_t copy_deadline_ms;
+        uint32_t current_ms = config->now_ms == NULL ? 0u :
+                              config->now_ms(config->ctx);
+
+        outbound.earliest_tx_ms = outbound.route_wave_start_ms +
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+            mesh_gateway_route_adv_copy_offset_ms(
+                outbound.packet.src_id,
+                outbound.packet.session_id,
+                0u,
+                operation.burst_index);
+        outbound.earliest_tx_valid = true;
+        copy_deadline_ms = outbound.route_wave_start_ms +
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+            ((uint32_t)operation.burst_index + 1u) *
+                MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS;
+        flood_ops.absolute_deadline_ms = copy_deadline_ms;
+        flood_ops.absolute_deadline_valid = true;
+        if (operation.absolute_deadline_valid &&
+            refresh_wait_ms(current_ms, operation.absolute_deadline_ms) <
+                refresh_wait_ms(current_ms, copy_deadline_ms)) {
+            flood_ops.absolute_deadline_ms = operation.absolute_deadline_ms;
+        }
 
         if (refresh_operation_pause_requested()) {
             ret = -EAGAIN;
             goto finish;
         }
+        if (operation.absolute_deadline_valid &&
+            refresh_deadline_reached(current_ms,
+                                     operation.absolute_deadline_ms)) {
+            ret = -ETIMEDOUT;
+            goto finish;
+        }
+        if (operation.wake_sent &&
+            refresh_deadline_reached(current_ms, copy_deadline_ms)) {
+            operation.burst_index++;
+            memset(&operation.flood, 0, sizeof(operation.flood));
+            continue;
+        }
         if (!operation.wake_sent) {
             uint32_t wake_start_ms = outbound.earliest_tx_ms;
             uint32_t wake_train_ms =
-                operation.snapshot.enumeration_prearm_present ?
-                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS :
-                    config->wake_train_ms;
-            uint32_t current_ms = config->now_ms == NULL ? 0u :
-                                  config->now_ms(config->ctx);
+                MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS;
             bool response_priority =
                 config->response_priority_active != NULL &&
                 config->response_priority_active(current_ms, config->ctx) &&
@@ -601,9 +629,23 @@ static void refresh_work_handler(struct k_work *work)
                  refresh_wait_ms(current_ms,
                                  operation.response_due_ms) == 0u);
 
-            if (!response_priority &&
-                wake_start_ms > wake_train_ms) {
-                wake_start_ms -= wake_train_ms;
+            if (!response_priority) {
+                wake_start_ms = outbound.route_wave_start_ms +
+                    mesh_gateway_route_activation_start_offset_ms(
+                        outbound.packet.src_id,
+                        outbound.packet.session_id,
+                        0u);
+            }
+            if (operation.absolute_deadline_valid &&
+                refresh_deadline_reached(
+                    wake_start_ms, operation.absolute_deadline_ms)) {
+                if (!refresh_deadline_reached(
+                        current_ms, operation.absolute_deadline_ms)) {
+                    refresh_flood_sleep(operation.absolute_deadline_ms,
+                                        &operation);
+                }
+                ret = -ETIMEDOUT;
+                goto finish;
             }
             if (!refresh_deadline_reached(current_ms, wake_start_ms)) {
                 refresh_flood_sleep(wake_start_ms, &operation);
@@ -618,20 +660,31 @@ static void refresh_work_handler(struct k_work *work)
                 ret = config->send_wake == NULL ? -ENOTSUP :
                       config->send_wake(config->ctx,
                                         "gateway-route-adv",
-                                        wake_train_ms);
+                                        wake_train_ms,
+                                        &outbound);
                 if (ret < 0) {
                     goto finish;
                 }
             }
             operation.wake_sent = true;
         }
-        ret = app_mesh_flood_send_bounded_resume(&outbound,
-                                                  &flood_ops,
-                                                  &operation.flood,
-                                                  &result);
+        ret = app_mesh_flood_send_opportunity_resume(&outbound,
+                                                      &flood_ops,
+                                                      &operation.flood,
+                                                      &result);
         if (ret == -EAGAIN && !operation.flood.complete) {
             resume_flood = true;
             goto finish;
+        }
+        if (ret == -ETIMEDOUT && !operation.flood.complete &&
+            (!operation.absolute_deadline_valid ||
+             !refresh_deadline_reached(
+                 config->now_ms == NULL ? 0u :
+                 config->now_ms(config->ctx),
+                 operation.absolute_deadline_ms))) {
+            operation.burst_index++;
+            memset(&operation.flood, 0, sizeof(operation.flood));
+            continue;
         }
         if (result.sent_count > 0u) {
             operation.outer_sent = true;
@@ -644,15 +697,7 @@ static void refresh_work_handler(struct k_work *work)
             goto finish;
         }
         operation.burst_index++;
-        operation.wake_sent = false;
         memset(&operation.flood, 0, sizeof(operation.flood));
-        if (operation.burst_index < operation.burst_count) {
-            outbound.earliest_tx_ms =
-                refresh_deadline_add(config->now_ms == NULL ? 0u :
-                                     config->now_ms(config->ctx),
-                                     FLOOD_POST_ROOT_GUARD_MS);
-            outbound.earliest_tx_valid = true;
-        }
     }
     ret = operation.outer_sent ? 0 : (ret < 0 ? ret : -EAGAIN);
 
@@ -744,7 +789,13 @@ finish:
         }
         route_refresh.relay_settle_pending = true;
         ret = refresh_schedule(
-            APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+            route_refresh.snapshot.valid ?
+                refresh_wait_ms(
+                    sent_ms,
+                    refresh_deadline_add(
+                        route_refresh.snapshot.queued_at_ms,
+                        APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS)) :
+                APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
         if (ret < 0) {
             route_refresh.relay_settle_pending = false;
             refresh_complete(ret);
@@ -1042,6 +1093,7 @@ void app_node_comm_gateway_route_refresh_resume(uint32_t now_ms)
 {
     uint32_t paused_ms;
     uint32_t resume_due_ms;
+    bool partial_wave;
 
     if (app_node_comm_sync_lock() < 0) {
         return;
@@ -1063,12 +1115,27 @@ void app_node_comm_gateway_route_refresh_resume(uint32_t now_ms)
         app_node_comm_sync_unlock();
         return;
     }
-    route_refresh.due_ms = refresh_deadline_add(route_refresh.due_ms,
-                                                paused_ms);
-    app_mesh_flood_progress_rebase(&route_refresh.flood, paused_ms);
-    resume_due_ms = route_refresh.flood.initialized &&
-                    !route_refresh.flood.complete ?
-                    route_refresh.flood.due_ms : route_refresh.due_ms;
+    partial_wave = route_refresh.snapshot.valid &&
+                   !route_refresh.relay_settle_pending;
+    if (partial_wave) {
+        /* Activation countdowns are rooted in the original wave clock and
+         * cannot be shifted after a click or another radio preemption. Let
+         * that possibly-partial wave become RF-quiet, then start a fresh
+         * sequence instead of transmitting stale copies late. */
+        resume_due_ms = refresh_deadline_add(
+            route_refresh.snapshot.queued_at_ms,
+            APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+        refresh_reset_outer_attempt();
+    } else if (route_refresh.relay_settle_pending) {
+        resume_due_ms = route_refresh.due_ms;
+    } else {
+        route_refresh.due_ms = refresh_deadline_add(route_refresh.due_ms,
+                                                    paused_ms);
+        app_mesh_flood_progress_rebase(&route_refresh.flood, paused_ms);
+        resume_due_ms = route_refresh.flood.initialized &&
+                        !route_refresh.flood.complete ?
+                        route_refresh.flood.due_ms : route_refresh.due_ms;
+    }
     if (route_refresh.absolute_deadline_valid &&
         refresh_deadline_reached(now_ms,
                                  route_refresh.absolute_deadline_ms)) {

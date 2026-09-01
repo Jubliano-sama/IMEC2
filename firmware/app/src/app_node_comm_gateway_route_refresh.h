@@ -10,20 +10,17 @@
 
 struct k_work_delayable;
 
-/* CLAIM follows the enumeration Here-I-Am as a pipelined wave. The gateway
- * waits for one complete relay hop; every CLAIM relay preserves that same
- * one-hop lead, so depth N receives CLAIM only after depth N has had time to
- * wake and prearm depth N+1. The whole Here-I-Am wave need not finish first. */
-#define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS 1u
+/* The gateway does not start the next command until every supported
+ * Here-I-Am depth and the final weak-link fallback round have closed. */
+#define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS \
+    MESH_GATEWAY_ROUTE_SELECTION_SETTLE_BLOCKS
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS \
     MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS \
-    (APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS * \
-     APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS + \
-     FLOOD_POST_ROOT_GUARD_MS)
+    MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS
 
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 5255u,
-               "Here-I-Am settle must establish one relay-hop lead");
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 45150u,
+               "Here-I-Am settle must include the weak-link fallback round");
 
 typedef int (*app_node_comm_route_refresh_build_fn)(
     void *ctx,
@@ -33,7 +30,8 @@ typedef int (*app_node_comm_route_refresh_build_fn)(
     struct mesh_outbound *out);
 typedef int (*app_node_comm_route_refresh_wake_fn)(void *ctx,
                                                    const char *reason,
-                                                   uint32_t duration_ms);
+                                                   uint32_t duration_ms,
+                                                   const struct mesh_outbound *route_adv);
 typedef int (*app_node_comm_route_refresh_schedule_fn)(
     void *ctx, struct k_work_delayable *work, uint32_t delay_ms);
 typedef int (*app_node_comm_route_refresh_next_sequence_fn)(

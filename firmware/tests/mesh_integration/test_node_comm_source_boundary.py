@@ -272,7 +272,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             transient_snapshot,
         )
         handle_rx = drain.index(
-            "mesh_relay_handle_rx_with_random(", immutable_fallback
+            "mesh_relay_handle_rx_with_random_radio(", immutable_fallback
         )
         action_handoff = drain.index(
             "mesh_handle_result_actions(", handle_rx

@@ -1,5 +1,6 @@
 #include "mesh_sim_internal.h"
 #include "mesh_sim_interval.h"
+#include "mesh_relay.h"
 
 #include <limits.h>
 #include <string.h>
@@ -1144,6 +1145,14 @@ static int append_reception(struct mesh_sim_world *world,
             enum uwb_anchor_claim_decision decision;
 
             ret = uwb_decode_wake_claim(tx->frame, tx->frame_len, &claim);
+            if (ret != PROTO_OK &&
+                tx->frame_len >= UWB_WAKE_CLAIM_LEN +
+                                     MESH_GATEWAY_ROUTE_ACTIVATION_LEN) {
+                struct mesh_gateway_route_activation activation;
+
+                ret = mesh_gateway_route_activation_wake_decode(
+                    tx->frame, tx->frame_len, &claim, &activation);
+            }
             if (ret == PROTO_OK) {
                 ret = uwb_anchor_accept_wake_claim(&receiver->anchor_session,
                                                    &claim,

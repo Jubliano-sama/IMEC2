@@ -36,8 +36,8 @@
     (ROUTE_LISTENER_CLICK_ACQUIRE_US + \
      ROUTE_LISTENER_CLICK_PROBE_COMPLETION_US)
 
-_Static_assert(MESH_RADIO_ANCHOR_SCAN_RX_US == 3500u,
-               "wake scenarios require the production 3.5 ms anchor scan");
+_Static_assert(MESH_RADIO_ANCHOR_SCAN_RX_US == 10000u,
+               "wake scenarios require the production 10 ms anchor scan");
 _Static_assert(MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS == 380u,
                "wake scenarios require the production 380 ms reschedule");
 _Static_assert(MESH_RADIO_WAKE_TRAIN_MS == 500u,
@@ -241,6 +241,7 @@ static bool schedule_wake_train_with_gap(struct fixture *fixture,
                                          uint64_t start_us,
                                          uint64_t duration_us,
                                          uint32_t gap_jitter_max_us,
+                                         bool combined_activation,
                                          const char *scenario,
                                          uint32_t seed,
                                          int64_t phase_us,
@@ -255,7 +256,8 @@ static bool schedule_wake_train_with_gap(struct fixture *fixture,
         .first_tx_index = UINT16_MAX,
     };
     while (at_us < close_us) {
-        uint8_t frame[UWB_WAKE_CLAIM_LEN];
+        uint8_t frame[UWB_WAKE_CLAIM_LEN +
+                      MESH_GATEWAY_ROUTE_ACTIVATION_LEN];
         uint64_t remaining_us = close_us - at_us;
         uint16_t remaining_ms = (uint16_t)((remaining_us + 999u) / 1000u);
         uint16_t tx_index;
@@ -271,6 +273,46 @@ static bool schedule_wake_train_with_gap(struct fixture *fixture,
                                phase_us,
                                scenario)) {
             return false;
+        }
+        if (combined_activation) {
+            struct uwb_wake_claim_frame route_claim;
+            const struct mesh_gateway_route_activation activation = {
+                .gateway_id = GATEWAY_ID,
+                .gateway_route_seq = ROUTE_EPOCH,
+                .gateway_epoch = 1u,
+                .relay_window_starts_in_ms =
+                    MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS,
+                .route_adv_starts_in_ms =
+                    MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS,
+                .sender_depth = 0u,
+            };
+            size_t suffix_len = 0u;
+
+            if (!check_result(uwb_decode_wake_claim(
+                                  frame, frame_len, &route_claim) == PROTO_OK,
+                              scenario, seed, phase_us,
+                              "combined wake prefix decode failed")) {
+                return false;
+            }
+            route_claim.flags = FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                                FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+            if (!check_result(uwb_encode_wake_claim(
+                                  &route_claim, frame,
+                                  UWB_WAKE_CLAIM_LEN, &frame_len) == PROTO_OK,
+                              scenario, seed, phase_us,
+                              "combined wake prefix encode failed") ||
+                !check_result(mesh_gateway_route_activation_encode(
+                                  &activation,
+                                  &frame[frame_len],
+                                  sizeof(frame) - frame_len,
+                                  &suffix_len) == PROTO_OK &&
+                                  suffix_len ==
+                                      MESH_GATEWAY_ROUTE_ACTIVATION_LEN,
+                              scenario, seed, phase_us,
+                              "combined activation encoding failed")) {
+                return false;
+            }
+            frame_len += suffix_len;
         }
         timing_airtime_us = dwm3000_timing_airtime_us_ceil(
             DWM3000_TIMING_PHY_CH5_WAKE,
@@ -316,7 +358,8 @@ static bool schedule_wake_train_with_gap(struct fixture *fixture,
         if (jitter_us > schedule->max_jitter_us) {
             schedule->max_jitter_us = jitter_us;
         }
-        at_us = schedule->last_end_us + jitter_us;
+        at_us = schedule->last_end_us +
+                MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US + jitter_us;
     }
     return check_result(schedule->frame_count > 0u &&
                             schedule->last_end_us > schedule->first_start_us,
@@ -335,6 +378,7 @@ static bool schedule_wake_train(struct fixture *fixture,
         start_us,
         PRODUCTION_WAKE_TRAIN_US,
         UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US,
+        false,
         "attempt_1_train",
         seed,
         phase_us,
@@ -353,6 +397,7 @@ static bool schedule_enumeration_activation_train(
         start_us,
         ENUMERATION_ACTIVATION_WAKE_TRAIN_US,
         MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US,
+        true,
         "enumeration_activation_train",
         seed,
         phase_us,
@@ -393,7 +438,7 @@ static bool measure_low_duty_timing(struct low_duty_timing *timing)
                                 MESH_RADIO_ANCHOR_SCAN_RX_US &&
                             timing->second_start_us > timing->first_end_us,
                         "measure_low_duty", seed, 0,
-                        "low-duty windows do not use the production 3.5 ms RX duration");
+                        "low-duty windows do not use the production 10 ms RX duration");
 }
 
 static size_t accepted_wake_receptions(const struct mesh_sim_world *world)
@@ -652,7 +697,8 @@ static void test_enumeration_activation_covers_every_scan_phase(
             }
         }
         check_result(observed_max_gap_us <=
-                         MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US,
+                         MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+                             MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US,
                      "enumeration_activation_phase_coverage", seed, 0,
                      "enumeration train exceeded its production gap bound");
 
@@ -671,7 +717,8 @@ static void test_enumeration_activation_covers_every_scan_phase(
                " boundary_simulations=%zu gap_max_us=%u\n",
                cycle_us,
                simulated_boundaries,
-               MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US);
+               MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+                   MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US);
     }
 }
 

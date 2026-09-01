@@ -47,6 +47,11 @@ int app_mesh_flood_send_opportunity(
     const struct mesh_outbound *out,
     const struct app_mesh_flood_ops *ops,
     struct app_mesh_flood_result *result);
+int app_mesh_flood_send_opportunity_resume(
+    const struct mesh_outbound *out,
+    const struct app_mesh_flood_ops *ops,
+    struct app_mesh_flood_progress *progress,
+    struct app_mesh_flood_result *result);
 int app_mesh_flood_send_bounded_resume(
     const struct mesh_outbound *out,
     const struct app_mesh_flood_ops *ops,

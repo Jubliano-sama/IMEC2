@@ -26,6 +26,7 @@ struct refresh_fixture {
     struct gateway_sequence_cursor local_sequence_cursor;
     struct gateway_sequence_cursor *sequence_cursor;
     uint32_t message_ages[64];
+    uint32_t send_times_ms[64];
     uint32_t now_ms;
     uint32_t boot_random;
     uint32_t scheduled_delay_ms;
@@ -48,6 +49,7 @@ struct refresh_fixture {
     bool response_active;
     bool enumeration_prearm;
     bool scan_active;
+    bool block_first_route_stratum;
     uint8_t synchronous_schedule_calls;
 };
 
@@ -136,6 +138,12 @@ static bool fixture_quiet(uint32_t sniff_ms, void *ctx)
     struct refresh_fixture *fixture = ctx;
 
     assert(sniff_ms == 20u);
+    if (fixture->block_first_route_stratum &&
+        fixture->now_ms <
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS) {
+        return false;
+    }
     if (fixture->quiet_failures_remaining > 0u) {
         fixture->quiet_failures_remaining--;
         return false;
@@ -151,6 +159,7 @@ static int fixture_send(const struct mesh_outbound *out, void *ctx)
     assert(fixture->send_calls <
            sizeof(fixture->message_ages) / sizeof(fixture->message_ages[0]));
     fixture->message_ages[fixture->send_calls] = out->packet.message_age_ms;
+    fixture->send_times_ms[fixture->send_calls] = fixture->now_ms;
     fixture->send_calls++;
     assert(pthread_mutex_lock(&interleave_lock) == 0);
     if (block_first_send && fixture->send_calls == 1u) {
@@ -204,17 +213,23 @@ static int fixture_build(void *ctx,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->queued_at_ms = snapshot->queued_at_ms;
     out->queued_at_valid = true;
-    out->earliest_tx_ms = snapshot->queued_at_ms;
+    out->route_wave_start_ms = snapshot->queued_at_ms;
+    out->earliest_tx_ms = snapshot->queued_at_ms +
+        MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS;
     out->earliest_tx_valid = true;
     out->flood_retry_count = fixture->flood_retry_count;
     return 0;
 }
 
-static int fixture_wake(void *ctx, const char *reason, uint32_t duration_ms)
+static int fixture_wake(void *ctx,
+                        const char *reason,
+                        uint32_t duration_ms,
+                        const struct mesh_outbound *route_adv)
 {
     struct refresh_fixture *fixture = ctx;
 
     assert(reason != NULL);
+    assert(route_adv != NULL);
     fixture->last_wake_duration_ms = duration_ms;
     fixture->wake_calls++;
     return 0;
@@ -346,7 +361,7 @@ static struct proto_packet correlated_command(void)
     };
 }
 
-static void test_pause_between_opportunities_preserves_four_real_sends(void)
+static void test_pause_between_copies_restarts_after_old_wave_is_quiet(void)
 {
     struct refresh_fixture fixture;
     struct proto_packet command = correlated_command();
@@ -362,10 +377,11 @@ static void test_pause_between_opportunities_preserves_four_real_sends(void)
 
     fixture.now_ms += 1000u;
     app_node_comm_gateway_route_refresh_resume(fixture.now_ms);
-    assert(fixture.scheduled_delay_ms == 40u);
+    assert(fixture.scheduled_delay_ms ==
+           APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - fixture.now_ms);
     fixture.pause_after_first_send = false;
     fixture_run(&fixture);
-    assert(fixture.send_calls == app_mesh_flood_repeat_limit());
+    assert(fixture.send_calls == 1u + MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
     fixture_run(&fixture);
     assert(fixture.event_count == 2u);
     assert(fixture.events[0].kind ==
@@ -375,7 +391,8 @@ static void test_pause_between_opportunities_preserves_four_real_sends(void)
     assert(fixture.events[1].result == 0);
     assert(fixture.events[1].correlation.session_id == command.session_id);
     assert(fixture.note_sent_calls == 1u);
-    assert(fixture.message_ages[1] >= 1040u);
+    assert(fixture.message_ages[1] >=
+           MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS);
 }
 
 static void test_pause_rebases_outer_backoff_but_deadline_stays_absolute(void)
@@ -430,7 +447,7 @@ static void test_manual_refresh_completion_does_not_schedule_maintenance(void)
     assert(app_node_comm_gateway_route_refresh_request(
                0u, "manual-only", true, &command) == 0);
     fixture_run(&fixture);
-    assert(fixture.send_calls == 4u);
+    assert(fixture.send_calls == MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
     fixture_run(&fixture);
     assert(fixture.events[fixture.event_count - 1u].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
@@ -440,7 +457,7 @@ static void test_manual_refresh_completion_does_not_schedule_maintenance(void)
     assert(fixture.scheduled_delay_ms == 0u);
 }
 
-static void test_gateway_originates_one_four_copy_wave(void)
+static void test_gateway_originates_one_three_copy_wave(void)
 {
     struct refresh_fixture fixture;
     struct proto_packet command = correlated_command();
@@ -451,7 +468,22 @@ static void test_gateway_originates_one_four_copy_wave(void)
                0u, "one-root-wave", true, &command) == 0);
     fixture_run(&fixture);
     assert(fixture.wake_calls == 1u);
-    assert(fixture.send_calls == app_mesh_flood_repeat_limit());
+    assert(fixture.send_calls == MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
+    for (uint8_t copy = 0u;
+         copy < MESH_GATEWAY_ROUTE_ADV_COPY_COUNT;
+         copy++) {
+        uint32_t expected_ms =
+            MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+            mesh_gateway_route_adv_copy_offset_ms(
+                GATEWAY_ID, 1u, 0u, copy);
+
+        assert(fixture.send_times_ms[copy] == expected_ms);
+        assert(fixture.send_times_ms[copy] +
+                   OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+               MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+                   ((uint32_t)copy + 1u) *
+                       MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS);
+    }
     assert(fixture.events[0].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
     assert(fixture.events[0].sent_count == fixture.send_calls);
@@ -459,7 +491,41 @@ static void test_gateway_originates_one_four_copy_wave(void)
     assert(fixture.events[1].kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
 }
 
-static void test_enumeration_prearm_uses_long_root_wake(void)
+static void test_busy_first_stratum_cannot_shift_copies_into_next_depth(void)
+{
+    struct refresh_fixture fixture;
+    struct proto_packet command = correlated_command();
+    unsigned int steps = 0u;
+
+    fixture_init(&fixture);
+    fixture.flood_retry_count = 2u;
+    fixture.block_first_route_stratum = true;
+    assert(app_node_comm_gateway_route_refresh_request(
+               0u, "stratum-deadline", true, &command) == 0);
+    while (fixture.event_count == 0u && steps++ < 64u) {
+        fixture_run(&fixture);
+    }
+
+    assert(fixture.event_count == 1u);
+    assert(fixture.events[0].kind ==
+           APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
+    assert(fixture.send_calls == 2u);
+    assert(fixture.send_times_ms[0] >=
+           MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+               MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS);
+    assert(fixture.send_times_ms[0] +
+               OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+           MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+               2u * MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS);
+    assert(fixture.send_times_ms[1] >=
+           MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS +
+               2u * MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS);
+    assert(fixture.send_times_ms[1] +
+               OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS <=
+           MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+}
+
+static void test_enumeration_prearm_uses_500ms_route_wake(void)
 {
     struct refresh_fixture fixture;
     struct proto_packet command = correlated_command();
@@ -471,8 +537,8 @@ static void test_enumeration_prearm_uses_long_root_wake(void)
     fixture_run(&fixture);
     assert(fixture.wake_calls == 1u);
     assert(fixture.last_wake_duration_ms ==
-           MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS);
-    assert(fixture.send_calls == app_mesh_flood_repeat_limit());
+           MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS);
+    assert(fixture.send_calls == MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
 }
 
 static void test_host_completion_waits_for_bounded_relay_settle(void)
@@ -489,32 +555,30 @@ static void test_host_completion_waits_for_bounded_relay_settle(void)
     wave_complete_ms = fixture.now_ms;
     send_count = fixture.send_calls;
 
-    assert(send_count == app_mesh_flood_repeat_limit());
+    assert(send_count == MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
     assert(fixture.event_count == 1u);
     assert(fixture.events[0].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
     assert(fixture.scheduled_delay_ms ==
-           APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 1u);
+           APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - wave_complete_ms);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 10u);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS ==
            MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS == 5105u);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS == 4500u);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS ==
            APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS *
                APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS +
                FLOOD_POST_ROOT_GUARD_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 5255u);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 45150u);
 
-    fixture.now_ms = wave_complete_ms +
-        APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - 1u;
+    fixture.now_ms = APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - 1u;
     fixture.scheduled_delay_ms = 1u;
     assert(fixture.event_count == 1u);
     assert(fixture.events[0].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
 
     fixture_run(&fixture);
-    assert(fixture.now_ms - wave_complete_ms ==
-           APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+    assert(fixture.now_ms == APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
     assert(fixture.send_calls == send_count);
     assert(fixture.event_count == 2u);
     assert(fixture.events[1].kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
@@ -612,7 +676,7 @@ static void test_concurrent_pause_stops_callbacks_and_preserves_correlation(void
     fixture.now_ms += 100u;
     app_node_comm_gateway_route_refresh_resume(fixture.now_ms);
     fixture_run(&fixture);
-    assert(fixture.send_calls == app_mesh_flood_repeat_limit());
+    assert(fixture.send_calls == 1u + MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
     fixture_run(&fixture);
     for (uint8_t i = 0u; i < fixture.event_count; i++) {
         if (fixture.events[i].kind ==
@@ -680,7 +744,7 @@ static void test_synchronous_initial_schedule_cannot_stop_restarted_scan(void)
                0u, "synchronous-initial", true, &command) == 0);
 
     assert(fixture.synchronous_schedule_calls == 1u);
-    assert(fixture.send_calls == app_mesh_flood_repeat_limit());
+    assert(fixture.send_calls == MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
     assert(fixture.stop_calls >= 1u);
     assert(fixture.restart_calls == 1u);
     assert(fixture.scan_active);
@@ -861,12 +925,13 @@ static void test_sequence_allocation_failure_never_reaches_rf(void)
 
 int main(void)
 {
-    test_pause_between_opportunities_preserves_four_real_sends();
+    test_pause_between_copies_restarts_after_old_wave_is_quiet();
     test_pause_rebases_outer_backoff_but_deadline_stays_absolute();
     test_schedule_failure_is_terminal();
     test_manual_refresh_completion_does_not_schedule_maintenance();
-    test_gateway_originates_one_four_copy_wave();
-    test_enumeration_prearm_uses_long_root_wake();
+    test_gateway_originates_one_three_copy_wave();
+    test_busy_first_stratum_cannot_shift_copies_into_next_depth();
+    test_enumeration_prearm_uses_500ms_route_wake();
     test_host_completion_waits_for_bounded_relay_settle();
     test_concurrent_pause_stops_callbacks_and_preserves_correlation();
     test_synchronous_resume_schedule_cannot_strand_refresh();

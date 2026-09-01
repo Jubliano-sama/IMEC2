@@ -1096,7 +1096,7 @@ def _owner_capacity(policy: PresetPolicy, owner: str) -> int:
         "system_workqueue": policy.system_workqueue_bytes,
         "clicker_action": 8192 if policy.preset == "mesh_clicker" else 0,
         "anchor_uwb_scan": (
-            8192 if policy.preset in {
+            9984 if policy.preset in {
                 "mesh_anchor", "mesh_anchor_forcedhop",
             } else 0
         ),
