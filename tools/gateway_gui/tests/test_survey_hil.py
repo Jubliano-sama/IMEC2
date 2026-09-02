@@ -1,7 +1,25 @@
 from types import SimpleNamespace
 
 from tools.gateway_gui.protocol import CMD_SURVEY_PLAN, CMD_SURVEY_START
-from tools.gateway_gui.survey_hil import SurveyHilEvidence
+from tools.gateway_gui.survey_hil import (
+    SurveyHilEvidence,
+    _disconnect_injection_due,
+)
+
+
+def test_disconnect_injection_waits_for_full_requested_delay() -> None:
+    assert not _disconnect_injection_due(
+        delay_s=None, accepted_at=100.0, now=999.0
+    )
+    assert not _disconnect_injection_due(
+        delay_s=1.0, accepted_at=None, now=999.0
+    )
+    assert not _disconnect_injection_due(
+        delay_s=1.0, accepted_at=100.0, now=100.999
+    )
+    assert _disconnect_injection_due(
+        delay_s=1.0, accepted_at=100.0, now=101.0
+    )
 
 
 def test_one_pair_batches_require_every_plan_and_intermediate_completion() -> None:

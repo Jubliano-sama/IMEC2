@@ -1399,6 +1399,34 @@ class AppModelTests(unittest.TestCase):
         )
         self.assertEqual(gui.assignment_button.options["state"], "disabled")
 
+    def test_scheduled_phase_progress_counts_down_without_expiring_owner(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.operation_phase_text = FakeVariable()  # type: ignore[assignment]
+        gui.operation_phase_progress = FakeWidget()  # type: ignore[assignment]
+
+        gui._set_scheduled_phase_estimate(
+            "routes", "Refresh routes", 45_150, now=100.0
+        )
+        snapshot = gui._update_scheduled_phase_progress(now=122.575)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertAlmostEqual(snapshot.fraction, 0.5, places=3)
+        self.assertEqual(
+            gui.operation_phase_text.get(),
+            "Refresh routes: about 0:23 remaining.",
+        )
+        self.assertAlmostEqual(
+            gui.operation_phase_progress.options["value"], 50.0, places=3
+        )
+
+        late = gui._update_scheduled_phase_progress(now=146.0)
+        self.assertIsNotNone(late)
+        assert late is not None
+        self.assertTrue(late.elapsed)
+        self.assertIn("waiting for terminal telemetry", gui.operation_phase_text.get())
+        self.assertIsNotNone(gui._scheduled_phase_estimate)
+
     def test_enumeration_updates_topology_view_live_with_discovered_anchors(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.status_text = FakeVariable()  # type: ignore[assignment]

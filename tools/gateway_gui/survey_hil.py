@@ -228,6 +228,16 @@ def _configure_expected_anchors(
     gui.assignment_expected_anchors_text.set(str(expected_anchors))
 
 
+def _disconnect_injection_due(
+    *, delay_s: float | None, accepted_at: float | None, now: float
+) -> bool:
+    return (
+        delay_s is not None
+        and accepted_at is not None
+        and now - accepted_at >= delay_s
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     root = tk.Tk()
     if not args.show_window:
@@ -243,6 +253,7 @@ def run(args: argparse.Namespace) -> int:
     reboot_requested = False
     reboot_disconnect_seen = False
     started = False
+    survey_start_accepted_at: float | None = None
     exit_code = 1
 
     def finish(reason: str) -> None:
@@ -250,15 +261,18 @@ def run(args: argparse.Namespace) -> int:
         pairs = tuple(gui._survey_pairs)
         results = dict(gui._survey_results)
         error = gui.error_text.get()
-        success = reason == "survey-complete" and evidence.qualifies(
-            expected_anchors=args.expected_anchors,
-            expected_pairs=args.expected_pairs,
-            expected_samples=args.expected_samples,
-            batch_pairs=args.batch_pairs,
-            gui_pairs=pairs,
-            gui_results=results,
-            gui_error=error,
-        )
+        if reason == "disconnect-injected":
+            success = evidence.command_status.get(CMD_SURVEY_START) == 0
+        else:
+            success = reason == "survey-complete" and evidence.qualifies(
+                expected_anchors=args.expected_anchors,
+                expected_pairs=args.expected_pairs,
+                expected_samples=args.expected_samples,
+                batch_pairs=args.batch_pairs,
+                gui_pairs=pairs,
+                gui_results=results,
+                gui_error=error,
+            )
         exit_code = 0 if success else 1
         _emit(
             "GUI_FINAL",
@@ -286,12 +300,16 @@ def run(args: argparse.Namespace) -> int:
             error=error,
             success=success,
         )
+        # This is the same graceful BLE teardown used by the real window-close
+        # path.  In disconnect-injection mode the firmware must finish and
+        # unwind the already accepted survey without any more host traffic.
         gui.transport.shutdown()
         root.destroy()
 
     def poll() -> None:
         nonlocal last_state, reboot_requested, reboot_disconnect_seen
         nonlocal started, run_started_at, terminal_seen_at
+        nonlocal survey_start_accepted_at
         elapsed = time.monotonic() - started_at
         command_active = gui.command_orchestrator.active
         state = (
@@ -344,6 +362,21 @@ def run(args: argparse.Namespace) -> int:
                     flush=True,
                 )
                 gui._run_survey()
+        if (
+            args.disconnect_after_start is not None
+            and started
+            and evidence.command_status.get(CMD_SURVEY_START) == 0
+        ):
+            if survey_start_accepted_at is None:
+                survey_start_accepted_at = time.monotonic()
+                print("GUI_SURVEY_START_ACCEPTED_FOR_DISCONNECT", flush=True)
+            elif _disconnect_injection_due(
+                delay_s=args.disconnect_after_start,
+                accepted_at=survey_start_accepted_at,
+                now=time.monotonic(),
+            ):
+                finish("disconnect-injected")
+                return
         if (
             started
             and evidence.terminal_seen
@@ -414,6 +447,16 @@ def main() -> None:
     parser.add_argument("--reboot-timeout", type=float, default=30.0)
     parser.add_argument("--settle", type=float, default=5.0)
     parser.add_argument(
+        "--disconnect-after-start",
+        type=float,
+        metavar="SECONDS",
+        help=(
+            "close the production GUI this many seconds after SURVEY_START is "
+            "accepted; this deliberately leaves the gateway to time out and "
+            "unwind the survey without further host traffic"
+        ),
+    )
+    parser.add_argument(
         "--show-window",
         action="store_true",
         help="show the production GUI while the automated survey runs",
@@ -425,9 +468,17 @@ def main() -> None:
         args.expected_samples,
     ) <= 0:
         parser.error("expected counts must be positive")
-    if args.timeout <= 0 or args.reboot_timeout <= 0 or args.settle < 0:
+    if (
+        args.timeout <= 0
+        or args.reboot_timeout <= 0
+        or args.settle < 0
+        or (
+            args.disconnect_after_start is not None
+            and args.disconnect_after_start < 0
+        )
+    ):
         parser.error(
-            "timeouts must be positive and settle must be nonnegative"
+            "timeouts must be positive and delays must be nonnegative"
         )
     if not 1 <= args.batch_pairs <= 100:
         parser.error("batch-pairs must be in 1..100")

@@ -260,7 +260,7 @@ static int anchor_radio_release(struct radio_guard_uwb_lease *lease,
 static int anchor_radio_claim(uint64_t deadline_ms,
                               struct radio_guard_uwb_lease *lease)
 {
-    int ret;
+    int ret = -ETIMEDOUT;
 
     dwm3000_driver_request_receive_abort(
         DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
@@ -269,17 +269,19 @@ static int anchor_radio_claim(uint64_t deadline_ms,
                                     "scheduled anchor survey",
                                     lease);
         if (ret == 0) {
-            dwm3000_driver_clear_receive_abort(
-                DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
-            return 0;
+            break;
         }
         if (ret != -EBUSY && ret != -EAGAIN) {
-            return ret;
+            break;
         }
         k_sleep(K_MSEC(APP_SURVEY_RADIO_RETRY_MS));
         app_watchdog_note_radio_progress();
     }
-    return -ETIMEDOUT;
+    /* This is a level-triggered owner: once survey stops trying to acquire
+     * the radio, success or failure, it must not cancel later wake scans. */
+    dwm3000_driver_clear_receive_abort(
+        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+    return ret;
 }
 
 static int survey_lane_try_tx(struct survey_response_lane *lane,
@@ -2176,8 +2178,10 @@ int app_survey_anchor_apply_control(const struct proto_packet *packet,
     } else if (control->phase == SURVEY_PHASE_ABORT) {
         anchor_rx_terminate_locked(true);
         (void)k_work_cancel_delayable(&anchor_work);
+        /* ABORT needs one receive boundary, not a level owner whose matching
+         * acquisition lifecycle no longer exists after termination. */
         dwm3000_driver_request_receive_abort(
-            DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
     } else {
         ret = -EINVAL;
     }

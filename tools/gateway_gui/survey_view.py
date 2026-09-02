@@ -29,6 +29,7 @@ from .anchor_geometry_visibility import (
 from .anchor_geometry_seeds import SEED_CURRENT
 from .diagnostic_models import anchor_label
 from .survey_runtime import SurveyOperationModel
+from .survey_timing import ScheduledPhaseSnapshot
 from .theme import (
     ACCENT,
     AMBER,
@@ -460,10 +461,27 @@ class SurveyGeometryView(ttk.Frame):
         ttk.Label(
             summary, textvariable=self.identity_var, style="PanelMuted.TLabel"
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self.phase_timing_var = tk.StringVar(
+            value="Scheduled phase timing appears when a survey is active."
+        )
+        ttk.Label(
+            summary,
+            textvariable=self.phase_timing_var,
+            style="PanelMuted.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self.phase_progress = ttk.Progressbar(
+            summary, orient="horizontal", mode="determinate", maximum=100.0
+        )
+        self.phase_progress.grid(row=3, column=0, sticky="ew", pady=(3, 0))
+        ttk.Label(
+            summary,
+            text="Overall survey workflow",
+            style="PanelMuted.TLabel",
+        ).grid(row=4, column=0, sticky="w", pady=(4, 0))
         self.progress = ttk.Progressbar(
             summary, orient="horizontal", mode="determinate", maximum=100.0
         )
-        self.progress.grid(row=2, column=0, sticky="ew", pady=(5, 0))
+        self.progress.grid(row=5, column=0, sticky="ew", pady=(3, 0))
 
         steps_frame = ttk.Frame(self, style="Panel.TFrame")
         steps_frame.grid(
@@ -694,6 +712,29 @@ class SurveyGeometryView(ttk.Frame):
         scrollbar.grid(row=0, column=1, sticky="ns")
 
         self._sync_edge_editor()
+
+    def show_phase_progress(
+        self, snapshot: ScheduledPhaseSnapshot | None
+    ) -> None:
+        if snapshot is None:
+            self.phase_timing_var.set(
+                "Scheduled phase timing appears when a survey is active."
+            )
+            self.phase_progress.configure(value=0.0)
+            return
+        if snapshot.elapsed:
+            detail = (
+                f"{snapshot.label}: scheduled window elapsed; waiting for "
+                "terminal telemetry."
+            )
+        else:
+            seconds = (snapshot.remaining_ms + 999) // 1_000
+            minutes, seconds = divmod(seconds, 60)
+            detail = (
+                f"{snapshot.label}: about {minutes:d}:{seconds:02d} remaining."
+            )
+        self.phase_timing_var.set(detail)
+        self.phase_progress.configure(value=100.0 * snapshot.fraction)
 
     def _build_edge_editor(self, parent: tk.Misc) -> ttk.Frame:
         editor = ttk.Frame(parent, style="Panel.TFrame")

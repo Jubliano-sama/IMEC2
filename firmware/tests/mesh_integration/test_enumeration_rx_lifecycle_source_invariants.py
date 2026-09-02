@@ -23,7 +23,9 @@ APP_NODE_COMM = (ROOT / "app/src/app_node_comm.c").read_text()
 APP_MESH_FLOOD = (ROOT / "app/src/app_mesh_flood.c").read_text()
 APP_SURVEY = (ROOT / "app/src/app_survey.c").read_text()
 DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
+DRIVER_HEADER = (ROOT / "app/src/dwm3000_driver.h").read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
+DRIVER_RADIO = (ROOT / "app/src/dwm3000_driver_radio.inc").read_text()
 LIFECYCLE = (ROOT / "src/protocol_rx_lifecycle.c").read_text()
 RELAY_CUSTODY = (ROOT / "src/mesh_relay_custody.inc").read_text()
 NODE_COMM = (ROOT / "src/node_comm.c").read_text()
@@ -422,6 +424,68 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5", continuous)
         self.assertIn("protocol_rx_lifecycle_note_rx_recovery(", recovery)
         self.assertIn("PROTOCOL_RX_RECOVERY_TERMINATED", recovery)
+
+    def test_survey_radio_abort_owners_end_with_their_scoped_lifecycle(
+        self,
+    ) -> None:
+        claim = function_body(APP_SURVEY, "anchor_radio_claim")
+        apply = function_body(APP_SURVEY, "app_survey_anchor_apply_control")
+        wait_status = function_body(DRIVER_RADIO, "wait_status_internal")
+        abort_start = apply.index("control->phase == SURVEY_PHASE_ABORT")
+        abort_end = apply.index("} else {", abort_start)
+        abort = apply[abort_start:abort_end]
+
+        request = claim.index("dwm3000_driver_request_receive_abort(")
+        request_owner = claim.index(
+            "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY", request
+        )
+        clear = claim.index("dwm3000_driver_clear_receive_abort(")
+        clear_owner = claim.index(
+            "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY", clear
+        )
+        returns = [match.start() for match in re.finditer(r"\breturn\b", claim)]
+
+        # Gateway priority is level-triggered. Keep a single exit after its
+        # matching clear so success, hard failure, and timeout cannot poison
+        # every later low-duty Channel-5 receive.
+        self.assertEqual(
+            claim.count("DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY"), 2
+        )
+        self.assertEqual(
+            claim.count("dwm3000_driver_request_receive_abort("), 1
+        )
+        self.assertEqual(
+            claim.count("dwm3000_driver_clear_receive_abort("), 1
+        )
+        self.assertEqual(len(returns), 1)
+        self.assertLess(request, request_owner)
+        self.assertLess(request_owner, clear)
+        self.assertLess(clear, clear_owner)
+        self.assertLess(clear_owner, returns[0])
+        self.assertIn("int ret = -ETIMEDOUT;", claim)
+
+        # A received survey ABORT only needs to interrupt the current receive
+        # boundary. MESH_CONTROL is consumed as an edge by wait_status; using
+        # the level GATEWAY_PRIORITY owner here would have no later lifecycle
+        # left to clear it after anchor termination.
+        self.assertEqual(
+            abort.count("dwm3000_driver_request_receive_abort("), 1
+        )
+        self.assertIn("DWM3000_RECEIVE_ABORT_MESH_CONTROL", abort)
+        self.assertNotIn("DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY", abort)
+        self.assertNotIn("dwm3000_driver_clear_receive_abort(", abort)
+        self.assertRegex(
+            DRIVER_HEADER,
+            r"#define\s+DWM3000_RECEIVE_ABORT_LEVEL_MASK\s+\\\n"
+            r"\s*DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY\b",
+        )
+        self.assertIn(
+            "pending & ~(atomic_val_t)DWM3000_RECEIVE_ABORT_LEVEL_MASK",
+            wait_status,
+        )
+        self.assertIn(
+            "atomic_and(&receive_abort_owners, ~edge_owners)", wait_status
+        )
 
     def test_survey_listener_yields_same_queue_at_radio_prepare_edge(self) -> None:
         pending = function_body(

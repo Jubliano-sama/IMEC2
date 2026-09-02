@@ -24,9 +24,35 @@ from tools.gateway_gui.survey_view import (
 from tools.gateway_gui.anchor_geometry import AnchorPairDistance
 from tools.gateway_gui.diagnostic_views import parse_blueprint_dimensions_m
 from tools.gateway_gui.diagnostic_views import _projector as click_projector
+from tools.gateway_gui.survey_timing import ScheduledPhaseEstimate
+
+
+class FakeVariable:
+    def __init__(self) -> None:
+        self.value = ""
+
+    def set(self, value: str) -> None:
+        self.value = value
 
 
 class SurveyLayoutTransformTests(unittest.TestCase):
+    def test_phase_progress_distinguishes_estimate_from_terminal_wait(self) -> None:
+        view = SurveyGeometryView.__new__(SurveyGeometryView)
+        view.phase_timing_var = FakeVariable()  # type: ignore[assignment]
+        view.phase_progress = Mock()  # type: ignore[assignment]
+        estimate = ScheduledPhaseEstimate("routes", "Refresh routes", 10.0, 1_000)
+
+        view.show_phase_progress(estimate.snapshot(10.5))
+        self.assertEqual(
+            view.phase_timing_var.value,
+            "Refresh routes: about 0:01 remaining.",
+        )
+        view.phase_progress.configure.assert_called_with(value=50.0)
+
+        view.show_phase_progress(estimate.snapshot(12.0))
+        self.assertIn("waiting for terminal telemetry", view.phase_timing_var.value)
+        view.phase_progress.configure.assert_called_with(value=100.0)
+
     def test_canvas_projection_and_registration_inverse_round_trip(self) -> None:
         projection = CanvasProjection(
             min_x=-2.0,

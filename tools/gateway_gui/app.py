@@ -143,6 +143,15 @@ from .protocol import (
     hex_dump,
     is_gateway_assignment_publisher_event,
 )
+from .survey_timing import (
+    ROUTE_REFRESH_SCHEDULED_MS,
+    SURVEY_MAX_HOPS,
+    ScheduledPhaseEstimate,
+    ScheduledPhaseSnapshot,
+    survey_enumeration_phase_ms,
+    survey_neighbor_phase_ms,
+    survey_ranging_phase_ms,
+)
 from .survey_runtime import (
     SURVEY_PASS_ADDITIONAL_MERGE,
     SURVEY_PASS_ADDITIONAL_ONLY,
@@ -247,6 +256,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.scanning = False
         self.gateway_id: int | None = None
         self._command_progress_text = ""
+        self._scheduled_phase_estimate: ScheduledPhaseEstimate | None = None
         self._topology_gateway_id: int | None = None
         self._topology_slot_span: int | None = None
         self._topology_deepest_hop = 0
@@ -291,6 +301,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
         self.operation_estimate_text = tk.StringVar(value="")
+        self.operation_phase_text = tk.StringVar(
+            value="Scheduled phase timing appears while an operation is active."
+        )
         self._on_assignment_parameters_changed()
         self.sample_warning_text = tk.StringVar(value="Select a click report to inspect aligned samples.")
         self.cir_state_text = tk.StringVar(value="Select a CIR diagnostic fragment to inspect its assembly.")
@@ -626,6 +639,22 @@ class GatewayGui(GatewayDiagnosticsMixin):
             wraplength=295,
             justify="left",
         ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(
+            operations,
+            textvariable=self.operation_phase_text,
+            style="Muted.TLabel",
+            wraplength=295,
+            justify="left",
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.operation_phase_progress = ttk.Progressbar(
+            operations,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100.0,
+        )
+        self.operation_phase_progress.grid(
+            row=14, column=0, columnspan=2, sticky="ew", pady=(4, 0)
+        )
 
     def _build_workspace(self, parent: ttk.Frame) -> None:
         parent.grid_rowconfigure(0, weight=1)
@@ -940,6 +969,83 @@ class GatewayGui(GatewayDiagnosticsMixin):
             if hours else f"{minutes:d}:{seconds:02d}"
         )
 
+    def _set_scheduled_phase_estimate(
+        self,
+        key: str,
+        label: str,
+        duration_ms: int,
+        *,
+        now: float | None = None,
+        preserve_start: bool = False,
+    ) -> None:
+        current = getattr(self, "_scheduled_phase_estimate", None)
+        started_at = (
+            current.started_at
+            if preserve_start and current is not None and current.key == key
+            else time.monotonic() if now is None else now
+        )
+        self._scheduled_phase_estimate = ScheduledPhaseEstimate(
+            key,
+            label,
+            started_at,
+            duration_ms,
+        )
+        self._update_scheduled_phase_progress(now=now)
+
+    def _clear_scheduled_phase_estimate(self) -> None:
+        self._scheduled_phase_estimate = None
+        phase_text = getattr(self, "operation_phase_text", None)
+        if phase_text is not None:
+            phase_text.set(
+                "Scheduled phase timing appears while an operation is active."
+            )
+        progress = getattr(self, "operation_phase_progress", None)
+        if progress is not None:
+            progress.configure(value=0.0)
+        view = getattr(self, "survey_geometry_view", None)
+        if view is not None:
+            show_phase = getattr(view, "show_phase_progress", None)
+            if callable(show_phase):
+                show_phase(None)
+
+    def _scheduled_phase_snapshot(
+        self, *, now: float | None = None
+    ) -> ScheduledPhaseSnapshot | None:
+        estimate = getattr(self, "_scheduled_phase_estimate", None)
+        if estimate is None:
+            return None
+        return estimate.snapshot(time.monotonic() if now is None else now)
+
+    def _scheduled_phase_text(self, snapshot: ScheduledPhaseSnapshot) -> str:
+        if snapshot.elapsed:
+            return (
+                f"{snapshot.label}: scheduled window elapsed; waiting for "
+                "terminal telemetry."
+            )
+        return (
+            f"{snapshot.label}: about "
+            f"{self._format_duration_ms(snapshot.remaining_ms)} remaining."
+        )
+
+    def _update_scheduled_phase_progress(
+        self, *, now: float | None = None
+    ) -> ScheduledPhaseSnapshot | None:
+        snapshot = self._scheduled_phase_snapshot(now=now)
+        if snapshot is None:
+            return None
+        phase_text = getattr(self, "operation_phase_text", None)
+        if phase_text is not None:
+            phase_text.set(self._scheduled_phase_text(snapshot))
+        progress = getattr(self, "operation_phase_progress", None)
+        if progress is not None:
+            progress.configure(value=100.0 * snapshot.fraction)
+        view = getattr(self, "survey_geometry_view", None)
+        if view is not None:
+            show_phase = getattr(view, "show_phase_progress", None)
+            if callable(show_phase):
+                show_phase(snapshot)
+        return snapshot
+
     def _operation_policy_profile(
         self,
         *,
@@ -1020,10 +1126,43 @@ class GatewayGui(GatewayDiagnosticsMixin):
             dispatch.on_dispatch()
         if getattr(self.command_orchestrator, "phase", None) == "preflight":
             self._command_progress_text = "Refreshing routes"
+            self._set_scheduled_phase_estimate(
+                "routes",
+                "Refresh routes",
+                ROUTE_REFRESH_SCHEDULED_MS,
+            )
         elif dispatch.command_kind == 1:
             self._command_progress_text = "Collecting enumeration responses"
+            self._set_scheduled_phase_estimate(
+                "enumeration",
+                "Enumerate anchors",
+                survey_enumeration_phase_ms(SURVEY_MAX_HOPS),
+            )
+        elif dispatch.command_id == CMD_FORCE_REDISCOVERY:
+            self._command_progress_text = "Refreshing routes"
+            self._set_scheduled_phase_estimate(
+                "routes",
+                "Refresh routes",
+                ROUTE_REFRESH_SCHEDULED_MS,
+            )
+        elif dispatch.command_id == CMD_SURVEY_START:
+            assignment = getattr(self.survey_model, "assignment", None)
+            if assignment is not None:
+                self._set_scheduled_phase_estimate(
+                    "neighbors",
+                    "Collect neighbors",
+                    survey_neighbor_phase_ms(
+                        assignment.max_hop_count,
+                        assignment.slot_span,
+                    ),
+                )
+        elif dispatch.command_id == CMD_SURVEY_PLAN:
+            # The accepted plan event supplies the exact wave count.  Retain
+            # no made-up progress while firmware is still building it.
+            self._clear_scheduled_phase_estimate()
         else:
             self._command_progress_text = "Running gateway command"
+            self._clear_scheduled_phase_estimate()
         self.status_text.set(dispatch.status_text)
         self.transport.send_frame(dispatch.frame, dispatch.label)
 
@@ -1049,8 +1188,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 self._survey_chain_pending = False
                 self._survey_auto_all = False
                 self._survey_phase = "idle"
-        if transition.completed:
+        if transition.completed and transition.dispatch is None:
             self._command_progress_text = ""
+            self._clear_scheduled_phase_estimate()
         self._refresh_survey_view()
         self._update_command_state()
 
@@ -1080,6 +1220,22 @@ class GatewayGui(GatewayDiagnosticsMixin):
             anchors = self.command_timeline_model.enumerated_anchors.get(
                 event.correlation_key, {}
             )
+            deepest_hop = max(
+                (
+                    detail.hop_count
+                    for detail in anchors.values()
+                    if detail.hop_count > 0
+                ),
+                default=SURVEY_MAX_HOPS,
+            )
+            estimate = getattr(self, "_scheduled_phase_estimate", None)
+            if estimate is not None and estimate.key == "enumeration":
+                self._set_scheduled_phase_estimate(
+                    "enumeration",
+                    f"Enumerate anchors (max hop {deepest_hop})",
+                    survey_enumeration_phase_ms(deepest_hop),
+                    preserve_start=True,
+                )
             if event.stage == 6:
                 expected_raw = self.assignment_expected_anchors_text.get().strip()
                 expected = int(expected_raw) if expected_raw else event.total_count
@@ -1418,6 +1574,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_assignment = self.survey_model.assignment
         self._survey_results = dict(self.survey_model.results)
         if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
+            self._clear_scheduled_phase_estimate()
             self._survey_phase = "planning"
             degree_cap = self.survey_max_degree_text.get().strip()
             plan_label = {
@@ -1438,6 +1595,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         elif event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
             self._survey_phase = "ranging"
+            self._set_scheduled_phase_estimate(
+                "ranging",
+                (
+                    f"Range anchor pairs ({event.wave_count} wave"
+                    f"{'s' if event.wave_count != 1 else ''})"
+                ),
+                survey_ranging_phase_ms(
+                    event.assignment.max_hop_count,
+                    event.wave_count,
+                ),
+                # PLAN_ACCEPTED is created at the firmware's PLAN RF origin.
+                # Start there rather than when Tk drains the BLE packet so
+                # retained queue age is subtracted from the countdown.
+                now=created_at,
+            )
             self._survey_pairs = tuple(
                 (pair.initiator_slot, pair.responder_slot)
                 for pair in self.survey_model.plan_pairs
@@ -1455,6 +1627,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"{len(self._survey_pairs)} pair results received."
             )
         elif event.kind == SURVEY_EVENT_BATCH_COMPLETE:
+            self._clear_scheduled_phase_estimate()
             self._survey_batch_cursor += 1
             self._survey_phase = "planning"
             self.status_text.set(
@@ -1470,6 +1643,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 )
             )
         elif event.kind == SURVEY_EVENT_TERMINAL:
+            self._clear_scheduled_phase_estimate()
             usable = sum(
                 result.usable for result in self._survey_results.values()
             )
@@ -1603,6 +1777,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 self._drain_buffered_survey_events()
             self._dispatch_deferred_survey_command()
         else:
+            self._clear_scheduled_phase_estimate()
             status_name = COMMAND_STATUS_NAMES.get(status, str(status))
             self.survey_model.note_command_rejected(command_id, status_name)
             if command_id == CMD_SURVEY_CANCEL:
@@ -1680,6 +1855,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         command_id = transition.request.command_id
         self._survey_pending_dispatch = None
+        self._clear_scheduled_phase_estimate()
         self.survey_model.note_command_timeout(command_id)
         if command_id == CMD_SURVEY_CANCEL:
             self._survey_phase = "ranging"
@@ -2002,6 +2178,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         # expire against wall time after all already-received events are seen.
         self._expire_gateway_command()
         self._expire_survey_command()
+        self._update_scheduled_phase_progress()
         self._update_command_state()
         if self.root.winfo_exists():
             self.root.after(50, self._drain_events)
@@ -2263,10 +2440,18 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 if survey_pending is not None
                 else self._command_progress_text or "Command running"
             )
-            reason = (
-                f"{progress}. Deadline countdown: "
-                f"{self._format_duration_ms(int(remaining_s * 1000))}."
-            )
+            scheduled = self._scheduled_phase_snapshot(now=now)
+            if scheduled is None:
+                reason = (
+                    f"{progress}. Deadline countdown: "
+                    f"{self._format_duration_ms(int(remaining_s * 1000))}."
+                )
+            else:
+                reason = (
+                    f"{progress}. {self._scheduled_phase_text(scheduled)} "
+                    "Safety deadline: "
+                    f"{self._format_duration_ms(int(remaining_s * 1000))}."
+                )
         elif not self.connected:
             reason = "Connect gateway to run a command."
         elif self.gateway_id is None:
@@ -2274,9 +2459,15 @@ class GatewayGui(GatewayDiagnosticsMixin):
         else:
             reason = "Ready for a gateway command."
         if survey_active and not command_active:
+            scheduled = self._scheduled_phase_snapshot()
             reason = (
                 "Survey "
-                f"{self._survey_phase.replace('-', ' ')}; fixed radio plan active."
+                f"{self._survey_phase.replace('-', ' ')}; "
+                + (
+                    self._scheduled_phase_text(scheduled)
+                    if scheduled is not None
+                    else "fixed radio plan active."
+                )
             )
         command_state = (
             "normal"

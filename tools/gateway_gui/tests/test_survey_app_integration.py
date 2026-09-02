@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 from typing import cast
 from unittest.mock import Mock, patch
@@ -441,7 +442,7 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         pairs = ((0, 1), (0, 2), (1, 2))
         gui.survey_model.set_requested_pairs(pairs)
         gui._submit_survey_dispatch(dispatch(CMD_SURVEY_PLAN, 101, 8))
-        plan = plan_packet()
+        plan = replace(plan_packet(), age_ms=2_500)
         gui._add_packet(plan, received_at=received_at + 1.0)
         gui._add_packet(plan, received_at=received_at + 1.0)
 
@@ -457,6 +458,13 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         self.assertEqual(len(gui.survey_model.plan_pairs), 3)
         self.assertEqual(gui.delivery_dedup.size, 2)
         self.assertEqual(gui.transport.send_frame.call_count, 2)
+        self.assertIsNotNone(gui._scheduled_phase_estimate)
+        assert gui._scheduled_phase_estimate is not None
+        self.assertEqual(gui._scheduled_phase_estimate.key, "ranging")
+        self.assertEqual(
+            gui._scheduled_phase_estimate.started_at,
+            received_at + 1.0 - 2.5,
+        )
 
 
 if __name__ == "__main__":
