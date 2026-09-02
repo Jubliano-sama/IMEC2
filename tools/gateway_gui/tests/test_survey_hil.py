@@ -4,6 +4,7 @@ from tools.gateway_gui.protocol import CMD_SURVEY_PLAN, CMD_SURVEY_START
 from tools.gateway_gui.survey_hil import (
     SurveyHilEvidence,
     _disconnect_injection_due,
+    _survey_event_is_current,
 )
 
 
@@ -19,6 +20,18 @@ def test_disconnect_injection_waits_for_full_requested_delay() -> None:
     )
     assert _disconnect_injection_due(
         delay_s=1.0, accepted_at=100.0, now=101.0
+    )
+
+
+def test_hil_evidence_accepts_only_the_production_gui_generation() -> None:
+    assert not _survey_event_is_current(
+        event_generation=1, current_generation=None
+    )
+    assert not _survey_event_is_current(
+        event_generation=1, current_generation=2
+    )
+    assert _survey_event_is_current(
+        event_generation=2, current_generation=2
     )
 
 

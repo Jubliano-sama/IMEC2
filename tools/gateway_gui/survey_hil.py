@@ -100,6 +100,7 @@ class SurveyHilGui(GatewayGui):
     def _add_packet(
         self, packet: Packet, *, received_at: float | None = None
     ) -> None:
+        forwarded = False
         try:
             if packet.msg_type == MSG_COMMAND_RESULT:
                 command_id = packet.value(TLV_COMMAND_ID)
@@ -131,6 +132,23 @@ class SurveyHilGui(GatewayGui):
                 )
             elif packet.msg_type == MSG_SURVEY_EVENT:
                 event = decode_survey_event(packet)
+                # Let the production GUI apply its generation and dispatch-time
+                # gates first.  A reconnect can replay the abandoned survey's
+                # terminal packet after the next run has already started; that
+                # packet is useful to print, but it is not evidence for the new
+                # run.
+                forwarded = True
+                super()._add_packet(packet, received_at=received_at)
+                if not _survey_event_is_current(
+                    event_generation=event.generation,
+                    current_generation=self._survey_generation,
+                ):
+                    print(
+                        f"HOST_PACKET stale_survey={event.generation} "
+                        f"current={self._survey_generation}",
+                        flush=True,
+                    )
+                    return
                 self.hil_evidence.partial_reasons |= event.partial_reasons
                 if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
                     self.hil_evidence.neighbor_reports = len(
@@ -214,7 +232,8 @@ class SurveyHilGui(GatewayGui):
                     )
         except Exception as exc:
             print(f"HOST_PACKET malformed_survey={exc}", flush=True)
-        super()._add_packet(packet, received_at=received_at)
+        if not forwarded:
+            super()._add_packet(packet, received_at=received_at)
 
 
 def _emit(kind: str, **fields: object) -> None:
@@ -235,6 +254,15 @@ def _disconnect_injection_due(
         delay_s is not None
         and accepted_at is not None
         and now - accepted_at >= delay_s
+    )
+
+
+def _survey_event_is_current(
+    *, event_generation: int, current_generation: int | None
+) -> bool:
+    return (
+        current_generation is not None
+        and event_generation == current_generation
     )
 
 
