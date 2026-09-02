@@ -577,10 +577,15 @@ static void test_route_wave_depths_are_non_overlapping(void)
                   block_start_ms + MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
               "Here-I-Am copies escaped their depth block");
     }
-    CHECK(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 10u,
-          "route selection lost the empty weak-link fallback round");
-    CHECK(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 45150u,
-          "gateway can advance before every route depth is quiet");
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS == 20000u,
+          "gateway command release lost its approved spatial edge");
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS >=
+              4u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS &&
+              APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS <
+                  5u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+          "gateway command release is not inside depth four");
+    CHECK(APP_NODE_COMM_ROUTE_REFRESH_FULL_QUIET_MS == 45150u,
+          "partial route waves lost the complete quiet horizon");
 }
 
 static void test_enumeration_prearm_covers_complete_claim_pipeline(void)

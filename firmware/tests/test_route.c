@@ -148,6 +148,76 @@ static void test_borderline_relay_becomes_fallback_after_next_depth(void)
     assert(!selected->provisional_valid);
 }
 
+static void test_borderline_wait_can_only_be_consumed_once_per_wave(void)
+{
+    struct route_table table;
+    struct route_candidate first =
+        candidate(0x14u, 21u, 1u,
+                  route_link_quality_from_rsl(-99), 10u);
+    struct route_candidate later =
+        candidate(0x15u, 21u, 2u,
+                  route_link_quality_from_rsl(-100), 50u);
+    struct route_candidate after_wait =
+        candidate(0x16u, 21u, 3u,
+                  route_link_quality_from_rsl(-99), 101u);
+    const struct route_candidate *stored;
+
+    first.link_rsl_dbm = -99;
+    first.link_rsl_valid = true;
+    first.provisional_until_ms = 100u;
+    first.provisional_valid = true;
+    later.link_rsl_dbm = -100;
+    later.link_rsl_valid = true;
+    later.provisional_until_ms = 200u;
+    later.provisional_valid = true;
+    after_wait.link_rsl_dbm = -99;
+    after_wait.link_rsl_valid = true;
+    after_wait.provisional_until_ms = 300u;
+    after_wait.provisional_valid = true;
+
+    route_table_init(&table, 21u);
+    assert(route_upsert_candidate(&table, &first) == PROTO_OK);
+    assert(table.weak_link_deferral_consumed);
+    assert(table.weak_link_deferral_active);
+    assert(table.weak_link_deferral_until_ms == 100u);
+
+    assert(route_upsert_candidate(&table, &later) == PROTO_OK);
+    stored = candidate_for_next_hop(&table, later.next_hop_id);
+    assert(stored != NULL);
+    assert(stored->provisional_valid);
+    assert(stored->provisional_until_ms == 100u);
+    assert(route_select_best_at(&table, 99u) == PROTO_ERR_NOT_FOUND);
+
+    assert(route_select_best_at(&table, 100u) == PROTO_OK);
+    assert(!table.weak_link_deferral_active);
+    assert(table.weak_link_deferral_consumed);
+    assert(route_upsert_candidate(&table, &after_wait) == PROTO_OK);
+    stored = candidate_for_next_hop(&table, after_wait.next_hop_id);
+    assert(stored != NULL);
+    assert(!stored->provisional_valid);
+    assert(stored->provisional_until_ms == 0u);
+
+    route_table_begin_selection_wave(&table);
+    after_wait.last_seen_ms = 200u;
+    after_wait.provisional_until_ms = 400u;
+    after_wait.provisional_valid = true;
+    assert(route_upsert_candidate(&table, &after_wait) == PROTO_OK);
+    assert(table.current_epoch == 21u);
+    assert(table.weak_link_deferral_consumed);
+    assert(table.weak_link_deferral_active);
+    assert(table.weak_link_deferral_until_ms == 400u);
+
+    after_wait.route_epoch = 22u;
+    after_wait.last_seen_ms = 500u;
+    after_wait.provisional_until_ms = 700u;
+    after_wait.provisional_valid = true;
+    assert(route_upsert_candidate(&table, &after_wait) == PROTO_OK);
+    assert(table.current_epoch == 22u);
+    assert(table.weak_link_deferral_consumed);
+    assert(table.weak_link_deferral_active);
+    assert(table.weak_link_deferral_until_ms == 700u);
+}
+
 static void test_strong_direct_still_beats_strong_relay(void)
 {
     struct route_table table;
@@ -744,6 +814,7 @@ int main(void)
     test_same_hop_uses_link_quality();
     test_borderline_direct_waits_for_stronger_relay();
     test_borderline_relay_becomes_fallback_after_next_depth();
+    test_borderline_wait_can_only_be_consumed_once_per_wave();
     test_strong_direct_still_beats_strong_relay();
     test_rsl_margin_boundary_is_inclusive();
     test_epoch_change_invalidates_old_routes();

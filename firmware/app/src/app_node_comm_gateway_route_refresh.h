@@ -10,17 +10,20 @@
 
 struct k_work_delayable;
 
-/* The gateway does not start the next command until every supported
- * Here-I-Am depth and the final weak-link fallback round have closed. */
-#define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS \
-    MESH_GATEWAY_ROUTE_SELECTION_SETTLE_BLOCKS
+/* A successful root wave can hand command ownership back once its relays are
+ * four RF layers away. A partial wave must still become globally quiet before
+ * a fresh sequence starts, because its old countdowns cannot be resumed. */
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS \
     MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
-#define APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS \
+#define APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS \
+    MESH_GATEWAY_ROUTE_COMMAND_RELEASE_MS
+#define APP_NODE_COMM_ROUTE_REFRESH_FULL_QUIET_MS \
     MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS
 
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 45150u,
-               "Here-I-Am settle must include the weak-link fallback round");
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS == 20000u,
+               "successful route refresh must release at the approved edge");
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_FULL_QUIET_MS == 45150u,
+               "partial route waves still need the complete quiet horizon");
 
 typedef int (*app_node_comm_route_refresh_build_fn)(
     void *ctx,

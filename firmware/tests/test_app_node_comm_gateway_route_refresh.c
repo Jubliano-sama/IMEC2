@@ -378,7 +378,7 @@ static void test_pause_between_copies_restarts_after_old_wave_is_quiet(void)
     fixture.now_ms += 1000u;
     app_node_comm_gateway_route_refresh_resume(fixture.now_ms);
     assert(fixture.scheduled_delay_ms ==
-           APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - fixture.now_ms);
+           APP_NODE_COMM_ROUTE_REFRESH_FULL_QUIET_MS - fixture.now_ms);
     fixture.pause_after_first_send = false;
     fixture_run(&fixture);
     assert(fixture.send_calls == 1u + MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
@@ -541,7 +541,7 @@ static void test_enumeration_prearm_uses_500ms_route_wake(void)
     assert(fixture.send_calls == MESH_GATEWAY_ROUTE_ADV_COPY_COUNT);
 }
 
-static void test_host_completion_waits_for_bounded_relay_settle(void)
+static void test_host_completion_releases_after_spatial_separation(void)
 {
     struct refresh_fixture fixture;
     struct proto_packet command = correlated_command();
@@ -560,25 +560,25 @@ static void test_host_completion_waits_for_bounded_relay_settle(void)
     assert(fixture.events[0].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
     assert(fixture.scheduled_delay_ms ==
-           APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - wave_complete_ms);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 10u);
+           APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS - wave_complete_ms);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS ==
            MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS == 4500u);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS ==
-           APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS *
-               APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS +
-               FLOOD_POST_ROOT_GUARD_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 45150u);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS == 20000u);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS >=
+           4u * APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS <
+           5u * APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_FULL_QUIET_MS == 45150u);
 
-    fixture.now_ms = APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - 1u;
+    fixture.now_ms = APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS - 1u;
     fixture.scheduled_delay_ms = 1u;
     assert(fixture.event_count == 1u);
     assert(fixture.events[0].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);
 
     fixture_run(&fixture);
-    assert(fixture.now_ms == APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+    assert(fixture.now_ms == APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS);
     assert(fixture.send_calls == send_count);
     assert(fixture.event_count == 2u);
     assert(fixture.events[1].kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
@@ -932,7 +932,7 @@ int main(void)
     test_gateway_originates_one_three_copy_wave();
     test_busy_first_stratum_cannot_shift_copies_into_next_depth();
     test_enumeration_prearm_uses_500ms_route_wake();
-    test_host_completion_waits_for_bounded_relay_settle();
+    test_host_completion_releases_after_spatial_separation();
     test_concurrent_pause_stops_callbacks_and_preserves_correlation();
     test_synchronous_resume_schedule_cannot_strand_refresh();
     test_synchronous_initial_schedule_cannot_stop_restarted_scan();

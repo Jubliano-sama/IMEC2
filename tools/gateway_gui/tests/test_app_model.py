@@ -1405,22 +1405,22 @@ class AppModelTests(unittest.TestCase):
         gui.operation_phase_progress = FakeWidget()  # type: ignore[assignment]
 
         gui._set_scheduled_phase_estimate(
-            "routes", "Refresh routes", 45_150, now=100.0
+            "routes", "Refresh routes", 20_000, now=100.0
         )
-        snapshot = gui._update_scheduled_phase_progress(now=122.575)
+        snapshot = gui._update_scheduled_phase_progress(now=110.0)
 
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
         self.assertAlmostEqual(snapshot.fraction, 0.5, places=3)
         self.assertEqual(
             gui.operation_phase_text.get(),
-            "Refresh routes: about 0:23 remaining.",
+            "Refresh routes: about 0:10 remaining.",
         )
         self.assertAlmostEqual(
             gui.operation_phase_progress.options["value"], 50.0, places=3
         )
 
-        late = gui._update_scheduled_phase_progress(now=146.0)
+        late = gui._update_scheduled_phase_progress(now=121.0)
         self.assertIsNotNone(late)
         assert late is not None
         self.assertTrue(late.elapsed)

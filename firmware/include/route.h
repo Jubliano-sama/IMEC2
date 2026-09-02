@@ -87,10 +87,14 @@ struct route_candidate {
 struct route_table {
     struct route_candidate candidates[ROUTE_MAX_CANDIDATES];
     uint32_t current_epoch;
+    uint32_t weak_link_deferral_until_ms;
     uint8_t selected_index;
+    bool weak_link_deferral_consumed;
+    bool weak_link_deferral_active;
 };
 
 void route_table_init(struct route_table *table, uint32_t current_epoch);
+void route_table_begin_selection_wave(struct route_table *table);
 bool route_epoch_strictly_newer(uint32_t candidate, uint32_t current);
 uint16_t route_candidate_cost(uint8_t hop_count, uint8_t link_quality);
 bool route_link_rsl_immediately_usable(int8_t rsl_dbm);

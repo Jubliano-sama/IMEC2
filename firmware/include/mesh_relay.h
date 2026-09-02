@@ -106,6 +106,17 @@ struct uwb_wake_claim_frame;
 #define MESH_GATEWAY_ROUTE_SELECTION_SETTLE_MS \
     ((MESH_GATEWAY_ROUTE_SELECTION_SETTLE_BLOCKS * \
       MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS) + FLOOD_POST_ROOT_GUARD_MS)
+/* The root may release its command owner once the route wave is already four
+ * RF layers away.  Relays keep the immutable wave clock and finish the deeper
+ * blocks autonomously; a partial wave still uses the complete quiet horizon
+ * before it may be restarted. */
+#define MESH_GATEWAY_ROUTE_COMMAND_RELEASE_MS 20000u
+_Static_assert(MESH_GATEWAY_ROUTE_COMMAND_RELEASE_MS >=
+                   4u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+               "route command release needs four complete separation blocks");
+_Static_assert(MESH_GATEWAY_ROUTE_COMMAND_RELEASE_MS <
+                   5u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+               "route command release should occur during depth four");
 #define MESH_GATEWAY_ROUTE_ADV_COPY_SPACING_MS 500u
 #define MESH_GATEWAY_ROUTE_ADV_COPY_COUNT (FLOOD_DEFAULT_RETRY_COUNT + 1u)
 #define MESH_GATEWAY_ROUTE_ADV_FIRST_COPY_JITTER_MAX_MS \

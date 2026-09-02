@@ -1464,6 +1464,12 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (!alternate_path) {
+        /* A gateway epoch may contain several Here-I-Am waves. Give each
+         * newly validated wave one weak-parent deferral token, while every
+         * alternate ingress parent in this same sequence shares it. */
+        route_table_begin_selection_wave(&relay->upstream);
+    }
     route_ret = upsert_reactive_route(relay,
                                       fields.gateway_id,
                                       previous_hop_id,

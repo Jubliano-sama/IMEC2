@@ -794,8 +794,8 @@ finish:
                     sent_ms,
                     refresh_deadline_add(
                         route_refresh.snapshot.queued_at_ms,
-                        APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS)) :
-                APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+                        APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS)) :
+                APP_NODE_COMM_ROUTE_REFRESH_COMMAND_RELEASE_MS);
         if (ret < 0) {
             route_refresh.relay_settle_pending = false;
             refresh_complete(ret);
@@ -1124,7 +1124,7 @@ void app_node_comm_gateway_route_refresh_resume(uint32_t now_ms)
          * sequence instead of transmitting stale copies late. */
         resume_due_ms = refresh_deadline_add(
             route_refresh.snapshot.queued_at_ms,
-            APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+            APP_NODE_COMM_ROUTE_REFRESH_FULL_QUIET_MS);
         refresh_reset_outer_attempt();
     } else if (route_refresh.relay_settle_pending) {
         resume_due_ms = route_refresh.due_ms;

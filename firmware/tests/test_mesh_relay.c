@@ -21430,6 +21430,10 @@ static void test_weak_direct_route_is_retained_until_fallback_round(void)
     const uint32_t received_at_ms = 4000u;
     const uint32_t fallback_ms = root_wave_start_ms +
         (2u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
+    const uint32_t next_wave_start_ms = fallback_ms + 1000u;
+    const uint32_t next_wave_received_ms = next_wave_start_ms + 3000u;
+    const uint32_t next_wave_fallback_ms = next_wave_start_ms +
+        (2u * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS);
 
     mesh_relay_init(&gateway,
                     MESH_RELAY_ROLE_GATEWAY,
@@ -21471,6 +21475,29 @@ static void test_weak_direct_route_is_retained_until_fallback_round(void)
            PROTO_ERR_NOT_FOUND);
     assert(route_select_best_at(&anchor.upstream, fallback_ms) == PROTO_OK);
     assert(route_selected(&anchor.upstream)->next_hop_id == GATEWAY);
+
+    /* A route epoch survives across refreshes, but every new Here-I-Am
+     * sequence receives its own single weak-parent deferral. */
+    assert(mesh_relay_build_gateway_route_adv(
+               &gateway, 78u, next_wave_start_ms, &adv) == PROTO_OK);
+    adv.packet.message_age_ms = next_wave_received_ms - next_wave_start_ms;
+    assert(mesh_relay_handle_rx_with_random_radio(
+               &anchor,
+               &adv.packet,
+               adv.payload,
+               adv.payload_len,
+               GATEWAY,
+               route_link_quality_from_rsl(-99),
+               -99,
+               true,
+               next_wave_received_ms,
+               UINT32_C(0x66bb66bb),
+               &result) == PROTO_OK);
+    candidate = find_route_candidate(&anchor, GATEWAY);
+    assert(candidate != NULL);
+    assert(candidate->provisional_valid);
+    assert(candidate->provisional_until_ms == next_wave_fallback_ms);
+    assert(route_selected(&anchor.upstream) == NULL);
 }
 
 int main(void)

@@ -98,6 +98,16 @@ static void normalize_candidate_provisional(struct route_candidate *candidate,
     }
 }
 
+static void normalize_weak_link_deferral(struct route_table *table,
+                                         uint32_t now_ms)
+{
+    if (table->weak_link_deferral_active &&
+        deadline_reached(now_ms, table->weak_link_deferral_until_ms)) {
+        table->weak_link_deferral_until_ms = 0u;
+        table->weak_link_deferral_active = false;
+    }
+}
+
 static uint8_t normalized_capacity_state(uint8_t capacity_state)
 {
     return capacity_state <= RELAY_CAP_BLACK ? capacity_state : RELAY_CAP_UNKNOWN;
@@ -258,6 +268,9 @@ static void invalidate_candidates(struct route_table *table)
         table->candidates[i].valid = false;
     }
     table->selected_index = ROUTE_NO_SELECTION;
+    table->weak_link_deferral_until_ms = 0u;
+    table->weak_link_deferral_consumed = false;
+    table->weak_link_deferral_active = false;
 }
 
 void route_table_init(struct route_table *table, uint32_t current_epoch)
@@ -267,6 +280,17 @@ void route_table_init(struct route_table *table, uint32_t current_epoch)
         table->current_epoch = current_epoch;
         table->selected_index = ROUTE_NO_SELECTION;
     }
+}
+
+void route_table_begin_selection_wave(struct route_table *table)
+{
+    if (table == NULL) {
+        return;
+    }
+
+    table->weak_link_deferral_until_ms = 0u;
+    table->weak_link_deferral_consumed = false;
+    table->weak_link_deferral_active = false;
 }
 
 int route_select_best(struct route_table *table)
@@ -283,6 +307,7 @@ int route_select_best_at(struct route_table *table, uint32_t now_ms)
         return PROTO_ERR_ARG;
     }
 
+    normalize_weak_link_deferral(table, now_ms);
     for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
         struct route_candidate *candidate = &table->candidates[i];
 
@@ -348,6 +373,8 @@ int route_upsert_candidate(struct route_table *table,
     stored.route_cost = route_candidate_cost(stored.hop_count, stored.link_quality);
     now_ms = stored.last_seen_ms;
     normalize_candidate_capacity_hint(&stored, now_ms);
+    normalize_candidate_provisional(&stored, now_ms);
+    normalize_weak_link_deferral(table, now_ms);
 
     index = find_candidate_index(table, candidate->next_hop_id, candidate->gateway_id);
     if (index >= 0) {
@@ -376,6 +403,24 @@ int route_upsert_candidate(struct route_table *table,
         stored.last_success_ms = 0u;
         stored.hold_down_until_ms = 0u;
         stored.hold_down_valid = false;
+    }
+
+    if (stored.provisional_valid) {
+        if (!table->weak_link_deferral_consumed) {
+            /* One selection wave gets exactly one following-depth wait.
+             * Every later weak candidate shares that first edge and cannot
+             * push the anchor into another round. */
+            table->weak_link_deferral_until_ms =
+                stored.provisional_until_ms;
+            table->weak_link_deferral_consumed = true;
+            table->weak_link_deferral_active = true;
+        } else if (table->weak_link_deferral_active) {
+            stored.provisional_until_ms =
+                table->weak_link_deferral_until_ms;
+        } else {
+            stored.provisional_until_ms = 0u;
+            stored.provisional_valid = false;
+        }
     }
 
     table->candidates[index] = stored;
