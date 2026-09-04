@@ -326,8 +326,7 @@ int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot)
     if (!local_anchor_discovery_assignment_get(&epoch,
                                                &assigned_slot,
                                                &assigned_slot_count) ||
-        epoch == 0u || assigned_slot_count != slot_count ||
-        assigned_slot >= assigned_slot_count) {
+        epoch == 0u || assigned_slot >= slot_count) {
         /*
          * A hash fallback can collide with another anchor and defeats the
          * collision-free table the gateway just enumerated.  Stay silent

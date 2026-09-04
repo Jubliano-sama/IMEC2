@@ -477,6 +477,9 @@ static int anchor_enumeration_rx_begin_table(
 static bool anchor_enumeration_rx_bind_claim(uint32_t epoch,
                                              uint32_t claim_session_id,
                                              uint32_t claim_command_seq);
+static bool anchor_enumeration_rx_rollback_unbound_claim(
+    uint32_t epoch,
+    const char *reason);
 static bool anchor_enumeration_rx_active(void);
 static bool anchor_enumeration_rx_matches_claim(
     uint32_t epoch,

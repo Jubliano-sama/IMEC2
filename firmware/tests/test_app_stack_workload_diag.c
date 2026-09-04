@@ -1,12 +1,90 @@
 #include "app_stack_diag.h"
 #include "app_stack_workload_diag.h"
 
+#include <zephyr/kernel.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+
+/*
+ * Every workload lane is queued and replayed from one delayable work item off
+ * the caller's critical path. The native shim never runs a work queue, so
+ * drain the deferred records synchronously from the reschedule seam. Each
+ * production call therefore still produces its records in call order here and
+ * the per-call begin/sample/end accounting stays exact.
+ */
+void zephyr_shim_note_work_reschedule(struct k_work_delayable *work,
+                                      int timeout);
+
+/*
+ * Suspending the drain models the target, where the work item stays armed for
+ * its delay while producers keep queueing records.
+ */
+static bool stack_diag_drain_suspended;
+static struct k_work_delayable *stack_diag_armed_work;
+
+void zephyr_shim_note_work_reschedule(struct k_work_delayable *work,
+                                      int timeout)
+{
+    (void)timeout;
+    if (work == NULL || work->work.handler == NULL) {
+        return;
+    }
+    if (stack_diag_drain_suspended) {
+        stack_diag_armed_work = work;
+        return;
+    }
+    work->work.handler(&work->work);
+}
+
+static void stack_diag_resume_drain(void)
+{
+    struct k_work_delayable *work = stack_diag_armed_work;
+
+    stack_diag_armed_work = NULL;
+    stack_diag_drain_suspended = false;
+    if (work != NULL && work->work.handler != NULL) {
+        work->work.handler(&work->work);
+    }
+}
+
+/*
+ * Runs one replay pass while the seam stays suspended, which is how the
+ * target behaves when the handler re-arms itself instead of recursing.
+ */
+static void stack_diag_run_armed_drain(void)
+{
+    struct k_work_delayable *work = stack_diag_armed_work;
+
+    stack_diag_armed_work = NULL;
+    if (work != NULL && work->work.handler != NULL) {
+        work->work.handler(&work->work);
+    }
+}
+
+static bool stack_diag_radio_critical;
+static uint32_t stack_diag_critical_queries;
+
+static bool stack_diag_critical_probe(void)
+{
+    stack_diag_critical_queries++;
+    return stack_diag_radio_critical;
+}
+
+/*
+ * The anchor scan lane is rate limited against the kernel clock, so the shim
+ * clock has to be steerable to prove both the suppression and the release.
+ */
+static int64_t shim_uptime_ms;
+
+int64_t k_uptime_get(void)
+{
+    return shim_uptime_ms;
+}
 
 #define MAX_RECORDS 4096u
 #define CONCURRENCY_STRESS_ROUNDS 1000u
@@ -39,6 +117,10 @@ static uint32_t max_diag_calls_in_flight;
 static pthread_mutex_t lock_attempt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t lock_attempt_cond = PTHREAD_COND_INITIALIZER;
 static uint32_t lock_attempt_count;
+/* Workers that returned without ever contending for the correlation lock:
+ * with the FIFO deferral a producer whose records queue behind an already
+ * armed drain never locks, so the serialization check must count them. */
+static uint32_t workers_finished;
 
 void app_stack_workload_diag_test_lock_attempt(void)
 {
@@ -253,6 +335,10 @@ static void *concurrent_worker_main(void *opaque)
         assert(barrier_result == 0 || barrier_result == PTHREAD_BARRIER_SERIAL_THREAD);
         run_concurrent_workload(worker->workload, iteration);
     }
+    assert(pthread_mutex_lock(&lock_attempt_mutex) == 0);
+    workers_finished++;
+    assert(pthread_cond_broadcast(&lock_attempt_cond) == 0);
+    assert(pthread_mutex_unlock(&lock_attempt_mutex) == 0);
     return NULL;
 }
 
@@ -279,6 +365,7 @@ static void test_concurrent_workload_state_is_serialized(void)
     assert(pthread_mutex_unlock(&diag_stub_mutex) == 0);
     assert(pthread_mutex_lock(&lock_attempt_mutex) == 0);
     lock_attempt_count = 0u;
+    workers_finished = 0u;
     assert(pthread_mutex_unlock(&lock_attempt_mutex) == 0);
 
     assert(pthread_create(&threads[0], NULL, concurrent_worker_main,
@@ -300,8 +387,10 @@ static void test_concurrent_workload_state_is_serialized(void)
     }
     assert(pthread_mutex_unlock(&diag_stub_mutex) == 0);
 
+    /* The blocked replay owns one lock attempt; every other worker has either
+     * contended for the lock (and is blocked) or finished without locking. */
     assert(pthread_mutex_lock(&lock_attempt_mutex) == 0);
-    while (lock_attempt_count < 3u) {
+    while (lock_attempt_count + workers_finished < 3u) {
         assert(pthread_cond_wait(&lock_attempt_cond, &lock_attempt_mutex) == 0);
     }
     assert(pthread_mutex_unlock(&lock_attempt_mutex) == 0);
@@ -401,6 +490,226 @@ static void test_failed_diagnostic_commits_retain_only_usable_runs(void)
     assert(active_count == 0u);
 }
 
+/*
+ * The anchor lanes are queued, not emitted inline. The queue must still hand
+ * app_stack_diag every record in call order: a sample can never overtake the
+ * run boundary it belongs to, which is exactly what the transcript verifier
+ * rejects as an uncorrelated record.
+ */
+static void test_deferred_anchor_lanes_retain_ordered_run_accounting(void)
+{
+    struct proto_packet report = packet(40u, 400u, 40u);
+    uint32_t begins_before = begin_count;
+    uint32_t samples_before = sample_count;
+    uint32_t ends_before = end_count;
+
+    assert(active_count == 0u);
+    app_stack_workload_diag_cir_admit(&report, 3u, 1u);
+    assert(begin_count == begins_before + 1u);
+    assert(sample_count == samples_before);
+    app_stack_workload_diag_cir_sample(&report, 3u, 1u);
+    assert(sample_count == samples_before + 1u);
+    /* A second sample still lands inside the same open run. */
+    app_stack_workload_diag_cir_sample(&report, 4u, 2u);
+    assert(sample_count == samples_before + 2u);
+    assert(end_count == ends_before);
+    app_stack_workload_diag_cir_release(&report, 0, 0u, 0u);
+    assert(end_count == ends_before + 1u);
+    assert(outcomes[ends_before] == APP_STACK_DIAG_TERMINAL_ACK);
+    assert(workloads[begins_before] == APP_STACK_DIAG_WORKLOAD_CIR_HANDLING);
+    assert(owners[begins_before] == APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN);
+    assert(active_count == 0u);
+
+    /* A sample with no admitted run must emit nothing at all. */
+    app_stack_workload_diag_cir_sample(&report, 5u, 5u);
+    assert(sample_count == samples_before + 2u);
+    assert(begin_count == begins_before + 1u);
+}
+
+static void test_anchor_scan_cycles_are_rate_limited(void)
+{
+    struct proto_packet scan = packet(41u, 401u, 41u);
+    uint32_t begins_before = begin_count;
+    uint32_t samples_before = sample_count;
+    uint32_t ends_before = end_count;
+
+    shim_uptime_ms = 100000;
+    app_stack_workload_diag_anchor_scan_cycle(&scan, 2u, 1u);
+    assert(begin_count == begins_before + 1u);
+    assert(sample_count == samples_before + 1u);
+    assert(end_count == ends_before + 1u);
+    assert(workloads[begins_before] == APP_STACK_DIAG_WORKLOAD_ANCHOR_SCAN);
+    assert(owners[begins_before] == APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN);
+
+    /* The low-duty scan loop repeats far faster than the evidence interval. */
+    shim_uptime_ms = 100050;
+    app_stack_workload_diag_anchor_scan_cycle(&scan, 2u, 1u);
+    shim_uptime_ms = 100999;
+    app_stack_workload_diag_anchor_scan_cycle(&scan, 2u, 1u);
+    assert(begin_count == begins_before + 1u);
+    assert(end_count == ends_before + 1u);
+
+    shim_uptime_ms = 101000;
+    app_stack_workload_diag_anchor_scan_cycle(&scan, 2u, 1u);
+    assert(begin_count == begins_before + 2u);
+    assert(sample_count == samples_before + 2u);
+    assert(end_count == ends_before + 2u);
+    assert(active_count == 0u);
+}
+
+/*
+ * A queue that overruns while the work item is still armed must shed extra
+ * samples, never an admission or a completion: an unmatched completion or a
+ * leaked run breaks the transcript, a thinner run does not.
+ */
+static void test_deferred_queue_overflow_retains_run_boundaries(void)
+{
+    struct proto_packet report = packet(42u, 402u, 42u);
+    uint32_t begins_before = begin_count;
+    uint32_t samples_before = sample_count;
+    uint32_t ends_before = end_count;
+
+    assert(active_count == 0u);
+    stack_diag_drain_suspended = true;
+    app_stack_workload_diag_cir_admit(&report, 1u, 1u);
+    for (uint32_t index = 0u; index < 64u; index++) {
+        app_stack_workload_diag_cir_sample(&report, 1u, 1u);
+    }
+    app_stack_workload_diag_cir_release(&report, 0, 0u, 0u);
+    assert(begin_count == begins_before);
+    assert(sample_count == samples_before);
+    assert(end_count == ends_before);
+
+    stack_diag_resume_drain();
+    assert(begin_count == begins_before + 1u);
+    assert(end_count == ends_before + 1u);
+    assert(sample_count > samples_before);
+    assert(sample_count < samples_before + 64u);
+    assert(workloads[begins_before] == APP_STACK_DIAG_WORKLOAD_CIR_HANDLING);
+    assert(outcomes[ends_before] == APP_STACK_DIAG_TERMINAL_ACK);
+    assert(active_count == 0u);
+}
+
+/*
+ * No production thread may reach the sampler. Every lane, including the ones
+ * that used to emit inline on the mesh route, BLE, and system workqueue
+ * threads, has to leave its records in the queue until the replay runs.
+ */
+static void test_every_lane_defers_until_the_replay_runs(void)
+{
+    struct proto_packet relay = packet(50u, 500u, 50u);
+    struct proto_packet ble = packet(51u, 501u, 51u);
+    struct proto_packet control = packet(52u, 502u, 52u);
+    struct proto_packet report = packet(53u, 503u, 53u);
+    const struct app_stack_workload_diag_pressure pressure = {
+        .queue_depth = 1u,
+        .custody_depth = 1u,
+        .credit_available = 2u,
+        .retry_depth = 3u,
+        .drain_depth = 4u,
+    };
+    uint32_t begins_before = begin_count;
+    uint32_t samples_before = sample_count;
+    uint32_t ends_before = end_count;
+
+    assert(active_count == 0u);
+    stack_diag_drain_suspended = true;
+    app_stack_workload_diag_relay_admit(&relay, 1u, 1u);
+    app_stack_workload_diag_relay_sample(&relay, 1u, 1u);
+    app_stack_workload_diag_ble_admit_with_pressure(
+        &ble, APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE, &pressure);
+    app_stack_workload_diag_gateway_control_admit(&control, 1u, 1u);
+    app_stack_workload_diag_gateway_report_cycle(&report, 1u, 1u);
+    assert(begin_count == begins_before);
+    assert(sample_count == samples_before);
+    assert(end_count == ends_before);
+
+    stack_diag_resume_drain();
+    assert(begin_count == begins_before + 4u);
+    assert(workloads[begins_before] == APP_STACK_DIAG_WORKLOAD_RELAY_RETRY);
+    assert(owners[begins_before] == APP_STACK_DIAG_OWNER_MESH_ROUTE);
+    assert(workloads[begins_before + 1u] ==
+           APP_STACK_DIAG_WORKLOAD_BLE_BACKPRESSURE);
+    /* The queued record must retain the BLE lane's own pressure fields. */
+    assert(begin_states[begins_before + 1u].credit_available == 2u);
+    assert(begin_states[begins_before + 1u].retry_depth == 3u);
+    assert(begin_states[begins_before + 1u].drain_depth == 4u);
+    assert(workloads[begins_before + 2u] ==
+           APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL);
+    assert(workloads[begins_before + 3u] ==
+           APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS);
+    assert(owners[begins_before + 3u] == APP_STACK_DIAG_OWNER_MESH_ROUTE);
+    assert(sample_count == samples_before + 2u);
+    assert(end_count == ends_before + 1u);
+
+    app_stack_workload_diag_relay_release(&relay, 0, 0u, 0u);
+    app_stack_workload_diag_gateway_control_release(&control, 0, 0u, 0u);
+    /* A lane-wide BLE release is queued like any other record. */
+    app_stack_workload_diag_ble_release_all(0, 0u, 0u);
+    assert(end_count == ends_before + 4u);
+    assert(active_count == 0u);
+}
+
+/*
+ * A replay must never land between a frame decode and its RX re-arm. The
+ * held record keeps its queue position so the run boundaries stay ordered.
+ */
+static void test_radio_critical_hook_holds_records_in_order(void)
+{
+    struct proto_packet report = packet(60u, 600u, 60u);
+    uint32_t begins_before = begin_count;
+    uint32_t samples_before = sample_count;
+    uint32_t ends_before = end_count;
+
+    app_stack_workload_diag_set_critical_hook(stack_diag_critical_probe);
+    stack_diag_radio_critical = true;
+    stack_diag_critical_queries = 0u;
+    stack_diag_drain_suspended = true;
+    app_stack_workload_diag_gateway_report_cycle(&report, 1u, 1u);
+    assert(stack_diag_armed_work != NULL);
+
+    stack_diag_run_armed_drain();
+    assert(stack_diag_critical_queries == 1u);
+    assert(begin_count == begins_before);
+    assert(stack_diag_armed_work != NULL);
+
+    stack_diag_radio_critical = false;
+    stack_diag_resume_drain();
+    assert(begin_count == begins_before + 1u);
+    assert(sample_count == samples_before + 1u);
+    assert(end_count == ends_before + 1u);
+    assert(workloads[begins_before] ==
+           APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS);
+    assert(active_count == 0u);
+    app_stack_workload_diag_set_critical_hook(NULL);
+}
+
+/*
+ * A radio state that never clears must not silently suppress the runs the
+ * hardware workload policy requires, so the hold is bounded.
+ */
+static void test_wedged_radio_state_cannot_suppress_evidence(void)
+{
+    struct proto_packet report = packet(61u, 601u, 61u);
+    uint32_t begins_before = begin_count;
+
+    app_stack_workload_diag_set_critical_hook(stack_diag_critical_probe);
+    stack_diag_radio_critical = true;
+    stack_diag_drain_suspended = true;
+    app_stack_workload_diag_gateway_report_cycle(&report, 1u, 1u);
+    for (uint32_t attempt = 0u;
+         attempt < 400u && begin_count == begins_before; attempt++) {
+        stack_diag_run_armed_drain();
+    }
+    assert(begin_count == begins_before + 1u);
+    assert(workloads[begins_before] ==
+           APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS);
+    stack_diag_radio_critical = false;
+    app_stack_workload_diag_set_critical_hook(NULL);
+    stack_diag_resume_drain();
+    assert(active_count == 0u);
+}
+
 int main(void)
 {
     struct proto_packet first = packet(1u, 10u, 1u);
@@ -467,6 +776,12 @@ int main(void)
     assert(end_count == 9u);
     assert(active_count == 0u);
     test_failed_diagnostic_commits_retain_only_usable_runs();
+    test_deferred_anchor_lanes_retain_ordered_run_accounting();
+    test_anchor_scan_cycles_are_rate_limited();
+    test_deferred_queue_overflow_retains_run_boundaries();
+    test_every_lane_defers_until_the_replay_runs();
+    test_radio_critical_hook_holds_records_in_order();
+    test_wedged_radio_state_cannot_suppress_evidence();
     test_concurrent_workload_state_is_serialized();
     test_concurrent_gateway_workloads_stress();
     return 0;

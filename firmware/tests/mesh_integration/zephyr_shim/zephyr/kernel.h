@@ -108,6 +108,21 @@ static inline bool k_is_in_isr(void)
     return false;
 }
 
+/*
+ * The native scenarios are single-stepped from the reschedule seam, so the
+ * cooperative hand-back a target replay performs between records has no
+ * scheduler to model here.
+ */
+static inline void k_yield(void)
+{
+}
+
+static inline int32_t k_sleep(k_timeout_t timeout)
+{
+    (void)timeout;
+    return 0;
+}
+
 static inline int k_mutex_lock(struct k_mutex *mutex, int timeout)
 {
     pthread_t self;

@@ -182,6 +182,8 @@ TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT = 0xB2
 TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8
 TLV_GATEWAY_HOST_RECEIPT_IDENTITY = 0xBB
 TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC
+TLV_BATCH_PENDING = 0xCD
+TLV_BATCH_REMAINING = 0xCF
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -2349,7 +2351,13 @@ def validate_self_test_report_packet(packet: Packet) -> None:
         TLV_BATTERY_MV: 2,
     }
     values: dict[int, TlvValue] = {}
+    batch_hints: set[int] = set()
     for tlv in packet.tlvs:
+        if tlv.type_id in (TLV_BATCH_PENDING, TLV_BATCH_REMAINING):
+            if len(tlv.raw) != 1 or tlv.type_id in batch_hints or tlv.truncated:
+                raise DecodeError("self-test report batch hint is malformed")
+            batch_hints.add(tlv.type_id)
+            continue
         width = expected.get(tlv.type_id)
         if width is None or tlv.type_id in values or len(tlv.raw) != width:
             raise DecodeError("self-test report TLVs are not canonical")

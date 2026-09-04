@@ -4,6 +4,7 @@
 #include "app_stack_diag.h"
 #include "report.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 struct app_stack_workload_diag_pressure {
@@ -101,6 +102,14 @@ void app_stack_workload_diag_ble_terminal_with_pressure(
     const struct proto_packet *packet,
     enum app_stack_diag_terminal_outcome outcome,
     const struct app_stack_workload_diag_pressure *pressure);
+
+/*
+ * Radio-path busy predicate consulted before every replayed record.  While it
+ * reports true the replay holds the record and retries shortly after, so a
+ * stack walk never lands between a frame decode and its RX re-arm or during
+ * an ACK transmit.  Registered once at init; NULL disables the hold.
+ */
+void app_stack_workload_diag_set_critical_hook(bool (*critical)(void));
 #else
 #define APP_STACK_WORKLOAD_DIAG_NOOP(prefix) \
     static inline void app_stack_workload_diag_##prefix##_admit( \
@@ -150,6 +159,12 @@ static inline void app_stack_workload_diag_ble_release_all(
     (void)result;
     (void)queue_depth;
     (void)custody_depth;
+}
+
+static inline void app_stack_workload_diag_set_critical_hook(
+    bool (*critical)(void))
+{
+    (void)critical;
 }
 #endif
 

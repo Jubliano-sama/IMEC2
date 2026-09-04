@@ -69,6 +69,16 @@ static bool command_result_identity_matches(
            identity->seq == command->seq;
 }
 
+static void command_result_identity_apply(
+    struct proto_packet *command,
+    const struct app_gateway_command_result_command_identity *identity)
+{
+    command->src_id = identity->src_id;
+    command->dst_id = identity->dst_id;
+    command->session_id = identity->session_id;
+    command->seq = identity->seq;
+}
+
 static uint8_t reservation_index_for_token(
     const struct app_gateway_command_result_queue *queue,
     uint32_t token)
@@ -293,8 +303,44 @@ int app_gateway_command_result_rebind(
         return -ENOENT;
     }
     reservation = &queue->slots[index].reserved;
+    if ((reservation->flags & COMMAND_RESULT_RESERVED_PREPARED) != 0u) {
+        return command_result_identity_matches(&reservation->prepared,
+                                               result_command) ?
+            0 : -ESTALE;
+    }
     command_result_identity_store(&reservation->prepared, result_command);
     reservation->flags |= COMMAND_RESULT_RESERVED_PREPARED;
+    return 0;
+}
+
+int app_gateway_command_result_terminal_command(
+    const struct app_gateway_command_result_queue *queue,
+    uint32_t token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    struct proto_packet *terminal_command)
+{
+    const struct app_gateway_command_result_reserved *reservation;
+    uint8_t index = reservation_index_for_token(queue, token);
+
+    if (index == COMMAND_RESULT_SLOT_NONE || command == NULL ||
+        terminal_command == NULL || command->msg_type != MSG_COMMAND) {
+        return -EINVAL;
+    }
+    reservation = &queue->slots[index].reserved;
+    if ((reservation->flags & COMMAND_RESULT_RESERVED_BOUND) == 0u ||
+        reservation->command_id != (uint16_t)command_id ||
+        (!command_result_identity_matches(&reservation->original, command) &&
+         ((reservation->flags & COMMAND_RESULT_RESERVED_PREPARED) == 0u ||
+          !command_result_identity_matches(&reservation->prepared,
+                                           command)))) {
+        return -ENOENT;
+    }
+    *terminal_command = *command;
+    command_result_identity_apply(
+        terminal_command,
+        (reservation->flags & COMMAND_RESULT_RESERVED_PREPARED) != 0u ?
+            &reservation->prepared : &reservation->original);
     return 0;
 }
 

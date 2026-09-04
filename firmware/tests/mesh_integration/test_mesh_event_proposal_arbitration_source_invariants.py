@@ -454,9 +454,11 @@ timeout_discard = propose.index(
     "mesh_ch9_ack_batch_discard_if_safe(", accept_timeout
 )
 timing_clear = propose.index("mesh_relay_clear_channel9_timing(", timeout_discard)
-retry = propose.index("mesh_event_propose_retry_after_failure(", timing_clear)
-assert accept_timeout < timeout_discard < timing_clear < retry
+proposal_clear = propose.index("mesh_event_propose_clear();", timing_clear)
+terminal_return = propose.index("return -ETIMEDOUT;", proposal_clear)
+assert accept_timeout < timeout_discard < timing_clear < proposal_clear < terminal_return
 assert '"event-accept-timeout"' in propose[timeout_discard:timing_clear]
+assert "mesh_event_propose_retry_after_failure(" not in propose
 
 event_handler = function_body(event_tx, "mesh_handle_event_control")
 event_end_rx = event_handler.index("if (packet->msg_type == MSG_MESH_EVENT_END)")
@@ -603,34 +605,34 @@ repair_start = ack_select.index(
     "mesh_propose_event_after_channel5_contact_authorized(", local_gate
 )
 assert local_gate < repair_start
-assert "app_mesh_ch9_ack_table_note_send_failure" in ack_select[
+assert "mesh_ch9_ack_note_send_failure" in ack_select[
     local_gate:repair_start
 ]
 
-retry_handler = function_body(
-    event_tx, "mesh_event_negotiation_retry_work_handler"
+deferred_repair = function_body(
+    event_tx, "mesh_retry_deferred_forwarded_ack_event_repair"
 )
-assert "mesh_local_delivery_blocks_background_event_repair()" in retry_handler
-assert "mesh_event_propose_retry.retry_due_ms = now_ms + 25u" in retry_handler
+assert "mesh_local_delivery_blocks_background_event_repair()" in deferred_repair
+assert "mesh_event_propose_retry.retry_due_ms" not in deferred_repair
 
 # Topology proposal exhaustion during discovery assignment is
 # cadence contention on the shared parent's single downstream slot: the
-# selected parent stays valid and the same parent gets one jittered retry.
+# selected parent stays valid and the retained requester schedules the retry.
 # The exhausted branch must never abandon, hold down, or rediscover.
 propose_terminal = function_body(event_tx, "mesh_event_propose_terminal_failure")
 topology_gate_at = propose_terminal.index(
-    "if (!topology_operation || !mesh_id_is_unicast(peer_id))"
+    "if (topology_operation)"
 )
 cadence_at = propose_terminal.index('"topology-cadence-wait"', topology_gate_at)
 cadence_end_at = (
-    propose_terminal.index("% 100u)", cadence_at) + len("% 100u)")
+    propose_terminal.index("1u)", cadence_at) + len("1u)")
 )
 wait_block = propose_terminal[topology_gate_at:cadence_end_at]
 assert "mesh_schedule_route_waiting_retry_after(" in wait_block
-assert "50u + (sys_rand32_get() % 100u)" in wait_block
+assert "mesh_parent_contact_retry_delay_ms(peer_id, 1u)" in wait_block
 for forbidden_route_collapse in (
     "mesh_relay_abandon_upstream_parent_at(",
     "mesh_event_retry_after_failure(",
     "hold_down",
 ):
-    assert forbidden_route_collapse not in propose_terminal
+    assert forbidden_route_collapse not in wait_block

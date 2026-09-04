@@ -377,12 +377,12 @@ static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                     if (mesh_local_delivery_blocks_background_event_repair()) {
                         uint32_t retry_delay_ms = 0u;
 
-                        (void)app_mesh_ch9_ack_table_note_send_failure(
-                            &mesh_ch9_ack_table,
+                        (void)mesh_ch9_ack_note_send_failure(
                             peer_id,
                             now_ms,
                             sys_rand32_get(),
-                            &retry_delay_ms);
+                            &retry_delay_ms,
+                            "event-repair-local-owner");
                         status_debug_printf(
                             "DBG_FORWARD_GATEWAY_ACK_EVENT_DEFER peer=0x%llx delay=%u owner=local\n",
                             (unsigned long long)peer_id,
@@ -420,7 +420,16 @@ static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                         transit_core_owned ? "transit" : "late",
                         repair_ret);
                     if (repair_ret < 0) {
-                        report_tx_schedule(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+                        uint32_t retry_delay_ms = 0u;
+
+                        (void)mesh_ch9_ack_note_send_failure(
+                            peer_id,
+                            now_ms,
+                            sys_rand32_get(),
+                            &retry_delay_ms,
+                            "event-repair-failed");
+                        report_tx_schedule(retry_delay_ms == 0u ? 1u :
+                                           retry_delay_ms);
                     }
                 } else {
                     (void)mesh_ch9_ack_batch_discard_if_safe(
@@ -433,12 +442,12 @@ static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                 mesh_relay_note_channel9_missed(&mesh_runtime,
                                                 peer_id,
                                                 &mesh_event_stats);
-                (void)app_mesh_ch9_ack_table_note_send_failure(
-                    &mesh_ch9_ack_table,
+                (void)mesh_ch9_ack_note_send_failure(
                     peer_id,
                     now_ms,
                     sys_rand32_get(),
-                    &retry_delay_ms);
+                    &retry_delay_ms,
+                    "event-plan-policy-defer");
                 status_debug_printf(
                     "DBG_CH9_ACK_POLICY_DEFER peer=0x%llx delay=%u act=%u\n",
                     (unsigned long long)peer_id,
@@ -929,6 +938,72 @@ static bool mesh_c5_enumeration_relay_burst_active(void)
     return atomic_get(&mesh_c5_enumeration_relay_burst_count) != 0;
 }
 
+static bool mesh_c5_flood_deferred_entry_due(
+    const struct mesh_c5_flood_deferred_entry *entry,
+    uint32_t now_ms)
+{
+    return entry != NULL && entry->valid &&
+           (!entry->outbound.earliest_tx_valid ||
+            uptime_deadline_reached(now_ms,
+                                    entry->outbound.earliest_tx_ms));
+}
+
+static void mesh_c5_flood_deferred_schedule_after_locked(
+    struct mesh_c5_flood_deferred_entry *entry,
+    uint32_t now_ms,
+    uint32_t delay_ms)
+{
+    uint32_t retry_due_ms;
+
+    if (entry == NULL || !entry->valid) {
+        return;
+    }
+
+    retry_due_ms = now_ms + delay_ms;
+    if (entry->outbound.earliest_tx_valid &&
+        !uptime_deadline_reached(now_ms,
+                                 entry->outbound.earliest_tx_ms) &&
+        (int32_t)(entry->outbound.earliest_tx_ms - retry_due_ms) > 0) {
+        retry_due_ms = entry->outbound.earliest_tx_ms;
+    }
+    entry->outbound.earliest_tx_ms = retry_due_ms;
+    entry->outbound.earliest_tx_valid = true;
+}
+
+static uint32_t mesh_c5_flood_next_delay_locked(uint32_t now_ms)
+{
+    const struct mesh_c5_flood_deferred_entry *entry =
+        mesh_c5_flood_deferred.valid ? &mesh_c5_flood_deferred :
+                                       &mesh_route_adv_deferred;
+
+    if (!entry->valid ||
+        mesh_c5_flood_deferred_entry_due(entry, now_ms)) {
+        return 0u;
+    }
+    return uptime_ms_until_deadline(now_ms,
+                                    entry->outbound.earliest_tx_ms);
+}
+
+static void mesh_c5_flood_schedule_loss_fail_stop(int schedule_ret,
+                                                  const char *owner)
+{
+    if (schedule_ret >= 0) {
+        return;
+    }
+    if (schedule_ret == -ESHUTDOWN && mesh_transport_paused()) {
+        LOG_WRN("deferred C5 flood worker parked for transport resume: owner=%s",
+                owner == NULL ? "unknown" : owner);
+        return;
+    }
+
+    /* Valid deferred custody without a future worker is unrecoverable. The
+     * generic owned-work helper also asserts this idempotent fail-stop. */
+    LOG_ERR("deferred C5 flood lost its worker: owner=%s ret=%d",
+            owner == NULL ? "unknown" : owner,
+            schedule_ret);
+    app_watchdog_stop_feeding();
+}
+
 static bool mesh_c5_gateway_enumeration_quick_copy_burst(
     const struct mesh_outbound *out)
 {
@@ -964,10 +1039,39 @@ void mesh_stop_role_scan(void)
     }
 }
 
+static bool mesh_inline_rx_rearm_owned(void)
+{
+    return mesh_inline_rx_rearm_owner != NULL &&
+           mesh_inline_rx_rearm_owner == k_current_get();
+}
+
+static void mesh_inline_rx_rearm_owner_begin(void)
+{
+    mesh_inline_rx_rearm_owner = k_current_get();
+}
+
+static void mesh_inline_rx_rearm_owner_end(void)
+{
+    mesh_inline_rx_rearm_owner = NULL;
+}
+
 void mesh_restart_role_scan(void)
 {
     int ret;
 
+    /*
+     * The caller is running inside the receive loop that owns the next arm.
+     * Publishing another scan here can only produce a deferred rearm that
+     * fires behind that loop, so the physical receiver would still be off
+     * for the same interval and a stale worker would be left queued.
+     */
+    if (mesh_inline_rx_rearm_owned()) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_GATEWAY_RX_REARM_INLINE at=%u\n",
+                                k_uptime_get_32());
+        }
+        return;
+    }
     /* A completed wake train normally restarts RX before its caller returns.
      * The one exception is the exact retained stale-collection receipt: its
      * frozen C5 EACK still owns the radio until semantic completion retires
@@ -975,8 +1079,8 @@ void mesh_restart_role_scan(void)
     if (mesh_gateway_collection_recovery_receipt_active()) {
         return;
     }
-    /* One logical enumeration control burst owns the radio through every
-     * physical copy. A per-copy release must not reopen the role scanner. */
+    /* One physically due enumeration copy owns the radio through its bounded
+     * send. Admission waits and inter-copy backoff deliberately do not. */
     if (mesh_c5_enumeration_relay_burst_active()) {
         return;
     }
@@ -1030,8 +1134,8 @@ bool mesh_transport_quiesced(void)
 {
     return mesh_transport_paused() &&
            !radio_guard_uwb_busy() &&
-           /* A paused EVENT_ACCEPT retry is retained RAM custody, not live
-            * RF.  Keep it parked for resume, but wait for an attempt that is
+           /* A paused EVENT_ACCEPT response is retained RAM state, not live
+            * RF.  Keep it parked for resume, but wait for the attempt that is
             * physically inside the response send before lending the radio. */
            atomic_get(&mesh_rx_response_active_state) == 0 &&
            atomic_get(&mesh_rx_handler_active_state) == 0;
@@ -1040,6 +1144,7 @@ bool mesh_transport_quiesced(void)
 void mesh_transport_resume(void)
 {
     bool c5_flood_pending_now;
+    uint32_t c5_flood_delay_ms = 0u;
     uint32_t route_discovery_delay_ms;
     bool route_discovery_pending_now;
 
@@ -1084,11 +1189,21 @@ void mesh_transport_resume(void)
     k_mutex_lock(&mesh_c5_flood_deferred_lock, K_FOREVER);
     c5_flood_pending_now = mesh_c5_flood_deferred.valid ||
                            mesh_route_adv_deferred.valid;
+    if (c5_flood_pending_now) {
+        c5_flood_delay_ms = mesh_c5_flood_next_delay_locked(
+            k_uptime_get_32());
+    }
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
     if (c5_flood_pending_now) {
-        (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
-                                         0u,
-                                         "transport-resume-c5-flood");
+        int schedule_ret = mesh_reschedule_owned_work(
+            &mesh_c5_flood_work,
+            c5_flood_delay_ms,
+            "transport-resume-c5-flood");
+
+        if (schedule_ret < 0) {
+            mesh_c5_flood_schedule_loss_fail_stop(
+                schedule_ret, "transport-resume-c5-flood");
+        }
     }
     k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
     route_discovery_pending_now =
@@ -1283,7 +1398,11 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
     size_t frame_len = 0u;
     int ret;
 
-    if (out == NULL || out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
+    /* The caller already configured the PHY for out->radio_channel: the
+     * channel-9 payload PHY or the channel-5 extended-PHR control PHY. */
+    if (out == NULL ||
+        (out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
+         out->radio_channel != UWB_CHANNEL_WAKE_CONTACT)) {
         return -EINVAL;
     }
     if (observation != NULL) {
@@ -1307,7 +1426,9 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
     ret = mesh_encode_outbound_tx_snapshot(
         out,
         mesh_transmitted_frame_airtime_us(
-            UWB_CHANNEL_MESH_PAYLOAD, false, frame_len),
+            out->radio_channel,
+            out->radio_channel == UWB_CHANNEL_WAKE_CONTACT,
+            frame_len),
         &tx_packet,
         frame,
         UWB_MESH_MAX_FRAME_LEN,
@@ -1360,7 +1481,7 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
     }
 
     status_debug_tx_mesh_frame_sent_pulse();
-    status_debug_uwb_tx_channel_pulse(UWB_CHANNEL_MESH_PAYLOAD);
+    status_debug_uwb_tx_channel_pulse(out->radio_channel);
     if (tx_packet.msg_type == MSG_GATEWAY_ACK) {
         status_debug_gateway_ack_tx_pulse();
     }
@@ -1518,8 +1639,9 @@ static int mesh_send_outbound_with_release_on_channel_until(
                                 tx_packet.msg_type);
         }
     } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_C5_TX_CONFIG ret=%d ext=%u len=%u msg=%02x reason=%s\n",
+        status_debug_printf("DBG_C5_TX_CONFIG ret=%d at=%u ext=%u len=%u msg=%02x reason=%s\n",
                             ret,
+                            k_uptime_get_32(),
                             channel5_extended_control ? 1u : 0u,
                             (unsigned int)frame_len,
                             tx_packet.msg_type,
@@ -1613,7 +1735,17 @@ static int mesh_send_outbound_with_release_on_channel_until(
     }
     release_ret = radio_guard_uwb_release_begin(&radio_lease);
     if (release_ret == 0) {
-        if (ret == 0 && radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        /* A gateway causal ACK on channel 5 is immediately followed by the
+         * continuous receiver re-arming on the same PHY.  Parking the radio
+         * in standby here cost a sleep/wake cycle (~8-10 ms deaf) before the
+         * next frame could be heard; keep it idle and configured instead. */
+        bool gateway_c5_idle_release =
+            DEVICE_ROLE == ROLE_GATEWAY &&
+            radio_channel == UWB_CHANNEL_WAKE_CONTACT &&
+            release_policy == MESH_RADIO_RELEASE_IDLE;
+
+        if (ret == 0 && (radio_channel == UWB_CHANNEL_MESH_PAYLOAD ||
+                         gateway_c5_idle_release)) {
             if (release_policy == MESH_RADIO_RELEASE_IDLE) {
                 parking_ret = mesh_radio_idle_with_bounded_recovery(
                     reason == NULL ? "mesh-send-idle" : reason);
@@ -1800,7 +1932,9 @@ static int mesh_send_outbound_keep_channel9_awake(const struct mesh_outbound *ou
                                                   const char *reason,
                                                   bool *rf_started_out)
 {
-    if (out == NULL || out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
+    if (out == NULL ||
+        (out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
+         out->radio_channel != UWB_CHANNEL_WAKE_CONTACT)) {
         return -EINVAL;
     }
 
@@ -1828,7 +1962,9 @@ static int mesh_send_causal_channel9_response(
     bool abort_scan = false;
     int ret;
 
-    if (out == NULL || out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
+    if (out == NULL ||
+        (out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
+         out->radio_channel != UWB_CHANNEL_WAKE_CONTACT)) {
         return -EINVAL;
     }
     if (DEVICE_ROLE == ROLE_GATEWAY) {
@@ -1842,24 +1978,73 @@ static int mesh_send_causal_channel9_response(
                 DWM3000_RECEIVE_ABORT_MESH_CONTROL);
         }
         ret = mesh_rx_handoff_wait_for_control();
+        status_debug_printf("DBG_GWLAT_HANDOFF at=%u ret=%d msg=0x%02x ch=%u\n",
+                            k_uptime_get_32(),
+                            ret,
+                            out->packet.msg_type,
+                            out->radio_channel);
         if (ret < 0) {
             goto out;
         }
-        if (out->packet.msg_type == MSG_GATEWAY_ACK) {
+        if (out->packet.msg_type == MSG_GATEWAY_ACK &&
+            out->radio_channel != UWB_CHANNEL_WAKE_CONTACT) {
             /*
              * Hold the RX-to-control handoff across the peer retune guard.
              * Sleeping before this reservation lets a later receive turn
              * overtake the causal ACK that owns the current response.
+             *
+             * Channel 5 is excluded because there is no peer retune to cover.
+             * A direct-gateway sender transmits its report on the extended-PHR
+             * wake_mesh_control PHY and then, without reconfiguring the radio,
+             * falls straight into its ACK receive loop
+             * (mesh_send_direct_gateway_payload_and_wait_ack ->
+             * mesh_wait_for_direct_gateway_ack_configured), so it is listening
+             * within its own post-TX bookkeeping.  The gateway cannot reach
+             * this point sooner than its receive drain allows, which is an
+             * order of magnitude longer than that turnaround, so the guard
+             * only delays an ACK the sender is already waiting for.
              */
             status_debug_printf("DBG_GATEWAY_ACK_GUARD ms=%u seq=%u owner=control\n",
                                 MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
                                 out->packet.seq);
             k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
+        } else if (out->packet.msg_type == MSG_GATEWAY_ACK) {
+            /*
+             * Channel 5: the sender's report leaves the air and the sender
+             * then does its own bookkeeping before arming the ACK receiver.
+             * With a 1024-symbol ACK preamble the gateway must not transmit
+             * before that receiver is provably armed.  A fixed guard is the
+             * consistent choice; the 50 ms delivery slot leaves ample room.
+             */
+            status_debug_printf("DBG_GATEWAY_ACK_GUARD ms=%u seq=%u owner=control ch=5\n",
+                                MESH_GATEWAY_C5_ACK_GUARD_MS,
+                                out->packet.seq);
+            k_msleep(MESH_GATEWAY_C5_ACK_GUARD_MS);
         }
     }
 
-    ret = mesh_send_outbound_keep_channel9_awake(out, reason,
-                                                 rf_started_out);
+    if (out->radio_channel == UWB_CHANNEL_WAKE_CONTACT) {
+        /* Channel-5 causal reply: the RX-to-control handoff above makes the
+         * coordinator see mesh RX rather than gateway RX, and the causal
+         * intent lets it transmit while later RX items are still queued. */
+        status_debug_printf("DBG_GWLAT_TX_ENTER at=%u msg=0x%02x seq=%u\n",
+                            k_uptime_get_32(),
+                            out->packet.msg_type,
+                            out->packet.seq);
+        ret = mesh_send_outbound_with_release_on_channel_until(
+            out,
+            reason,
+            MESH_RADIO_RELEASE_IDLE,
+            rf_started_out,
+            0u,
+            NULL,
+            UWB_CHANNEL_WAKE_CONTACT,
+            NULL,
+            FW_C5_TX_INTENT_CAUSAL_RESPONSE);
+    } else {
+        ret = mesh_send_outbound_keep_channel9_awake(out, reason,
+                                                     rf_started_out);
+    }
 
 out:
     if (control_handoff_started) {
@@ -2148,6 +2333,7 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
                 0u,
                 false,
                 &valid_mesh_frame,
+                NULL,
                 NULL);
 
             if (queued) {
@@ -2400,14 +2586,42 @@ static void mesh_c5_enumeration_relay_burst_end(void)
     }
 }
 
+static int mesh_c5_enumeration_relay_wait_for_scan(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    uint32_t deadline_ms = k_uptime_get_32() +
+                           MESH_CONTROL_RX_HANDOFF_TIMEOUT_MS;
+
+    /* Requesting RX abort is asynchronous. Keep the due burst reservation
+     * until the scanner has parked and released its lease, so it cannot
+     * rearm between that abort and the transmitter's radio claim. */
+    while (radio_guard_uwb_owner_client() ==
+           RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN) {
+        if (mesh_transport_paused()) {
+            return -ESHUTDOWN;
+        }
+        if (uptime_deadline_reached(k_uptime_get_32(), deadline_ms)) {
+            status_debug_printf("DBG_ENUM_RELAY_SCAN_HANDOFF_TIMEOUT ms=%u\n",
+                                MESH_CONTROL_RX_HANDOFF_TIMEOUT_MS);
+            return -EBUSY;
+        }
+        k_msleep(1);
+    }
+#endif
+    return 0;
+}
+
 bool mesh_c5_protocol_flood_work_pending(void)
 {
+    const struct mesh_c5_flood_deferred_entry *entry;
     bool pending;
+    uint32_t now_ms = k_uptime_get_32();
 
     k_mutex_lock(&mesh_c5_flood_deferred_lock, K_FOREVER);
+    entry = mesh_c5_flood_deferred.valid ? &mesh_c5_flood_deferred :
+                                           &mesh_route_adv_deferred;
     pending = mesh_c5_enumeration_relay_burst_active() ||
-        mesh_c5_flood_deferred.valid ||
-        mesh_route_adv_deferred.valid;
+              mesh_c5_flood_deferred_entry_due(entry, now_ms);
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
     return pending;
 }
@@ -2420,8 +2634,12 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
 {
     struct mesh_c5_flood_deferred_entry *entry =
         &mesh_c5_flood_deferred;
+    struct mesh_c5_flood_deferred_entry previous_entry;
     bool abort_background_scan = false;
+    uint32_t generation;
+    uint32_t now_ms;
     uint32_t retry_ms;
+    int schedule_ret;
 
     if (out == NULL) {
         return -EINVAL;
@@ -2477,6 +2695,7 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
                     out->packet.msg_type);
         }
     }
+    previous_entry = *entry;
     entry->outbound = *out;
     entry->purpose = purpose;
     entry->reason = reason;
@@ -2488,13 +2707,21 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
     if (entry->generation == 0u) {
         entry->generation = 1u;
     }
+    generation = entry->generation;
     entry->valid = true;
+    now_ms = k_uptime_get_32();
     retry_ms = local_deferral ? MESH_C5_LOCAL_DEFER_RETRY_MS :
         mesh_c5_flood_deferred_retry_ms(out, &entry->rf_retry);
     entry->retry_count = local_deferral ? 0u : 1u;
-    (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
-                                     retry_ms,
-                                     "c5-flood-admission");
+    mesh_c5_flood_deferred_schedule_after_locked(entry, now_ms, retry_ms);
+    schedule_ret = mesh_reschedule_owned_work(&mesh_c5_flood_work,
+                                              mesh_c5_flood_next_delay_locked(
+                                                  now_ms),
+                                              "c5-flood-admission");
+    if (schedule_ret < 0 && entry->valid &&
+        entry->generation == generation) {
+        *entry = previous_entry;
+    }
     if (DEVICE_ROLE == ROLE_ANCHOR && response_priority &&
         radio_guard_uwb_owner_client() ==
             RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN &&
@@ -2503,6 +2730,13 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
         abort_background_scan = true;
     }
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+    if (schedule_ret < 0) {
+        LOG_ERR("mesh C5 flood admission schedule failed: msg=0x%02x generation=%u ret=%d",
+                out->packet.msg_type,
+                generation,
+                schedule_ret);
+        return schedule_ret;
+    }
     if (abort_background_scan) {
         status_debug_printf(
             "DBG_C5_FLOOD_SCAN_PREEMPT msg=%02x seq=%u\n",
@@ -2848,11 +3082,6 @@ static int mesh_send_c5_flood_now_until(
         mesh_c5_gateway_enumeration_claim(&tx);
     long_gateway_activation = gateway_enumeration_claim;
 
-    if (compact_primary_control || gateway_enumeration_quick_copies) {
-        mesh_c5_enumeration_relay_burst_begin(&tx);
-        enumeration_burst_owned = true;
-    }
-
     if (mesh_c5_flood_defer_active_cb(&flood_ctx)) {
         ret = -EAGAIN;
         goto out;
@@ -2897,6 +3126,12 @@ static int mesh_send_c5_flood_now_until(
             if (uptime_deadline_reached(k_uptime_get_32(),
                                         route_adv_copy_deadline_ms)) {
                 ret = -ETIMEDOUT;
+                /* Later short copies cannot substitute for an activation
+                 * train that never ran. In particular, they must not mark
+                 * an RF-hidden downstream layer as awake. */
+                if (wake_train_ms != 0u) {
+                    break;
+                }
                 continue;
             }
         }
@@ -2932,11 +3167,24 @@ static int mesh_send_c5_flood_now_until(
         }
 
         if (wake_train_ms != 0u) {
+            if (compact_primary_control ||
+                gateway_enumeration_quick_copies) {
+                mesh_c5_enumeration_relay_burst_begin(&tx);
+                enumeration_burst_owned = true;
+                ret = mesh_c5_enumeration_relay_wait_for_scan();
+                if (ret < 0) {
+                    goto out;
+                }
+            }
             ret = mesh_send_route_wake_train_with_duration(
                 MESH_BROADCAST_ID, NULL, NULL,
                 purpose, reason, &tx, NULL,
                 c5_tx_intent, wake_train_ms,
                 NULL, NULL);
+            if (enumeration_burst_owned) {
+                mesh_c5_enumeration_relay_burst_end();
+                enumeration_burst_owned = false;
+            }
             if (ret < 0) {
                 mesh_restart_role_scan();
                 LOG_WRN("mesh C5 flood wake train failed: msg=0x%02x ret=%d reason=%s",
@@ -2949,6 +3197,14 @@ static int mesh_send_c5_flood_now_until(
                                                          log_reason);
         }
 
+        if (compact_primary_control || gateway_enumeration_quick_copies) {
+            mesh_c5_enumeration_relay_burst_begin(&tx);
+            enumeration_burst_owned = true;
+            ret = mesh_c5_enumeration_relay_wait_for_scan();
+            if (ret < 0) {
+                goto out;
+            }
+        }
         if (gateway_route_adv) {
             do {
                 ret = app_mesh_flood_send_opportunity_resume(
@@ -2970,6 +3226,10 @@ static int mesh_send_c5_flood_now_until(
                     &tx, &ops, &attempt_result) :
                 app_mesh_command_orchestrator_send_flood(
                     command_orchestrator, &ops, &attempt_result);
+        }
+        if (enumeration_burst_owned) {
+            mesh_c5_enumeration_relay_burst_end();
+            enumeration_burst_owned = false;
         }
         aggregate_result.sent_count =
             UINT8_MAX - aggregate_result.sent_count < attempt_result.sent_count ?

@@ -11,6 +11,9 @@ CLICKER = (ROOT / "app" / "src" / "app_clicker.c").read_text(encoding="utf-8")
 INDICATOR = (ROOT / "app" / "src" / "app_battery_indicator.c").read_text(
     encoding="utf-8"
 )
+WATCHDOG = (ROOT / "app" / "src" / "app_watchdog.c").read_text(
+    encoding="utf-8"
+)
 
 
 def function_body(source: str, name: str) -> str:
@@ -68,6 +71,28 @@ assert "band == BATTERY_STATUS_LOW" in INDICATOR
 assert "band == BATTERY_STATUS_HIGH" in INDICATOR
 assert "band == BATTERY_STATUS_MIDDLE" in INDICATOR
 assert "battery_status_clicker_band(battery_mv)" in INDICATOR
+
+indicator_handler = function_body(INDICATOR, "battery_indicator_work_handler")
+assert indicator_handler.index("if (battery_indicator_led_on)") < \
+    indicator_handler.index("app_watchdog_clicker_idle_checkpoint()") < \
+    indicator_handler.index("battery_sample_lithium_mv"), \
+    "the clicker watchdog must share the existing LED-on wake, even if ADC sampling fails"
+assert (
+    "BATTERY_INDICATOR_CLICKER_PERIOD_MS <\n"
+    "                 APP_WATCHDOG_HARDWARE_TIMEOUT_MS"
+) in INDICATOR, "the coalesced battery/watchdog interval needs a build-time bound"
+
+coalesced = function_body(WATCHDOG, "clicker_idle_watchdog_coalesced")
+assert "DEVICE_ROLE == ROLE_CLICKER" in coalesced
+assert "CONFIG_IMEC_PRODUCTION_BATTERY_INDICATOR" in coalesced
+monitor_start = function_body(WATCHDOG, "start_watchdog_health_monitor")
+assert monitor_start.index("clicker_idle_watchdog_coalesced()") < \
+    monitor_start.index("k_work_init_delayable"), \
+    "production clicker must skip the one-second work and timer owners"
+checkpoint = function_body(WATCHDOG, "app_watchdog_clicker_idle_checkpoint")
+assert checkpoint.index("atomic_set(&system_progress_ms") < \
+    checkpoint.index("watchdog_timer_handler(NULL)"), \
+    "the shared battery wake must refresh progress before feeding"
 
 action = function_body(CLICKER, "app_clicker_handle_button_action")
 assert action.index("app_battery_indicator_suspend()") < action.index(

@@ -454,6 +454,18 @@ static int initialise_radio(bool idle_after_init)
     return 0;
 }
 
+/*
+ * dwt_setpreambledetecttimeout() counts PACs, so the wall-clock acquisition
+ * budget depends on the active PHY's PAC size.  Keep it constant across the
+ * two channel-5 PHYs.
+ */
+static uint16_t immediate_preamble_timeout_pac(enum dwm3000_phy_mode phy_mode)
+{
+    return phy_mode == DWM3000_PHY_WAKE_MESH_CONTROL ?
+           CONTROL_RX_PREAMBLE_TIMEOUT_PAC :
+           IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC;
+}
+
 static dwt_txconfig_t *txconfig_for_phy(enum dwm3000_phy_mode phy_mode)
 {
     return phy_mode == DWM3000_PHY_MESH_PAYLOAD ?
@@ -503,7 +515,7 @@ static int apply_radio_config(const dwt_config_t *config,
     dwt_configciadiag(DWM3000_CIA_DIAG_MODE);
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
     dwt_settxantennadelay(DWM3000_TX_ANT_DLY);
-    dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(immediate_preamble_timeout_pac(phy_mode));
     dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
 
@@ -551,7 +563,7 @@ static int restore_txrx_after_sleep(enum dwm3000_phy_mode phy_mode)
     dwt_configciadiag(DWM3000_CIA_DIAG_MODE);
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
     dwt_settxantennadelay(DWM3000_TX_ANT_DLY);
-    dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(immediate_preamble_timeout_pac(phy_mode));
     dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
 
@@ -586,6 +598,25 @@ static const dwt_config_t *config_for_phy(enum dwm3000_phy_mode phy_mode)
     default:
         return &default_config;
     }
+}
+
+/*
+ * True when two configurations drive the same analogue front end: same
+ * channel (so the same PLL/RF band), same preamble code pair and PRF family,
+ * same data rate and the same STS/PDoA structure.  Two such configurations
+ * differ only in fields dwt_configure() reprograms without a PLL relock, so
+ * the change can be applied in place instead of from a hardware reset.
+ */
+static bool phy_configs_same_front_end(const dwt_config_t *a,
+                                       const dwt_config_t *b)
+{
+    return a->chan == b->chan &&
+           a->txCode == b->txCode &&
+           a->rxCode == b->rxCode &&
+           a->dataRate == b->dataRate &&
+           a->stsMode == b->stsMode &&
+           a->stsLength == b->stsLength &&
+           a->pdoaMode == b->pdoaMode;
 }
 
 static bool phy_configs_equal(const dwt_config_t *a, const dwt_config_t *b)
@@ -714,6 +745,13 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     }
     active_config = config_for_phy(active_phy_mode);
     requested_config = config_for_phy(requested_phy);
+    /*
+     * Identical configurations can keep the retained TX/RX state.  Anything
+     * else wakes "for reconfigure": active_phy_mode deliberately still names
+     * the retained PHY so ensure_phy_mode() sees the real transition, and for
+     * a same-front-end change (channel-5 wake -> channel-5 mesh control) it
+     * settles it with a plain dwt_configure() rather than a hardware reset.
+     */
     restore_txrx = active_phy_mode == requested_phy ||
                    phy_configs_equal(active_config, requested_config);
 
@@ -816,10 +854,34 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     return 0;
 }
 
+/*
+ * Reports which reconfiguration path a cross-PHY change actually took and what
+ * it cost, so the bench can tell a ~2 ms same-channel retune from a ~25-30 ms
+ * hardware reset without inferring it from surrounding timestamps.
+ */
+static void phy_switch_marker(enum dwm3000_phy_mode from_phy,
+                              enum dwm3000_phy_mode to_phy,
+                              bool fast,
+                              uint32_t start_us)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+    status_debug_printf("DBG_DWM_PHY_SWITCH from=%u to=%u fast=%u us=%u\n",
+                        (unsigned int)from_phy,
+                        (unsigned int)to_phy,
+                        fast ? 1u : 0u,
+                        (unsigned int)(k_cyc_to_us_floor32(k_cycle_get_32()) -
+                                       start_us));
+}
+
 static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
 {
     const dwt_config_t *active_config;
     const dwt_config_t *config;
+    enum dwm3000_phy_mode from_phy;
+    uint32_t switch_start_us;
+    bool fast_path;
     int ret;
 
     if (!radio_configured) {
@@ -872,17 +934,39 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
     }
 
     /*
-     * Cross-PHY changes retune the DW3000 PLL. In practice the active channel-5
-     * wake PHY does not reliably transition back to an IDLE_RC state suitable
-     * for dwt_configure(); the reset configure path is the supported recovery
-     * path used by Qorvo examples when PLL calibration fails.
+     * A channel change retunes the DW3000 PLL. In practice the active
+     * channel-5 wake PHY does not reliably transition back to an IDLE_RC
+     * state suitable for dwt_configure() across channels; the reset configure
+     * path is the supported recovery path used by Qorvo examples when PLL
+     * calibration fails.
+     *
+     * A same-front-end change (channel-5 wake <-> channel-5 mesh control:
+     * preamble length, PAC, SFD timeout, PHR mode/rate) does not relock the
+     * PLL, so in principle dwt_forcetrxoff() + dwt_configure() would settle it
+     * for ~2 ms instead of the ~25-30 ms hardware reset.  In practice
+     * dwt_configure() fails on a radio that is already in IDLE_PLL, so this is
+     * compiled out - see DWM3000_ENABLE_SAME_CHANNEL_FAST_SWITCH in
+     * dwm3000_driver.c for the run20 evidence and the missing IDLE_RC step.
+     * Every cross-PHY change therefore takes the proven from-reset path, and
+     * DBG_DWM_PHY_SWITCH reports its real cost with fast=0.
      */
-    if (radio_awake) {
-        return configure_radio_from_reset(phy_mode);
+    fast_path = DWM3000_ENABLE_SAME_CHANNEL_FAST_SWITCH != 0 &&
+                radio_configured && !radio_state_unknown &&
+                active_phy_mode != DWM3000_PHY_NONE &&
+                phy_configs_same_front_end(active_config, config);
+    if (radio_awake && !fast_path) {
+        from_phy = active_phy_mode;
+        switch_start_us = k_cyc_to_us_floor32(k_cycle_get_32());
+        ret = configure_radio_from_reset(phy_mode);
+        phy_switch_marker(from_phy, phy_mode, false, switch_start_us);
+        return ret;
     }
 
+    from_phy = active_phy_mode;
+    switch_start_us = k_cyc_to_us_floor32(k_cycle_get_32());
     ret = apply_radio_config(config, phy_mode);
     if (ret == 0) {
+        phy_switch_marker(from_phy, phy_mode, true, switch_start_us);
         return 0;
     }
 
@@ -907,6 +991,7 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
         }
         return ret;
     }
+    phy_switch_marker(from_phy, phy_mode, false, switch_start_us);
     LOG_INF("DWM3000 PHY mode %d configured after full reinit", phy_mode);
     return 0;
 }

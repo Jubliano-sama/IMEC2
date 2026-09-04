@@ -27,6 +27,10 @@ struct app_survey_ops {
     int (*anchor_consume_enumeration_handoff)(uint32_t assignment_epoch);
     int (*anchor_reschedule)(struct k_work_delayable *work,
                              uint32_t delay_ms);
+    bool (*anchor_handle_click_wake_claim)(
+        const struct uwb_wake_claim_frame *claim,
+        uint8_t link_quality,
+        int64_t received_at_ms);
 };
 
 struct app_survey_gateway_roster {
@@ -69,6 +73,7 @@ void app_survey_anchor_clear_ram_roster(void);
 int app_survey_anchor_apply_control(const struct proto_packet *packet,
                                     const struct survey_control *control);
 bool app_survey_anchor_active(void);
+bool app_survey_anchor_preempt_for_click(void);
 bool app_survey_anchor_rx_continuous(void);
 bool app_survey_anchor_radio_work_pending(uint64_t now_ms,
                                           uint32_t *wait_ms_out);

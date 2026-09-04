@@ -19,7 +19,10 @@ extern "C" {
     (GATEWAY_BLE_STREAM_RECORD_HEADER_LEN + PACKET_EXT_MAX_PAYLOAD_LEN)
 #define GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN \
     (GATEWAY_BLE_STREAM_RECORD_MAX_LEN - GATEWAY_BLE_STREAM_RECORD_HEADER_LEN)
-#define GATEWAY_BLE_STREAM_QUEUE_DEPTH 3u
+/* Six record slots: the RAM-admission ACK must not fail while a connecting
+ * host still holds a few command events and receipts in the queue. The byte
+ * pool, not the slot count, bounds click bursts. */
+#define GATEWAY_BLE_STREAM_QUEUE_DEPTH 6u
 /* Keep the gateway's static RAM below the deployable mesh policy while
  * retaining a 78-byte margin over the exact click/CIR burst bound below. */
 #define GATEWAY_BLE_STREAM_RECORD_POOL_BYTES 1756u
@@ -29,7 +32,7 @@ extern "C" {
 #define GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES \
     ((3u * GATEWAY_BLE_STREAM_RECORD_HEADER_LEN) + PACKET_MAX_PAYLOAD_LEN + \
      PACKET_EXT_MAX_PAYLOAD_LEN + GATEWAY_BLE_STREAM_CLICK_CIR_TAIL_PAYLOAD_BYTES)
-#define GATEWAY_BLE_STREAM_RAM_BUDGET_BYTES 2048u
+#define GATEWAY_BLE_STREAM_RAM_BUDGET_BYTES 2304u
 #define GATEWAY_BLE_RECOVERY_BACKOFF_BASE_MS 250u
 #define GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS 30000u
 
@@ -97,6 +100,14 @@ struct gateway_ble_stream_state {
     uint16_t pool_used;
     uint16_t reservation_payload_len;
     uint8_t reservation_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    /*
+     * The exact buffer the reservation digest was taken over.  A commit that
+     * presents the same object and length is proven by that digest already,
+     * which keeps a second SHA-256 pass over a whole report out of the
+     * gateway receive-to-ACK path.  Any other buffer is still re-hashed and
+     * compared.
+     */
+    const uint8_t *reservation_payload_source;
     uint8_t count;
     uint8_t head_send_phase;
     bool reservation_active;

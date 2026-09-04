@@ -55,7 +55,7 @@ extern "C" {
 #define UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST (1u << 0)
 #define UWB_WAKE_CLAIM_LEN 49u
 #define UWB_DISCOVER_LEN 32u
-#define UWB_DISCOVERY_REPLY_LEN 44u
+#define UWB_DISCOVERY_REPLY_LEN 45u
 #define UWB_DISCOVERY_SLOT_COUNT 50u
 #define UWB_RANGE_RELEASE_LEN 34u
 #define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
@@ -266,6 +266,7 @@ struct uwb_discovery_reply_frame {
     uint8_t rx_quality;
     uint16_t battery_mv;
     uint8_t flags;
+    uint8_t hop_depth;
 };
 
 struct uwb_range_schedule_entry {

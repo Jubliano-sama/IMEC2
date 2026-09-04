@@ -65,46 +65,15 @@ Use the connected-routing mesh presets. These are the current production-candida
   --build-dir build/mesh-gateway -- -DIMEC_BUILD_PRESET=mesh_gateway
 ```
 
-**Deployment flashing** for `mesh_clicker`, `mesh_anchor`, and `mesh_gateway`
-uses the verified wrapper only. Do not use
-direct `west flash` for these deployable presets.
-
-`mesh_anchor` is one exact artifact for every production anchor. At boot it
-maps the nRF FICR `DEVICEID[1:0]` into the IMEC anchor identity domain without
-discarding bits. Discovery/ranging order is not compiled into the image; the
-gateway assigns it with `CMD_ASSIGN_DISCOVERY_SLOTS`, and an unassigned anchor
-does not answer normal click discovery until that assignment is persisted.
+**Deployment flashing** uses `west flash` for every mesh role:
 
 ```sh
-.venv/bin/python firmware/scripts/flash_verified_mesh.py \
-  --build-dir build/mesh-clicker \
-  --probe-id <probe-id> \
-  --stage-only
-
-.venv/bin/python firmware/scripts/capture_stack_evidence.py \
-  --build-dir build/mesh-clicker \
-  --probe-id <probe-id> \
-  --output-dir logs/stack-evidence \
-  --duration-seconds 300
-
-.venv/bin/python firmware/scripts/flash_verified_mesh.py \
-  --build-dir build/mesh-clicker \
-  --hardware-manifest logs/stack-evidence/mesh-clicker-<capture-id>.json \
-  --probe-id <probe-id>
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-clicker -- --dev-id <probe-id> --frequency 4000000
 ```
 
-The first invocation snapshots complete internal flash, stages without reset
-at the fixed 4 MHz rate, verifies the sector-erase result by full readback, and
-leaves a durable `awaiting_qualification` journal. Run the required real
-workload while `capture_stack_evidence.py` observes that exact staged artifact;
-additional bounded captures and regressions do not require another flash. The
-final invocation rejects a missing, mismatched, stale, or previously consumed
-manifest, verifies that the target's code sectors still match the staged
-artifact while allowing normal NVS drift, and consumes the capture without
-programming the target again. A failed qualification preserves the staged
-image and journal for diagnosis and retry. This is not cryptographic probe
-attestation; the qualification and provisioning scripts are the executable
-source of truth for their accepted arguments and local checks.
+Select the connected board and intended role before programming. Normal sector erase preserves durable configuration. Check static RAM headroom in the build output (the prototype requires more than 4 KiB), then record RTT while exercising the changed behavior. Flashing needs no manifest, capture ledger, or promotion step.
+
+`mesh_anchor` is one image for every production anchor. Its identity comes from the nRF FICR hardware identity; the gateway assigns discovery/ranging order. Verify enumeration, survey, and click delivery through their actual results on the host.
 
 **See AGENTS.md for the full list of presets**, including traffic generators, ML collection builds, and legacy regression roles. Always state and verify the exact preset before flashing.
 

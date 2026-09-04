@@ -102,6 +102,7 @@ struct uwb_anchor_candidate {
     uint8_t sample_count;
     uint8_t failure_count;
     bool ranged_ok;
+    uint8_t hop_depth;
 };
 
 struct uwb_clicker_session {
@@ -252,6 +253,20 @@ int uwb_session_validate_reply_timing(uint16_t poll_to_resp_us,
                                       uint16_t expected_reply_delay_us,
                                       uint16_t tolerance_us);
 uint16_t uwb_session_short_addr_from_id(uint64_t device_id);
+/*
+ * Click-report delivery grid. Every anchor in a burst derives the same
+ * physical delivery window from the schedule frame it received, so the
+ * boundaries window + (slot_index + m * slot_count) * slot_ms describe one
+ * grid shared by the whole burst with a residue class per anchor. Returns the
+ * first boundary of this anchor's class that is not already in the past, so a
+ * late report keeps its exclusive offset instead of racing its peers.
+ */
+uint32_t uwb_click_delivery_slot_due_ms(uint32_t window_start_ms,
+                                        uint8_t slot_index,
+                                        uint8_t slot_count,
+                                        uint16_t slot_ms,
+                                        uint32_t now_ms);
+
 uint32_t uwb_session_status_bits_from_diagnostics(const struct uwb_session_diagnostics *diagnostics);
 
 #ifdef __cplusplus

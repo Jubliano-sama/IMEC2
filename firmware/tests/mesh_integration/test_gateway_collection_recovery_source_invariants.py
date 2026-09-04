@@ -119,21 +119,23 @@ class GatewayCollectionRecoverySourceInvariants(unittest.TestCase):
         )
         self.assertIn("eack->gateway_epoch == current_gateway_epoch", RECOVERY_SOURCE)
 
-        complete = function_body(DELIVERY, "mesh_complete_gateway_host_delivery_locked")
-        recovery_finalize = complete.index(
-            "gateway_collection_recovery_after_host_receipt("
+        # RAM admission completes the stale recovery inline: the host record
+        # is committed first, then the recovery EACK runs and its RAM barrier
+        # is released, all before the next RX item is dequeued.
+        drain = function_body(DELIVERY, "mesh_drain_rx_queue_locked")
+        stream_visible = drain.index(
+            "gateway_ble_commit_stream_reservation_projection("
         )
-        ble_retire = complete.index("gateway_ble_finish_host_delivery(")
-        self.assertLess(recovery_finalize, ble_retire)
-        self.assertIn(
-            "semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY",
-            complete,
+        recovery_finalize = drain.index(
+            "gateway_collection_recovery_after_host_receipt(", stream_visible
         )
-        self.assertIn("APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY", complete)
-        self.assertLess(
-            complete.index("gateway_ble_finish_host_delivery("),
-            complete.index("gateway_collection_recovery_finish_host_delivery("),
+        recovery_finish = drain.index(
+            "gateway_collection_recovery_finish_host_delivery(",
+            recovery_finalize,
         )
+        self.assertLess(stream_visible, recovery_finalize)
+        self.assertLess(recovery_finalize, recovery_finish)
+        self.assertNotIn("mesh_gateway_host_delivery_pending_state", DELIVERY)
 
         reserve = DELIVERY.index("gateway_collection_recovery_reserve_host_custody(")
         stream_commit = DELIVERY.index("gateway_ble_commit_stream_reservation_projection(")
@@ -172,6 +174,23 @@ class GatewayCollectionRecoverySourceInvariants(unittest.TestCase):
         self.assertIn("src/app_gateway_collection_recovery.c", APP_CMAKE)
         self.assertIn("test_app_gateway_collection_recovery", FIRMWARE_CMAKE)
         self.assertIn("app_gateway_collection_recovery", FIRMWARE_CMAKE)
+
+    def test_result_admission_accepts_every_report_bearing_channel(self):
+        """All mesh traffic rides Channel 5 now.
+
+        mesh_queue_from_frame_at() tags each receive with
+        UWB_CHANNEL_WAKE_CONTACT, so a Channel-9-only admission gate silently
+        rejects every MSG_COMMAND_RESULT and MSG_RESULT_BUNDLE, which strands
+        survey and enumeration results at the gateway.
+        """
+        for name in ("gateway_note_command_result",
+                     "gateway_note_command_result_bundle"):
+            with self.subTest(function=name):
+                body = function_body(RESULT_RUNTIME, name)
+                self.assertIn("mesh_channel_carries_reports(", body)
+                self.assertNotIn(
+                    "received_radio_channel != UWB_CHANNEL_MESH_PAYLOAD",
+                    body)
 
 
 if __name__ == "__main__":

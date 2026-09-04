@@ -191,7 +191,13 @@ static bool gateway_ack_sender(uint8_t gateway_index, uint8_t sender_index)
     return ret == MESH_SIM_OK;
 }
 
-static bool sender_has_distinct_ack_confirm(
+/*
+ * MSG_GATEWAY_ACK_CONFIRM is retired: the gateway ACK is sent on RAM/BLE
+ * admission and is itself terminal proof. A sender that received it must
+ * therefore hold no custody at all - no pending report, no confirm debt and
+ * no confirm frame it could still build.
+ */
+static bool sender_custody_retired_by_gateway_ack(
     const struct mesh_sim_role_instance *sender,
     const struct report_wire *report)
 {
@@ -200,26 +206,19 @@ static bool sender_has_distinct_ack_confirm(
     uint8_t payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
     size_t payload_len = 0u;
 
-    if (!sender->relay.outbox_record.valid ||
-        !pending->gateway_ack_confirm_pending ||
-        pending->packet.msg_type != MSG_CLICK_REPORT ||
-        !packet_identity_equal(&pending->packet, &report->packet)) {
+    (void)report;
+    if (pending->state != MESH_RELAY_TX_IDLE ||
+        pending->gateway_ack_confirm_pending) {
         return false;
     }
-    if (mesh_relay_pending_gateway_ack_confirm_wire(
-            &sender->relay,
-            (uint32_t)(world.now_us / 1000u),
-            &confirm,
-            payload,
-            sizeof(payload),
-            &payload_len) != PROTO_OK) {
-        return false;
-    }
-    return confirm.msg_type == MSG_GATEWAY_ACK_CONFIRM &&
-           confirm.msg_type != report->packet.msg_type &&
-           confirm.src_id == report->packet.src_id &&
-           confirm.dst_id == report->packet.dst_id &&
-           payload_len == MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN;
+    return mesh_relay_pending_gateway_ack_confirm_wire(
+               &sender->relay,
+               (uint32_t)(world.now_us / 1000u),
+               &confirm,
+               payload,
+               sizeof(payload),
+               &payload_len) == PROTO_ERR_NOT_FOUND &&
+           payload_len == 0u;
 }
 
 static bool test_back_to_back_reports_cross_former_rearm_hole(void)
@@ -337,9 +336,9 @@ static bool test_back_to_back_reports_cross_former_rearm_hole(void)
               "anchor_a=%zu anchor_b=%zu",
               tx_a_count, tx_b_count);
     }
-    CHECK(sender_has_distinct_ack_confirm(&world.roles[anchor_a],
-                                          &report_a),
-          "anchor A gateway ACK state was not distinct ACK_CONFIRM "
+    CHECK(sender_custody_retired_by_gateway_ack(&world.roles[anchor_a],
+                                                &report_a),
+          "anchor A custody was not retired by the terminal gateway ACK "
           "pending_state=%u pending_type=0x%02x confirm=%u "
           "outbox_valid=%u outbox_acked=%u",
           (unsigned int)world.roles[anchor_a].relay.pending.state,
@@ -348,9 +347,9 @@ static bool test_back_to_back_reports_cross_former_rearm_hole(void)
               1u : 0u,
           world.roles[anchor_a].relay.outbox_record.valid ? 1u : 0u,
           world.roles[anchor_a].relay.outbox_record.gateway_acked ? 1u : 0u);
-    CHECK(sender_has_distinct_ack_confirm(&world.roles[anchor_b],
-                                          &report_b),
-          "anchor B gateway ACK state was not distinct ACK_CONFIRM "
+    CHECK(sender_custody_retired_by_gateway_ack(&world.roles[anchor_b],
+                                                &report_b),
+          "anchor B custody was not retired by the terminal gateway ACK "
           "pending_state=%u pending_type=0x%02x confirm=%u "
           "outbox_valid=%u outbox_acked=%u",
           (unsigned int)world.roles[anchor_b].relay.pending.state,
@@ -362,8 +361,8 @@ static bool test_back_to_back_reports_cross_former_rearm_hole(void)
     CHECK(world.roles[gateway].delivery_count == 2u,
           "ACK processing created an extra host delivery");
 
-    puts("PASS gateway Channel-9 back-to-back reports cross former 8 ms "
-         "post-frame hole with exactly-once retention and distinct ACK_CONFIRM");
+    puts("PASS gateway back-to-back reports cross the former 8 ms post-frame "
+         "hole with exactly-once retention and terminal gateway ACK custody");
     return true;
 }
 

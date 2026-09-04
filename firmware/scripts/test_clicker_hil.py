@@ -296,7 +296,7 @@ def run_click_test(
                     not clicker_firmware_ready and
                     clicker_down_channel_ready and
                     connected_roles == set(PROBES)):
-                write_rtt_command(fds["clicker"], b"READY\n")
+                write_rtt_command(fds["clicker"], b"\nREADY\n")
                 clicker_ready_query_sent = True
                 print("All four RTT readers attached; querying clicker firmware readiness")
             

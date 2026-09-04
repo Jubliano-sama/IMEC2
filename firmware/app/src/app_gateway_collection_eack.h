@@ -36,7 +36,7 @@ struct app_gateway_collection_eack_result {
     bool collection_open;
 };
 
-uint64_t app_gateway_collection_eack_current_channel9_return_hop(
+uint64_t app_gateway_collection_eack_current_event_return_hop(
     uint64_t previous_hop_id,
     uint8_t received_radio_channel,
     const struct mesh_event_plan *current_channel9_plan,

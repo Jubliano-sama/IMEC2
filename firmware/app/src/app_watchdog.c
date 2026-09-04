@@ -50,6 +50,12 @@ static struct app_watchdog_health watchdog_health;
 static void watchdog_timer_handler(struct k_timer *timer);
 static void watchdog_bypass_feed(void);
 
+static bool clicker_idle_watchdog_coalesced(void)
+{
+    return DEVICE_ROLE == ROLE_CLICKER &&
+           IS_ENABLED(CONFIG_IMEC_PRODUCTION_BATTERY_INDICATOR);
+}
+
 static uint32_t lease_age_ms(uint32_t now_ms, atomic_t *lease)
 {
     return (uint32_t)(now_ms - (uint32_t)atomic_get(lease));
@@ -104,6 +110,9 @@ static uint8_t feed_inherited_watchdog(bool feeding_allowed)
 
 static void start_watchdog_health_monitor(void)
 {
+    if (clicker_idle_watchdog_coalesced()) {
+        return;
+    }
     k_work_init_delayable(&system_progress_work,
                           system_progress_work_handler);
     k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
@@ -281,10 +290,12 @@ int app_watchdog_init(void)
                 return -EIO;
             }
             watchdog_health.feeds = 1u;
-            k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
-            k_timer_start(&watchdog_timer,
-                          K_MSEC(APP_WATCHDOG_CHECK_MS),
-                          K_MSEC(APP_WATCHDOG_CHECK_MS));
+            if (!clicker_idle_watchdog_coalesced()) {
+                k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
+                k_timer_start(&watchdog_timer,
+                              K_MSEC(APP_WATCHDOG_CHECK_MS),
+                              K_MSEC(APP_WATCHDOG_CHECK_MS));
+            }
         }
         status_debug_printf(
             "DBG_WATCHDOG_BOOT mode=bypass running=%u rr=0x%02x count=%u immediate=%u crv=%u reset=0x%08x err=0\n",
@@ -353,6 +364,20 @@ int app_watchdog_init(void)
             APP_WATCHDOG_PROGRESS_LEASE_MS,
             watchdog_health.reset_cause);
     return 0;
+}
+
+void app_watchdog_clicker_idle_checkpoint(void)
+{
+    if (!clicker_idle_watchdog_coalesced()) {
+        return;
+    }
+
+    /* The production clicker is already awake for its ten-second battery
+     * pulse. Refresh the system-workqueue lease and service the hardware
+     * watchdog at that same boundary, so watchdog supervision adds no
+     * one-second timer or workqueue wakeups while retained-idle. */
+    atomic_set(&system_progress_ms, (atomic_val_t)k_uptime_get_32());
+    watchdog_timer_handler(NULL);
 }
 
 void app_watchdog_note_radio_progress(void)

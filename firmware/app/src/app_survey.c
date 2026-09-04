@@ -2,13 +2,16 @@
 
 #include "app_config.h"
 #include "app_board.h"
+#include "app_mesh_c5_priority.h"
 #include "app_radio_guard.h"
 #include "app_radio_recovery.h"
 #include "app_state.h"
+#include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "enumeration_response_lane.h"
 #include "status.h"
+#include "uwb_session.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/random/random.h>
@@ -25,9 +28,18 @@
 #define APP_SURVEY_ANCHOR_PREPARE_MS 100u
 #define APP_SURVEY_GATEWAY_PREPARE_MS 40u
 #define APP_SURVEY_RADIO_RETRY_MS 2u
+#define APP_SURVEY_CLEANUP_ABORT_RETRY_MS 250u
 #define APP_SURVEY_RANGE_RX_GUARD_MS 25u
 #define APP_SURVEY_RANGE_TIMEOUT_MS 55u
 #define APP_SURVEY_START_EDGE_SLOP_MS SURVEY_RADIO_GUARD_MS
+#define APP_SURVEY_CLICK_PROBE_INTERVAL_MS 300u
+#define APP_SURVEY_CLICK_PROBE_RX_MS \
+    (20u + (2u * UWB_CONTROL_TX_TIMEOUT_MS) + \
+     ((UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US + 999u) / 1000u))
+#define APP_SURVEY_CLICK_PROBE_BUDGET_MS \
+    (APP_SURVEY_CLICK_PROBE_INTERVAL_MS + \
+     APP_SURVEY_CLICK_PROBE_RX_MS + \
+     (2u * MESH_RADIO_EVENT_RETUNE_GUARD_MS))
 
 _Static_assert(APP_SURVEY_RANGE_RX_GUARD_MS +
                    APP_SURVEY_RANGE_TIMEOUT_MS <=
@@ -42,6 +54,8 @@ _Static_assert(
     "the last range timeout and radio guard must fit inside its wave");
 _Static_assert(SURVEY_HARD_CAP_MS < INT32_MAX,
                "survey RX ownership must fit a wrap-safe uptime deadline");
+_Static_assert(APP_SURVEY_CLICK_PROBE_BUDGET_MS < WAKE_ADV_MS,
+               "survey click probes must fit one repeated wake train");
 
 enum app_survey_gateway_stage {
     APP_SURVEY_GATEWAY_IDLE = 0,
@@ -91,7 +105,15 @@ struct app_survey_gateway_state {
     uint8_t signal_count;
     enum survey_response_kind response_kind;
     enum app_survey_gateway_stage stage;
+    bool cleanup_abort_pending;
     bool active;
+};
+
+struct app_survey_click_capture {
+    struct uwb_wake_claim_frame claim;
+    uint32_t observed_at_ms;
+    uint8_t quality;
+    bool valid;
 };
 
 struct app_survey_anchor_state {
@@ -243,6 +265,22 @@ static int gateway_work_reschedule(uint64_t due_ms)
                              K_MSEC(bounded_wait_ms(now_ms, due_ms)));
 }
 
+static void gateway_work_reschedule_owned(uint64_t due_ms,
+                                          const char *reason)
+{
+    int ret = gateway_work_reschedule(due_ms);
+
+    if (ret < 0) {
+        status_debug_printf(
+            "DBG_SURVEY_GATEWAY_SCHEDULE_FAIL g=%u stage=%u ret=%d reason=%s\n",
+            gateway_state.identity.generation,
+            (unsigned int)gateway_state.stage,
+            ret,
+            reason == NULL ? "survey" : reason);
+        app_watchdog_stop_feeding();
+    }
+}
+
 static int anchor_radio_release(struct radio_guard_uwb_lease *lease,
                                 const char *reason)
 {
@@ -282,6 +320,125 @@ static int anchor_radio_claim(uint64_t deadline_ms,
     dwm3000_driver_clear_receive_abort(
         DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     return ret;
+}
+
+static int anchor_probe_standard_click(
+    struct app_survey_click_capture *capture,
+    bool restore_control_phy,
+    uint64_t deadline_ms)
+{
+    uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    struct uwb_wake_claim_frame claim;
+    enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
+    uint64_t probe_deadline_ms;
+    size_t frame_len = 0u;
+    uint8_t quality = 0u;
+    int ret;
+
+    uint64_t now_ms = (uint64_t)k_uptime_get();
+
+    if (capture == NULL || capture->valid) {
+        return -EINVAL;
+    }
+    if (now_ms >= deadline_ms) {
+        return 0;
+    }
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        return ret;
+    }
+    probe_deadline_ms = MIN(deadline_ms,
+                            (uint64_t)k_uptime_get() +
+                                APP_SURVEY_CLICK_PROBE_RX_MS);
+    ret = dwm3000_driver_receive_frame_continuous_extend_on_activity_until(
+        APP_SURVEY_CLICK_PROBE_RX_MS,
+        ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
+        (int64_t)probe_deadline_ms,
+        frame,
+        sizeof(frame),
+        &frame_len,
+        &quality,
+        NULL,
+        &failure);
+    if (ret == 0 && uwb_decode_wake_claim(frame, frame_len, &claim) ==
+                        PROTO_OK &&
+        app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags, true)) {
+        capture->claim = claim;
+        capture->observed_at_ms = k_uptime_get_32();
+        capture->quality = quality;
+        capture->valid = true;
+        status_debug_printf(
+            "DBG_SURVEY_CLICK_CAPTURE evt=%u attempt=%u q=%u\n",
+            claim.click_event_id, claim.attempt_index, quality);
+        return 1;
+    }
+    if (ret != 0 && ret != -ETIMEDOUT &&
+        !app_wake_train_politeness_rx_activity(ret, failure)) {
+        int recovery_ret = dwm3000_driver_force_recovery();
+
+        if (recovery_ret < 0) {
+            return recovery_ret;
+        }
+    }
+    if (restore_control_phy) {
+        ret = dwm3000_driver_configure_wake_mesh_control_mode();
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
+static int anchor_control_wait_with_click_probes(
+    uint32_t generation,
+    uint64_t deadline_ms,
+    uint64_t *next_probe_ms,
+    struct app_survey_click_capture *capture)
+{
+    if (next_probe_ms == NULL || capture == NULL) {
+        return -EINVAL;
+    }
+    while ((uint64_t)k_uptime_get() < deadline_ms) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+
+        if (!anchor_generation_live(generation)) {
+            return -ECANCELED;
+        }
+        if (now_ms >= *next_probe_ms) {
+            int ret = anchor_probe_standard_click(capture, true, deadline_ms);
+
+            if (ret != 0) {
+                return ret > 0 ? -EINTR : ret;
+            }
+            *next_probe_ms = (uint64_t)k_uptime_get() +
+                             APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
+            continue;
+        }
+        sleep_until_ms((int64_t)MIN(deadline_ms, *next_probe_ms));
+    }
+    return 0;
+}
+
+static int anchor_standard_wait_for_click(
+    uint32_t generation,
+    uint64_t deadline_ms,
+    struct app_survey_click_capture *capture)
+{
+    int ret = dwm3000_driver_configure_wake_mode();
+
+    if (ret < 0) {
+        return ret;
+    }
+    while ((uint64_t)k_uptime_get() < deadline_ms) {
+        if (!anchor_generation_live(generation)) {
+            return -ECANCELED;
+        }
+        ret = anchor_probe_standard_click(capture, false, deadline_ms);
+        if (ret != 0) {
+            return ret > 0 ? -EINTR : ret;
+        }
+    }
+    return 0;
 }
 
 static int survey_lane_try_tx(struct survey_response_lane *lane,
@@ -371,10 +528,13 @@ static int anchor_run_response_lane(
     uint8_t hop_count,
     uint8_t max_hop_count,
     const struct survey_response_record *local_records,
-    uint8_t local_record_count)
+    uint8_t local_record_count,
+    struct app_survey_click_capture *capture)
 {
     struct survey_response_lane lane;
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    uint64_t lane_deadline_ms;
+    uint64_t next_probe_ms;
     int32_t all_acked_elapsed_ms = -1;
     int ret;
 
@@ -384,6 +544,8 @@ static int anchor_run_response_lane(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
+    lane_deadline_ms = start_ms +
+        enumeration_response_duration_ms(max_hop_count);
     for (uint8_t i = 0u; i < local_record_count; i++) {
         ret = survey_response_lane_add_record(&lane, &local_records[i], NULL);
         if (ret != PROTO_OK) {
@@ -395,6 +557,8 @@ static int anchor_run_response_lane(
     if (ret < 0) {
         return ret;
     }
+    next_probe_ms = (uint64_t)k_uptime_get() +
+                    APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
     while (anchor_generation_live(generation)) {
         struct enumeration_response_timing timing;
         uint64_t now_ms = (uint64_t)k_uptime_get();
@@ -404,6 +568,17 @@ static int anchor_run_response_lane(
         uint8_t next_offset;
         size_t frame_len = 0u;
         enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
+
+        if (now_ms >= next_probe_ms) {
+            ret = anchor_probe_standard_click(capture, true,
+                                              lane_deadline_ms);
+            if (ret != 0) {
+                return ret > 0 ? -EINTR : ret;
+            }
+            next_probe_ms = (uint64_t)k_uptime_get() +
+                            APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
+            now_ms = (uint64_t)k_uptime_get();
+        }
 
         if (!enumeration_response_timing_at_depth(start_ms, now_ms,
                                                    max_hop_count, &timing)) {
@@ -430,6 +605,9 @@ static int anchor_run_response_lane(
         }
         next_offset = survey_response_lane_next_offset_ms(&lane, &timing);
         receive_deadline_ms = round_deadline_ms;
+        if (next_probe_ms < receive_deadline_ms) {
+            receive_deadline_ms = next_probe_ms;
+        }
         if (next_offset != SURVEY_RESPONSE_NO_OFFSET) {
             uint64_t next_tx_ms = round_start_ms + next_offset;
 
@@ -458,11 +636,21 @@ static int anchor_run_response_lane(
                     lane.record_count, all_acked_elapsed_ms);
             }
         } else if (ret != -ETIMEDOUT && ret != -ECANCELED) {
-            int recovery_ret = dwm3000_driver_force_recovery();
+            if (app_wake_train_politeness_rx_activity(ret, failure)) {
+                ret = anchor_probe_standard_click(capture, true,
+                                                  lane_deadline_ms);
+                if (ret != 0) {
+                    return ret > 0 ? -EINTR : ret;
+                }
+                next_probe_ms = (uint64_t)k_uptime_get() +
+                                APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
+            } else {
+                int recovery_ret = dwm3000_driver_force_recovery();
 
-            if (recovery_ret < 0 ||
-                dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
-                return recovery_ret < 0 ? recovery_ret : ret;
+                if (recovery_ret < 0 ||
+                    dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
+                    return recovery_ret < 0 ? recovery_ret : ret;
+                }
             }
         } else if (ret == -ECANCELED && !anchor_generation_live(generation)) {
             return -ECANCELED;
@@ -473,7 +661,8 @@ static int anchor_run_response_lane(
 }
 
 static int anchor_neighbor_sequence(
-    const struct app_survey_anchor_state *snapshot)
+    const struct app_survey_anchor_state *snapshot,
+    struct app_survey_click_capture *capture)
 {
 #define LOCAL_SIGNAL_RECORD_CAPACITY \
     (1u + ((SURVEY_MAX_ANCHORS - 1u + \
@@ -496,6 +685,7 @@ static int anchor_neighbor_sequence(
     uint8_t record_count = 1u;
     size_t encoded_presence_len = 0u;
     uint64_t sequence_end_ms;
+    uint64_t next_probe_ms;
     int ret;
 
     ret = anchor_radio_claim(snapshot->neighbor_start_ms +
@@ -515,7 +705,16 @@ static int anchor_neighbor_sequence(
         ret = mesh_errno_from_proto(ret);
         goto out;
     }
-    sleep_until_ms((int64_t)snapshot->neighbor_start_ms);
+    next_probe_ms = (uint64_t)k_uptime_get() +
+                    APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
+    ret = anchor_control_wait_with_click_probes(
+        snapshot->identity.generation,
+        snapshot->neighbor_start_ms,
+        &next_probe_ms,
+        capture);
+    if (ret < 0) {
+        goto out;
+    }
     for (uint8_t slot = 0u; slot < snapshot->slot_span; slot++) {
         uint64_t slot_start_ms = snapshot->neighbor_start_ms +
             (uint64_t)slot * SURVEY_NEIGHBOR_SLOT_MS;
@@ -528,8 +727,15 @@ static int anchor_neighbor_sequence(
         if (slot == snapshot->own_slot) {
             for (uint8_t beacon = 0u;
                  beacon < SURVEY_NEIGHBOR_BEACON_COUNT; beacon++) {
-                sleep_until_ms((int64_t)(slot_start_ms +
-                    survey_neighbor_beacon_offset_ms(beacon)));
+                ret = anchor_control_wait_with_click_probes(
+                    snapshot->identity.generation,
+                    slot_start_ms +
+                        survey_neighbor_beacon_offset_ms(beacon),
+                    &next_probe_ms,
+                    capture);
+                if (ret < 0) {
+                    goto out;
+                }
                 ret = dwm3000_driver_send_frame(encoded_presence,
                                                  encoded_presence_len,
                                                  UWB_CONTROL_TX_TIMEOUT_MS);
@@ -543,7 +749,14 @@ static int anchor_neighbor_sequence(
                 }
                 app_watchdog_note_radio_progress();
             }
-            sleep_until_ms((int64_t)slot_end_ms);
+            ret = anchor_control_wait_with_click_probes(
+                snapshot->identity.generation,
+                slot_end_ms,
+                &next_probe_ms,
+                capture);
+            if (ret < 0) {
+                goto out;
+            }
             continue;
         }
         while ((uint64_t)k_uptime_get() < slot_end_ms &&
@@ -551,11 +764,25 @@ static int anchor_neighbor_sequence(
             struct survey_presence_frame heard;
             size_t frame_len = 0u;
             uint64_t now_ms = (uint64_t)k_uptime_get();
+            uint64_t receive_deadline_ms = MIN(slot_end_ms, next_probe_ms);
             int8_t rsl_dbm = 0;
+            enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
+
+            if (now_ms >= next_probe_ms) {
+                ret = anchor_probe_standard_click(capture, true, slot_end_ms);
+                if (ret != 0) {
+                    ret = ret > 0 ? -EINTR : ret;
+                    goto out;
+                }
+                next_probe_ms = (uint64_t)k_uptime_get() +
+                                APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
+                continue;
+            }
 
             ret = dwm3000_driver_receive_frame_continuous(
-                bounded_wait_ms(now_ms, slot_end_ms), frame, sizeof(frame),
-                &frame_len, NULL, &rsl_dbm, NULL);
+                bounded_wait_ms(now_ms, receive_deadline_ms),
+                frame, sizeof(frame),
+                &frame_len, NULL, &rsl_dbm, &failure);
             if (ret == 0 &&
                 uwb_decode_survey_presence(frame, frame_len, &heard) ==
                     PROTO_OK &&
@@ -576,11 +803,23 @@ static int anchor_neighbor_sequence(
                         rsl_dbm;
                 }
             } else if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
-                int recovery_ret = dwm3000_driver_force_recovery();
+                if (app_wake_train_politeness_rx_activity(
+                        ret, failure)) {
+                    ret = anchor_probe_standard_click(capture, true,
+                                                      slot_end_ms);
+                    if (ret != 0) {
+                        ret = ret > 0 ? -EINTR : ret;
+                        goto out;
+                    }
+                    next_probe_ms = (uint64_t)k_uptime_get() +
+                                    APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
+                } else {
+                    int recovery_ret = dwm3000_driver_force_recovery();
 
-                if (recovery_ret < 0 ||
-                    dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
-                    goto out;
+                    if (recovery_ret < 0 ||
+                        dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
+                        goto out;
+                    }
                 }
             }
             app_watchdog_note_radio_progress();
@@ -628,7 +867,8 @@ static int anchor_neighbor_sequence(
         snapshot->identity.generation, SURVEY_RESPONSE_NEIGHBORS,
         sequence_end_ms + SURVEY_RESULT_PREPARE_MS,
         snapshot->parent_id, snapshot->hop_count,
-        snapshot->identity.assignment.max_hop_count, records, record_count);
+        snapshot->identity.assignment.max_hop_count, records, record_count,
+        capture);
 out:
     {
         int release_ret = anchor_radio_release(&lease, "survey-neighbors");
@@ -702,7 +942,14 @@ static int anchor_run_responder_pair(
         int64_t call_end_ms;
         int ret;
 
+        if (!anchor_generation_live(snapshot->identity.generation)) {
+            return -ECANCELED;
+        }
+
         sleep_until_ms((int64_t)listen_ms);
+        if (!anchor_generation_live(snapshot->identity.generation)) {
+            return -ECANCELED;
+        }
         survey_range_request_fill(&request, snapshot, pair_index, attempt,
                                   initiator_id, DEVICE_ID);
         request.timeout_ms = timeout_ms;
@@ -731,7 +978,7 @@ static int anchor_run_responder_pair(
         survey_result));
 }
 
-static void anchor_run_initiator_pair(
+static int anchor_run_initiator_pair(
     const struct app_survey_anchor_state *snapshot,
     uint8_t pair_index,
     uint64_t wave_start_ms)
@@ -744,8 +991,15 @@ static void anchor_run_initiator_pair(
         struct dwm3000_range_request request;
         struct dwm3000_range_result result = {.status = RANGE_RX_TIMEOUT};
 
+        if (!anchor_generation_live(snapshot->identity.generation)) {
+            return -ECANCELED;
+        }
+
         sleep_until_ms((int64_t)(wave_start_ms +
             survey_range_attempt_offset_ms(attempt)));
+        if (!anchor_generation_live(snapshot->identity.generation)) {
+            return -ECANCELED;
+        }
         survey_range_request_fill(&request, snapshot, pair_index, attempt,
                                   DEVICE_ID, responder_id);
         {
@@ -766,9 +1020,12 @@ static void anchor_run_initiator_pair(
         }
         app_watchdog_note_radio_progress();
     }
+    return 0;
 }
 
-static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
+static int anchor_execute_plan(
+    struct app_survey_anchor_state *snapshot,
+    struct app_survey_click_capture *capture)
 {
     struct radio_guard_uwb_lease lease = {0};
     uint32_t stride_ms = survey_wave_stride_ms(
@@ -841,8 +1098,8 @@ static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
                 if (pair->initiator_slot == snapshot->own_slot) {
                     int64_t pair_end_ms;
 
-                    anchor_run_initiator_pair(snapshot, pair_index,
-                                              wave_start_ms);
+                    ret = anchor_run_initiator_pair(snapshot, pair_index,
+                                                    wave_start_ms);
                     pair_end_ms = k_uptime_get();
                     status_debug_printf(
                         "DBG_SURVEY_PROFILE kind=pair r=I p=%u "
@@ -855,9 +1112,17 @@ static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
                         (long long)((int64_t)(wave_start_ms +
                                              SURVEY_RANGE_WAVE_MS) -
                                     pair_end_ms));
+                    if (ret < 0) {
+                        goto out;
+                    }
                     break;
                 }
             }
+        }
+        ret = anchor_standard_wait_for_click(
+            snapshot->identity.generation, lane_start_ms, capture);
+        if (ret < 0) {
+            goto out;
         }
         for (uint8_t i = 0u; i < snapshot->local_result_count; i++) {
             if (survey_range_result_encode(&snapshot->local_results[i],
@@ -870,7 +1135,7 @@ static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
             snapshot->identity.generation, SURVEY_RESPONSE_RANGES,
             lane_start_ms, snapshot->parent_id, snapshot->hop_count,
             snapshot->identity.assignment.max_hop_count,
-            records, snapshot->local_result_count);
+            records, snapshot->local_result_count, capture);
         if (ret < 0 && ret != -ECANCELED) {
             break;
         }
@@ -883,9 +1148,58 @@ out:
     }
 }
 
+static bool anchor_preempt_for_click_identity(
+    const struct survey_identity *expected_identity,
+    bool request_owned_rf_abort)
+{
+    bool abort_owned_rf = false;
+    bool released = false;
+
+    k_mutex_lock(&survey_lock, K_FOREVER);
+    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
+    if (anchor_state.active && !anchor_state.aborted &&
+        (expected_identity == NULL ||
+         survey_identity_equal(&anchor_state.identity, expected_identity))) {
+        abort_owned_rf = request_owned_rf_abort &&
+                         anchor_rx_lifecycle.mode ==
+                             PROTOCOL_RX_MODE_OWNED_RF_WORK;
+        anchor_rx_terminate_locked(true);
+        (void)k_work_cancel_delayable(&anchor_work);
+        released = true;
+    }
+    k_mutex_unlock(&survey_lock);
+    if (abort_owned_rf) {
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    }
+    return released;
+}
+
+static void anchor_handoff_captured_click(
+    const struct app_survey_anchor_state *snapshot,
+    enum app_survey_anchor_action action,
+    const struct app_survey_click_capture *capture)
+{
+    bool preempted = anchor_preempt_for_click_identity(
+        &snapshot->identity, false);
+    bool handled = preempted &&
+        survey_ops.anchor_handle_click_wake_claim != NULL &&
+        survey_ops.anchor_handle_click_wake_claim(
+            &capture->claim, capture->quality, capture->observed_at_ms);
+
+    status_debug_printf(
+        "DBG_SURVEY_CLICK_PREEMPT gen=%u action=%u released=%u handled=%u\n",
+        snapshot->identity.generation, (unsigned int)action,
+        preempted ? 1u : 0u, handled ? 1u : 0u);
+    if (!handled) {
+        (void)anchor_uwb_scan_schedule_ms(0u);
+    }
+}
+
 static void anchor_work_handler(struct k_work *work)
 {
     struct app_survey_anchor_state snapshot;
+    struct app_survey_click_capture click_capture = {0};
     enum app_survey_anchor_action action;
     int ret = 0;
 
@@ -911,23 +1225,36 @@ static void anchor_work_handler(struct k_work *work)
         return;
     }
     if (action == APP_SURVEY_ANCHOR_ACTION_NEIGHBORS) {
-        ret = anchor_neighbor_sequence(&snapshot);
+        ret = anchor_neighbor_sequence(&snapshot, &click_capture);
+        if (click_capture.valid) {
+            anchor_handoff_captured_click(&snapshot, action, &click_capture);
+            return;
+        }
         k_mutex_lock(&survey_lock, K_FOREVER);
         if (anchor_state.active &&
             anchor_state.identity.generation == snapshot.identity.generation) {
-            if (protocol_rx_lifecycle_rf_end(
+            if (ret < 0 && ret != -ECANCELED) {
+                anchor_rx_terminate_locked(true);
+            } else if (protocol_rx_lifecycle_rf_end(
                     &anchor_rx_lifecycle,
                     PROTOCOL_RX_OPERATION_SURVEY,
                     snapshot.identity.generation)) {
                 anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXPIRE;
-                (void)anchor_work_reschedule(anchor_state.self_stop_ms);
+                ret = anchor_work_reschedule(anchor_state.self_stop_ms);
+                if (ret < 0) {
+                    anchor_rx_terminate_locked(true);
+                }
             } else {
                 anchor_rx_terminate_locked(true);
             }
         }
         k_mutex_unlock(&survey_lock);
     } else if (action == APP_SURVEY_ANCHOR_ACTION_EXECUTE) {
-        ret = anchor_execute_plan(&snapshot);
+        ret = anchor_execute_plan(&snapshot, &click_capture);
+        if (click_capture.valid) {
+            anchor_handoff_captured_click(&snapshot, action, &click_capture);
+            return;
+        }
         k_mutex_lock(&survey_lock, K_FOREVER);
         if (anchor_state.active &&
             anchor_state.identity.generation == snapshot.identity.generation) {
@@ -944,7 +1271,10 @@ static void anchor_work_handler(struct k_work *work)
                 anchor_state.next_batch_index =
                     (uint8_t)(snapshot.plan.batch_index + 1u);
                 anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXPIRE;
-                (void)anchor_work_reschedule(anchor_state.self_stop_ms);
+                ret = anchor_work_reschedule(anchor_state.self_stop_ms);
+                if (ret < 0) {
+                    anchor_rx_terminate_locked(true);
+                }
             } else {
                 anchor_rx_terminate_locked(true);
             }
@@ -1033,12 +1363,41 @@ static void gateway_begin_cleanup_locked(const struct survey_event *event)
      * receivers release early, but only the advertised self-stop proves that
      * every possible listener has relinquished survey ownership. */
     gateway_state.cleanup_deadline_ms = gateway_state.self_stop_ms;
-    (void)gateway_work_reschedule(gateway_state.cleanup_deadline_ms);
+    gateway_work_reschedule_owned(gateway_state.cleanup_deadline_ms,
+                                  "cleanup-deadline");
     status_debug_printf(
         "DBG_SURVEY_CLEANUP g=%u release=%llu self=%llu\n",
         gateway_state.identity.generation,
         (unsigned long long)gateway_state.cleanup_deadline_ms,
         (unsigned long long)gateway_state.self_stop_ms);
+}
+
+static void gateway_begin_abort_cleanup_locked(
+    const struct survey_event *event,
+    uint64_t now_ms)
+{
+    gateway_begin_cleanup_locked(event);
+    if (now_ms < gateway_state.cleanup_deadline_ms) {
+        gateway_state.cleanup_abort_pending = true;
+        gateway_work_reschedule_owned(now_ms, "cleanup-abort");
+    }
+}
+
+static uint64_t gateway_possible_remote_self_stop_locked(
+    enum app_survey_gateway_stage stage,
+    uint64_t now_ms)
+{
+    uint32_t remote_delay_ms = 0u;
+
+    if (stage == APP_SURVEY_GATEWAY_WAIT_START_RF) {
+        remote_delay_ms = SURVEY_INITIAL_SELF_EXPIRY_MS;
+    } else if (stage == APP_SURVEY_GATEWAY_WAIT_PLAN_RF) {
+        remote_delay_ms = gateway_state.plan_build.plan.self_stop_delay_ms;
+    }
+    if (remote_delay_ms == 0u) {
+        return gateway_state.self_stop_ms;
+    }
+    return MAX(gateway_state.self_stop_ms, now_ms + remote_delay_ms);
 }
 
 static bool gateway_cleanup_event_if_due_locked(uint64_t now_ms,
@@ -1093,7 +1452,9 @@ static void gateway_work_handler(struct k_work *work)
         }
         now_ms = (uint64_t)k_uptime_get();
         if (control_ret == -EAGAIN && now_ms < pending_deadline_ms) {
-            (void)gateway_work_reschedule(now_ms + APP_SURVEY_RADIO_RETRY_MS);
+            gateway_work_reschedule_owned(
+                now_ms + APP_SURVEY_RADIO_RETRY_MS,
+                "control-origin");
             return;
         }
         if (control_ret == -EAGAIN) {
@@ -1111,13 +1472,18 @@ static void gateway_work_handler(struct k_work *work)
         gateway_state.pending_control_handle = 0u;
         gateway_state.pending_control_deadline_ms = 0u;
         if (control_ret != 0 || control_origin_ms == 0u) {
+            uint64_t cleanup_deadline_ms;
+
             event.kind = SURVEY_EVENT_TERMINAL;
             event.status = SURVEY_TERMINAL_ABORTED;
             event.identity = gateway_state.identity;
             event.partial_reasons = gateway_state.partial_reasons;
-            gateway_state.self_stop_ms = now_ms +
-                                         gateway_state.control_delivery_ms;
-            gateway_begin_cleanup_locked(&event);
+            gateway_state.self_stop_ms =
+                gateway_possible_remote_self_stop_locked(pending_stage,
+                                                         now_ms);
+            cleanup_identity = gateway_state.identity;
+            cleanup_deadline_ms = gateway_state.self_stop_ms;
+            gateway_begin_abort_cleanup_locked(&event, now_ms);
             k_mutex_unlock(&survey_lock);
             if (ops.control_abandon != NULL) {
                 (void)ops.control_abandon(pending_handle);
@@ -1128,6 +1494,10 @@ static void gateway_work_handler(struct k_work *work)
                 pending_stage == APP_SURVEY_GATEWAY_WAIT_START_RF ?
                     SURVEY_PHASE_NEIGHBOR_START : SURVEY_PHASE_PLAN,
                 event.identity.generation, pending_handle, control_ret);
+            status_debug_printf(
+                "DBG_SURVEY_CONTROL_RF_CLEANUP g=%u self=%llu\n",
+                cleanup_identity.generation,
+                (unsigned long long)cleanup_deadline_ms);
             if (ops.wake_gateway_rx != NULL) {
                 ops.wake_gateway_rx();
             }
@@ -1155,8 +1525,9 @@ static void gateway_work_handler(struct k_work *work)
                 survey_result_lane_duration_ms(
                     gateway_state.identity.assignment.max_hop_count);
             gateway_state.stage = APP_SURVEY_GATEWAY_NEIGHBORS;
-            (void)gateway_work_reschedule(
-                gateway_state.response_lane_end_ms);
+            gateway_work_reschedule_owned(
+                gateway_state.response_lane_end_ms,
+                "neighbor-lane");
         } else {
             const struct survey_plan *plan = &gateway_state.plan_build.plan;
 
@@ -1198,8 +1569,9 @@ static void gateway_work_handler(struct k_work *work)
             event.status = event.partial_reasons == 0u ?
                 SURVEY_TERMINAL_COMPLETE : SURVEY_TERMINAL_PARTIAL;
             gateway_state.last_event = event;
-            (void)gateway_work_reschedule(
-                gateway_state.response_lane_end_ms);
+            gateway_work_reschedule_owned(
+                gateway_state.response_lane_end_ms,
+                "range-lane");
             publish = true;
         }
         k_mutex_unlock(&survey_lock);
@@ -1218,18 +1590,30 @@ static void gateway_work_handler(struct k_work *work)
         return;
     }
     if (gateway_state.stage == APP_SURVEY_GATEWAY_CLEANUP) {
+        if (gateway_state.cleanup_abort_pending &&
+            now_ms < gateway_state.cleanup_deadline_ms) {
+            gateway_state.cleanup_abort_pending = false;
+            cleanup_identity = gateway_state.identity;
+            abort_control.phase = SURVEY_PHASE_ABORT;
+            abort_control.identity = cleanup_identity;
+            queue_abort = true;
+        }
         terminal = gateway_cleanup_event_if_due_locked(now_ms, &event);
-        if (!terminal) {
-            (void)gateway_work_reschedule(
-                gateway_state.cleanup_deadline_ms);
+        if (!terminal && !queue_abort) {
+            gateway_work_reschedule_owned(
+                gateway_state.cleanup_deadline_ms,
+                "cleanup-wait");
         }
         k_mutex_unlock(&survey_lock);
         if (terminal) {
             gateway_terminal_publish(&event);
-        } else if (ops.wake_gateway_rx != NULL) {
+        } else if (!queue_abort && ops.wake_gateway_rx != NULL) {
             ops.wake_gateway_rx();
         }
-        return;
+        if (!queue_abort) {
+            return;
+        }
+        goto send_abort;
     }
     if (now_ms >= gateway_state.hard_deadline_ms ||
         now_ms >= gateway_state.self_stop_ms) {
@@ -1278,7 +1662,8 @@ static void gateway_work_handler(struct k_work *work)
         gateway_state.self_stop_ms = MIN(
             gateway_state.operation_origin_ms + SURVEY_INITIAL_SELF_EXPIRY_MS,
             gateway_state.hard_deadline_ms);
-        (void)gateway_work_reschedule(gateway_state.plan_deadline_ms);
+        gateway_work_reschedule_owned(gateway_state.plan_deadline_ms,
+                                      "host-plan");
         publish = true;
         publish_signals = gateway_state.signal_count > 0u;
     } else if (gateway_state.stage == APP_SURVEY_GATEWAY_WAIT_PLAN &&
@@ -1323,8 +1708,9 @@ static void gateway_work_handler(struct k_work *work)
                 gateway_state.stage = APP_SURVEY_GATEWAY_WAIT_PLAN;
                 gateway_state.plan_deadline_ms = now_ms +
                                                  SURVEY_HOST_PLAN_TIMEOUT_MS;
-                (void)gateway_work_reschedule(
-                    gateway_state.plan_deadline_ms);
+                gateway_work_reschedule_owned(
+                    gateway_state.plan_deadline_ms,
+                    "next-batch-plan");
                 publish = true;
             }
         } else {
@@ -1339,24 +1725,55 @@ static void gateway_work_handler(struct k_work *work)
                 gateway_state.response_lane_start_ms +
                 survey_result_lane_duration_ms(
                     gateway_state.identity.assignment.max_hop_count);
-            (void)gateway_work_reschedule(
-                gateway_state.response_lane_end_ms);
+            gateway_work_reschedule_owned(
+                gateway_state.response_lane_end_ms,
+                "next-range-lane");
             publish = true;
         }
     }
     k_mutex_unlock(&survey_lock);
 
+send_abort:
     if (queue_abort) {
         if (ops.send_control != NULL) {
             abort_ret = ops.send_control(&abort_control, &abort_handle);
         }
-        if (abort_ret == 0 && ops.control_detach != NULL) {
+        if (abort_ret == 0 && abort_handle != 0u &&
+            ops.control_detach != NULL) {
             abort_ret = ops.control_detach(abort_handle);
         }
         if (abort_ret < 0 || abort_handle == 0u) {
             status_debug_printf(
                 "DBG_SURVEY_CLEANUP_ABORT_FAIL g=%u ret=%d handle=%u\n",
                 cleanup_identity.generation, abort_ret, abort_handle);
+            if (abort_handle != 0u && ops.control_abandon != NULL) {
+                (void)ops.control_abandon(abort_handle);
+            }
+            now_ms = (uint64_t)k_uptime_get();
+            k_mutex_lock(&survey_lock, K_FOREVER);
+            if (gateway_state.active &&
+                gateway_state.stage == APP_SURVEY_GATEWAY_CLEANUP &&
+                survey_identity_equal(&gateway_state.identity,
+                                      &cleanup_identity) &&
+                now_ms < gateway_state.cleanup_deadline_ms) {
+                gateway_state.cleanup_abort_pending = true;
+                gateway_work_reschedule_owned(
+                    MIN(now_ms + APP_SURVEY_CLEANUP_ABORT_RETRY_MS,
+                        gateway_state.cleanup_deadline_ms),
+                    "cleanup-abort-retry");
+            }
+            k_mutex_unlock(&survey_lock);
+        } else {
+            k_mutex_lock(&survey_lock, K_FOREVER);
+            if (gateway_state.active &&
+                gateway_state.stage == APP_SURVEY_GATEWAY_CLEANUP &&
+                survey_identity_equal(&gateway_state.identity,
+                                      &cleanup_identity)) {
+                gateway_work_reschedule_owned(
+                    gateway_state.cleanup_deadline_ms,
+                    "cleanup-after-abort");
+            }
+            k_mutex_unlock(&survey_lock);
         }
         if (ops.wake_gateway_rx != NULL) {
             ops.wake_gateway_rx();
@@ -1428,6 +1845,7 @@ int app_survey_gateway_start(
         !survey_assignment_identity_valid(&roster->assignment) ||
         survey_ops.send_control == NULL ||
         survey_ops.control_origin == NULL ||
+        survey_ops.control_detach == NULL ||
         survey_ops.control_abandon == NULL) {
         return -EINVAL;
     }
@@ -1508,8 +1926,9 @@ int app_survey_gateway_start(
             SURVEY_RESULT_PREPARE_MS +
             survey_result_lane_duration_ms(
                 roster->assignment.max_hop_count));
-    (void)gateway_work_reschedule(
-        (uint64_t)k_uptime_get() + APP_SURVEY_RADIO_RETRY_MS);
+    gateway_work_reschedule_owned(
+        (uint64_t)k_uptime_get() + APP_SURVEY_RADIO_RETRY_MS,
+        "start-origin");
     k_mutex_unlock(&survey_lock);
     if (survey_ops.wake_gateway_rx != NULL) {
         survey_ops.wake_gateway_rx();
@@ -1532,6 +1951,7 @@ int app_survey_gateway_submit_plan(
     if (DEVICE_ROLE != ROLE_GATEWAY || request == NULL ||
         survey_ops.send_control == NULL ||
         survey_ops.control_origin == NULL ||
+        survey_ops.control_detach == NULL ||
         survey_ops.control_abandon == NULL) {
         return -EINVAL;
     }
@@ -1589,7 +2009,8 @@ int app_survey_gateway_submit_plan(
             survey_identity_equal(&request->identity,
                                   &gateway_state.identity)) {
             gateway_state.stage = APP_SURVEY_GATEWAY_WAIT_PLAN;
-            (void)gateway_work_reschedule(gateway_state.plan_deadline_ms);
+            gateway_work_reschedule_owned(gateway_state.plan_deadline_ms,
+                                          "plan-submit-rollback");
         }
         k_mutex_unlock(&survey_lock);
         return ret < 0 ? ret : -EIO;
@@ -1616,8 +2037,9 @@ int app_survey_gateway_submit_plan(
         execution_delay_ms + survey_execution_duration_ms(
             built.plan.wave_count,
             gateway_state.identity.assignment.max_hop_count));
-    (void)gateway_work_reschedule(
-        (uint64_t)k_uptime_get() + APP_SURVEY_RADIO_RETRY_MS);
+    gateway_work_reschedule_owned(
+        (uint64_t)k_uptime_get() + APP_SURVEY_RADIO_RETRY_MS,
+        "plan-origin");
     if (result_out != NULL) {
         *result_out = built;
     }
@@ -1627,12 +2049,10 @@ int app_survey_gateway_submit_plan(
 
 int app_survey_gateway_abort(const struct survey_identity *identity)
 {
-    struct survey_control control;
     struct survey_event event;
     struct app_survey_ops ops;
     uint32_t pending_handle = 0u;
-    uint32_t abort_handle = 0u;
-    int ret = -ENOTSUP;
+    uint64_t now_ms;
 
     if (DEVICE_ROLE != ROLE_GATEWAY || identity == NULL) {
         return -EINVAL;
@@ -1650,9 +2070,6 @@ int app_survey_gateway_abort(const struct survey_identity *identity)
         k_mutex_unlock(&survey_lock);
         return 0;
     }
-    memset(&control, 0, sizeof(control));
-    control.phase = SURVEY_PHASE_ABORT;
-    control.identity = gateway_state.identity;
     memset(&event, 0, sizeof(event));
     event.kind = SURVEY_EVENT_TERMINAL;
     event.status = SURVEY_TERMINAL_ABORTED;
@@ -1661,22 +2078,14 @@ int app_survey_gateway_abort(const struct survey_identity *identity)
     pending_handle = gateway_state.pending_control_handle;
     gateway_state.pending_control_handle = 0u;
     gateway_state.pending_control_deadline_ms = 0u;
-    gateway_begin_cleanup_locked(&event);
+    now_ms = (uint64_t)k_uptime_get();
+    gateway_state.self_stop_ms = gateway_possible_remote_self_stop_locked(
+        gateway_state.stage, now_ms);
+    gateway_begin_abort_cleanup_locked(&event, now_ms);
     ops = survey_ops;
     k_mutex_unlock(&survey_lock);
     if (pending_handle != 0u && ops.control_abandon != NULL) {
         (void)ops.control_abandon(pending_handle);
-    }
-    if (ops.send_control != NULL) {
-        ret = ops.send_control(&control, &abort_handle);
-    }
-    if (ret == 0 && ops.control_detach != NULL) {
-        ret = ops.control_detach(abort_handle);
-    }
-    if (ret < 0 || abort_handle == 0u) {
-        status_debug_printf(
-            "DBG_SURVEY_CLEANUP_ABORT_FAIL g=%u ret=%d handle=%u\n",
-            identity->generation, ret, abort_handle);
     }
     if (ops.wake_gateway_rx != NULL) {
         ops.wake_gateway_rx();
@@ -2199,6 +2608,14 @@ bool app_survey_anchor_active(void)
     active = anchor_state.active && !anchor_state.aborted;
     k_mutex_unlock(&survey_lock);
     return active;
+}
+
+bool app_survey_anchor_preempt_for_click(void)
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR) {
+        return false;
+    }
+    return anchor_preempt_for_click_identity(NULL, true);
 }
 
 bool app_survey_anchor_rx_continuous(void)

@@ -50,7 +50,7 @@ def main() -> None:
         "static void mesh_handle_result_actions("
     )
     result_actions_end = source.index(
-        "void mesh_gateway_host_receipt_ready(", result_actions_start
+        "static uint32_t mesh_drain_rx_queue_locked(", result_actions_start
     )
 
     for needle in (

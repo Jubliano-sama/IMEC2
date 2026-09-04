@@ -1798,8 +1798,11 @@ static int run_ttl_ladder_data_case(void)
         CHECK(route_ack_matches(&tx->outbound,
                                 world.roles[gateway_relay].id,
                                 &data_packet));
-        CHECK(world.roles[gateway_relay].relay.pending
-                  .gateway_ack_confirm_pending);
+        /* The gateway ACK is terminal for a report using hop custody: the
+         * relay never transitions into an ACK_CONFIRM wait, because
+         * MSG_GATEWAY_ACK_CONFIRM no longer exists. */
+        CHECK(!world.roles[gateway_relay].relay.pending
+                   .gateway_ack_confirm_pending);
     }
 
     for (size_t reverse_step = 0u;
@@ -1851,56 +1854,15 @@ static int run_ttl_ladder_data_case(void)
         }
     }
     CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(pending_gateway_ack_confirm_packet(&world,
-                                             path[TTL_LADDER_HOP_COUNT - 1u],
-                                             &confirm_packet) == PROTO_OK);
-    CHECK(confirm_packet.src_id == data_packet.src_id);
-    CHECK(confirm_packet.dst_id == data_packet.dst_id);
-    CHECK(confirm_packet.session_id == data_packet.session_id);
-    CHECK(confirm_packet.seq == data_packet.seq);
-    {
-        const size_t gateway_connection = TTL_LADDER_HOP_COUNT - 1u;
-        const uint8_t gateway_relay = path[gateway_connection];
-        uint16_t transmission_index = UINT16_MAX;
-        const struct mesh_sim_transmission *tx;
-
-        set_test_phase("ttl_ladder_adjacent_relay_confirm");
-        CHECK(run_connection_until_message(
-                  &world,
-                  connections[gateway_connection],
-                  gateway_relay,
-                  GATEWAY_ID,
-                  MSG_GATEWAY_ACK_CONFIRM,
-                  &transmission_index) == MESH_SIM_OK);
-        tx = &world.transmissions[transmission_index];
-        CHECK(tx->outbound.packet.src_id == confirm_packet.src_id);
-        CHECK(tx->outbound.packet.dst_id == confirm_packet.dst_id);
-        CHECK(tx->outbound.packet.session_id == confirm_packet.session_id);
-        CHECK(tx->outbound.packet.seq == confirm_packet.seq);
-        CHECK(tx->outbound.next_hop_id == GATEWAY_ID);
-    }
-
-    {
-        const size_t gateway_connection = TTL_LADDER_HOP_COUNT - 1u;
-        const uint8_t gateway_relay = path[gateway_connection];
-        uint16_t transmission_index = UINT16_MAX;
-        const struct mesh_sim_transmission *tx;
-
-        set_test_phase("ttl_ladder_adjacent_relay_confirm_receipt");
-        CHECK(run_connection_until_message(
-                  &world,
-                  connections[gateway_connection],
-                  gateway,
-                  world.roles[gateway_relay].id,
-                  MSG_GATEWAY_ACK,
-                  &transmission_index) == MESH_SIM_OK);
-        tx = &world.transmissions[transmission_index];
-        CHECK(route_ack_matches(&tx->outbound,
-                                world.roles[gateway_relay].id,
-                                &confirm_packet));
-        CHECK(world.roles[gateway_relay].relay.pending.state ==
-              MESH_RELAY_TX_IDLE);
-    }
+    /* MSG_GATEWAY_ACK_CONFIRM is retired. The adjacent relay's copy is
+     * retired by the gateway ACK itself, so there is no confirm frame to
+     * queue and no second gateway ACK to receive for it. */
+    CHECK(pending_gateway_ack_confirm_packet(
+              &world,
+              path[TTL_LADDER_HOP_COUNT - 1u],
+              &confirm_packet) == PROTO_ERR_NOT_FOUND);
+    CHECK(world.roles[path[TTL_LADDER_HOP_COUNT - 1u]].relay.pending.state ==
+          MESH_RELAY_TX_IDLE);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[origin].id) == 0u);
@@ -1912,8 +1874,10 @@ static int run_ttl_ladder_data_case(void)
                                      MESH_SIM_TRANSITION_ROUTE_REQUIRED,
                                      0u) == 0u);
     for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
-        CHECK(world.connections[connections[i]].completed_events >=
-              (i + 1u == TTL_LADDER_HOP_COUNT ? 4u : 2u));
+        /* Every edge now completes exactly two events: the data frame and
+         * the reverse ACK. The gateway edge used to need four because the
+         * retired ACK_CONFIRM round trip added a second exchange. */
+        CHECK(world.connections[connections[i]].completed_events == 2u);
         CHECK(world.connections[connections[i]].completed_repairs <= 1u);
         CHECK(world.connections[connections[i]].timing_a.timing_fresh);
         CHECK(world.connections[connections[i]].timing_b.timing_fresh);
@@ -2448,11 +2412,13 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
                      click_payload,
                      click_payload_len) == 0);
     }
-    CHECK(world.roles[relay_2].relay.pending.state ==
-          MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    /* The gateway ACK is terminal for a report using hop custody: relay_2's
+     * copy is retired inside this very turn, so there is no ACK_CONFIRM
+     * frame to build and no second exchange with the gateway. */
+    CHECK(world.roles[relay_2].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_2].id) == 0u);
+                                     world.roles[relay_2].id) == 1u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[relay_1].id) == 1u);
@@ -2461,25 +2427,15 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
                                      world.roles[origin].id) == 0u);
     CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[relay_2].relay.pending.gateway_ack_confirm_pending);
+    CHECK(!world.roles[relay_2].relay.pending.gateway_ack_confirm_pending);
     CHECK(pending_gateway_ack_confirm_packet(&world,
                                              relay_2,
-                                             &confirm_packet) == PROTO_OK);
-    CHECK(confirm_packet.src_id == click_packet.src_id);
-    CHECK(confirm_packet.dst_id == click_packet.dst_id);
-    CHECK(confirm_packet.session_id == click_packet.session_id);
-    CHECK(confirm_packet.seq == click_packet.seq);
-    CHECK(mesh_sim_count_transitions(&world,
-                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[origin].id) == 0u);
-    CHECK(mesh_sim_count_transitions(&world,
-                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_1].id) == 1u);
+                                             &confirm_packet) ==
+          PROTO_ERR_NOT_FOUND);
     CHECK(world.roles[gateway].gateway_semantic_commit_count == 1u);
     CHECK(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
 
-    set_test_phase("unseeded_click_adjacent_relay_confirm");
-    CHECK(run_direct_click_turn(&world, relay_2, gateway) == MESH_SIM_OK);
+    set_test_phase("unseeded_click_terminal_quiescence");
     CHECK(world.roles[gateway].delivery_count == gateway_delivery_before + 1u);
     CHECK(world.roles[relay_2].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
@@ -2523,7 +2479,8 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
             }
         }
         CHECK(click_transmissions == 3u);
-        CHECK(confirm_transmissions == 1u);
+        /* MSG_GATEWAY_ACK_CONFIRM is retired; nobody emits one. */
+        CHECK(confirm_transmissions == 0u);
     }
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_ROUTE_REQUIRED,

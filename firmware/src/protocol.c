@@ -128,6 +128,7 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_RESULT_GRANT:
     case MSG_RESULT_BUNDLE:
     case MSG_GATEWAY_COLLECTION_EACK:
+    case MSG_ROUTE_SOLICIT:
     case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_SURVEY_EVENT:
@@ -1089,6 +1090,8 @@ int proto_self_test_report_validate(const struct proto_packet *packet,
         {TLV_EVENT_SEQ, sizeof(uint32_t)},
         {TLV_ERROR_CODE, sizeof(uint16_t)},
         {TLV_BATTERY_MV, sizeof(uint16_t)},
+        {TLV_BATCH_PENDING, sizeof(uint8_t)},
+        {TLV_BATCH_REMAINING, sizeof(uint8_t)},
     };
     uint64_t clicker_id = 0u;
     uint32_t event_seq = 0u;
@@ -1115,8 +1118,7 @@ int proto_self_test_report_validate(const struct proto_packet *packet,
                                  sizeof(rules) / sizeof(rules[0]),
                                  &seen);
     if (ret != PROTO_OK ||
-        seen != ((UINT32_C(1) << (sizeof(rules) / sizeof(rules[0]))) -
-                 1u)) {
+        (seen & UINT32_C(0x0f)) != UINT32_C(0x0f)) {
         return PROTO_ERR_MALFORMED;
     }
     ret = tlv_require_u64(payload, payload_len, TLV_CLICKER_ID, &clicker_id);

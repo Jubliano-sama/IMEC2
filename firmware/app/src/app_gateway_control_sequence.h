@@ -66,6 +66,8 @@ int app_gateway_control_sequence_maintain(void);
 /* Native tests drive maintenance with an explicit clock; no test sleeps. */
 int app_gateway_control_sequence_test_maintain_at(uint32_t now_ms);
 void app_gateway_control_sequence_test_reset(void);
+void app_gateway_control_sequence_test_set_schedule_result(int result);
+uint32_t app_gateway_control_sequence_test_schedule_calls(void);
 #endif
 
 #endif

@@ -16,7 +16,8 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
 
     record = &snapshot->record;
     pending = &snapshot->pending;
-    if (!relay_semantic_packet_digest(&pending->packet,
+    if (!relay_semantic_packet_digest(relay,
+                                      &pending->packet,
                                       pending->payload,
                                       pending->payload_len,
                                       semantic_digest)) {
@@ -1055,6 +1056,36 @@ void mesh_relay_note_tx_sent(struct mesh_relay *relay,
     }
 }
 
+int mesh_relay_note_gateway_ack_window_elapsed(struct mesh_relay *relay,
+                                               const struct mesh_outbound *sent,
+                                               uint32_t deadline_ms)
+{
+    if (relay == NULL || sent == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (relay->pending.state != MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+        relay->pending.result_offer_active ||
+        relay->pending.gateway_ack_confirm_pending) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (!pending_matches_outbound(relay, &relay->pending, sent)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (relay->pending.hop_ack_observed_since_send) {
+        /*
+         * First-hop custody already advanced this window to the multi-hop
+         * gateway-ACK return budget. A short local receive turn proves
+         * nothing about that longer path, so never shorten it here.
+         */
+        return PROTO_ERR_STALE;
+    }
+    if (!deadline_reached(deadline_ms,
+                          relay->pending.gateway_ack_deadline_ms)) {
+        relay->pending.gateway_ack_deadline_ms = deadline_ms;
+    }
+    return PROTO_OK;
+}
+
 void mesh_relay_note_delivery_failure_at(struct mesh_relay *relay,
                                          uint64_t dst_id,
                                          uint32_t now_ms)
@@ -1154,6 +1185,8 @@ static int schedule_pending_parent_failure(struct mesh_relay *relay,
                                    relay->pending.packet.dst_id,
                                    &next_hop_id) != PROTO_OK) {
         mesh_relay_invalidate_upstream_route(relay);
+        /* Every candidate is exhausted: advertise UNREACHABLE until repair. */
+        mesh_relay_poison_upstream(relay);
         if (preserve_local_pending_after_parent_loss(relay,
                                                      now_ms,
                                                      random_value)) {
@@ -1586,6 +1619,7 @@ static int handle_retained_pending_retry(
                        payload,
                        payload_len,
                        previous_hop_id,
+                       now_ms,
                        result);
     result->status = PROTO_ERR_STALE;
     return PROTO_OK;
@@ -1637,9 +1671,60 @@ int mesh_relay_handle_rx_with_random_radio(
         packet->session_id == 0u ||
         packet->seq == 0u ||
         !id_is_unicast(relay->local_id) ||
-        !id_is_unicast(packet->src_id) ||
-        packet->src_id == relay->local_id) {
+        !id_is_unicast(packet->src_id)) {
         return PROTO_ERR_ARG;
+    }
+    if (packet->src_id == relay->local_id) {
+        /*
+         * A parent that lost its route may hand a packet back to whoever gave
+         * it, including the node that originated it.  If this relay handed
+         * exactly these bytes to exactly that parent and never saw a gateway
+         * ACK for them, they are ours again: re-adopt custody rather than
+         * dropping our own packet as a self-addressed duplicate.
+         */
+        if (!mesh_relay_should_readopt_returned_packet(relay,
+                                                        packet,
+                                                        previous_hop_id)) {
+            return PROTO_ERR_ARG;
+        }
+        result_reset(result);
+        if (mesh_relay_tx_active(relay)) {
+            /* No free custody slot: say so instead of staying silent. */
+            return mesh_relay_build_backpressure_ack(relay,
+                                                     packet,
+                                                     payload,
+                                                     payload_len,
+                                                     previous_hop_id,
+                                                     0u,
+                                                     now_ms,
+                                                     result);
+        }
+        ret = mesh_relay_start_tx(relay,
+                                  packet,
+                                  payload,
+                                  payload_len,
+                                  now_ms,
+                                  &result->retransmit);
+        if (ret != PROTO_OK) {
+            return mesh_relay_build_backpressure_ack(relay,
+                                                     packet,
+                                                     payload,
+                                                     payload_len,
+                                                     previous_hop_id,
+                                                     0u,
+                                                     now_ms,
+                                                     result);
+        }
+        result->actions |= MESH_RELAY_ACTION_RETRANSMIT |
+                           MESH_RELAY_ACTION_CUSTODY_ACCEPTED;
+        add_hop_ack_action(relay,
+                           packet,
+                           payload,
+                           payload_len,
+                           previous_hop_id,
+                           now_ms,
+                           result);
+        return PROTO_OK;
     }
 
     result_reset(result);
@@ -1691,7 +1776,8 @@ int mesh_relay_handle_rx_with_random_radio(
             !deadline_reached(
                 now_ms,
                 relay->route_discovery.completed_request_until_ms) &&
-            relay_semantic_packet_digest(packet,
+            relay_semantic_packet_digest(relay,
+                                         packet,
                                          payload,
                                          payload_len,
                                          reply_digest) &&
@@ -1766,7 +1852,8 @@ clicker_leaf_rx_allowed:
             return PROTO_OK;
         }
         command_seq = duplicate_session_identity(packet, payload, payload_len);
-        replay = broadcast_command_replay_classify(&relay->command_replay,
+        replay = broadcast_command_replay_classify(relay,
+                                                   &relay->command_replay,
                                                    command_seq,
                                                    packet,
                                                    payload,
@@ -1819,6 +1906,7 @@ clicker_leaf_rx_allowed:
                                payload_len,
                                previous_hop_id,
                                now_ms,
+                               random_value,
                                result);
         return PROTO_OK;
     }
@@ -1934,6 +2022,7 @@ clicker_leaf_rx_allowed:
                                          payload,
                                          payload_len,
                                          previous_hop_id,
+                                         now_ms,
                                          result);
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_STALE;
@@ -1979,6 +2068,7 @@ clicker_leaf_rx_allowed:
                                payload,
                                payload_len,
                                previous_hop_id,
+                               now_ms,
                                result);
             result->actions |= MESH_RELAY_ACTION_CUSTODY_ACCEPTED |
                                MESH_RELAY_ACTION_DROP;
@@ -2018,6 +2108,7 @@ clicker_leaf_rx_allowed:
                                    payload,
                                    payload_len,
                                    previous_hop_id,
+                                   now_ms,
                                    result);
                 result->actions |= MESH_RELAY_ACTION_DROP;
                 result->status = PROTO_ERR_STALE;
@@ -2048,6 +2139,7 @@ clicker_leaf_rx_allowed:
                                payload,
                                payload_len,
                                previous_hop_id,
+                               now_ms,
                                result);
             result->status = PROTO_ERR_STALE;
             return PROTO_OK;
@@ -2247,13 +2339,25 @@ clicker_leaf_rx_allowed:
                                      payload,
                                      payload_len,
                                      previous_hop_id,
+                                     now_ms,
                                      result);
         return PROTO_OK;
     }
 
     if (packet->dst_id == MESH_BROADCAST_ID) {
+        if (packet->msg_type == MSG_ROUTE_SOLICIT) {
+            /*
+             * A solicit is consumed locally: the gateway answers with a
+             * Here-I-Am wave and an anchor re-originates it upstream.  It is
+             * never re-flooded, so a solicit storm cannot propagate.
+             */
+            duplicate_store(relay, packet, payload, payload_len, now_ms);
+            result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
+            return PROTO_OK;
+        }
         if (packet->msg_type == MSG_COMMAND) {
             ret = broadcast_command_replay_store(
+                    relay,
                     &relay->command_replay,
                     duplicate_session_identity(packet, payload, payload_len),
                     packet,
@@ -2320,6 +2424,7 @@ clicker_leaf_rx_allowed:
                                    payload,
                                    payload_len,
                                    previous_hop_id,
+                                   now_ms,
                                    result);
                 result->actions |= MESH_RELAY_ACTION_CUSTODY_ACCEPTED;
                 result->status = ret;
@@ -2395,6 +2500,7 @@ clicker_leaf_rx_allowed:
                            payload,
                            payload_len,
                            previous_hop_id,
+                           now_ms,
                            result);
         return PROTO_OK;
     }

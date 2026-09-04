@@ -693,35 +693,6 @@ static void require_result_exact(const struct mesh_relay_result *result,
     REQUIRE(result->actions == expected_actions);
 }
 
-static void build_gateway_ack_confirm_for_record(
-    const struct proto_packet *record,
-    const uint8_t *record_payload,
-    size_t record_payload_len,
-    struct proto_packet *confirm,
-    uint8_t *confirm_payload,
-    size_t confirm_payload_cap,
-    size_t *confirm_payload_len)
-{
-    REQUIRE(record != NULL);
-    REQUIRE(confirm != NULL);
-    REQUIRE(confirm_payload != NULL);
-    REQUIRE(confirm_payload_len != NULL);
-    *confirm_payload_len = 0u;
-    REQUIRE(mesh_gateway_ack_confirm_payload_build(record,
-                                                   record_payload,
-                                                   record_payload_len,
-                                                   confirm_payload,
-                                                   confirm_payload_cap,
-                                                   confirm_payload_len) ==
-            PROTO_OK);
-    REQUIRE(mesh_init_gateway_ack_confirm(confirm,
-                                          record->src_id,
-                                          record->dst_id,
-                                          record->session_id,
-                                          record->seq) == PROTO_OK);
-    REQUIRE(confirm->payload_len == *confirm_payload_len);
-}
-
 static void scenario_result_offer_and_command_result(void)
 {
     struct mesh_gateway_ack_store ack_store;
@@ -729,10 +700,6 @@ static void scenario_result_offer_and_command_result(void)
     struct result_fixture accepted;
     struct result_fixture competing;
     struct mesh_relay_result result;
-    struct mesh_gateway_ack_confirm_identity confirmed_identity;
-    struct proto_packet confirm;
-    uint8_t confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
-    size_t confirm_payload_len = 0u;
     const uint32_t commit_ms = 4320u;
     uint32_t reservation_deadline;
 
@@ -833,6 +800,11 @@ static void scenario_result_offer_and_command_result(void)
                          PROTO_OK,
                          MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
     trace_result("command_result.commit", &result);
+    /*
+     * The gateway ACK is terminal. MSG_GATEWAY_ACK_CONFIRM is gone, so the
+     * commit path confirms the retained identity immediately: it is a
+     * duplicate-detect tombstone, never outstanding confirmation debt.
+     */
     printf("QUERY command_result.confirmation_pending=%u\n",
            mesh_relay_gateway_identity_confirmation_pending(
                &gateway,
@@ -841,7 +813,7 @@ static void scenario_result_offer_and_command_result(void)
                accepted.result_packet.session_id,
                accepted.result_packet.seq,
                commit_ms + 1u) ? 1u : 0u);
-    REQUIRE(mesh_relay_gateway_identity_confirmation_pending(
+    REQUIRE(!mesh_relay_gateway_identity_confirmation_pending(
                 &gateway,
                 accepted.result_packet.src_id,
                 accepted.result_packet.msg_type,
@@ -863,42 +835,6 @@ static void scenario_result_offer_and_command_result(void)
                          MESH_RELAY_ACTION_DELIVER_LOCAL);
     trace_result("command_result.duplicate", &result);
     trace_gateway_state("command_result.duplicate", &gateway, &ack_store);
-
-    build_gateway_ack_confirm_for_record(&accepted.result_packet,
-                                         accepted.result_payload,
-                                         accepted.result_payload_len,
-                                         &confirm,
-                                         confirm_payload,
-                                         sizeof(confirm_payload),
-                                         &confirm_payload_len);
-    trace_packet("command_result.confirm",
-                 &confirm,
-                 confirm_payload,
-                 confirm_payload_len);
-    REQUIRE(mesh_relay_gateway_ack_confirm_history_match(
-                &gateway,
-                &confirm,
-                confirm_payload,
-                confirm_payload_len,
-                &confirmed_identity) == PROTO_OK);
-    REQUIRE(!mesh_relay_gateway_identity_confirmation_pending(
-                &gateway,
-                accepted.result_packet.src_id,
-                accepted.result_packet.msg_type,
-                accepted.result_packet.session_id,
-                accepted.result_packet.seq,
-                commit_ms + 11u));
-    printf("CONFIRM command_result type=%u flags=%u session=%" PRIu32
-           " seq=%u len=%u digest=",
-           confirmed_identity.msg_type,
-           confirmed_identity.flags,
-           confirmed_identity.session_id,
-           confirmed_identity.seq,
-           confirmed_identity.payload_len);
-    trace_hex(confirmed_identity.digest,
-              sizeof(confirmed_identity.digest));
-    putchar('\n');
-    trace_gateway_state("command_result.confirm", &gateway, &ack_store);
 
     REQUIRE(mesh_relay_handle_rx(&gateway,
                                  &accepted.result_packet,
@@ -963,14 +899,15 @@ static void scenario_result_bundle(void)
                          PROTO_OK,
                          MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
     trace_result("bundle.commit", &result);
-    REQUIRE(mesh_relay_gateway_identity_confirmation_pending(
+    /* Terminal gateway ACK: the bundle identity is confirmed at commit. */
+    REQUIRE(!mesh_relay_gateway_identity_confirmation_pending(
                 &gateway,
                 bundle.packet.src_id,
                 bundle.packet.msg_type,
                 bundle.packet.session_id,
                 bundle.packet.seq,
                 commit_ms + 1u));
-    printf("QUERY bundle.confirmation_pending=1\n");
+    printf("QUERY bundle.confirmation_pending=0\n");
     trace_gateway_state("bundle.commit", &gateway, &ack_store);
 
     REQUIRE(mesh_relay_handle_rx(&gateway,

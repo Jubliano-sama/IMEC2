@@ -770,15 +770,24 @@ static int schedule_pending_retry(struct mesh_sim_world *world,
     CHECK(mesh_sim_schedule_relay_tick(world, owner, due_us) ==
           MESH_SIM_OK);
     CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
-    CHECK(relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    /*
+     * The jittered exponential ACK backoff is shorter than one owned
+     * Channel-9 turn, so the owner may already have re-armed its retransmit
+     * while this helper drove the connection past the ACK deadline.
+     */
+    CHECK(relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
+          relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
 
-    due_us = (uint64_t)relay->pending.retry_after_ms * 1000u;
-    if (due_us < world->now_us) {
-        due_us = world->now_us;
+    if (relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        due_us = (uint64_t)relay->pending.retry_after_ms * 1000u;
+        if (due_us < world->now_us) {
+            due_us = world->now_us;
+        }
+        CHECK(mesh_sim_schedule_relay_tick(world, owner, due_us) ==
+              MESH_SIM_OK);
+        CHECK(keep_connection_alive_until(world, connection, due_us) ==
+              MESH_SIM_OK);
     }
-    CHECK(mesh_sim_schedule_relay_tick(world, owner, due_us) ==
-          MESH_SIM_OK);
-    CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
     /*
      * If the retry deadline coincides with the next owned Channel-9 turn,
      * the scheduler may admit the freshly queued retry immediately.  The
@@ -842,61 +851,6 @@ static int run_relay_to_gateway_payload_attempt(
     }
     CHECK(mesh_sim_run_until(world, window_end_us) == MESH_SIM_OK);
     world->reachable[anchor][gateway] = reachable;
-    if (world->roles[gateway].dwm3000.cpu_busy_until_us > world->now_us) {
-        CHECK(mesh_sim_run_until(
-                  world, world->roles[gateway].dwm3000.cpu_busy_until_us) ==
-              MESH_SIM_OK);
-    }
-    return 0;
-}
-
-static int run_relay_to_gateway_confirm_attempt(
-    struct mesh_sim_world *world,
-    uint8_t anchor,
-    uint8_t gateway,
-    uint32_t session_id,
-    uint16_t seq)
-{
-    const struct mesh_sim_queued_tx *queued = queued_packet_for_peer(
-        &world->roles[anchor], GATEWAY_ID, MSG_GATEWAY_ACK_CONFIRM,
-        session_id, seq);
-    uint64_t ready_us = direct_pair_ready_us(world, anchor, gateway);
-    uint64_t air_start_us;
-    uint64_t window_end_us;
-    int ret;
-
-    CHECK(queued != NULL);
-    CHECK(queued->outbound.payload_len ==
-          MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN);
-    if (ready_us > world->now_us) {
-        CHECK(mesh_sim_run_until(world, ready_us) == MESH_SIM_OK);
-    }
-    air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
-    window_end_us = air_start_us + DIRECT_PAYLOAD_SERVICE_US;
-    CHECK(mesh_sim_direct_gateway_arm_rx(world, gateway,
-                                         air_start_us, window_end_us) ==
-          MESH_SIM_OK);
-    ret = mesh_sim_direct_gateway_start_queued_tx(world,
-                                                  anchor,
-                                                  air_start_us,
-                                                  window_end_us,
-                                                  NULL);
-    if (ret != MESH_SIM_OK) {
-        fprintf(stderr,
-                "confirm direct ret=%d last=%d pending=%u pending-msg=0x%02x "
-                "flags=0x%02x ttl=%u needs-start=%u queue=%zu now=%llu\n",
-                ret,
-                world->last_error,
-                world->roles[anchor].relay.pending.state,
-                world->roles[anchor].relay.pending.packet.msg_type,
-                queued->outbound.packet.flags,
-                queued->outbound.packet.ttl,
-                queued->needs_relay_start,
-                world->roles[anchor].tx_queue_count,
-                (unsigned long long)world->now_us);
-    }
-    CHECK(ret == MESH_SIM_OK);
-    CHECK(mesh_sim_run_until(world, window_end_us) == MESH_SIM_OK);
     if (world->roles[gateway].dwm3000.cpu_busy_until_us > world->now_us) {
         CHECK(mesh_sim_run_until(
                   world, world->roles[gateway].dwm3000.cpu_busy_until_us) ==
@@ -1076,22 +1030,14 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
 
             CHECK(world.roles[transmitter].relay.pending.state ==
                   MESH_RELAY_TX_IDLE);
+            /* The gateway ACK is terminal for a report using hop custody:
+             * MSG_GATEWAY_ACK_CONFIRM is retired, so the anchor queues no
+             * confirm frame and needs no second gateway exchange. */
             CHECK(queued_packet_for_peer(
                       &world.roles[anchor], GATEWAY_ID,
                       MSG_GATEWAY_ACK_CONFIRM,
-                      packet.session_id, packet.seq) != NULL);
-            CHECK(run_relay_to_gateway_confirm_attempt(
-                      &world,
-                      anchor,
-                      gateway,
-                      packet.session_id,
-                      packet.seq) == 0);
+                      packet.session_id, packet.seq) == NULL);
             CHECK(world.roles[gateway].delivery_count == packet_index + 1u);
-            CHECK(queued_gateway_ack_for_sender(
-                      &world.roles[gateway], ANCHOR_ID, TRANSMITTER_ID,
-                      packet.session_id) != NULL);
-            CHECK(run_gateway_to_relay_ack_attempt(
-                      &world, anchor, gateway, false) == 0);
             relay_gateway_confirms++;
             CHECK(mesh_sim_count_transitions(
                       &world, MESH_SIM_TRANSITION_GATEWAY_ACKED,

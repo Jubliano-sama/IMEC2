@@ -30,7 +30,7 @@ extern "C" {
      MESH_ENUMERATION_RELAY_COPY_SPACING_MAX_MS)
 #define MESH_DEFAULT_TTL MESH_NETWORK_MAX_HOPS
 #define MESH_GATEWAY_ACK_TTL MESH_NETWORK_MAX_HOPS
-#define MESH_EVENT_CHANNEL UWB_CHANNEL_MESH_PAYLOAD
+#define MESH_EVENT_CHANNEL UWB_CHANNEL_WAKE_CONTACT
 #define MESH_CH9_BATCH_FLAG_FINAL 0x01u
 #define MESH_ACK_SEMANTIC_IDENTITY_MAX 8u
 #define MESH_ACK_SEMANTIC_IDENTITY_VALUE_LEN \
@@ -56,6 +56,59 @@ extern "C" {
      SEMANTIC_DIGEST_SHA256_LEN)
 #define MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN \
     (PROTO_TLV_HEADER_LEN + MESH_GATEWAY_ACK_CONFIRM_IDENTITY_VALUE_LEN)
+
+/*
+ * Channel-5 delivery protocol: depth, credit and explicit backpressure.
+ *
+ * Every MSG_MESH_HOP_ACK / MSG_GATEWAY_ACK may carry the responder's current
+ * gateway depth (TLV_HOP_COUNT) and the number of further frames it can take
+ * from this sender right now (TLV_BATCH_CREDIT).  A receiver that cannot
+ * admit at all answers with no accepted identities, its real depth, credit 0
+ * and TLV_RETRY_AFTER_MS: silence is never an answer.
+ */
+#define MESH_ROUTE_DEPTH_UNREACHABLE 0xFFu
+/* Free custody slots a responder keeps for its own reports. */
+#define MESH_CUSTODY_OWN_RESERVE 1u
+/* Largest credit that fits the u8 TLV without colliding with the sentinel. */
+#define MESH_BATCH_CREDIT_MAX 0xFEu
+/* Longest burst the batch TLVs can describe. */
+#define MESH_BATCH_MAX_FRAMES 0xFFu
+/* Bytes added to an ACK payload by depth + credit (+ retry-after). */
+#define MESH_ACK_FLOW_CONTROL_TLV_BYTES \
+    (2u * PROTO_TLV_U8_ENCODED_LEN)
+#define MESH_ACK_BACKPRESSURE_TLV_BYTES \
+    (MESH_ACK_FLOW_CONTROL_TLV_BYTES + PROTO_TLV_U16_ENCODED_LEN)
+/* An explicit refusal names no identity: requested seq + depth + credit +
+ * retry-after only. */
+#define MESH_ACK_BACKPRESSURE_PAYLOAD_LEN \
+    ((PROTO_TLV_HEADER_LEN + sizeof(uint16_t)) + \
+     MESH_ACK_BACKPRESSURE_TLV_BYTES)
+
+struct mesh_ack_flow_control {
+    /* Responder's gateway depth; MESH_ROUTE_DEPTH_UNREACHABLE when routeless. */
+    uint8_t depth;
+    /* Further frames the responder can take from this sender right now. */
+    uint8_t credit;
+    /* Sender-visible retry delay for an explicit refusal. */
+    uint16_t retry_after_ms;
+    /* Accepted semantic identities named by this ACK. Zero is a refusal. */
+    uint8_t identity_count;
+    bool depth_valid;
+    bool credit_valid;
+    bool retry_after_valid;
+};
+
+/*
+ * Report-bearing mesh traffic now rides Channel 5 (MESH_EVENT_CHANNEL) while
+ * the retiring Channel-9 payload event still exists on legacy builds.  Receive
+ * and ACK admission gates must accept either radio channel; only transmit-side
+ * scheduling may still name one channel explicitly.
+ */
+static inline bool mesh_channel_carries_reports(uint8_t radio_channel)
+{
+    return radio_channel == UWB_CHANNEL_WAKE_CONTACT ||
+           radio_channel == UWB_CHANNEL_MESH_PAYLOAD;
+}
 
 struct mesh_ack_semantic_identity {
     uint32_t session_id;
@@ -228,6 +281,49 @@ int mesh_append_requested_seq(uint8_t *payload,
                                    size_t payload_cap,
                                    size_t *offset,
                                    uint16_t requested_seq);
+/*
+ * Append TLV_HOP_COUNT / TLV_BATCH_CREDIT (and TLV_RETRY_AFTER_MS when the
+ * responder is refusing) to an ACK payload under construction.  Each field is
+ * emitted only when its *_valid flag is set, so an encoder can stay byte
+ * compatible with old firmware by leaving them clear.
+ */
+int mesh_append_ack_flow_control(uint8_t *payload,
+                                 size_t payload_cap,
+                                 size_t *offset,
+                                 const struct mesh_ack_flow_control *flow);
+/*
+ * Decode the depth/credit/retry-after view of an ACK and count the accepted
+ * semantic identities.  A missing TLV leaves the matching *_valid flag clear,
+ * which is exactly what old firmware produces and means "unknown, unchanged
+ * behaviour".  Returns PROTO_ERR_MALFORMED for an ACK whose framing is bad.
+ */
+int mesh_ack_flow_control_parse(const struct proto_packet *ack_packet,
+                                const uint8_t *ack_payload,
+                                size_t ack_payload_len,
+                                struct mesh_ack_flow_control *flow);
+/* The responder has no route and took nothing: dead end, not an RF failure. */
+bool mesh_ack_flow_control_is_dead_end(const struct mesh_ack_flow_control *flow);
+/* The responder has a route but cannot admit right now: keep custody, retry. */
+bool mesh_ack_flow_control_is_backpressure(
+    const struct mesh_ack_flow_control *flow);
+/* Free custody slots -> advertised credit, honouring the own-report reserve. */
+uint8_t mesh_batch_credit_from_free_slots(uint16_t free_slots);
+/* TLV_BATCH_PENDING on a report frame; absent decodes as zero. */
+int mesh_append_batch_pending(uint8_t *payload,
+                              size_t payload_cap,
+                              size_t *offset,
+                              uint8_t pending);
+int mesh_batch_pending_from_payload(const uint8_t *payload,
+                                    size_t payload_len,
+                                    uint8_t *pending);
+/* TLV_BATCH_REMAINING on a burst frame; absent decodes as zero. */
+int mesh_append_batch_remaining(uint8_t *payload,
+                                size_t payload_cap,
+                                size_t *offset,
+                                uint8_t remaining);
+int mesh_batch_remaining_from_payload(const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint8_t *remaining);
 bool mesh_packet_semantic_digest(
     const struct proto_packet *packet,
     const uint8_t *payload,

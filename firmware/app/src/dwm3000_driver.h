@@ -115,6 +115,8 @@ struct dwm3000_rx_debug_snapshot {
     uint32_t status;
     uint32_t rx_finfo;
     uint16_t sfd_timeout;
+    /* Recoverable RX errors re-enabled inside this receive call. */
+    uint16_t recoverable_rearms;
     uint8_t phy_mode;
     uint8_t channel;
     uint8_t preamble_length;
@@ -149,6 +151,9 @@ struct dwm3000_driver_stats {
     uint32_t rx_crc_failures;
     uint32_t rx_failures;
     uint32_t rx_scope_drops;
+    /* Recoverable RX errors absorbed by a same-window receiver re-enable
+     * instead of a full park/rearm cycle. */
+    uint32_t rx_cheap_rearms;
     uint32_t tx_starts;
     uint32_t tx_dones;
     uint32_t tx_failures;

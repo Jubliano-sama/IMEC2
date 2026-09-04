@@ -354,92 +354,22 @@ increase any stack size:
 .venv/bin/west build --no-sysbuild -s firmware/app \
   -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor-stack-stress -- \
   -DIMEC_BUILD_PRESET=mesh_anchor -DIMEC_STACK_STRESS_BUILD=ON
-
-.venv/bin/python firmware/scripts/verify_stack_evidence.py \
-  --build-dir build/mesh-anchor-stack-stress
 ```
 
 Replace `mesh-anchor` and `mesh_anchor` together with `mesh-clicker` /
 `mesh_clicker` or `mesh-gateway` / `mesh_gateway` for the other exact role.
-Host stack consumption and native sanitizer success are never evidence that an
-nRF52833 stack is safe; only the exact cross-compiled call-frame gate plus
-on-target guards, canaries, thread high-water output, and typed workload
-captures cover the embedded stacks.
+Native sanitizer results cover host execution. Check embedded stack use with the cross-compiled frame reports and on-target guards, canaries, and thread high-water output.
 
 ## Flash once, run many hardware cases
 
-Stage the exact stack-stress artifact once through the verified wrapper. This
-is the only programming operation in the transaction; it performs a full
-readback and leaves a durable `awaiting_qualification` journal:
+Flash the intended role at 4 MHz, then capture RTT while running real workloads:
 
 ```sh
-.venv/bin/python firmware/scripts/flash_verified_mesh.py \
-  --build-dir build/mesh-anchor-stack-stress \
-  --probe-id <ANCHOR_PROBE_ID> --stage-only
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor-stack-stress -- --dev-id <ANCHOR_PROBE_ID> --frequency 4000000
+
+.venv/bin/python firmware/scripts/bench_rtt.py --probe anchor=<ANCHOR_PROBE_ID> --no-ble --duration 180 --output-dir logs/anchor-rtt
 ```
 
-Then run the capture and a role-specific real workload concurrently against
-that staged artifact; an anchor example is:
+Use `provision_mesh_anchor.py` for enumeration and `python -m tools.gateway_gui.survey_hil` for an actual survey. The topology collector proves which anchors answered; publishing an assignment table alone does not prove that anchors accepted it. A survey must produce the expected neighbor reports and range samples. Click tests must match completed clicks to reports and host receipts, including the expected relay path for forced-hop cases.
 
-```sh
-.venv/bin/python firmware/scripts/capture_stack_evidence.py \
-  --build-dir build/mesh-anchor-stack-stress \
-  --probe-id <ANCHOR_PROBE_ID> --output-dir logs/stack-evidence \
-  --duration-seconds 600
-
-.venv/bin/python firmware/scripts/provision_mesh_anchor.py \
-  --gateway <GATEWAY_BLE_ADDRESS> --command assign-slots \
-  --expected-anchors 3 --duration 300
-```
-
-The required successful typed workloads are `click_activity` for a clicker,
-`anchor_scan` for an anchor, and all of `gateway_report_ingress`,
-`gateway_priority_control`, and `ble_backpressure` for a gateway. Promote the
-qualified, already-running artifact through the same wrapper, never through
-direct `west flash` for a deployable mesh role:
-
-```sh
-.venv/bin/python firmware/scripts/flash_verified_mesh.py \
-  --build-dir build/mesh-anchor-stack-stress \
-  --hardware-manifest \
-    logs/stack-evidence/mesh-anchor-<capture-id>.json \
-  --probe-id <ANCHOR_PROBE_ID>
-```
-
-Promotion verifies only the staged artifact's code sectors, so ordinary NVS
-changes from qualification are allowed; it consumes the manifest and writes no
-firmware. Before or after promotion, `capture_stack_evidence.py` can attach to
-the already-loaded image and record each new bounded scenario without
-programming it. Start it in one terminal and inject a workload from another,
-for example:
-
-```sh
-.venv/bin/python firmware/scripts/capture_stack_evidence.py \
-  --build-dir build/mesh-anchor-stack-stress \
-  --probe-id <ANCHOR_PROBE_ID> --output-dir logs/stack-evidence \
-  --duration-seconds 600
-
-.venv/bin/python firmware/scripts/provision_mesh_anchor.py \
-  --gateway <GATEWAY_BLE_ADDRESS> --command here-i-am \
-  --repeat 100 --interval 0.05 --duration 60 \
-  --notification-hold-s 5
-```
-
-Use repeated `assign-slots` commands with fresh identities to
-exercise re-entrant admission and BUSY handling, and use `qualify-reachability`
-when terminal direct/multihop evidence is required. The CLI's `--repeat`,
-`--interval`, `--duration`, and `--notification-hold-s` parameters change the
-host workload, so these cases do not require a firmware rebuild or reflash.
-Capture gateway traffic independently when diagnosing loss or latency:
-
-```sh
-.venv/bin/python tools/mesh_ble_route_monitor.py \
-  --gateway <GATEWAY_BLE_ADDRESS> --duration-s 600 \
-  --include-all-mesh-data --jsonl-file logs/mesh-stress-gateway.jsonl \
-  --jsonl-fsync --verbose
-```
-
-The native simulator remains the main iteration loop. This flash-once workflow
-checks embedded stack and real scheduling/RF boundaries for a candidate; it is
-not a reason to repeat a full physical regression for every host-proven
-protocol edit.
+Run multiple scenarios against the same flashed image. Rebuild or reflash when the firmware or role changes; no manifest or promotion step is required.

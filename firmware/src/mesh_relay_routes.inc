@@ -14,6 +14,9 @@ void mesh_relay_init(struct mesh_relay *relay,
     relay->local_id = local_id;
     relay->gateway_id = gateway_id;
     relay->next_seq = 1u;
+    /* No admission-capacity hook installed yet: the core uses its own idle
+     * custody slot until the application reports real free-slot counts. */
+    relay->batch.local_free_slots = MESH_RELAY_FREE_SLOTS_UNKNOWN;
     if (route_epoch != 0u && (uint16_t)route_epoch == 0u) {
         route_epoch++;
     }
@@ -38,6 +41,7 @@ int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
 
     mesh_gateway_ack_store_init(store);
     relay->gateway_ack_store = store;
+    relay->gateway_ack_sweep_valid = false;
     return PROTO_OK;
 }
 
@@ -316,12 +320,7 @@ int mesh_relay_note_flood_parent_candidate(
     uint32_t now_ms)
 {
     struct route_candidate candidate;
-    struct route_candidate *stored_candidate = NULL;
-    uint32_t preserved_hold_down_until_ms = 0u;
     uint8_t gateway_hop_count;
-    uint8_t preserved_failure_count = 0u;
-    bool preserve_failure_state = false;
-    bool preserved_hold_down_valid = false;
     int ret;
 
     if (relay == NULL || packet == NULL ||
@@ -354,49 +353,7 @@ int mesh_relay_note_flood_parent_candidate(
         .relay_capacity_state = RELAY_CAP_UNKNOWN,
         .valid = true,
     };
-    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
-        struct route_candidate *existing = &relay->upstream.candidates[i];
-
-        if (existing->valid &&
-            existing->route_epoch == route_epoch &&
-            existing->next_hop_id == previous_hop_id &&
-            existing->gateway_id == relay->gateway_id) {
-            preserved_failure_count = existing->failure_count;
-            preserved_hold_down_until_ms = existing->hold_down_until_ms;
-            preserved_hold_down_valid = existing->hold_down_valid;
-            preserve_failure_state = true;
-            break;
-        }
-    }
     ret = route_upsert_candidate(&relay->upstream, &candidate);
-    if (ret == PROTO_OK && preserve_failure_state) {
-        for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
-            struct route_candidate *existing =
-                &relay->upstream.candidates[i];
-
-            if (existing->valid &&
-                existing->route_epoch == route_epoch &&
-                existing->next_hop_id == previous_hop_id &&
-                existing->gateway_id == relay->gateway_id) {
-                stored_candidate = existing;
-                break;
-            }
-        }
-        if (stored_candidate == NULL) {
-            return PROTO_ERR_NOT_FOUND;
-        }
-        stored_candidate->failure_count = preserved_failure_count;
-        stored_candidate->hold_down_until_ms =
-            preserved_hold_down_until_ms;
-        stored_candidate->hold_down_valid = preserved_hold_down_valid;
-        ret = route_select_best_at(&relay->upstream, now_ms);
-        if (ret != PROTO_OK && preserved_hold_down_valid) {
-            /* A valid passive refresh may leave every known parent held.
-             * Keep the route evidence and let discovery run; absence of a
-             * currently selectable parent is not a malformed control. */
-            ret = PROTO_OK;
-        }
-    }
     if (ret == PROTO_OK && previous_hop_id == relay->gateway_id) {
         const struct route_candidate *stored = find_upstream_candidate(
             relay, previous_hop_id, relay->upstream.current_epoch);
@@ -473,6 +430,14 @@ uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
             if (!relay->upstream.candidates[i].valid) {
                 clear_upstream_candidate_ancestry_at(relay, i);
             }
+        }
+        /*
+         * A depth this node can no longer justify must not stay advertised.
+         * Poisoning is what stops children from queueing behind a parent that
+         * has nothing left upstream; repair is local, not gateway-driven.
+         */
+        if (route_selected(&relay->upstream) == NULL) {
+            mesh_relay_poison_upstream(relay);
         }
     }
     return expired;
@@ -585,6 +550,50 @@ static bool route_path_interior_avoids_participants(
     return true;
 }
 
+/*
+ * Loop freedom.  Forward only to a neighbour whose advertised depth is
+ * strictly lower than this node's; a node that has lost its own route (depth
+ * UNREACHABLE) may use any finite-depth neighbour, including a former child,
+ * because nobody may select a node that advertises no depth.
+ *
+ * The ordinary selection is loop free by construction - local depth is the
+ * selected candidate's depth plus one - so this only bites once a candidate
+ * has been poisoned to UNREACHABLE by a dead-end ACK or has aged out.
+ */
+static int enforce_loop_free_upstream(const struct mesh_relay *relay,
+                                      uint32_t now_ms,
+                                      uint64_t *next_hop_id)
+{
+    const struct route_candidate *best = NULL;
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &relay->upstream.candidates[i];
+
+        if (!candidate->valid ||
+            candidate->gateway_id != relay->gateway_id ||
+            (candidate->hold_down_valid &&
+             !deadline_reached(now_ms, candidate->hold_down_until_ms)) ||
+            !mesh_relay_depth_is_forwardable(relay,
+                                             candidate->hop_count,
+                                             now_ms)) {
+            continue;
+        }
+        if (candidate->next_hop_id == *next_hop_id) {
+            /* The ordinary choice is already loop free: keep it. */
+            return PROTO_OK;
+        }
+        if (best == NULL || candidate->route_cost < best->route_cost) {
+            best = candidate;
+        }
+    }
+    if (best == NULL) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    *next_hop_id = best->next_hop_id;
+    return PROTO_OK;
+}
+
 int mesh_relay_select_next_hop_for_packet(
     const struct mesh_relay *relay,
     const struct proto_packet *packet,
@@ -606,6 +615,14 @@ int mesh_relay_select_next_hop_for_packet(
     ordinary_ret = mesh_relay_select_next_hop(relay,
                                                packet->dst_id,
                                                next_hop_id);
+    if (ordinary_ret == PROTO_OK &&
+        relay->role != MESH_RELAY_ROLE_GATEWAY &&
+        packet->dst_id == relay->gateway_id) {
+        ordinary_ret = enforce_loop_free_upstream(relay, now_ms, next_hop_id);
+        if (ordinary_ret != PROTO_OK) {
+            return ordinary_ret;
+        }
+    }
     if (ordinary_ret != PROTO_OK ||
         !click_participant_list(relay,
                                 packet,

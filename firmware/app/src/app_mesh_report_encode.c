@@ -505,6 +505,97 @@ int app_mesh_report_encode_queue_next_cir(void)
 #endif
 }
 
+/*
+ * Click-report delivery grid for this anchor.
+ *
+ * `build_uwb_schedule_report_if_relevant()` derives the burst-wide delivery
+ * window and this anchor's schedule index from the schedule frame, so the
+ * first transmission of the click report belongs at
+ * window + slot_index * MESH_CLICK_DELIVERY_SLOT_MS. Post-burst work can
+ * still push the hand-off past that instant, so the transmit path re-derives
+ * the next boundary of the same residue class from this record instead of
+ * sending as soon as the queue drains.
+ */
+struct app_click_delivery_slot {
+    uint32_t session_id;
+    uint32_t window_start_ms;
+    uint16_t seq;
+    uint8_t slot_index;
+    uint8_t slot_count;
+    bool valid;
+};
+
+static struct app_click_delivery_slot anchor_click_delivery_slot;
+/* The anchor scan thread publishes the slot; the mesh-route thread reads it. */
+static struct k_spinlock anchor_click_delivery_slot_lock;
+
+static void app_mesh_report_note_click_delivery_slot(uint32_t session_id,
+                                                     uint16_t seq,
+                                                     uint32_t window_start_ms,
+                                                     uint8_t slot_index,
+                                                     uint8_t slot_count)
+{
+    k_spinlock_key_t key = k_spin_lock(&anchor_click_delivery_slot_lock);
+
+    anchor_click_delivery_slot.session_id = session_id;
+    anchor_click_delivery_slot.seq = seq;
+    anchor_click_delivery_slot.window_start_ms = window_start_ms;
+    anchor_click_delivery_slot.slot_index = slot_index;
+    anchor_click_delivery_slot.slot_count = slot_count;
+    anchor_click_delivery_slot.valid = true;
+    k_spin_unlock(&anchor_click_delivery_slot_lock, key);
+}
+
+bool app_mesh_report_click_delivery_due_ms(const struct proto_packet *packet,
+                                           uint32_t now_ms,
+                                           uint32_t *due_ms,
+                                           uint32_t *window_start_ms,
+                                           uint8_t *slot_index,
+                                           uint8_t *slot_count)
+{
+    struct app_click_delivery_slot slot;
+    k_spinlock_key_t key;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || packet == NULL) {
+        return false;
+    }
+    key = k_spin_lock(&anchor_click_delivery_slot_lock);
+    slot = anchor_click_delivery_slot;
+    k_spin_unlock(&anchor_click_delivery_slot_lock, key);
+    if (!slot.valid) {
+        return false;
+    }
+    /*
+     * Only the exact first fragment of the exact click report owns the slot.
+     * Later fragments and CIR chunks follow their predecessor's ACK, and a
+     * stale grid must never delay an unrelated packet.
+     */
+    if (packet->msg_type != MSG_CLICK_REPORT ||
+        packet->src_id != DEVICE_ID ||
+        packet->session_id != slot.session_id ||
+        packet->seq != slot.seq) {
+        return false;
+    }
+
+    if (due_ms != NULL) {
+        *due_ms = uwb_click_delivery_slot_due_ms(slot.window_start_ms,
+                                                 slot.slot_index,
+                                                 slot.slot_count,
+                                                 MESH_CLICK_DELIVERY_SLOT_MS,
+                                                 now_ms);
+    }
+    if (window_start_ms != NULL) {
+        *window_start_ms = slot.window_start_ms;
+    }
+    if (slot_index != NULL) {
+        *slot_index = slot.slot_index;
+    }
+    if (slot_count != NULL) {
+        *slot_count = slot.slot_count;
+    }
+    return true;
+}
+
 static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
                                       uint8_t attempt_index,
@@ -515,7 +606,12 @@ static int build_range_report_samples(uint64_t clicker_id,
                                       const int32_t *distance_samples_mm,
                                       const uint8_t *range_round_indices,
                                       const int64_t *sample_sequence_start_ms,
-                                      uint16_t sample_count)
+                                      uint16_t sample_count,
+                                      uint32_t delivery_window_start_ms,
+                                      uint8_t delivery_slot_index,
+                                      uint8_t delivery_slot_count,
+                                      uint32_t earliest_tx_ms,
+                                      bool earliest_tx_valid)
 {
     struct range_report_fields fields;
     struct proto_packet packet;
@@ -757,6 +853,10 @@ build_payload:
             struct mesh_outbound outbound = {
                 .packet = packet,
                 .payload_len = (uint8_t)payload_len,
+                /* The first fragment waits for this anchor's delivery slot;
+                 * later fragments follow their predecessor's ACK. */
+                .earliest_tx_ms = earliest_tx_ms,
+                .earliest_tx_valid = earliest_tx_valid && packet_index == 0u,
             };
             uint16_t queue_depth;
             bool final_fragment =
@@ -772,6 +872,20 @@ build_payload:
                 LOG_WRN("range report batch fragment could not be queued for mesh TX: %d",
                         ret);
                 goto fail;
+            }
+            if (packet_index == 0u && earliest_tx_valid) {
+                app_mesh_report_note_click_delivery_slot(
+                    packet.session_id,
+                    packet.seq,
+                    delivery_window_start_ms,
+                    delivery_slot_index,
+                    delivery_slot_count);
+                status_debug_printf("DBG_CLICK_REPORT_QUEUED now=%u window=%u k=%u earliest=%u n=%u\n",
+                                    k_uptime_get_32(),
+                                    delivery_window_start_ms,
+                                    delivery_slot_index,
+                                    earliest_tx_ms,
+                                    delivery_slot_count);
             }
             queue_depth = (uint16_t)report_tx_queue_used();
             app_stack_workload_diag_cir_admit(&packet, queue_depth, queue_depth);
@@ -821,10 +935,15 @@ int build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
     const struct uwb_range_schedule_frame *schedule,
     uint8_t schedule_flags,
-    const struct anchor_range_window_report *report)
+    const struct anchor_range_window_report *report,
+    uint32_t delivery_window_start_ms)
 {
     uint64_t participant_anchor_ids[RANGE_REPORT_MAX_PARTICIPANT_ANCHORS] = {0};
     uint8_t participant_anchor_count = 0u;
+    uint32_t earliest_tx_ms = 0u;
+    uint8_t delivery_slot_index = 0u;
+    uint8_t delivery_slot_count = 0u;
+    bool earliest_tx_valid = false;
     int ret;
 
     if ((schedule_flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) == 0u) {
@@ -860,6 +979,20 @@ int build_uwb_schedule_report_if_relevant(
         }
     }
 
+    if (delivery_window_start_ms != 0u &&
+        (schedule_flags & FLAG_COUNT_AS_CLICK) != 0u) {
+        for (uint8_t i = 0u; i < schedule->selected_count; i++) {
+            if (schedule->entries[i].anchor_id == DEVICE_ID) {
+                earliest_tx_ms = delivery_window_start_ms +
+                                 (uint32_t)i * MESH_CLICK_DELIVERY_SLOT_MS;
+                delivery_slot_index = i;
+                delivery_slot_count = schedule->selected_count;
+                earliest_tx_valid = true;
+                break;
+            }
+        }
+    }
+
     ret = build_range_report_samples(session->epoch.clicker_id,
                                      session->epoch.click_event_id,
                                      session->epoch.attempt_index,
@@ -872,7 +1005,12 @@ int build_uwb_schedule_report_if_relevant(
                                      report->distance_samples_mm,
                                      report->range_round_indices,
                                      report->sample_sequence_start_ms,
-                                     report->sample_count);
+                                     report->sample_count,
+                                     delivery_window_start_ms,
+                                     delivery_slot_index,
+                                     delivery_slot_count,
+                                     earliest_tx_ms,
+                                     earliest_tx_valid);
     if (ret < 0) {
         LOG_WRN("failed to build UWB scheduled anchor range report: %d", ret);
     }

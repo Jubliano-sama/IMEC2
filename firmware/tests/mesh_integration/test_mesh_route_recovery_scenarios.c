@@ -317,7 +317,12 @@ static int exercise_first_three_parent_hop_ack_misses(
         CHECK(producer->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
         CHECK(producer->pending.next_hop_id == PRIMARY_PARENT_ID);
         CHECK(producer->pending.retry_after_ms == *now_ms + expected_delay);
-        CHECK(expected_delay <= MESH_RELAY_RETRY_BACKOFF_MAX_MS);
+        CHECK(expected_delay >= MESH_RELAY_ACK_RETRY_BACKOFF_MIN_MS);
+        CHECK(expected_delay <= MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS);
+        if (failure == 1u) {
+            CHECK(expected_delay <=
+                  MESH_RELAY_ACK_RETRY_BACKOFF_FIRST_MAX_MS);
+        }
         CHECK(producer->pending.gateway_ack_deadline_ms == 0u);
         CHECK(producer->outbox_record.valid);
         CHECK(pending_payload_matches(producer, identity));
@@ -552,6 +557,299 @@ static int test_parent_hold_down_survives_wrapped_zero_deadline(void)
     return 0;
 }
 
+static int test_fresh_same_epoch_route_advertisement_reenables_parent(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct mesh_outbound advertisement;
+    struct mesh_relay_result result;
+    const struct route_candidate *candidate;
+    uint32_t hold_down_until_ms;
+
+    test_ctx = (struct test_context) {
+        .scenario = "fresh_same_epoch_route_advertisement",
+        .phase = "initial_observation",
+        .seed = 0u,
+    };
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY_ID,
+                    GATEWAY_ID, ROUTE_EPOCH);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, PRODUCER_ID,
+                    GATEWAY_ID, ROUTE_EPOCH);
+    CHECK(mesh_relay_build_gateway_route_adv(&gateway, 77u, 1000u,
+                                              &advertisement) == PROTO_OK);
+    CHECK(mesh_relay_handle_rx(&anchor,
+                               &advertisement.packet,
+                               advertisement.payload,
+                               advertisement.payload_len,
+                               GATEWAY_ID,
+                               90u,
+                               1010u,
+                               &result) == PROTO_OK);
+    candidate = find_candidate(&anchor, GATEWAY_ID);
+    CHECK(candidate != NULL);
+    CHECK(route_selected(&anchor.upstream) == candidate);
+
+    test_ctx.phase = "accumulated_failures";
+    CHECK(route_record_failure_at(&anchor.upstream,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  1100u) == ROUTE_DELIVERY_RETRY_CURRENT);
+    CHECK(route_record_failure_at(&anchor.upstream,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  1101u) == ROUTE_DELIVERY_RETRY_CURRENT);
+    candidate = find_candidate(&anchor, GATEWAY_ID);
+    CHECK(candidate != NULL);
+    CHECK(candidate->failure_count == 2u);
+
+    test_ctx.phase = "fresh_sequence_clears_failures";
+    CHECK(mesh_relay_build_gateway_route_adv(&gateway, 78u, 1200u,
+                                              &advertisement) == PROTO_OK);
+    CHECK(mesh_relay_handle_rx(&anchor,
+                               &advertisement.packet,
+                               advertisement.payload,
+                               advertisement.payload_len,
+                               GATEWAY_ID,
+                               85u,
+                               1210u,
+                               &result) == PROTO_OK);
+    candidate = find_candidate(&anchor, GATEWAY_ID);
+    CHECK(candidate != NULL);
+    CHECK(candidate->failure_count == 0u);
+    CHECK(!candidate->hold_down_valid);
+    CHECK(route_selected(&anchor.upstream) == candidate);
+
+    test_ctx.phase = "fourth_failure_starts_hold_down";
+    for (uint8_t failure = 0u;
+         failure < ROUTE_RETRIES_PER_CANDIDATE;
+         failure++) {
+        CHECK(route_record_failure_at(&anchor.upstream,
+                                      ROUTE_FAILURE_GATEWAY_ACK,
+                                      1300u + failure) ==
+              ROUTE_DELIVERY_RETRY_CURRENT);
+    }
+    CHECK(route_record_failure_at(&anchor.upstream,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  1310u) == ROUTE_DELIVERY_DISCOVER);
+    candidate = find_candidate(&anchor, GATEWAY_ID);
+    CHECK(candidate != NULL);
+    CHECK(candidate->failure_count == 0u);
+    CHECK(candidate->hold_down_valid);
+    hold_down_until_ms = 1310u + ROUTE_PARENT_HOLDDOWN_MS;
+    CHECK(candidate->hold_down_until_ms == hold_down_until_ms);
+    CHECK(route_selected(&anchor.upstream) == NULL);
+
+    test_ctx.phase = "exact_duplicate_remains_stale";
+    CHECK(mesh_relay_handle_rx(&anchor,
+                               &advertisement.packet,
+                               advertisement.payload,
+                               advertisement.payload_len,
+                               GATEWAY_ID,
+                               100u,
+                               1320u,
+                               &result) == PROTO_OK);
+    CHECK(result.status == PROTO_ERR_STALE);
+    CHECK(has_action(&result, MESH_RELAY_ACTION_DROP));
+    candidate = find_candidate(&anchor, GATEWAY_ID);
+    CHECK(candidate != NULL);
+    CHECK(candidate->hold_down_valid);
+    CHECK(candidate->hold_down_until_ms == hold_down_until_ms);
+    CHECK(candidate->last_seen_ms == 1210u);
+    CHECK(candidate->link_quality == 85u);
+    CHECK(route_selected(&anchor.upstream) == NULL);
+
+    test_ctx.phase = "fresh_sequence_clears_hold_down";
+    CHECK(mesh_relay_build_gateway_route_adv(&gateway, 79u, 1400u,
+                                              &advertisement) == PROTO_OK);
+    CHECK(mesh_relay_handle_rx(&anchor,
+                               &advertisement.packet,
+                               advertisement.payload,
+                               advertisement.payload_len,
+                               GATEWAY_ID,
+                               75u,
+                               1410u,
+                               &result) == PROTO_OK);
+    candidate = find_candidate(&anchor, GATEWAY_ID);
+    CHECK(candidate != NULL);
+    CHECK(candidate->last_seen_ms == 1410u);
+    CHECK(candidate->link_quality == 75u);
+    CHECK(candidate->failure_count == 0u);
+    CHECK(!candidate->hold_down_valid);
+    CHECK(candidate->hold_down_until_ms == 0u);
+    CHECK(route_selected(&anchor.upstream) == candidate);
+    CHECK(1410u < hold_down_until_ms);
+    return 0;
+}
+
+/*
+ * Build the explicit refusal a parent owes a sender it cannot serve: an ACK
+ * that names no accepted identity, states the parent's real depth and its
+ * remaining credit, and optionally says when to come back.
+ */
+static size_t build_refusal_hop_ack(struct proto_packet *ack,
+                                    uint8_t *payload,
+                                    size_t payload_cap,
+                                    uint64_t responder_id,
+                                    const struct pending_identity *identity,
+                                    uint8_t depth,
+                                    uint16_t retry_after_ms)
+{
+    struct mesh_ack_flow_control flow = {
+        .depth = depth,
+        .credit = 0u,
+        .retry_after_ms = retry_after_ms,
+        .depth_valid = true,
+        .credit_valid = true,
+        .retry_after_valid = retry_after_ms != 0u,
+    };
+    size_t offset = 0u;
+
+    if (mesh_append_requested_seq(payload,
+                                  payload_cap,
+                                  &offset,
+                                  identity->seq) != PROTO_OK ||
+        mesh_append_ack_flow_control(payload,
+                                     payload_cap,
+                                     &offset,
+                                     &flow) != PROTO_OK) {
+        return 0u;
+    }
+    memset(ack, 0, sizeof(*ack));
+    ack->msg_type = MSG_MESH_HOP_ACK;
+    ack->flags = 0u;
+    ack->src_id = responder_id;
+    ack->dst_id = identity->src_id;
+    ack->session_id = identity->session_id;
+    ack->seq = 3u;
+    ack->ttl = MESH_GATEWAY_ACK_TTL;
+    ack->payload_len = (uint16_t)offset;
+    return offset;
+}
+
+/*
+ * A parent that answers UNREACHABLE heard the frame and refused it.  The
+ * producer must keep the bytes, park that parent, move to the alternate, and
+ * spend none of its bounded RF retries on somebody else's routing problem.
+ */
+static int test_dead_end_ack_reselects_alternate(uint32_t seed,
+                                                 uint32_t now_ms)
+{
+    struct mesh_relay producer;
+    struct mesh_outbound initial;
+    struct pending_identity identity;
+    struct mesh_relay_result result;
+    struct proto_packet ack;
+    const struct route_candidate *primary;
+    uint8_t ack_payload[64];
+    size_t ack_payload_len;
+
+    test_ctx.scenario = "dead_end_reselects_alternate";
+    test_ctx.seed = seed;
+    test_ctx.phase = "setup";
+    if (start_pending_producer(&producer, true, now_ms, &initial,
+                               &identity) != 0) {
+        return 1;
+    }
+
+    test_ctx.phase = "dead_end_ack";
+    ack_payload_len = build_refusal_hop_ack(&ack,
+                                            ack_payload,
+                                            sizeof(ack_payload),
+                                            PRIMARY_PARENT_ID,
+                                            &identity,
+                                            MESH_ROUTE_DEPTH_UNREACHABLE,
+                                            0u);
+    CHECK(ack_payload_len > 0u);
+    CHECK(mesh_relay_handle_rx_with_random(&producer,
+                                           &ack,
+                                           ack_payload,
+                                           ack_payload_len,
+                                           PRIMARY_PARENT_ID,
+                                           90u,
+                                           now_ms + 40u,
+                                           seed,
+                                           &result) == PROTO_OK);
+    CHECK(has_action(&result, MESH_RELAY_ACTION_TX_HOP_DEFERRED));
+
+    test_ctx.phase = "custody_and_reselection";
+    CHECK(mesh_relay_tx_active(&producer));
+    CHECK(pending_payload_matches(&producer, &identity));
+    CHECK(producer.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    CHECK(producer.pending.next_hop_id == ALTERNATE_PARENT_ID);
+    CHECK(producer.pending.retry_after_ms == now_ms + 40u);
+    CHECK(!mesh_relay_upstream_poisoned(&producer));
+
+    test_ctx.phase = "no_rf_penalty";
+    primary = find_candidate(&producer, PRIMARY_PARENT_ID);
+    CHECK(primary != NULL);
+    CHECK(primary->failure_count == 0u);
+    CHECK(primary->hold_down_valid);
+    CHECK(primary->hold_down_until_ms ==
+          now_ms + 40u + MESH_PARENT_DEAD_END_HOLD_MS);
+    CHECK(primary->hop_count == MESH_ROUTE_DEPTH_UNREACHABLE);
+    return 0;
+}
+
+/*
+ * A parent that is routed but out of room says so.  Same parent, same route
+ * quality, no hold-down: only the schedule moves, by the amount it asked for.
+ */
+static int test_backpressure_ack_keeps_parent(uint32_t seed, uint32_t now_ms)
+{
+    struct mesh_relay producer;
+    struct mesh_outbound initial;
+    struct pending_identity identity;
+    struct mesh_relay_result result;
+    struct proto_packet ack;
+    const struct route_candidate *primary;
+    uint8_t ack_payload[64];
+    size_t ack_payload_len;
+    uint32_t delay_ms;
+
+    test_ctx.scenario = "backpressure_keeps_parent";
+    test_ctx.seed = seed;
+    test_ctx.phase = "setup";
+    if (start_pending_producer(&producer, true, now_ms, &initial,
+                               &identity) != 0) {
+        return 1;
+    }
+
+    test_ctx.phase = "backpressure_ack";
+    ack_payload_len = build_refusal_hop_ack(&ack,
+                                            ack_payload,
+                                            sizeof(ack_payload),
+                                            PRIMARY_PARENT_ID,
+                                            &identity,
+                                            1u,
+                                            300u);
+    CHECK(ack_payload_len > 0u);
+    CHECK(mesh_relay_handle_rx_with_random(&producer,
+                                           &ack,
+                                           ack_payload,
+                                           ack_payload_len,
+                                           PRIMARY_PARENT_ID,
+                                           90u,
+                                           now_ms + 40u,
+                                           seed,
+                                           &result) == PROTO_OK);
+    CHECK(has_action(&result, MESH_RELAY_ACTION_TX_HOP_DEFERRED));
+    CHECK(!has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
+
+    test_ctx.phase = "parent_unpenalised";
+    CHECK(mesh_relay_tx_active(&producer));
+    CHECK(pending_payload_matches(&producer, &identity));
+    CHECK(producer.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    CHECK(producer.pending.next_hop_id == PRIMARY_PARENT_ID);
+    CHECK(!mesh_relay_upstream_poisoned(&producer));
+    primary = find_candidate(&producer, PRIMARY_PARENT_ID);
+    CHECK(primary != NULL);
+    CHECK(primary->failure_count == 0u);
+    CHECK(!primary->hold_down_valid);
+
+    test_ctx.phase = "retry_after_honoured";
+    delay_ms = producer.pending.retry_after_ms - (now_ms + 40u);
+    CHECK(delay_ms >= 225u && delay_ms <= 375u);
+    return 0;
+}
+
 static int run_seed_set(const char *selection)
 {
     static const uint32_t seeds[] = {
@@ -579,6 +877,14 @@ static int run_seed_set(const char *selection)
             failed |= test_temporary_deferral_is_not_parent_failure(
                 seeds[i], start_times_ms[i]);
         }
+        if (selection == NULL || strcmp(selection, "dead_end") == 0) {
+            failed |= test_dead_end_ack_reselects_alternate(
+                seeds[i], start_times_ms[i]);
+        }
+        if (selection == NULL || strcmp(selection, "backpressure") == 0) {
+            failed |= test_backpressure_ack_keeps_parent(
+                seeds[i], start_times_ms[i]);
+        }
     }
     return failed;
 }
@@ -590,8 +896,12 @@ int main(int argc, char **argv)
     if (argc > 2 ||
         (selection != NULL && strcmp(selection, "no_alternate") != 0 &&
          strcmp(selection, "alternate") != 0 &&
+         strcmp(selection, "dead_end") != 0 &&
+         strcmp(selection, "backpressure") != 0 &&
          strcmp(selection, "deferral") != 0)) {
-        fprintf(stderr, "usage: %s [no_alternate|alternate|deferral]\n",
+        fprintf(stderr,
+                "usage: %s "
+                "[no_alternate|alternate|deferral|dead_end|backpressure]\n",
                 argv[0]);
         return 2;
     }
@@ -600,6 +910,10 @@ int main(int argc, char **argv)
     }
     if (selection == NULL &&
         test_parent_hold_down_survives_wrapped_zero_deadline() != 0) {
+        return 1;
+    }
+    if (selection == NULL &&
+        test_fresh_same_epoch_route_advertisement_reenables_parent() != 0) {
         return 1;
     }
     printf("mesh route recovery scenarios passed\n");

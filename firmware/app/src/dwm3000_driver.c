@@ -4,6 +4,7 @@
 #include "app_device_identity.h"
 #include "debug_log.h"
 #include "dwm3000_port.h"
+#include "dwm3000_timing.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -215,7 +216,35 @@ static atomic_t receive_abort_enabled;
  * acceptable on optimized DS-TWR delayed-RX legs because the receiver is armed
  * at a scheduled offset and still bounded by the frame wait timeout.
  */
+/*
+ * Same-channel PHY reconfigure without a hardware reset.  OFF: run20
+ * (logs/click_two_anchor_bench_20260903/run20) showed dwt_configure() failing
+ * on every attempt with DWT_ERROR and SYS_STATUS == 0 - 20 of 20 on anchor B,
+ * zero fast=1 markers across both anchors - so the attempt only added ~1 ms in
+ * front of the full reset it then had to do anyway.
+ *
+ * Cause: dwt_configure() clears SYS_STATUS CP_LOCK and then calls
+ * dwt_setdwstate(DWT_DW_IDLE), which only ORs the SEQ_CTRL auto-INIT2IDLE bit.
+ * That starts a PLL calibration on the IDLE_RC -> IDLE_PLL edge only.  A radio
+ * that is already in IDLE_PLL - either still awake, or woken from retained
+ * sleep with SEQ_CTRL restored from the AON array - has the bit set already,
+ * so no calibration runs, CP_LOCK never re-asserts, the six 20 us polls expire
+ * and dwt_configure() returns DWT_ERROR.  Re-enabling this needs
+ * dwt_setdwstate(DWT_DW_IDLE_RC) plus a dwt_checkidlerc() wait before
+ * dwt_configure(), which is exactly the precondition configure_radio_from_reset()
+ * gets for free from dwt_initialise(); that has not been proven on the bench.
+ */
+#define DWM3000_ENABLE_SAME_CHANNEL_FAST_SWITCH 0
 #define IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC 5u
+/*
+ * The preamble-detect timeout is counted in PACs, so the same PAC count means
+ * a different wall-clock acquisition budget on each PHY.  Five PACs of the
+ * channel-5 wake/range PHY (PAC16) is ~81 us; the mesh-control PHY runs PAC8,
+ * so it needs ten to keep the same tolerance for arming just before a sender
+ * starts.  Shortening the control preamble must change airtime, not how long
+ * an immediate receive is willing to hunt.
+ */
+#define CONTROL_RX_PREAMBLE_TIMEOUT_PAC 10u
 #define DELAYED_RX_PREAMBLE_TIMEOUT_PAC 0u
 #define DEFAULT_RESPONDER_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define DWM3000_SLEEP_MODE DWT_CONFIG
@@ -264,6 +293,30 @@ BUILD_ASSERT((DWM3000_SLEEP_WAKE_FLAGS & (DWT_WAKE_CSN | DWT_WAKE_WUP | DWT_SLP_
 #endif
 #ifndef DWM3000_WAKE_PHY_SFD_TIMEOUT
 #define DWM3000_WAKE_PHY_SFD_TIMEOUT DWM3000_PHY_SFD_TIMEOUT
+#endif
+/*
+ * Channel-5 mesh-control PHY (wake_mesh_control_config).  Mesh control frames
+ * are only ever exchanged between nodes that are already awake and listening -
+ * the gateway in continuous RX, or an anchor right after a wake train, a
+ * ranging burst or inside a post-burst listen window.  None of those receivers
+ * needs the 4096-symbol acquisition train the duty-cycled sniffers rely on, so
+ * this PHY keeps every wake-PHY field except the preamble, its matching PAC and
+ * the SFD timeout.  That removes 3126 us of SHR from every control frame
+ * (4185 us -> 1059 us).  The wake PHY itself stays at PLEN4096.
+ */
+#ifndef DWM3000_CONTROL_PHY_PREAMBLE_LENGTH
+#define DWM3000_CONTROL_PHY_PREAMBLE_LENGTH DWT_PLEN_1024
+#endif
+#ifndef DWM3000_CONTROL_PHY_RX_PAC
+/* Qorvo pairs PLEN1024 with PAC8; this is the same pairing the proven
+ * channel-9 payload PHY (DWM3000_MESH_PHY_*) already ships. */
+#define DWM3000_CONTROL_PHY_RX_PAC DWT_PAC8
+#endif
+#ifndef DWM3000_CONTROL_PHY_SFD_TIMEOUT
+/* PLEN 1024 + one SFD search symbol + the 16-symbol DW SFD - PAC8. The
+ * channel-9 tuple derives the same way but with its 8-symbol IEEE 4z SFD,
+ * so the two timeouts are not interchangeable. */
+#define DWM3000_CONTROL_PHY_SFD_TIMEOUT (1024u + 1u + 16u - 8u)
 #endif
 #ifndef DWM3000_PHY_STS_MODE
 #define DWM3000_PHY_STS_MODE DWT_STS_MODE_OFF
@@ -357,6 +410,19 @@ BUILD_ASSERT(DWM3000_STATUS_POLL_INTERVAL_US <= DS_TWR_RX_PATH_DELTA_US,
              "DWM3000 status polling must remain inside the equal-reply DS-TWR timing margin");
 BUILD_ASSERT(DWM3000_WAKE_PHY_SFD_TIMEOUT >= DWM3000_PHY_SFD_TIMEOUT,
              "wake/discovery open-window RX must not be shorter than the ranging SFD timeout");
+BUILD_ASSERT(DWM3000_CONTROL_PHY_PREAMBLE_LENGTH == DWT_PLEN_1024 &&
+             DWM3000_CONTROL_PHY_RX_PAC == DWT_PAC8 &&
+             DWM3000_CONTROL_PHY_SFD_TIMEOUT == 1033u,
+             "channel-5 mesh control PHY requires the PLEN1024/PAC8/DW16 SFD tuple");
+BUILD_ASSERT(DWM3000_CONTROL_PHY_PREAMBLE_LENGTH != DWM3000_PHY_PREAMBLE_LENGTH,
+             "the mesh control PHY exists to shorten the wake acquisition train");
+BUILD_ASSERT(DWM3000_CONTROL_PHY_SFD_TIMEOUT < DWM3000_WAKE_PHY_SFD_TIMEOUT,
+             "a shorter control preamble must shorten its SFD timeout as well");
+BUILD_ASSERT(DWM3000_TIMING_CH5_CONTROL_PREAMBLE_SYMBOLS == 1024u &&
+             DWM3000_TIMING_CH5_CONTROL_PAC_SYMBOLS == 8u &&
+             DWM3000_TIMING_CH5_CONTROL_SFD_TIMEOUT_SYMBOLS ==
+                 DWM3000_CONTROL_PHY_SFD_TIMEOUT,
+             "the airtime model must describe the shipped mesh control tuple");
 BUILD_ASSERT(DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS <= UINT16_MAX,
              "DS-TWR delayed-RX leading guard must fit DWM3000 timeout units");
 BUILD_ASSERT((DWM3000_CIR_ACCUM_SAMPLE_COUNT * DWM3000_CIR_SAMPLE_BYTES) + 1u ==
@@ -439,17 +505,23 @@ static dwt_config_t wake_config = {
     DWM3000_PHY_PDOA_MODE,
 };
 
+/*
+ * Differs from wake_config in exactly five fields: txPreambLength, rxPAC,
+ * sfdTO, phrMode and phrRate.  Channel, codes, PRF/SFD type, data rate, STS
+ * and PDoA stay identical so ensure_phy_mode() can retune this PHY with a
+ * plain dwt_configure() instead of a hardware reset.
+ */
 static dwt_config_t wake_mesh_control_config = {
     DWM3000_PHY_CHANNEL,
-    DWM3000_PHY_PREAMBLE_LENGTH,
-    DWM3000_PHY_RX_PAC,
+    DWM3000_CONTROL_PHY_PREAMBLE_LENGTH,
+    DWM3000_CONTROL_PHY_RX_PAC,
     DWM3000_PHY_TX_CODE,
     DWM3000_PHY_RX_CODE,
     DWM3000_PHY_SFD_TYPE,
     DWM3000_PHY_DATA_RATE,
     DWM3000_MESH_PHY_PHR_MODE,
     DWM3000_MESH_PHY_PHR_RATE,
-    DWM3000_WAKE_PHY_SFD_TIMEOUT,
+    DWM3000_CONTROL_PHY_SFD_TIMEOUT,
     DWM3000_PHY_STS_MODE,
     DWM3000_PHY_STS_LENGTH,
     DWM3000_PHY_PDOA_MODE,

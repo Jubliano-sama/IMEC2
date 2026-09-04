@@ -166,6 +166,39 @@
      UWB_SCHEDULED_RANGE_SPAN_MS)
 #define UWB_CLICK_DISCOVERY_DELAY_MS 20u
 #define UWB_CLICK_PRIORITY_EXTENSION_MS 300u
+/*
+ * After the DS-TWR burst, each selected anchor uploads its report in the
+ * schedule position the clicker assigned (gateway depth, then slot).  One
+ * slot covers a 300-byte extended-PHR frame plus the immediate ACK.
+ */
+#define MESH_CLICK_DELIVERY_SLOT_MS 50u
+/* The first delivery slot cannot open before the anchor's ranging window has
+ * closed, its report worker has started, and the radio is on the mesh-control
+ * PHY.  Every anchor adds the same lead so slot 0 is actually reachable. */
+#define MESH_CLICK_DELIVERY_LEAD_MS 30u
+/*
+ * Post-burst listen (Channel 5 Delivery Protocol section 5).
+ *
+ * Every anchor that received the range schedule stays in mesh-control RX
+ * from the start of the shared delivery window until the whole slot grid has
+ * drained plus a tail for the last hop ACK and one retransmit.  While that
+ * window is open a child whose next hop is a fellow participant skips the
+ * wake train entirely, which is the difference between a hop ACK inside
+ * ~20 ms and a 500-800 ms train that a duty-cycled parent may still miss.
+ */
+#define MESH_CLICK_DELIVERY_LISTEN_TAIL_MS 200u
+#define MESH_CLICK_DELIVERY_LISTEN_MS(schedule_len) \
+    (((uint32_t)(schedule_len) * MESH_CLICK_DELIVERY_SLOT_MS) + \
+     MESH_CLICK_DELIVERY_LISTEN_TAIL_MS)
+/*
+ * One continuous receive slice inside the listen window.  The window is
+ * rearmed immediately after each slice, so this only bounds how long the
+ * listener can hold the radio away from the report worker.  Half a delivery
+ * slot: the listener must never make this anchor miss its own slot boundary,
+ * and the radio stays configured on the mesh-control PHY between slices so
+ * the rearm gap is a wake-from-idle rather than a from-reset configure.
+ */
+#define MESH_CLICK_DELIVERY_LISTEN_SLICE_MS (MESH_CLICK_DELIVERY_SLOT_MS / 2u)
 #define UWB_CLICK_PRIORITY_LISTEN_EXTENSION_MS 900u
 #define UWB_CLICK_POST_WAKE_CLAIMED_DURATION_MS \
     (UWB_POST_WAKE_CLAIMED_DURATION_MS + \
@@ -225,6 +258,27 @@
      ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS ? \
      ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS : \
      ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS)
+/*
+ * Cost of one low-duty scan iteration that is not receive time: the anchor
+ * leaves retained sleep and reconfigures the DW3000 from mesh-control back to
+ * the standard-PHR wake PHY, which is a full from-reset configure.  Measured
+ * at ~21.5 ms on the bench (DBG_DWM_PHY_SWITCH from=4 to=2 fast=0), rounded
+ * up for the guard claim and low-power release around it.
+ */
+#define ANCHOR_UWB_SCAN_REARM_OVERHEAD_MS 40u
+/*
+ * A wake train aimed at a parent that did not take part in the click must
+ * survive that parent losing one whole scan opportunity, so it has to cover
+ * two complete scan periods (interval + rearm overhead + receive window).
+ * Bounded by the wire cap on wake_train_ends_in_ms.
+ */
+#define MESH_UPLINK_WAKE_TRAIN_SCAN_PERIODS 2u
+#define MESH_UPLINK_WAKE_TRAIN_MS_FOR_INTERVAL(interval_ms) \
+    MIN(UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS, \
+        MAX(WAKE_ADV_MS, \
+            MESH_UPLINK_WAKE_TRAIN_SCAN_PERIODS * \
+            ((uint32_t)(interval_ms) + ANCHOR_UWB_SCAN_REARM_OVERHEAD_MS + \
+             ANCHOR_UWB_SCAN_RX_MS)))
 #define ANCHOR_CLAIM_COLLECTION_MS 15u
 #define ANCHOR_FALSE_WAKE_COOLDOWN_MS 100u
 #define ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS 15u

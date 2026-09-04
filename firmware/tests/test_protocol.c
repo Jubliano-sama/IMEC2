@@ -1016,6 +1016,79 @@ static void test_unique_tlv_and_result_decoders_reject_duplicates(void)
                                              &decoded_eack) == PROTO_ERR_MALFORMED);
 }
 
+static void test_self_test_batch_hints_preserve_mandatory_schema(void)
+{
+    struct proto_packet packet = {
+        .msg_type = MSG_SELF_TEST_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = UINT64_C(0x1122334455667788),
+        .dst_id = UINT64_C(0x8877665544332211),
+        .session_id = UINT32_C(0x10001), .seq = 1u, .ttl = 4u,
+    };
+    uint8_t canonical[64];
+    uint8_t payload[96];
+    size_t canonical_len = 0u;
+    const uint8_t hints[] = {TLV_BATCH_PENDING, TLV_BATCH_REMAINING};
+
+    assert(tlv_append_u64(canonical, sizeof(canonical), &canonical_len,
+                         TLV_CLICKER_ID, packet.src_id) == PROTO_OK);
+    assert(tlv_append_u32(canonical, sizeof(canonical), &canonical_len,
+                         TLV_EVENT_SEQ, packet.session_id) == PROTO_OK);
+    assert(tlv_append_u16(canonical, sizeof(canonical), &canonical_len,
+                         TLV_ERROR_CODE, 0u) == PROTO_OK);
+    assert(tlv_append_u16(canonical, sizeof(canonical), &canonical_len,
+                         TLV_BATTERY_MV, 3000u) == PROTO_OK);
+
+    for (unsigned mask = 0u; mask < 4u; mask++) {
+        size_t len = canonical_len;
+        memcpy(payload, canonical, len);
+        for (unsigned i = 0u; i < 2u; i++) {
+            if ((mask & (1u << i)) != 0u) {
+                assert(tlv_append_u8(payload, sizeof(payload), &len,
+                                     hints[i], (uint8_t)(3u - i)) == PROTO_OK);
+            }
+        }
+        packet.payload_len = (uint16_t)len;
+        assert(proto_self_test_report_validate(&packet, payload, len) == PROTO_OK);
+    }
+
+    for (unsigned i = 0u; i < 2u; i++) {
+        size_t len = canonical_len;
+        memcpy(payload, canonical, len);
+        assert(tlv_append_u8(payload, sizeof(payload), &len, hints[i], 1u) == PROTO_OK);
+        assert(tlv_append_u8(payload, sizeof(payload), &len, hints[i], 1u) == PROTO_OK);
+        packet.payload_len = (uint16_t)len;
+        assert(proto_self_test_report_validate(&packet, payload, len) == PROTO_ERR_MALFORMED);
+
+        for (uint8_t width = 0u; width <= 2u; width += 2u) {
+            len = canonical_len;
+            memcpy(payload, canonical, len);
+            payload[len++] = hints[i];
+            payload[len++] = width;
+            memset(payload + len, 0, width);
+            len += width;
+            packet.payload_len = (uint16_t)len;
+            assert(proto_self_test_report_validate(&packet, payload, len) == PROTO_ERR_MALFORMED);
+        }
+    }
+
+    /* Optional hints must never satisfy any of the four required fields. */
+    for (size_t offset = 0u; offset < canonical_len;) {
+        size_t field_len = 2u + canonical[offset + 1u];
+        size_t len = canonical_len - field_len;
+        memcpy(payload, canonical, offset);
+        memcpy(payload + offset, canonical + offset + field_len,
+               canonical_len - offset - field_len);
+        assert(tlv_append_u8(payload, sizeof(payload), &len,
+                             TLV_BATCH_PENDING, 3u) == PROTO_OK);
+        assert(tlv_append_u8(payload, sizeof(payload), &len,
+                             TLV_BATCH_REMAINING, 0u) == PROTO_OK);
+        packet.payload_len = (uint16_t)len;
+        assert(proto_self_test_report_validate(&packet, payload, len) == PROTO_ERR_MALFORMED);
+        offset += field_len;
+    }
+}
+
 static void test_report_validators_reject_schema_smuggling_and_mismatch(void)
 {
     const uint64_t source_id = UINT64_C(0x1122334455667788);
@@ -1502,6 +1575,7 @@ int main(void)
     test_collection_eack_rejects_ambiguous_lists_and_schema_smuggling();
     test_unique_tlv_and_result_decoders_reject_duplicates();
     test_report_validators_reject_schema_smuggling_and_mismatch();
+    test_self_test_batch_hints_preserve_mandatory_schema();
     test_result_busy_disambiguates_alternate_from_correlation();
     test_gateway_host_receipt_identity_round_trip_and_strictness();
     test_gateway_local_command_result_validation();

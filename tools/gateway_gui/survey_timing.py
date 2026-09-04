@@ -15,7 +15,9 @@ SURVEY_MAX_HOPS = 8
 
 # Relays retain the complete gateway-origin, eight-depth, weak-fallback wave.
 # The gateway can release its local command owner at 20 s because the wave is
-# already in depth four and continues outward on its immutable clock.
+# already in depth four and continues outward on its immutable clock.  Allow
+# another three empirically observed seconds for terminal telemetry in the GUI
+# countdown; this estimate never controls the firmware or command deadline.
 ROUTE_DEPTH_BLOCK_MS = 4_500
 ROUTE_FULL_WAVE_BLOCKS = SURVEY_MAX_HOPS + 2
 ROUTE_FINAL_GUARD_MS = 150
@@ -23,7 +25,11 @@ ROUTE_FULL_WAVE_MS = (
     ROUTE_FULL_WAVE_BLOCKS * ROUTE_DEPTH_BLOCK_MS
     + ROUTE_FINAL_GUARD_MS
 )
-ROUTE_REFRESH_SCHEDULED_MS = 20_000
+ROUTE_REFRESH_NOMINAL_MS = 20_000
+ROUTE_REFRESH_TERMINAL_MARGIN_MS = 3_000
+ROUTE_REFRESH_SCHEDULED_MS = (
+    ROUTE_REFRESH_NOMINAL_MS + ROUTE_REFRESH_TERMINAL_MARGIN_MS
+)
 
 # Compact survey control and response timing.  The gateway command may spend
 # up to this long obtaining the first RF origin; later calculations begin at

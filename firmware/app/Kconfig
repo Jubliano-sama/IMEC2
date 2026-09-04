@@ -333,6 +333,19 @@ config IMEC_CLICK_HANDOFF_RTT_TRACE
 endmenu
 
 
+config IMEC_CLICK_DELIVERY_PARENT_LISTEN
+    bool "Post-burst channel-5 listen window for click-report delivery"
+    default y
+    help
+      Every anchor that received a range schedule stays in channel-5
+      mesh-control receive from the shared delivery window start until the
+      whole slot grid plus a tail has passed, admitting children's uplinks and
+      answering MSG_MESH_HOP_ACK immediately. A child whose next hop took part
+      in the same click then skips the wake train entirely.
+
+      Disable this to force every parent-hop uplink through a wake train, which
+      is what the wake-train bench overlay measures.
+
 config IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
     int "Anchor low-duty UWB wake scan interval in milliseconds"
     default 380

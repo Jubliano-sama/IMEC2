@@ -50,12 +50,45 @@ static bool mesh_direct_gateway_ack_matches_packet(const struct mesh_outbound *p
         return false;
     }
 
-    return app_mesh_direct_gateway_ack_matches(probe,
-                                               packet,
-                                               payload,
-                                               payload_len,
-                                               previous_hop_id,
-                                               GATEWAY_ID);
+    if (probe->next_hop_id == GATEWAY_ID) {
+        return app_mesh_direct_gateway_ack_matches(probe,
+                                                   packet,
+                                                   payload,
+                                                   payload_len,
+                                                   previous_hop_id,
+                                                   GATEWAY_ID);
+    }
+
+    if (previous_hop_id == probe->next_hop_id &&
+        packet->msg_type == MSG_MESH_HOP_ACK &&
+        packet->src_id == probe->next_hop_id &&
+        packet->dst_id == probe->packet.src_id) {
+        return true;
+    }
+
+    return false;
+}
+
+BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS >=
+             MESH_GATEWAY_DIRECT_PROBE_ACK_RX_SLICE_MS,
+             "the gateway ACK window must cover at least one continuous receive slice");
+BUILD_ASSERT(APP_MESH_PARENT_HOP_ACK_RX_MS >=
+             MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS,
+             "a low-duty parent hop must never wait less than the gateway");
+
+/*
+ * The gateway answers from its own receive turn; a parent anchor first has to
+ * hand the frame to its route thread. Sizing one wait for both would either
+ * hold the radio through hundreds of milliseconds of dead air on every direct
+ * upload or cut the parent hop off before it can answer.
+ */
+static uint32_t mesh_direct_gateway_ack_rx_window_ms(
+    const struct mesh_outbound *probe)
+{
+    if (probe != NULL && probe->next_hop_id != GATEWAY_ID) {
+        return APP_MESH_PARENT_HOP_ACK_RX_MS;
+    }
+    return MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS;
 }
 
 static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outbound *probe,
@@ -69,6 +102,7 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
     uint32_t deadline_ms;
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
     uint8_t timeout_slices = 0u;
+    bool rx_ret_first_arm = true;
     int result_ret = -ETIMEDOUT;
 
     if (probe == NULL) {
@@ -78,7 +112,7 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
         memset(debug, 0, sizeof(*debug));
     }
 
-    deadline_ms = k_uptime_get_32() + MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS;
+    deadline_ms = k_uptime_get_32() + mesh_direct_gateway_ack_rx_window_ms(probe);
     ARG_UNUSED(reason);
     while (true) {
         size_t frame_len = 0u;
@@ -100,7 +134,20 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
         memset(packet, 0, sizeof(*packet));
         slice_ms = MIN(remaining_ms, MESH_GATEWAY_DIRECT_PROBE_ACK_RX_SLICE_MS);
         rx_failure = DWM3000_RX_FAILURE_NONE;
-        rx_ret = dwm3000_driver_receive_frame_detailed_quiet(
+        if (timeout_slices == 0u && rx_ret_first_arm &&
+            probe->packet.msg_type == MSG_CLICK_REPORT &&
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            /* Turnaround from the report leaving the air to the receiver
+             * being armed for the gateway ACK; the ACK preamble is ~1 ms. */
+            status_debug_printf("DBG_CLICK_ACK_RX_ARM now=%u slice=%u seq=%u\n",
+                                now_ms, slice_ms, probe->packet.seq);
+            rx_ret_first_arm = false;
+        }
+        /* Continuous listen: the quiet receive arms a short preamble-detect
+         * timeout and re-arms in a loop, and the gaps between re-arms lose a
+         * 1024-symbol ACK preamble roughly one time in three.  The gateway's
+         * continuous receive has no such gaps. */
+        rx_ret = dwm3000_driver_receive_frame_continuous(
             slice_ms,
             frame,
             UWB_MESH_MAX_FRAME_LEN,
@@ -218,7 +265,7 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                 frame,
                 frame_len,
                 quality,
-                UWB_CHANNEL_MESH_PAYLOAD,
+                probe->radio_channel,
                 k_uptime_get_32(),
                 0u,
                 NULL,
@@ -266,6 +313,8 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
     struct radio_guard_uwb_lease radio_lease = {0};
     uint32_t ack_deadline_ms;
+    uint32_t click_tx_done_ms = 0u;
+    bool click_report = out != NULL && out->packet.msg_type == MSG_CLICK_REPORT;
     bool gateway_ack_required = false;
     bool ack_wait_started = false;
     bool keep_channel9_awake = false;
@@ -282,8 +331,9 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         memset(observation, 0, sizeof(*observation));
     }
     if (out == NULL ||
-        out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
-        out->next_hop_id != GATEWAY_ID) {
+        (out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
+         out->radio_channel != UWB_CHANNEL_WAKE_CONTACT) ||
+        out->next_hop_id == 0u) {
         return -EINVAL;
     }
 
@@ -297,10 +347,13 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         k_mutex_unlock(&mesh_send_scratch_lock);
         return ret;
     }
-
     uwb_window_start_ms = k_uptime_get();
-    ret = dwm3000_driver_configure_mesh_payload_mode();
-    mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
+    ret = (out->radio_channel == UWB_CHANNEL_WAKE_CONTACT) ?
+          dwm3000_driver_configure_wake_mesh_control_mode() :
+          dwm3000_driver_configure_mesh_payload_mode();
+    if (out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_DIRECT_GW_TX_CONFIG ret=%d now=%u seq=%u\n",
                             ret,
@@ -319,6 +372,21 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         functional_tx_completed = true;
         if (rf_sent != NULL) {
             *rf_sent = observation == NULL || observation->rf_started;
+        }
+        /*
+         * The click upload budget is measured from the frame leaving the air,
+         * not from the send call returning, so publish the radio's own
+         * completion stamp when the backend reported one.
+         */
+        if (observation != NULL && observation->tx_completed) {
+            click_tx_done_ms = (uint32_t)observation->tx_completed_at_ms;
+        } else {
+            click_tx_done_ms = k_uptime_get_32();
+        }
+        if (click_report && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CLICK_TX_DONE now=%u seq=%u\n",
+                                click_tx_done_ms,
+                                out->packet.seq);
         }
         mesh_relay_note_tx_sent(&mesh_runtime, out, k_uptime_get_32());
         fw_delivery_loss_note_sent(&mesh_delivery_loss, out);
@@ -362,6 +430,15 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
             status_debug_printf("DBG_DIRECT_GW_TX_ACK_WAIT ret=%d seq=%u\n",
                                 ack_ret,
                                 out->packet.seq);
+            if (click_report && ack_ret == 0 && ack_debug.matched &&
+                IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                uint32_t ack_rx_ms = (uint32_t)ack_debug.matched_at_ms;
+
+                status_debug_printf("DBG_CLICK_ACK_RX now=%u dms=%u seq=%u\n",
+                                    ack_rx_ms,
+                                    ack_rx_ms - click_tx_done_ms,
+                                    out->packet.seq);
+            }
             app_mesh_test_note_direct_gateway_ack(out->packet.seq,
                                                   ack_ret,
                                                   report_tx_queue_used());
@@ -436,10 +513,13 @@ static void mesh_init_direct_gateway_batch_plan(struct mesh_event_plan *plan,
         return;
     }
 
+    /* Delivery order is carried by each queued report's earliest_tx_ms
+     * (schedule position after ranging), not by re-deriving an offset from
+     * "now" on every worker pass, which could defer forever. */
     plan->action = MESH_EVENT_PLAN_START;
     plan->start_ms = now_ms;
     plan->window_ms = MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
-    plan->end_ms = now_ms + MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
+    plan->end_ms = plan->start_ms + MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
 }
 
 static int mesh_try_send_report_tx_ch9_direct_gateway_batch(

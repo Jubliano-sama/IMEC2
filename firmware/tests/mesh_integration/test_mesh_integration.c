@@ -266,7 +266,7 @@ static void test_single_relay_delivery(void)
     assert(count_transitions_for_message(&world,
                                          MESH_SIM_TRANSITION_TX_START,
                                          ANCHOR_1_ID,
-                                         MSG_GATEWAY_ACK_CONFIRM) >= 1u);
+                                         MSG_GATEWAY_ACK_CONFIRM) == 0u);
     assert(mesh_sim_count_transitions(&world,
                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                       ANCHOR_1_ID) == 1u);
@@ -285,7 +285,7 @@ static void test_single_relay_delivery(void)
     assert(delivery_transition != NULL);
     assert(delivery_transition->time_us > 200000u);
     assert(delivery_transition->time_us < 225000u);
-    assert(world.connections[child_connection].completed_events >= 4u);
+    assert(world.connections[child_connection].completed_events >= 2u);
     assert(world.connections[gateway_connection].completed_events >= 2u);
     assert_no_route_fallback(&world);
 }
@@ -374,7 +374,7 @@ static void test_two_relay_delivery(void)
     assert(count_transitions_for_message(&world,
                                          MESH_SIM_TRANSITION_TX_START,
                                          ANCHOR_2_ID,
-                                         MSG_GATEWAY_ACK_CONFIRM) >= 1u);
+                                         MSG_GATEWAY_ACK_CONFIRM) == 0u);
     assert(mesh_sim_count_transitions(&world,
                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                       ANCHOR_2_ID) == 1u);
@@ -757,9 +757,9 @@ static void test_click_preempts_transit_and_origin_retries(void)
     assert(preempted->time_us == 100000u);
 
     run_next_connection(&world, gateway_connection, false);
-    assert(world.roles[anchors[0]].relay.pending.state !=
+    assert(world.roles[anchors[0]].relay.pending.state ==
            MESH_RELAY_TX_IDLE);
-    assert(world.roles[anchors[0]].relay.pending.gateway_ack_confirm_pending);
+    assert(!world.roles[anchors[0]].relay.pending.gateway_ack_confirm_pending);
     timeout_ms = world.roles[transmitter].relay.pending.gateway_ack_deadline_ms;
     assert(timeout_ms > 100u);
     assert(mesh_sim_schedule_relay_tick(&world,

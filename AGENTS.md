@@ -57,18 +57,13 @@ The remaining build lines are not alternative production architectures:
 
 ## Flashing and Monitoring
 
-Direct `west flash` is not a deployment path for `mesh_clicker`, `mesh_anchor`, or `mesh_gateway`. The only supported deployment path is the repository-owned verified wrapper below:
+Flash mesh roles with `west flash`. Select the build and the currently connected probe for the intended role:
 
 ```sh
-.venv/bin/python firmware/scripts/flash_verified_mesh.py \
-  --build-dir build/mesh-anchor \
-  --hardware-manifest logs/stack-evidence/mesh-anchor-<capture-id>.json \
-  --probe-id E46070D247233537
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor -- --dev-id <probe-id> --frequency 4000000
 ```
 
-```sh
-.venv/bin/west flash --runner pyocd --build-dir build/mesh-transmitter-forcedhop -- --frequency 4000000
-```
+Use the normal sector erase so durable configuration survives. Check the build's RAM margin, then capture RTT and exercise the behavior changed by the firmware. A successful flash proves programming completed; enumeration, survey, and click delivery need their own observed results.
 
 With more than one probe attached, pass the probe ID to west after the runner separator: `-- --dev-id <probe-id> --frequency 4000000`. The shorter `-u <probe-id>` form belongs to direct `pyocd` commands such as RTT and must not be used as a west-flash argument.
 

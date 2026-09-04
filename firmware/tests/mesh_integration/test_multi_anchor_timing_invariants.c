@@ -703,7 +703,10 @@ static void test_maintained_normal_click_phy_and_capacity_contract(void)
     const struct dwm3000_phy_timing *range =
         dwm3000_timing_phy_profile(DWM3000_TIMING_PHY_CH5_RANGE);
 
-    CHECK(wake != NULL && range != NULL,
+    const struct dwm3000_phy_timing *control =
+        dwm3000_timing_phy_profile(DWM3000_TIMING_PHY_CH5_MESH_CONTROL);
+
+    CHECK(wake != NULL && range != NULL && control != NULL,
           "production channel-5 PHY profiles are unavailable");
     if (wake != NULL && range != NULL) {
         CHECK(wake->pac_symbols == 32u && range->pac_symbols == 32u,
@@ -711,6 +714,26 @@ static void test_maintained_normal_click_phy_and_capacity_contract(void)
         CHECK(wake->sfd_timeout_symbols == 4073u &&
                   range->sfd_timeout_symbols == 4073u,
               "production channel-5 PHY must use the documented 4073-symbol SFD timeout");
+        CHECK(wake->preamble_symbols == 4096u &&
+                  range->preamble_symbols == 4096u,
+              "duty-cycled sniffers still need the 4096-symbol wake train");
+    }
+    if (control != NULL) {
+        /*
+         * Mesh control frames only reach receivers that are already awake and
+         * listening, so this PHY runs a short acquisition train.  Pinning it
+         * here keeps the schedule geometry below honest about control airtime.
+         */
+        CHECK(control->preamble_symbols == 1024u && control->pac_symbols == 8u,
+              "channel-5 mesh control PHY must use the PLEN1024/PAC8 tuple");
+        CHECK(control->sfd_timeout_symbols == 1033u,
+              "channel-5 mesh control SFD timeout must follow its own preamble");
+        CHECK(dwm3000_timing_airtime_us_ceil(
+                  DWM3000_TIMING_PHY_CH5_MESH_CONTROL, 105u) == 2114u,
+              "a 105-byte gateway ACK must cost about 2 ms on the control PHY");
+        CHECK(dwm3000_timing_airtime_us_ceil(
+                  DWM3000_TIMING_PHY_CH5_MESH_CONTROL, 299u) == 3952u,
+              "a 299-byte click report must cost about 4 ms on the control PHY");
     }
     CHECK(UWB_NORMAL_CLICK_MAX_ANCHORS == 4u,
           "normal click schedules must cap selection at four anchors");

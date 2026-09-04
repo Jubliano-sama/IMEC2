@@ -60,9 +60,11 @@ int dwm3000_driver_configure_wake_mode(void)
 {
     int ret;
 
-    ret = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
-          configure_radio_from_reset(DWM3000_PHY_WAKE) :
-          ensure_phy_mode(DWM3000_PHY_WAKE);
+    /* Same-PHY re-entry reuses the active configuration; ensure_phy_mode()
+     * still takes the from-reset path for cross-PHY changes and after any
+     * invalidation.  A full re-init here cost ~30 ms per ACK and per RX
+     * slice on the gateway. */
+    ret = ensure_phy_mode(DWM3000_PHY_WAKE);
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_RESET_FAIL ret=%d\n", ret);
@@ -87,11 +89,23 @@ int dwm3000_driver_configure_range_mode(void)
 
 int dwm3000_driver_configure_wake_mesh_control_mode(void)
 {
+    /*
+     * The gateway re-enters this PHY before every receive arm and every
+     * causal ACK.  Sample the state that decides whether ensure_phy_mode()
+     * actually touches the radio, so the trace reports real transitions
+     * instead of adding a line to the debug channel on every arm; a silent
+     * success is by construction a no-op.
+     */
+    bool transition = !radio_configured || !radio_awake ||
+                      radio_state_unknown || radio_restored_from_sleep ||
+                      active_phy_mode != DWM3000_PHY_WAKE_MESH_CONTROL;
     int ret;
 
-    ret = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
-          configure_radio_from_reset(DWM3000_PHY_WAKE_MESH_CONTROL) :
-          ensure_phy_mode(DWM3000_PHY_WAKE_MESH_CONTROL);
+    /* Same-PHY re-entry reuses the active configuration; ensure_phy_mode()
+     * still takes the from-reset path for cross-PHY changes and after any
+     * invalidation.  A full re-init here cost ~30 ms per ACK and per RX
+     * slice on the gateway. */
+    ret = ensure_phy_mode(DWM3000_PHY_WAKE_MESH_CONTROL);
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_MESH_CTRL_FAIL ret=%d\n", ret);
@@ -99,6 +113,9 @@ int dwm3000_driver_configure_wake_mesh_control_mode(void)
         return ret;
     }
 
+    if (!transition) {
+        return 0;
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_DWM_WAKE_MESH_CTRL_OK sfd=%u\n",
                             (unsigned int)wake_mesh_control_config.sfdTO);
@@ -380,6 +397,39 @@ int dwm3000_driver_receive_frame(uint32_t timeout_ms,
                                                  NULL);
 }
 
+/*
+ * Bound on same-window receiver re-enables.  A single mesh-control window is
+ * hundreds of milliseconds and a foreign frame costs milliseconds, so this
+ * only stops a pathological status storm from spinning without ever handing
+ * control back to the caller's own recovery.
+ */
+#define DWM3000_RX_CHEAP_REARM_MAX 16u
+
+static bool rx_error_allows_cheap_reenable(bool continuous,
+                                           int ret,
+                                           uint32_t status,
+                                           uint16_t rearms_so_far)
+{
+    if (!continuous || ret != -EIO ||
+        rearms_so_far >= DWM3000_RX_CHEAP_REARM_MAX) {
+        return false;
+    }
+    /* receive_frame() only reports -EIO after it has forced RX off and
+     * cleared the terminal status, so re-enabling needs no extra teardown.
+     * Anything without a decodable-error status is left to the caller. */
+    switch (status_to_rx_failure(status)) {
+    case DWM3000_RX_FAILURE_SFD_TIMEOUT:
+    case DWM3000_RX_FAILURE_FRAME_TIMEOUT:
+    case DWM3000_RX_FAILURE_CRC_OR_PHY:
+        return true;
+    case DWM3000_RX_FAILURE_NONE:
+    case DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT:
+    case DWM3000_RX_FAILURE_BAD_FRAME:
+    default:
+        return false;
+    }
+}
+
 static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                                                uint16_t preamble_timeout_pac,
                                                uint8_t *frame,
@@ -399,6 +449,9 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     size_t payload_len;
     uint8_t rx_quality = 0u;
     int8_t rx_rsl_dbm = DWM3000_RSL_INVALID_DBM;
+    int64_t receive_deadline_ms;
+    uint32_t remaining_ms;
+    uint16_t recoverable_rearms = 0u;
     int ret;
 
     if (frame == NULL || frame_len == NULL || frame_cap == 0u || timeout_ms == 0u) {
@@ -421,37 +474,75 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
         return ret;
     }
 
-    dwt_setpreambledetecttimeout(preamble_timeout_pac);
-    dwt_setrxtimeout(0u);
-    clear_all_events();
-    ret = start_immediate_rx();
-    if (ret < 0) {
-        return ret;
-    }
-    if (timing != NULL) {
-        rx_enable_time32 = dwt_readsystimestamphi32();
-    }
-
+    receive_deadline_ms = k_uptime_get() + timeout_ms;
     if (allow_receive_abort) {
         atomic_set(&receive_abort_enabled, 1);
     }
-    last_rx_finfo_register = 0u;
-    ret = receive_frame(timeout_ms,
-                        &status,
-                        rx_buffer,
-                        sizeof(rx_buffer),
-                        &raw_len,
-                        timing == NULL ? NULL : &rx_timestamp,
-                        &rx_quality,
-                        &rx_rsl_dbm,
-                        NULL,
-                        NULL,
-                        NULL,
-                        NULL,
-                        NULL,
-                        NULL,
-                        NULL,
-                        rsl_dbm != NULL);
+
+    /*
+     * A foreign or corrupt frame is ordinary shared-spectrum weather, not a
+     * radio fault: receive_frame() has already forced RX off and cleared the
+     * terminal status by the time it reports one.  Re-enabling the receiver
+     * here keeps the caller's whole window listening, instead of unwinding
+     * through radio parking, lease release, PHY re-selection and a fresh arm
+     * for every neighbouring transmitter.  The caller still sees the pressure
+     * through the retained rearm count, so its storm re-init stays armed.
+     */
+    while (true) {
+        remaining_ms = remaining_timeout_ms(receive_deadline_ms);
+        if (remaining_ms == 0u) {
+            status = 0u;
+            ret = -ETIMEDOUT;
+            break;
+        }
+
+        dwt_setpreambledetecttimeout(preamble_timeout_pac);
+        dwt_setrxtimeout(0u);
+        clear_all_events();
+        ret = start_immediate_rx();
+        if (ret < 0) {
+            if (allow_receive_abort) {
+                atomic_set(&receive_abort_enabled, 0);
+            }
+            return ret;
+        }
+        if (timing != NULL) {
+            /* Sample every arm: rx_since_enable_uus must be measured from the
+             * enable that actually produced the frame, not from an earlier
+             * attempt a foreign frame ended. */
+            rx_enable_time32 = dwt_readsystimestamphi32();
+        }
+
+        last_rx_finfo_register = 0u;
+        ret = receive_frame(remaining_ms,
+                            &status,
+                            rx_buffer,
+                            sizeof(rx_buffer),
+                            &raw_len,
+                            timing == NULL ? NULL : &rx_timestamp,
+                            &rx_quality,
+                            &rx_rsl_dbm,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            rsl_dbm != NULL);
+        if (!rx_error_allows_cheap_reenable(allow_receive_abort,
+                                            ret,
+                                            status,
+                                            recoverable_rearms)) {
+            break;
+        }
+        /* Deliberately silent: one line per foreign frame is exactly the
+         * burst that overruns the debug channel.  The retained count is
+         * reported once per receive call by the caller's result trace and by
+         * driver_stats.rx_cheap_rearms. */
+        recoverable_rearms++;
+        driver_stats.rx_cheap_rearms++;
+    }
     {
         const dwt_config_t *config = config_for_phy(active_phy_mode);
 
@@ -461,6 +552,7 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
              * an unbounded diagnostic SPI transaction after timeout/error. */
             .rx_finfo = ret == 0 ? last_rx_finfo_register : 0u,
             .sfd_timeout = effective_sfd_timeout(config),
+            .recoverable_rearms = recoverable_rearms,
             .phy_mode = (uint8_t)active_phy_mode,
             .channel = config->chan,
             .preamble_length = config->txPreambLength,
@@ -934,7 +1026,8 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                           enum dwm3000_rx_failure *failure)
 {
     return receive_frame_with_preamble_timeout(timeout_ms,
-                                               IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC,
+                                               immediate_preamble_timeout_pac(
+                                                   active_phy_mode),
                                                frame,
                                                frame_cap,
                                                frame_len,
@@ -954,7 +1047,8 @@ int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
                                                 enum dwm3000_rx_failure *failure)
 {
     return receive_frame_with_preamble_timeout(timeout_ms,
-                                               IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC,
+                                               immediate_preamble_timeout_pac(
+                                                   active_phy_mode),
                                                frame,
                                                frame_cap,
                                                frame_len,

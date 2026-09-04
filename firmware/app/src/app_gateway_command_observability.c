@@ -256,6 +256,14 @@ int gateway_command_observability_prepare_with_sequence(
     if (state->lost_event_count < UINT16_MAX) {
         state->lost_event_count++;
     }
+    /*
+     * The terminal could not acquire bounded custody, so the active owner
+     * must fail closed.  Never leave its preceding progress snapshot eligible
+     * for reconnect replay: after the owner reaches a terminal boundary that
+     * snapshot is stale even when the terminal backlog is exhausted.
+     */
+    snapshot->valid = false;
+    snapshot->enqueue_pending = false;
     return -ENOSPC;
 }
 

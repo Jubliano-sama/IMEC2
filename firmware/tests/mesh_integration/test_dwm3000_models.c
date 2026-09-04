@@ -56,7 +56,20 @@ static void test_airtime_golden_vectors(void)
 {
     static const struct airtime_vector vectors[] = {
         {"channel-5-control", DWM3000_TIMING_PHY_CH5_MESH_CONTROL,
-         34u, UINT64_C(291299328), 4559u},
+         34u, UINT64_C(91545600), 1433u},
+        /*
+         * The gateway's 105-byte causal ACK and an anchor's 299-byte click
+         * report on the extended-PHR channel-5 control PHY.  With the former
+         * PLEN4096 acquisition train these were 5240 us and 7078 us, of which
+         * 4185 us was SHR; the control PHY now uses PLEN1024/PAC8, so the SHR
+         * checked below is 1059 us and the ACK costs 2114 us on air.  The
+         * bench must re-confirm DBG_MESH_TX_STAGE ACK start->complete near
+         * 2 ms against these numbers.
+         */
+        {"channel-5-control-gateway-ack", DWM3000_TIMING_PHY_CH5_MESH_CONTROL,
+         105u, UINT64_C(135061504), 2114u},
+        {"channel-5-control-click-report", DWM3000_TIMING_PHY_CH5_MESH_CONTROL,
+         299u, UINT64_C(252502016), 3952u},
         {"channel-9-ack", DWM3000_TIMING_PHY_CH9_MESH,
          49u, UINT64_C(102035456), 1597u},
         {"channel-9-81", DWM3000_TIMING_PHY_CH9_MESH,
@@ -94,6 +107,17 @@ static void test_airtime_golden_vectors(void)
 
     CHECK_U64(dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_WAKE),
               UINT64_C(267378688));
+    /* The mesh-control PHY keeps the wake channel and its 16-symbol DW SFD but
+     * shortens the acquisition train to 1024 symbols: its receivers are always
+     * already listening. */
+    CHECK_U64(dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_MESH_CONTROL),
+              UINT64_C(67624960));
+    CHECK_U64(dwm3000_timing_rctu_to_us_ceil(
+                  dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_MESH_CONTROL)),
+              1059u);
+    CHECK_U64(dwm3000_timing_rctu_to_us_ceil(
+                  dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_WAKE)),
+              4185u);
     CHECK_U64(dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH9_MESH),
               UINT64_C(67104768));
     CHECK_U64(dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH5_WAKE, 0u),
@@ -511,9 +535,64 @@ static void test_ds_twr_delayed_final_deadline(void)
     CHECK_TRUE(stalled_command_end_us >= stalled_deadline_us);
 }
 
+/*
+ * wake_mesh_control_config in dwm3000_driver.c is wake_config with five
+ * fields overridden: preamble length, PAC, SFD timeout, PHR mode and (with
+ * the extended PHR) the frame-length ceiling.  Everything the modeled airtime
+ * depends on besides those - channel and SFD length - must stay identical, or
+ * the two channel-5 PHYs no longer share a front end and ensure_phy_mode()'s
+ * same-channel reconfigure fast path would be retuning the radio behind the
+ * model's back.
+ */
+static void test_control_phy_differs_from_wake_only_where_intended(void)
+{
+    const struct dwm3000_phy_timing *wake =
+        dwm3000_timing_phy_profile(DWM3000_TIMING_PHY_CH5_WAKE);
+    const struct dwm3000_phy_timing *control =
+        dwm3000_timing_phy_profile(DWM3000_TIMING_PHY_CH5_MESH_CONTROL);
+
+    CHECK_TRUE(wake != NULL && control != NULL);
+    if (wake == NULL || control == NULL) {
+        return;
+    }
+
+    /* Shared front end. */
+    CHECK_INT(control->channel, wake->channel);
+    CHECK_INT(control->sfd_symbols, wake->sfd_symbols);
+
+    /* Intended differences. */
+    CHECK_INT(control->preamble_symbols, 1024);
+    CHECK_INT(wake->preamble_symbols, 4096);
+    CHECK_INT(control->pac_symbols, 8);
+    CHECK_TRUE(control->pac_symbols != wake->pac_symbols);
+    CHECK_INT(control->phr_mode, DWM3000_TIMING_PHR_EXTENDED);
+    CHECK_INT(wake->phr_mode, DWM3000_TIMING_PHR_STANDARD);
+    CHECK_TRUE(control->max_frame_bytes_without_fcs >
+               wake->max_frame_bytes_without_fcs);
+
+    /* sfdTO = preamble + one SFD search symbol + SFD - PAC, per PHY. */
+    CHECK_INT(control->sfd_timeout_symbols,
+              control->preamble_symbols + 1 + control->sfd_symbols -
+                  control->pac_symbols);
+    CHECK_INT(control->sfd_timeout_symbols, 1033);
+
+    /* The whole point: the control acquisition train is a quarter of the wake
+     * train, and the shared SFD costs the same on both. */
+    CHECK_U64(dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_MESH_CONTROL) *
+                  4u,
+              dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
+    CHECK_U64(dwm3000_timing_sfd_rctu(DWM3000_TIMING_PHY_CH5_MESH_CONTROL),
+              dwm3000_timing_sfd_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
+
+    /* The range PHY keeps the long acquisition train. */
+    CHECK_U64(dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_RANGE),
+              dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
+}
+
 int main(void)
 {
     test_airtime_golden_vectors();
+    test_control_phy_differs_from_wake_only_where_intended();
     test_delayed_tx_and_rounding();
     test_runtime_legal_sequence_and_delays();
     test_runtime_rejects_illegal_order_and_overlap();

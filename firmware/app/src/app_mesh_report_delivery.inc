@@ -35,7 +35,13 @@ static int mesh_try_send_report_tx_ch9_batch(void)
     }
 
     now_ms = k_uptime_get_32();
-    if (!mesh_outbound_ready_for_tx(first, now_ms)) {
+    /* A report that owns a delivery slot opening within one PHY-configure
+     * guard is ready: the uplink path configures the radio first and then
+     * waits for the exact slot boundary itself. */
+    if (!mesh_outbound_ready_for_tx(
+            first,
+            first->packet.msg_type == MSG_CLICK_REPORT ?
+                now_ms + MESH_CLICK_SLOT_WAKE_LEAD_MS : now_ms)) {
         return -EAGAIN;
     }
 
@@ -62,6 +68,10 @@ static int mesh_try_send_report_tx_ch9_batch(void)
         (first->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
     if (direct_gateway_batch) {
         mesh_init_direct_gateway_batch_plan(&plan, now_ms);
+        if (now_ms < plan.start_ms) {
+            report_tx_schedule(plan.start_ms - now_ms);
+            return -EALREADY;
+        }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_IMMEDIATE now=%u start=%u end=%u q=%u max=%u reserve=%u\n",
                                 now_ms,
@@ -549,28 +559,17 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
     bool response_priority;
     bool route_adv_lane;
     bool send_wake_train;
+    uint32_t pending_delay_ms = 0u;
     struct app_mesh_flood_result result = {0};
+    int schedule_ret;
     int ret;
 
     ARG_UNUSED(work);
 
     if (mesh_transport_paused()) {
-        /*
-         * The transport can pause after a caller decides to defer a flood but
-         * before this worker runs.  Transport resume normally submits the
-         * worker, but it may have completed just before the deferred record was
-         * stored.  Keep an independent delayed owner so that race cannot strand
-         * a gateway command indefinitely.
-         */
-        k_mutex_lock(&mesh_c5_flood_deferred_lock, K_FOREVER);
-        current_generation = mesh_c5_flood_deferred.valid ||
-                             mesh_route_adv_deferred.valid;
-        k_mutex_unlock(&mesh_c5_flood_deferred_lock);
-        if (current_generation) {
-            (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
-                                             0u,
-                                             "paused-c5-flood");
-        }
+        /* Pause cancellation deliberately transfers every valid deferred
+         * generation to mesh_transport_resume(). Scheduling here would only
+         * produce pause-owned -ESHUTDOWN and no independent worker. */
         return;
     }
 
@@ -583,6 +582,18 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
     }
 
     route_adv_lane = entry == &mesh_route_adv_deferred;
+    if (!mesh_c5_flood_deferred_entry_due(entry, k_uptime_get_32())) {
+        pending_delay_ms = mesh_c5_flood_next_delay_locked(k_uptime_get_32());
+        schedule_ret = mesh_reschedule_owned_work(&mesh_c5_flood_work,
+                                                  pending_delay_ms,
+                                                  "c5-flood-not-due");
+        k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+        if (schedule_ret < 0) {
+            mesh_c5_flood_schedule_loss_fail_stop(
+                schedule_ret, "c5-flood-not-due");
+        }
+        return;
+    }
     generation = entry->generation;
     outbound = entry->outbound;
     purpose = entry->purpose;
@@ -614,10 +625,19 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
         if (current_generation && local_deferral &&
             k_uptime_get_32() - entry->queued_at_ms <
                 MESH_C5_LOCAL_DEFER_MAX_AGE_MS) {
-            (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
-                                             MESH_C5_LOCAL_DEFER_RETRY_MS,
-                                             "c5-flood-local-defer");
+            mesh_c5_flood_deferred_schedule_after_locked(
+                entry,
+                k_uptime_get_32(),
+                MESH_C5_LOCAL_DEFER_RETRY_MS);
+            schedule_ret = mesh_reschedule_owned_work(
+                &mesh_c5_flood_work,
+                mesh_c5_flood_next_delay_locked(k_uptime_get_32()),
+                "c5-flood-local-defer");
             k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+            if (schedule_ret < 0) {
+                mesh_c5_flood_schedule_loss_fail_stop(
+                    schedule_ret, "c5-flood-local-defer");
+            }
             return;
         }
         if (current_generation && !local_deferral &&
@@ -625,10 +645,17 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
             retry_ms = mesh_c5_flood_deferred_retry_ms(
                 &outbound, &entry->rf_retry);
             entry->retry_count++;
-            (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
-                                             retry_ms,
-                                             "c5-flood-retry");
+            mesh_c5_flood_deferred_schedule_after_locked(
+                entry, k_uptime_get_32(), retry_ms);
+            schedule_ret = mesh_reschedule_owned_work(
+                &mesh_c5_flood_work,
+                mesh_c5_flood_next_delay_locked(k_uptime_get_32()),
+                "c5-flood-retry");
             k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+            if (schedule_ret < 0) {
+                mesh_c5_flood_schedule_loss_fail_stop(
+                    schedule_ret, "c5-flood-retry");
+            }
             return;
         }
         k_mutex_unlock(&mesh_c5_flood_deferred_lock);
@@ -650,6 +677,10 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
     }
     pending_after = mesh_c5_flood_deferred.valid ||
                     mesh_route_adv_deferred.valid;
+    if (pending_after) {
+        pending_delay_ms = mesh_c5_flood_next_delay_locked(
+            k_uptime_get_32());
+    }
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
 
     if (ret == 0 && result.sent_count > 0u) {
@@ -662,9 +693,13 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
                 k_uptime_get_32() - queued_at_ms);
     }
     if (pending_after) {
-        (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
-                                         0u,
-                                         "c5-flood-next-lane");
+        schedule_ret = mesh_reschedule_owned_work(&mesh_c5_flood_work,
+                                                  pending_delay_ms,
+                                                  "c5-flood-next-lane");
+        if (schedule_ret < 0) {
+            mesh_c5_flood_schedule_loss_fail_stop(
+                schedule_ret, "c5-flood-next-lane");
+        }
     }
 }
 
@@ -1719,7 +1754,8 @@ bool mesh_report_tx_backlog_active(void)
         range_batch_active = anchor_range_report_batch_reservation.active;
         k_mutex_unlock(&report_tx_queue_overflow_lock);
     }
-    return range_batch_active || app_mesh_report_encode_cir_pending() ||
+    return range_batch_active || mesh_c5_tx_bank_owned ||
+           app_mesh_report_encode_cir_pending() ||
            report_tx_queue_used() > 0u ||
            mesh_ch9_tx_pending_is_active();
 #else
@@ -1826,7 +1862,7 @@ static void report_tx_work_handler(struct k_work *work)
     anchor_busy = anchor_uwb_window_active();
     ch9_ack_send_pending =
         app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table);
-    report_queue_pending = report_tx_queue_used() > 0u;
+    report_queue_pending = report_tx_queue_used() > 0u || mesh_c5_tx_bank_owned;
     rx_queue_pending = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                         k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
     route_handoff_active = mesh_route_reply_handoff_active();
@@ -1846,14 +1882,17 @@ static void report_tx_work_handler(struct k_work *work)
                 return;
             }
             if (ch9_ack_send_pending) {
-                mesh_schedule_uwb_rx(0u);
+                (void)mesh_schedule_uwb_rx(0u);
             }
             report_tx_schedule(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         }
         return;
     }
 
-    ret = mesh_try_send_report_tx_ch9_batch();
+    ret = mesh_c5_try_batch();
+    if (ret == -ENOTSUP) {
+        ret = mesh_try_send_report_tx_ch9_batch();
+    }
     if (ret == 0) {
         return;
     }
@@ -1862,6 +1901,25 @@ static void report_tx_work_handler(struct k_work *work)
         return;
     }
     if (ret == -EALREADY) {
+        return;
+    }
+    if (ret == -EAGAIN && report_tx_queue_peek(outbound) == 0 &&
+        outbound->earliest_tx_valid) {
+        /* Not an RF failure: the head report simply owns a delivery slot
+         * that has not opened yet.  Wake exactly one PHY-configure guard
+         * before it instead of drawing a random RF-retry delay, which made
+         * anchors miss their slot boundary and fall to a later grid cycle. */
+        uint32_t now_ms = k_uptime_get_32();
+        uint32_t wake_ms = outbound->earliest_tx_ms - MESH_CLICK_SLOT_WAKE_LEAD_MS;
+        uint32_t delay_ms = uptime_deadline_reached(now_ms, wake_ms) ?
+                            1u : (wake_ms - now_ms);
+
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_REPORT_TX_SLOT_WAIT now=%u earliest=%u delay=%u seq=%u\n",
+                                now_ms, outbound->earliest_tx_ms, delay_ms,
+                                outbound->packet.seq);
+        }
+        report_tx_schedule(delay_ms);
         return;
     }
     if (mesh_send_failure_retryable(ret) &&
@@ -1879,6 +1937,10 @@ static void report_tx_work_handler(struct k_work *work)
         app_mesh_test_note_report_tx_backoff(outbound->packet.seq,
                                              ret,
                                              retry_delay_ms);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_REPORT_TX_BACKOFF_CAUSE ret=%d seq=%u\n",
+                                ret, outbound->packet.seq);
+        }
         report_tx_schedule_backoff(retry_delay_ms, "report-batch-send");
         return;
     }
@@ -1888,21 +1950,15 @@ static void report_tx_work_handler(struct k_work *work)
         return;
     }
 
-    {
-        uint16_t queue_depth = (uint16_t)report_tx_queue_used();
-        uint16_t custody_depth = (uint16_t)(mesh_ch9_tx_pending.count +
-            (mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u));
-
-        if ((outbound->packet.flags & FLAG_COUNT_AS_CLICK) != 0u) {
-            app_stack_workload_diag_click_sample(&outbound->packet,
-                                                 queue_depth, custody_depth);
-        }
-        app_stack_workload_diag_cir_sample(&outbound->packet, queue_depth,
-                                           custody_depth);
-    }
-
+    /* The admit-time sample already covers this run; a second pre-TX sample
+     * only consumed deferred-queue slots.  A click report that owns a
+     * delivery slot is ready one PHY-configure guard early: the uplink path
+     * configures the radio first and then waits for the exact boundary. */
     now_ms = k_uptime_get_32();
-    if (!mesh_outbound_ready_for_tx(outbound, now_ms)) {
+    if (!mesh_outbound_ready_for_tx(
+            outbound,
+            outbound->packet.msg_type == MSG_CLICK_REPORT ?
+                now_ms + MESH_CLICK_SLOT_WAKE_LEAD_MS : now_ms)) {
         (void)report_tx_queue_abort_head(&head_token);
         report_tx_schedule(uptime_ms_until_deadline(now_ms, outbound->earliest_tx_ms));
         return;
@@ -2167,6 +2223,10 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     int ret;
 
     queued = *outbound;
+    /* A relay starts a new physical attempt, with its own backlog/credit. */
+    if (mesh_outbound_clear_ch9_batch_metadata(&queued) != PROTO_OK) {
+        return -EBADMSG;
+    }
     mesh_outbound_refresh_age(&queued, k_uptime_get_32());
     mesh_attach_paused_delivery_loss(&queued, "queue-anchor-report");
     queued_local_priority = mesh_outbound_is_local_origin_priority(&queued);
@@ -3300,6 +3360,34 @@ static inline bool mesh_selected_relay_parent_needs_channel9_repair(
 #endif
 }
 
+/*
+ * End of the synchronous first-hop ACK window this sender actually listened
+ * through, measured from the physical send rather than from the moment the
+ * receive turn ended: an ACK slice cut short by another owner's frame must
+ * still leave the complete APP_MESH_DIRECT_GATEWAY_ACK_RX_MS window intact.
+ */
+static uint32_t mesh_direct_gateway_ack_window_end_ms(
+    const struct mesh_outbound *out,
+    const struct app_mesh_tx_observation *observation)
+{
+    uint32_t sent_ms = k_uptime_get_32();
+    /* A parent anchor answers with MSG_MESH_HOP_ACK only after its deferred
+     * mesh RX handoff; the gateway answers within a few ms.  Use the same
+     * per-hop window the ACK receive loop uses so the relay core's deadline
+     * matches how long the sender actually listened. */
+    uint32_t window_ms = (out != NULL && out->next_hop_id != GATEWAY_ID) ?
+                         APP_MESH_PARENT_HOP_ACK_RX_MS :
+                         MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS;
+
+    if (observation != NULL && observation->tx_completed) {
+        sent_ms = (uint32_t)observation->tx_completed_at_ms;
+    } else if (observation != NULL && observation->rf_started) {
+        sent_ms = (uint32_t)observation->rf_started_at_ms;
+    }
+
+    return sent_ms + window_ms + MESH_GATEWAY_DIRECT_PROBE_ACK_GUARD_MS;
+}
+
 static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                        uint8_t received_radio_channel,
                                        const struct mesh_rx_pending *rx,
@@ -3354,6 +3442,67 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
          * outcome without attempting a same-turn send. */
         int ret = -EAGAIN;
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+        if (received_radio_channel == UWB_CHANNEL_WAKE_CONTACT) {
+            const uint64_t ack_deadline_ms = (uint64_t)k_uptime_get() +
+                MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS;
+
+            gateway_ack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+            gateway_ack->earliest_tx_ms = 0u;
+            gateway_ack->earliest_tx_valid = false;
+            /* Causal reply: publishes the RX-to-control handoff and may
+             * transmit while later RX items are still queued, because the
+             * sender's ACK window is far shorter than draining a backlog. */
+            if (mesh_c5_collect_ack(gateway_ack, rx)) {
+                if (gateway_ack_handed_off != NULL) {
+                    *gateway_ack_handed_off = true;
+                }
+                goto after_gateway_ack;
+            }
+            ret = mesh_send_causal_channel9_response(
+                gateway_ack, "gateway-ack-c5", NULL);
+            /* dms is the receive-to-ACK latency this path exists to shrink:
+             * the frame's arrival stamp to the moment its ACK left the RF. */
+            status_debug_printf("DBG_GATEWAY_ACK_SEND ret=%d seq=%u dst=0x%llx next=0x%llx rx=%u dms=%u\n",
+                                ret,
+                                gateway_ack->packet.seq,
+                                (unsigned long long)gateway_ack->packet.dst_id,
+                                (unsigned long long)gateway_ack->next_hop_id,
+                                rx == NULL ? 0u : rx->received_at_ms,
+                                rx == NULL ? 0u :
+                                    k_uptime_get_32() - rx->received_at_ms);
+            if (ret == 0) {
+                if (gateway_ack_handed_off != NULL) {
+                    *gateway_ack_handed_off = true;
+                }
+                mesh_relay_note_tx_sent(&mesh_runtime,
+                                        gateway_ack,
+                                        k_uptime_get_32());
+                mesh_c5_capture_followers(gateway_ack, rx);
+                goto after_gateway_ack;
+            }
+            /* The radio was busy in this turn; node communication owns the
+             * bounded retry while the sender keeps its own retry clock. */
+            ret = app_node_comm_submit_control_response(
+                gateway_ack,
+                ack_deadline_ms,
+                gateway_ack->packet.seq);
+            status_debug_printf("DBG_GATEWAY_ACK_QUEUE ret=%d seq=%u dst=0x%llx next=0x%llx\n",
+                                ret,
+                                gateway_ack->packet.seq,
+                                (unsigned long long)gateway_ack->packet.dst_id,
+                                (unsigned long long)gateway_ack->next_hop_id);
+            if (ret < 0) {
+                LOG_WRN("gateway ACK communication admission failed; sender retains custody: ret=%d dst=0x%016llx seq=%u",
+                        ret,
+                        (unsigned long long)gateway_ack->packet.dst_id,
+                        gateway_ack->packet.seq);
+            } else if (gateway_ack_handed_off != NULL) {
+                *gateway_ack_handed_off = true;
+            }
+            goto after_gateway_ack;
+        }
+#endif
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             DEVICE_ROLE == ROLE_GATEWAY &&
             received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
@@ -3375,8 +3524,8 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
 
             if (meta_ret == PROTO_OK && batch_metadata.present) {
                 gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
-                mesh_ch9_ack_batch_queue(gateway_ack, rx);
-                if (gateway_ack_handed_off != NULL) {
+                ret = mesh_ch9_ack_batch_queue(gateway_ack, rx);
+                if (ret == 0 && gateway_ack_handed_off != NULL) {
                     /* Route-test batch admission is the radio owner for this
                      * ACK. The queue helper validates the exact packet and
                      * keeps duplicate entries idempotent. */
@@ -3390,7 +3539,7 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                     rx->packet.seq,
                                     gateway_ack->packet.seq,
                                     (unsigned long long)gateway_ack->next_hop_id);
-                if (batch_metadata.final_packet) {
+                if (ret == 0 && batch_metadata.final_packet) {
                     ret = mesh_send_current_ch9_ack_batch(
                         gateway_ack->next_hop_id,
                         "gateway-batch-ack-final");
@@ -3497,9 +3646,9 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
         app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
         if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_QUEUE_ROUTE_TEST_ACK) {
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
-            mesh_ch9_ack_batch_queue(gateway_ack, rx);
+            ret = mesh_ch9_ack_batch_queue(gateway_ack, rx);
             if (gateway_ack_handed_off != NULL) {
-                *gateway_ack_handed_off = true;
+                *gateway_ack_handed_off = ret == 0;
             }
             goto after_gateway_ack;
         }
@@ -3849,20 +3998,54 @@ after_gateway_ack:
         handoff_status.hop_ack_allowed) {
         struct mesh_outbound *hop_ack = &result->hop_ack;
 
+        if (mesh_c5_collect_ack(hop_ack, rx)) {
+            goto after_hop_ack;
+        }
         if (received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
             IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             hop_ack->radio_channel = MESH_EVENT_CHANNEL;
-            mesh_ch9_ack_batch_queue(hop_ack, rx);
+            (void)mesh_ch9_ack_batch_queue(hop_ack, rx);
         } else if (received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
             hop_ack->radio_channel = MESH_EVENT_CHANNEL;
             if (mesh_send_outbound(hop_ack, "hop-ack") == 0) {
                 mesh_relay_note_tx_sent(&mesh_runtime, hop_ack, k_uptime_get_32());
             }
-        } else if (mesh_send_outbound_causal_response(
-                       hop_ack, "hop-ack") == 0) {
-            mesh_relay_note_tx_sent(&mesh_runtime, hop_ack, k_uptime_get_32());
+        } else {
+            uint32_t hop_ack_at_ms = k_uptime_get_32();
+            uint32_t hop_ack_dms = rx == NULL ? 0u :
+                hop_ack_at_ms - rx->received_at_ms;
+            int hop_ack_ret;
+
+            /*
+             * Same fixed channel-5 turnaround the gateway uses: with a
+             * 1024-symbol ACK preamble the responder must not transmit before
+             * the sender's receiver is provably armed.  Only the remainder of
+             * the guard is ever slept, so a drain that already took longer
+             * than MESH_GATEWAY_C5_ACK_GUARD_MS pays nothing.
+             */
+            if (rx != NULL && hop_ack_dms < MESH_GATEWAY_C5_ACK_GUARD_MS) {
+                k_msleep(MESH_GATEWAY_C5_ACK_GUARD_MS - hop_ack_dms);
+                hop_ack_at_ms = k_uptime_get_32();
+                hop_ack_dms = hop_ack_at_ms - rx->received_at_ms;
+            }
+            hop_ack_ret = mesh_send_outbound_causal_response(hop_ack,
+                                                             "hop-ack");
+            status_debug_printf("DBG_HOP_ACK_TX at=%u dms=%u src=0x%llx seq=%u ret=%d\n",
+                                hop_ack_at_ms,
+                                hop_ack_dms,
+                                (unsigned long long)(rx == NULL ?
+                                    hop_ack->packet.dst_id :
+                                    rx->packet.src_id),
+                                hop_ack->packet.seq,
+                                hop_ack_ret);
+            if (hop_ack_ret == 0) {
+                mesh_relay_note_tx_sent(&mesh_runtime, hop_ack,
+                                        k_uptime_get_32());
+                mesh_c5_capture_followers(hop_ack, rx);
+            }
         }
     }
+after_hop_ack:
     if (route_reply_downstream_handoff_required) {
         route_reply_downstream_handoff_acked =
             mesh_send_route_reply_action(result, "route-reply-action");
@@ -4057,12 +4240,14 @@ after_gateway_ack:
                                PROTO_OK : PROTO_ERR_NOT_FOUND;
             mesh_fill_channel5_requirements(&requirements);
             (void)mesh_expire_channel9_timings(now_ms, "retransmit");
+            /* Every gateway-bound retransmit uses the channel-5 uplink: one
+             * frame plus an immediate ACK, preceded by a wake train when the
+             * next hop is a low-duty parent anchor. */
             direct_gateway_retransmit =
                 IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                 DEVICE_ROLE != ROLE_GATEWAY &&
                 retransmit->packet.dst_id == GATEWAY_ID &&
-                debug_select_ret == PROTO_OK &&
-                debug_next_hop == GATEWAY_ID;
+                debug_select_ret == PROTO_OK;
             if (direct_gateway_retransmit) {
                 plan.action = MESH_EVENT_PLAN_START;
                 plan.start_ms = now_ms;
@@ -4253,14 +4438,12 @@ after_gateway_ack:
                                     &mesh_runtime,
                                     retransmit->packet.dst_id,
                                     &selected_after_repair);
-                            bool topology_route_changed =
-                                mesh_outbound_is_topology_operation_uplink(
-                                    retransmit) &&
-                                (select_after_repair != PROTO_OK ||
-                                 selected_after_repair != debug_next_hop);
+                            bool selected_route_changed =
+                                select_after_repair != PROTO_OK ||
+                                selected_after_repair != debug_next_hop;
                             bool retain_known_parent = false;
 
-                            if (topology_route_changed) {
+                            if (selected_route_changed) {
                                 defer_ret = mesh_relay_note_retransmit_deferred(
                                     &mesh_runtime,
                                     retransmit,
@@ -4288,22 +4471,28 @@ after_gateway_ack:
                                         contact_action ==
                                         APP_MESH_KNOWN_PARENT_CONTACT_RETRY;
                                     if (retain_known_parent) {
+                                        uint32_t contact_retry_delay_ms =
+                                            mesh_parent_contact_retry_delay_ms(
+                                                debug_next_hop,
+                                                hard_failure_count);
+
                                         defer_ret =
                                             mesh_relay_note_retransmit_deferred(
                                                 &mesh_runtime,
                                                 retransmit,
                                                 failure_now_ms +
-                                                    RELAY_BUSY_RETRY_MIN_MS);
+                                                    contact_retry_delay_ms);
                                         status_debug_printf(
-                                            "DBG_KNOWN_PARENT_CONTACT_RETRY peer=0x%llx failure=%u/%u seq=%u phase=retransmit\n",
+                                            "DBG_KNOWN_PARENT_CONTACT_RETRY peer=0x%llx failure=%u/%u delay=%u seq=%u phase=retransmit\n",
                                             (unsigned long long)debug_next_hop,
                                             hard_failure_count,
                                             MESH_KNOWN_PARENT_CONTACT_RETRIES,
+                                            contact_retry_delay_ms,
                                             retransmit->packet.seq);
                                     }
                                 }
                             }
-                            if (!topology_route_changed &&
+                            if (!selected_route_changed &&
                                 !retain_known_parent) {
                                 downstream_peer_count =
                                     mesh_capture_downstream_channel9_peers(
@@ -4325,7 +4514,7 @@ after_gateway_ack:
                                         "parent-route-failed");
                                 }
                             }
-                            if (!topology_route_changed &&
+                            if (!selected_route_changed &&
                                 !retain_known_parent &&
                                 failure_ret == PROTO_OK &&
                                 (failure_actions &
@@ -4333,7 +4522,7 @@ after_gateway_ack:
                                 (void)mesh_schedule_route_request(
                                     retransmit->packet.dst_id,
                                     "retransmit-event-repair-failed");
-                            } else if (!topology_route_changed &&
+                            } else if (!selected_route_changed &&
                                        !retain_known_parent &&
                                        failure_ret != PROTO_OK) {
                                 status_debug_note(
@@ -4381,6 +4570,7 @@ after_gateway_ack:
             uint32_t backend_delivery_generation = 0u;
             bool backend_rf_started = false;
             bool backend_terminal = false;
+            bool direct_gateway_ack_wait_owned = false;
             int backend_ret =
                 app_node_comm_backend_retry_preflight_with_generation(
                     &retransmit->packet,
@@ -4416,16 +4606,46 @@ after_gateway_ack:
                 send_ret = backend_ret;
             } else {
                 if (direct_gateway_retransmit) {
-                    send_ret = mesh_send_direct_gateway_payload_and_wait_ack(
-                        retransmit,
-                        "retransmit-direct-gateway",
-                        &plan,
-                        plan.start_ms,
-                        plan.start_ms,
-                        false,
-                        &backend_rf_started,
-                        backend_deadline_ms,
-                        &backend_observation);
+                    send_ret = 0;
+                    if (retransmit->next_hop_id != GATEWAY_ID) {
+                        bool wake_rf_started = false;
+                        uint64_t wake_rf_started_at_ms = 0u;
+
+                        send_ret = mesh_send_route_wake_train(
+                            retransmit->next_hop_id,
+                            NULL,
+                            NULL,
+                            C5_CONTACT_PURPOSE_UPLINK,
+                            "retransmit-uplink-wake",
+                            retransmit,
+                            NULL,
+                            FW_C5_TX_INTENT_BACKGROUND,
+                            &wake_rf_started,
+                            &wake_rf_started_at_ms);
+                        status_debug_printf("DBG_UPLINK_WAKE next=0x%llx ret=%d seq=%u phase=retransmit\n",
+                                            (unsigned long long)retransmit->next_hop_id,
+                                            send_ret,
+                                            retransmit->packet.seq);
+                        if (send_ret < 0) {
+                            mesh_restart_role_scan();
+                        } else {
+                            mesh_wait_for_c5_control_followup_turnaround(
+                                retransmit->packet.msg_type,
+                                "retransmit-uplink-wake");
+                        }
+                    }
+                    if (send_ret == 0) {
+                        send_ret = mesh_send_direct_gateway_payload_and_wait_ack(
+                            retransmit,
+                            "retransmit-direct-gateway",
+                            &plan,
+                            plan.start_ms,
+                            plan.start_ms,
+                            false,
+                            &backend_rf_started,
+                            backend_deadline_ms,
+                            &backend_observation);
+                    }
                 } else {
                     send_ret = mesh_send_outbound_with_release_until(
                         retransmit,
@@ -4476,6 +4696,17 @@ after_gateway_ack:
                     backend_terminal = true;
                     send_ret = account_ret;
                 }
+                /* The frame physically went out: the relay core already
+                 * armed its ordinary ACK deadline for this retransmit, so a
+                 * missed short ACK slice must not be reclassified as an RF
+                 * send failure with its sub-second retry bank. */
+                direct_gateway_ack_wait_owned =
+                    !backend_terminal && direct_gateway_retransmit &&
+                    backend_rf_started && send_ret == -EAGAIN &&
+                    mesh_relay_tx_active(&mesh_runtime) &&
+                    mesh_packet_delivery_identity_matches(
+                        &mesh_runtime.pending.packet,
+                        &retransmit->packet);
             }
 
             if (send_ret == 0) {
@@ -4488,6 +4719,32 @@ after_gateway_ack:
                     mesh_note_channel9_local_tx(retransmit->next_hop_id,
                                                 plan.start_ms);
                 }
+            } else if (direct_gateway_ack_wait_owned) {
+                /* The payload RF send succeeded. A timeout, RX error, or full
+                 * RX queue in the fast synchronous ACK slice cannot turn that
+                 * completed send into a generic RF failure: doing so erases
+                 * gateway-failure accounting and creates an unbounded
+                 * sub-second retransmission loop. The relay core keeps this
+                 * exact packet and all retry policy; it is only told that the
+                 * ACK window this sender listened through has elapsed, so its
+                 * ordinary miss handling starts at the end of that window
+                 * instead of ROUTE_GATEWAY_ACK_TIMEOUT_MS after the frame. */
+                int ack_window_ret =
+                    mesh_relay_note_gateway_ack_window_elapsed(
+                        &mesh_runtime,
+                        retransmit,
+                        mesh_direct_gateway_ack_window_end_ms(
+                            retransmit,
+                            &backend_observation));
+
+                app_mesh_rf_retry_note_success(&mesh_retransmit_rf_retry,
+                                               &retry_key);
+                status_debug_printf(
+                    "DBG_RETRANSMIT_DIRECT_GW_ACK_WINDOW seq=%u deadline=%u window=%d\n",
+                    retransmit->packet.seq,
+                    mesh_runtime.pending.gateway_ack_deadline_ms,
+                    ack_window_ret);
+                mesh_schedule_tx_timeout();
             } else if (!backend_terminal &&
                        backend_ret >= 0) {
                 uint32_t retry_delay_ms = mesh_rf_retry_next_delay_ms(
@@ -4849,6 +5106,11 @@ gateway_confirmation_done:
         LOG_INF("mesh pending TX deferred by relay busy hint");
         mesh_schedule_tx_timeout();
     }
+    if (result->actions & MESH_RELAY_ACTION_TX_HOP_DEFERRED) {
+        /* A refusal is an answered turn, not a failed parent. The relay
+         * retained custody and selected its exact retry_after_ms deadline. */
+        mesh_schedule_tx_timeout();
+    }
 #if DEVICE_ROLE == ROLE_ANCHOR
     if (result->actions & MESH_RELAY_ACTION_TX_COLLECTION_RETRY) {
         LOG_INF("mesh pending collection result scheduled for EACK retry");
@@ -4901,335 +5163,6 @@ gateway_confirmation_done:
     }
 }
 
-#if DEVICE_ROLE == ROLE_GATEWAY
-static void mesh_gateway_host_delivery_retry_work_handler(struct k_work *work)
-{
-    int ret;
-
-    ARG_UNUSED(work);
-    if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0 ||
-        atomic_get(&mesh_gateway_host_receipt_received_state) == 0) {
-        return;
-    }
-    ret = mesh_submit_owned_work(&mesh_rx_work,
-                                 "gateway-host-receipt-retry");
-    if (ret < 0 && ret != -EALREADY) {
-        LOG_ERR("gateway host-receipt completion work lost: ret=%d", ret);
-        (void)mesh_reschedule_owned_work(
-            &mesh_gateway_host_delivery_retry_work,
-            MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
-            "gateway-host-receipt-retry-reschedule");
-    }
-}
-
-void mesh_gateway_host_receipt_ready(void)
-{
-    int ret;
-
-    if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
-        LOG_WRN("gateway host receipt arrived without retained custody");
-        return;
-    }
-    atomic_set(&mesh_gateway_host_receipt_received_state, 1);
-    ret = mesh_submit_owned_work(&mesh_rx_work,
-                                 "gateway-host-receipt");
-    if (ret < 0 && ret != -EALREADY) {
-        LOG_ERR("gateway host receipt event could not reach mesh owner: ret=%d",
-                ret);
-        ret = mesh_reschedule_owned_work(
-            &mesh_gateway_host_delivery_retry_work,
-            MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
-            "gateway-host-receipt-reschedule");
-        if (ret < 0) {
-            LOG_ERR("gateway host receipt retry could not be scheduled: ret=%d",
-                    ret);
-            app_watchdog_stop_feeding();
-        }
-    }
-}
-
-static int mesh_gateway_classify_post_receipt_semantic_result(
-    const struct mesh_rx_pending *pending,
-    int preflight_acceptance,
-    int semantic_ret)
-{
-    enum command_id command_id;
-
-    /*
-     * ACCEPT_NEW is produced only after the packet was fully decoded and
-     * matched to the then-live semantic owner.  The GUI may return its exact
-     * receipt after that volatile owner or receive window retires.  The raw
-     * packet is already in host custody, and retrying cannot recreate the old
-     * mutation boundary. Every error remains fail-closed and retryable.
-     */
-    if (pending == NULL ||
-        preflight_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_NEW) {
-        return semantic_ret;
-    }
-    ARG_UNUSED(command_id);
-    return semantic_ret;
-}
-
-static void mesh_trace_gateway_host_completion(const char *stage,
-                                               int ret,
-                                               const struct mesh_rx_pending *pending)
-{
-    if (!IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE) ||
-        pending == NULL) {
-        return;
-    }
-    status_debug_printf(
-        "DBG_GW_HOST_COMPLETE st=%s ret=%d msg=%02x src=%08x seq=%u\n",
-        stage,
-        ret,
-        pending->packet.msg_type,
-        (uint32_t)pending->packet.src_id,
-        pending->packet.seq);
-}
-
-static int mesh_complete_gateway_host_delivery_locked(void)
-{
-    struct mesh_rx_pending *pending = &mesh_rx_work_pending;
-    struct mesh_relay_result *result = &mesh_work_result;
-    bool gateway_ack_handed_off = false;
-    bool collection_recovery;
-    uint32_t validation_token;
-    int semantic_ret;
-    int ret;
-
-    if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0 ||
-        atomic_get(&mesh_gateway_host_receipt_received_state) == 0) {
-        return -EAGAIN;
-    }
-
-    semantic_ret = mesh_gateway_host_delivery_semantic_acceptance;
-    collection_recovery =
-        semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY;
-    if (atomic_get(&mesh_gateway_host_delivery_semantic_accepted_state) == 0) {
-        /* ACCEPT_BATCH is deliberately a pure preflight/reservation.  The
-         * semantic owner is allowed to mutate only after the GUI has accepted
-         * the exact retained stream record. */
-        if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW ||
-            semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-            gateway_command_result_validation_release_reserved(
-                pending->result_validation_token);
-            pending->result_validation_token = 0u;
-        } else {
-            validation_token = pending->result_validation_token;
-            ret = mesh_gateway_commit_preflighted_semantic_delivery(pending);
-            gateway_command_result_validation_release_reserved(
-                validation_token);
-            pending->result_validation_token = 0u;
-            ret = mesh_gateway_classify_post_receipt_semantic_result(
-                pending, semantic_ret, ret);
-            if (ret == APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
-                status_debug_printf(
-                    "DBG_GATEWAY_HOST_RESULT_RECOVERED_RAW src=0x%016llx session=%u seq=%u\n",
-                    (unsigned long long)pending->packet.src_id,
-                    pending->packet.session_id,
-                    pending->packet.seq);
-            }
-            if (ret < 0) {
-                mesh_trace_gateway_host_completion("accept", ret, pending);
-                LOG_WRN("gateway host-delivery semantic acceptance retained: msg=0x%02x src=0x%016llx ret=%d",
-                        pending->packet.msg_type,
-                        (unsigned long long)pending->packet.src_id,
-                        ret);
-                goto retry;
-            }
-            if (ret != APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
-                ret != APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
-                ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW &&
-                ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE &&
-                ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-                LOG_ERR("gateway host-delivery semantic acceptance invalid: msg=0x%02x src=0x%016llx ret=%d",
-                        pending->packet.msg_type,
-                        (unsigned long long)pending->packet.src_id,
-                        ret);
-                goto retry;
-            }
-            semantic_ret = ret;
-            mesh_gateway_host_delivery_semantic_acceptance = ret;
-        }
-        atomic_set(&mesh_gateway_host_delivery_semantic_accepted_state, 1);
-        if (pending->packet.src_id != DEVICE_ID) {
-            app_stack_workload_diag_gateway_report_cycle(
-                &pending->packet,
-                (uint16_t)k_msgq_num_used_get(&mesh_rx_msgq),
-                1u);
-        }
-        if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
-            pending->packet.msg_type == MSG_MESH_DATA) {
-            app_mesh_test_note_gateway_delivery(
-                &pending->packet,
-                pending->payload,
-                pending->payload_len,
-                pending->received_at_ms,
-                k_msgq_num_used_get(&mesh_rx_msgq));
-        }
-    }
-    if (atomic_get(&mesh_gateway_host_delivery_semantic_finalized_state) == 0) {
-        if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-            ret = gateway_collection_recovery_after_host_receipt(
-                &pending->packet,
-                pending->payload,
-                pending->payload_len);
-        } else if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
-            ret = 0;
-        } else {
-            ret = gateway_finalize_semantic_delivery(
-                &pending->packet,
-                pending->payload,
-                pending->payload_len,
-                pending->previous_hop_id,
-                pending->radio_channel,
-                pending->current_channel9_plan_valid ?
-                &pending->current_channel9_plan : NULL,
-                semantic_ret);
-        }
-        if (ret < 0) {
-            mesh_trace_gateway_host_completion("final", ret, pending);
-            LOG_WRN("gateway host-delivery semantic finalization retained: msg=0x%02x src=0x%016llx ret=%d",
-                    pending->packet.msg_type,
-                    (unsigned long long)pending->packet.src_id,
-                    ret);
-            goto retry;
-        }
-        atomic_set(&mesh_gateway_host_delivery_semantic_finalized_state, 1);
-    }
-
-    if (atomic_get(&mesh_gateway_host_delivery_relay_committed_state) == 0) {
-        if (semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-            ret = mesh_relay_commit_gateway_delivery(
-                &mesh_runtime,
-                &pending->packet,
-                pending->payload,
-                pending->payload_len,
-                pending->previous_hop_id,
-                k_uptime_get_32(),
-                result);
-            if (ret != PROTO_OK) {
-                mesh_trace_gateway_host_completion("relay", ret, pending);
-                LOG_WRN("gateway host-delivery relay commit retained: msg=0x%02x src=0x%016llx ret=%d",
-                        pending->packet.msg_type,
-                        (unsigned long long)pending->packet.src_id,
-                        ret);
-                goto retry;
-            }
-            if ((result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) == 0u) {
-                mesh_trace_gateway_host_completion("relay-ack", -EIO,
-                                                   pending);
-                goto retry;
-            }
-            /* mesh_work_result is shared timeout/RX scratch.  Freeze the
-             * committed ACK in this split-phase transaction before setting
-             * the durable relay-commit bit. */
-            mesh_gateway_host_delivery_ack = result->gateway_ack;
-            mesh_gateway_host_delivery_ack_valid = true;
-        }
-        atomic_set(&mesh_gateway_host_delivery_relay_committed_state, 1);
-    }
-
-    if (atomic_get(&mesh_gateway_host_delivery_ack_handoff_state) == 0) {
-        if (semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-            if (!mesh_gateway_host_delivery_ack_valid) {
-                mesh_trace_gateway_host_completion("ack-owner", -ESTALE,
-                                                   pending);
-                goto retry;
-            }
-            memset(result, 0, sizeof(*result));
-            result->actions = MESH_RELAY_ACTION_SEND_GATEWAY_ACK;
-            result->gateway_ack = mesh_gateway_host_delivery_ack;
-            mesh_handle_result_actions(
-                result,
-                pending->radio_channel,
-                pending,
-                NULL,
-                NULL,
-                0u,
-                NULL,
-                &gateway_ack_handed_off);
-            if (!gateway_ack_handed_off) {
-                mesh_trace_gateway_host_completion("ack", -EAGAIN, pending);
-                LOG_WRN("gateway host-delivery ACK has no mesh owner yet: msg=0x%02x src=0x%016llx",
-                        pending->packet.msg_type,
-                        (unsigned long long)pending->packet.src_id);
-                goto retry;
-            }
-        }
-        atomic_set(&mesh_gateway_host_delivery_ack_handoff_state, 1);
-    }
-
-    ret = gateway_ble_finish_host_delivery(&pending->packet);
-    if (ret < 0) {
-        mesh_trace_gateway_host_completion("ble", ret, pending);
-        LOG_WRN("gateway host-delivery BLE retirement retained: ret=%d", ret);
-        goto retry;
-    }
-    if (collection_recovery) {
-        ret = gateway_collection_recovery_finish_host_delivery(
-            &pending->packet, pending->payload, pending->payload_len);
-        if (ret < 0) {
-            /* The stream record is already retired, so retry cannot recreate
-             * this exact boundary. Keep the RAM collection barrier and stop
-             * watchdog progress rather than admitting a conflicting owner. */
-            LOG_ERR("gateway stale collection recovery retirement failed closed: src=0x%016llx seq=%u ret=%d",
-                    (unsigned long long)pending->packet.src_id,
-                    pending->packet.seq,
-                    ret);
-            app_watchdog_stop_feeding();
-            return ret;
-        }
-    }
-    mesh_trace_gateway_host_completion("done", 0, pending);
-    atomic_clear(&mesh_gateway_host_receipt_received_state);
-    atomic_clear(&mesh_gateway_host_delivery_pending_state);
-    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
-    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
-    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
-    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
-    mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
-    mesh_gateway_host_delivery_ack_valid = false;
-    (void)k_work_cancel_delayable(&mesh_gateway_host_delivery_retry_work);
-    if (collection_recovery) {
-        /* Release the exact recovery scan suppression only after its BLE
-         * retirement and RAM barrier have both completed. */
-        mesh_restart_role_scan();
-    }
-    return 0;
-
-retry:
-    if (atomic_get(&mesh_gateway_host_delivery_semantic_accepted_state) == 0 &&
-        pending->packet.msg_type == MSG_COMMAND_RESULT &&
-        pending->result_validation_token == 0u) {
-        uint32_t token = 0u;
-
-        ret = gateway_command_result_validation_reserve(
-            &pending->packet,
-            pending->first_received_at_ms,
-            &token);
-        if (ret == 0) {
-            pending->result_validation_token = token;
-        } else if (ret != -ENOENT) {
-            LOG_WRN("gateway host-delivery validation owner could not be rearmed: ret=%d",
-                    ret);
-        }
-    }
-    ret = mesh_reschedule_owned_work(
-        &mesh_gateway_host_delivery_retry_work,
-        MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
-        "gateway-host-receipt-completion");
-    if (ret < 0 && ret != -EALREADY) {
-        LOG_ERR("gateway host-receipt completion retry lost: ret=%d", ret);
-        app_watchdog_stop_feeding();
-    }
-    return -EAGAIN;
-}
-#else
-void mesh_gateway_host_receipt_ready(void)
-{
-}
-#endif
 
 static uint32_t mesh_drain_rx_queue_locked(const char *owner)
 {
@@ -5243,19 +5176,6 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                             owner == NULL ? "rx" : owner,
                             k_msgq_num_used_get(&mesh_rx_msgq));
     }
-#if DEVICE_ROLE == ROLE_GATEWAY
-    /* An exact GUI receipt is a barrier: finish semantic acceptance, EACK,
-     * and mesh-ACK handoff before dequeuing another RX item, otherwise a
-     * later item can overwrite the retained raw payload. */
-    if (atomic_get(&mesh_gateway_host_delivery_pending_state) != 0) {
-        if (atomic_get(&mesh_gateway_host_receipt_received_state) == 0) {
-            return 0u;
-        }
-        if (mesh_complete_gateway_host_delivery_locked() < 0) {
-            return 0u;
-        }
-    }
-#endif
     while (k_msgq_get(&mesh_rx_msgq, pending, K_NO_WAIT) == 0) {
         uint32_t now_ms = k_uptime_get_32();
         bool delivered_event_control = false;
@@ -5354,6 +5274,7 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 pending->first_received_at_ms);
         }
 #endif
+        mesh_c5_update_credit();
         ret = mesh_relay_handle_rx_with_random_radio(
             &mesh_runtime,
             &pending->packet,
@@ -5381,7 +5302,8 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING |
                 MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED |
                 MESH_RELAY_ACTION_TX_HOP_PROGRESS |
-                MESH_RELAY_ACTION_TX_RELAY_BUSY;
+                MESH_RELAY_ACTION_TX_RELAY_BUSY |
+                MESH_RELAY_ACTION_TX_HOP_DEFERRED;
 
             if ((result->actions & ~allowed_actions) != 0u ||
                 ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
@@ -5461,6 +5383,11 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
             }
         }
         if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
+            pending->packet.msg_type == MSG_ROUTE_SOLICIT) {
+            mesh_gateway_note_route_solicit(pending->packet.src_id);
+            goto mesh_rx_item_cleanup;
+        }
+        if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             mesh_packet_is_event_control_type(pending->packet.msg_type)) {
             delivered_event_control = true;
             admitted_event_control = mesh_handle_event_control(
@@ -5501,6 +5428,11 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
              */
             mesh_rx_pending_refresh_age(pending, k_uptime_get_32());
             gateway_semantic_delivery_processed = true;
+            status_debug_printf("DBG_GWLAT_DRAIN_ENTER at=%u rx=%u msg=0x%02x ctl=%u\n",
+                                k_uptime_get_32(),
+                                pending->received_at_ms,
+                                pending->packet.msg_type,
+                                internal_control ? 1u : 0u);
             semantic_ret = mesh_gateway_preflight_semantic_delivery(pending);
             semantic_preflight_complete = true;
             if (internal_control) {
@@ -5542,10 +5474,18 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                         reservation_ret ==
                             GATEWAY_BLE_STREAM_RESERVATION_ACQUIRED;
                     host_custody_ready = stream_reservation_acquired;
+                    status_debug_printf("DBG_GWLAT_RESV at=%u ret=%d ok=%u\n",
+                                        k_uptime_get_32(),
+                                        reservation_ret,
+                                        stream_reservation_acquired ? 1u : 0u);
                 }
             }
             if (!host_custody_ready) {
-                LOG_WRN("gateway semantic delivery deferred for BLE custody: msg=0x%02x src=0x%016llx ret=%d",
+                                status_debug_printf("DBG_GATEWAY_NO_ACK reason=deferred-ble-custody msg=0x%02x src=0x%llx ret=%d\n",
+                                    pending->packet.msg_type,
+                                    (unsigned long long)pending->packet.src_id,
+                                    reservation_ret);
+LOG_WRN("gateway semantic delivery deferred for BLE custody: msg=0x%02x src=0x%016llx ret=%d",
                         pending->packet.msg_type,
                         (unsigned long long)pending->packet.src_id,
                         reservation_ret);
@@ -5577,23 +5517,25 @@ gateway_semantic_result_ready:
                     if (stream_reservation_acquired) {
                         gateway_ble_cancel_stream_reservation();
                     }
-                    LOG_WRN("gateway semantic delivery rejected without ACK: msg=0x%02x src=0x%016llx ret=%d",
+                                        status_debug_printf("DBG_GATEWAY_NO_ACK reason=rejected msg=0x%02x src=0x%llx ret=%d\n",
+                                        pending->packet.msg_type,
+                                        (unsigned long long)pending->packet.src_id,
+                                        semantic_ret);
+LOG_WRN("gateway semantic delivery rejected without ACK: msg=0x%02x src=0x%016llx ret=%d",
                             pending->packet.msg_type,
                             (unsigned long long)pending->packet.src_id,
                             semantic_ret);
                     goto mesh_rx_item_cleanup;
                 } else if (stream_reservation_acquired) {
-                    /* Keep the pure preflight result with the raw pending
-                     * packet. Semantic mutation, gateway ACK, and collection
-                     * EACK all stay behind the exact GUI receipt. Arm that
-                     * owner before commit makes the record visible: the BLE
-                     * callback and host can otherwise return a valid receipt
-                     * before mesh custody exists to retain it. */
+                    /*
+                     * RAM admission is the ACK boundary.  The retained BLE
+                     * stream record is the host's copy; publication and the
+                     * GUI receipt only retire that record and never gate
+                     * mesh custody, so one absent host can never stall the
+                     * radio behind a single report.
+                     */
                     if (semantic_ret ==
                         APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-                        /* Reserve the stale packet's collection lane before
-                         * making its BLE record visible. A fresh collection
-                         * must not begin in the host-receipt interval. */
                         ret = gateway_collection_recovery_reserve_host_custody(
                             &pending->packet,
                             pending->payload,
@@ -5607,14 +5549,6 @@ gateway_semantic_result_ready:
                             goto mesh_rx_item_cleanup;
                         }
                     }
-                    mesh_gateway_host_delivery_semantic_acceptance = semantic_ret;
-                    atomic_clear(&mesh_gateway_host_receipt_received_state);
-                    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
-                    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
-                    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
-                    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
-                    mesh_gateway_host_delivery_ack_valid = false;
-                    atomic_set(&mesh_gateway_host_delivery_pending_state, 1);
                     ret = gateway_ble_commit_stream_reservation_projection(
                         &pending->packet,
                         pending->payload,
@@ -5637,22 +5571,64 @@ gateway_semantic_result_ready:
                                 app_watchdog_stop_feeding();
                             }
                         }
-                        if (stream_reservation_acquired) {
-                            gateway_ble_cancel_stream_reservation();
-                        }
-                        atomic_clear(&mesh_gateway_host_delivery_pending_state);
-                        atomic_clear(&mesh_gateway_host_receipt_received_state);
-                        atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
-                        atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
-                        atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
-                        atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
-                        mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
-                        mesh_gateway_host_delivery_ack_valid = false;
-                        LOG_ERR("gateway semantic BLE custody commit failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
+                        gateway_ble_cancel_stream_reservation();
+                                                status_debug_printf("DBG_GATEWAY_NO_ACK reason=ble-commit-failed msg=0x%02x src=0x%llx ret=%d\n",
+                                            pending->packet.msg_type,
+                                            (unsigned long long)pending->packet.src_id,
+                                            ret);
+LOG_ERR("gateway semantic BLE custody commit failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
                                 pending->packet.msg_type,
                                 (unsigned long long)pending->packet.src_id,
                                 ret);
                         goto mesh_rx_item_cleanup;
+                    }
+                    if (semantic_ret !=
+                            APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW &&
+                        semantic_ret !=
+                            APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
+                        uint32_t validation_token =
+                            pending->result_validation_token;
+
+                        ret = mesh_gateway_commit_preflighted_semantic_delivery(
+                            pending);
+                        gateway_command_result_validation_release_reserved(
+                            validation_token);
+                        pending->result_validation_token = 0u;
+                        if (ret < 0 ||
+                            (ret != APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+                             ret != APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
+                             ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW &&
+                             ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE &&
+                             ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY)) {
+                            /* The host already owns the raw record; the
+                             * sender keeps custody and its retry classifies
+                             * as a duplicate on the next pass. */
+                            LOG_WRN("gateway semantic acceptance failed after host custody; no ACK: msg=0x%02x src=0x%016llx ret=%d",
+                                    pending->packet.msg_type,
+                                    (unsigned long long)pending->packet.src_id,
+                                    ret);
+                            goto mesh_rx_item_cleanup;
+                        }
+                        semantic_ret = ret;
+                    } else {
+                        gateway_command_result_validation_release_reserved(
+                            pending->result_validation_token);
+                        pending->result_validation_token = 0u;
+                    }
+                    if (pending->packet.src_id != DEVICE_ID) {
+                        app_stack_workload_diag_gateway_report_cycle(
+                            &pending->packet,
+                            (uint16_t)k_msgq_num_used_get(&mesh_rx_msgq),
+                            1u);
+                    }
+                    if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+                        pending->packet.msg_type == MSG_MESH_DATA) {
+                        app_mesh_test_note_gateway_delivery(
+                            &pending->packet,
+                            pending->payload,
+                            pending->payload_len,
+                            pending->received_at_ms,
+                            k_msgq_num_used_get(&mesh_rx_msgq));
                     }
                 } else if (semantic_ret ==
                                APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
@@ -5663,30 +5639,57 @@ gateway_semantic_result_ready:
                     if (stream_reservation_acquired) {
                         gateway_ble_cancel_stream_reservation();
                     }
-                    LOG_ERR("gateway semantic delivery returned invalid acceptance without ACK: msg=0x%02x src=0x%016llx ret=%d",
+                                        status_debug_printf("DBG_GATEWAY_NO_ACK reason=invalid-acceptance msg=0x%02x src=0x%llx ret=%d\n",
+                                        pending->packet.msg_type,
+                                        (unsigned long long)pending->packet.src_id,
+                                        semantic_ret);
+LOG_ERR("gateway semantic delivery returned invalid acceptance without ACK: msg=0x%02x src=0x%016llx ret=%d",
                             pending->packet.msg_type,
                             (unsigned long long)pending->packet.src_id,
                             semantic_ret);
                     goto mesh_rx_item_cleanup;
                 }
 
-                if (!stream_reservation_acquired) {
+                if (semantic_ret ==
+                    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
+                    ret = gateway_collection_recovery_after_host_receipt(
+                        &pending->packet,
+                        pending->payload,
+                        pending->payload_len);
+                    if (ret == 0) {
+                        ret = gateway_collection_recovery_finish_host_delivery(
+                            &pending->packet,
+                            pending->payload,
+                            pending->payload_len);
+                    }
+                    if (ret < 0) {
+                        LOG_ERR("gateway stale collection recovery failed closed: src=0x%016llx seq=%u ret=%d",
+                                (unsigned long long)pending->packet.src_id,
+                                pending->packet.seq,
+                                ret);
+                        app_watchdog_stop_feeding();
+                        goto mesh_rx_item_cleanup;
+                    }
+                    mesh_restart_role_scan();
+                } else {
                     ret = semantic_ret ==
                               APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW ?
-                          0 : semantic_ret ==
-                              APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY ?
-                          -EAGAIN :
+                          0 :
                           gateway_finalize_semantic_delivery(
-                          &pending->packet,
-                          pending->payload,
-                          pending->payload_len,
-                          pending->previous_hop_id,
-                          pending->radio_channel,
-                          pending->current_channel9_plan_valid ?
-                          &pending->current_channel9_plan : NULL,
+                              &pending->packet,
+                              pending->payload,
+                              pending->payload_len,
+                              pending->previous_hop_id,
+                              pending->radio_channel,
+                              pending->current_channel9_plan_valid ?
+                              &pending->current_channel9_plan : NULL,
                               semantic_ret);
                     if (ret < 0) {
-                        LOG_WRN("gateway semantic post-custody finalization failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
+                                                status_debug_printf("DBG_GATEWAY_NO_ACK reason=finalize-failed msg=0x%02x src=0x%llx ret=%d\n",
+                                            pending->packet.msg_type,
+                                            (unsigned long long)pending->packet.src_id,
+                                            ret);
+LOG_WRN("gateway semantic finalization failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
                                 pending->packet.msg_type,
                                 (unsigned long long)pending->packet.src_id,
                                 ret);
@@ -5700,6 +5703,10 @@ gateway_semantic_result_ready:
                         pending->previous_hop_id,
                         k_uptime_get_32(),
                         result);
+                    status_debug_printf("DBG_GWLAT_COMMIT at=%u ret=%d sem=%d\n",
+                                        k_uptime_get_32(),
+                                        ret,
+                                        semantic_ret);
                     if (ret != PROTO_OK) {
                         LOG_WRN("gateway semantic delivery commit failed: msg=0x%02x src=0x%016llx ret=%d",
                                 pending->packet.msg_type,
@@ -5722,11 +5729,6 @@ gateway_semantic_result_ready:
                 status_debug_note("DBG_LEGACY_ACK_IDLE\n");
             }
         }
-#if DEVICE_ROLE == ROLE_GATEWAY
-        /* A retained host item is a hard barrier: semantic finalization,
-         * relay commit, and the source ACK all wait for HOST_ACCEPTED. */
-        if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
-#endif
             mesh_handle_result_actions(result, pending->radio_channel, pending,
                                        confirmed_packet_valid ?
                                        &confirmed_packet : NULL,
@@ -5736,9 +5738,6 @@ gateway_semantic_result_ready:
                                        confirmed_digest_valid ?
                                            confirmed_digest : NULL,
                                        NULL);
-#if DEVICE_ROLE == ROLE_GATEWAY
-        }
-#endif
         if (mesh_transport_paused()) {
             goto mesh_rx_item_cleanup;
         }
@@ -5815,27 +5814,13 @@ gateway_semantic_result_ready:
 #endif
         handled_count++;
 mesh_rx_item_cleanup:
-#if DEVICE_ROLE == ROLE_GATEWAY
-        /* A retained host item owns the command-result validation lease until
-         * post-receipt semantic acceptance; releasing it here would let the
-         * timeout worker clear the same-boot owner before the GUI receipt. */
-        if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
-            gateway_command_result_validation_release_reserved(
-                pending->result_validation_token);
-        }
-#else
         gateway_command_result_validation_release_reserved(
             pending->result_validation_token);
-#endif
-#if DEVICE_ROLE == ROLE_GATEWAY
-        if (atomic_get(&mesh_gateway_host_delivery_pending_state) != 0) {
-            break;
-        }
-#endif
         if (mesh_transport_paused()) {
             break;
         }
     }
+    mesh_c5_flush_batch_ack();
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_MESH_RX_DRAIN_EXIT owner=%s handled=%u q=%u\n",
                             owner == NULL ? "rx" : owner,

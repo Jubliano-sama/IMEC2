@@ -3606,6 +3606,31 @@ static bool anchor_discovery_pending_from_snapshot(
     return pending->response_lane < pending->response_lane_count;
 }
 
+static int anchor_discovery_assignment_fail_bound_claim(
+    uint32_t epoch,
+    const struct proto_packet *packet,
+    const struct gateway_command_options *options,
+    int error,
+    const char *reason)
+{
+    if (packet == NULL || options == NULL ||
+        !anchor_enumeration_rx_terminate_claim(
+            epoch,
+            packet->session_id,
+            options->command_seq,
+            reason)) {
+        LOG_ERR("bound enumeration CLAIM cleanup failed closed: epoch=%u session=%u seq=%u reason=%s error=%d",
+                epoch,
+                packet == NULL ? 0u : packet->session_id,
+                options == NULL ? 0u : options->command_seq,
+                reason == NULL ? "claim-failure" : reason,
+                error);
+        app_watchdog_stop_feeding();
+        return -EIO;
+    }
+    return error;
+}
+
 static int anchor_apply_discovery_assignment_command(
     const struct proto_packet *packet,
     const uint8_t *payload,
@@ -3769,11 +3794,18 @@ static int anchor_apply_discovery_assignment_command(
                     epoch,
                     packet->session_id,
                     assignment_options.command_seq)) {
+                (void)anchor_enumeration_rx_rollback_unbound_claim(
+                    epoch, "claim-pending-ack-bind");
                 return -ESTALE;
             }
             ret = anchor_resume_pending_discovery_assignment_ack(false);
             if (ret < 0) {
-                return ret;
+                return anchor_discovery_assignment_fail_bound_claim(
+                    epoch,
+                    packet,
+                    &assignment_options,
+                    ret,
+                    "claim-pending-ack-resume");
             }
             status_debug_printf(
                 "DBG_DISCOVERY_SLOT_CLAIM_DEFERRED epoch=%u pending_epoch=%u owner=ack\n",
@@ -3827,6 +3859,8 @@ static int anchor_apply_discovery_assignment_command(
                 epoch,
                 packet->session_id,
                 assignment_options.command_seq)) {
+            (void)anchor_enumeration_rx_rollback_unbound_claim(
+                epoch, "claim-bind");
             return -ESTALE;
         }
         ret = command_find_u8_tlv(payload,
@@ -3834,14 +3868,24 @@ static int anchor_apply_discovery_assignment_command(
                                   TLV_HOP_COUNT,
                                   &response_lane_max_hop_count);
         if (ret != PROTO_OK) {
-            return mesh_errno_from_proto(ret);
+            return anchor_discovery_assignment_fail_bound_claim(
+                epoch,
+                packet,
+                &assignment_options,
+                mesh_errno_from_proto(ret),
+                "claim-hop-parse");
         }
         ret = command_find_u32_tlv(payload,
                                    payload_len,
                                    TLV_DISCOVERY_START_DELAY_MS,
                                    &response_lane_start_delay_ms);
         if (ret != PROTO_OK) {
-            return mesh_errno_from_proto(ret);
+            return anchor_discovery_assignment_fail_bound_claim(
+                epoch,
+                packet,
+                &assignment_options,
+                mesh_errno_from_proto(ret),
+                "claim-start-delay-parse");
         }
         ret = anchor_start_compact_enumeration_response_lane(
             packet,
@@ -3849,7 +3893,12 @@ static int anchor_apply_discovery_assignment_command(
             response_lane_max_hop_count,
             response_lane_start_delay_ms);
         if (ret < 0) {
-            return ret;
+            return anchor_discovery_assignment_fail_bound_claim(
+                epoch,
+                packet,
+                &assignment_options,
+                ret,
+                "claim-response-lane");
         }
         app_operation_policy_commit_prepared(&policy_candidate);
         return 0;

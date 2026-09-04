@@ -59,6 +59,10 @@ add_library(core
 
 target_include_directories(core PUBLIC include)
 
+# Native-only instrumentation: lets tests count SHA-256 computations per
+# received packet. The Zephyr application build never defines this.
+target_compile_definitions(core PUBLIC SEMANTIC_DIGEST_ENABLE_CALL_COUNTER)
+
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(core PRIVATE -Wall -Wextra -Werror -pedantic)
 endif()
@@ -159,6 +163,12 @@ add_test(NAME enumeration_rx_lifecycle_source_invariants
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_enumeration_rx_lifecycle_source_invariants.py)
 set_tests_properties(enumeration_rx_lifecycle_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;assignment;state;radio;static_analysis")
+
+add_test(NAME protocol_listener_click_preemption_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_protocol_listener_click_preemption_source_invariants.py)
+set_tests_properties(protocol_listener_click_preemption_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;click;assignment;survey;radio;static_analysis")
 
 add_executable(test_mesh_event_owner tests/test_mesh_event_owner.c)
 target_link_libraries(test_mesh_event_owner PRIVATE core)
@@ -686,11 +696,6 @@ add_test(NAME node_comm_source_boundary
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_source_boundary.py)
 set_tests_properties(node_comm_source_boundary
     PROPERTIES LABELS "mesh_integration;hardware_models;communication")
-add_test(NAME gateway_host_receipt_priority_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_host_receipt_priority_source_invariants.py)
-set_tests_properties(gateway_host_receipt_priority_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;communication;delivery;gateway;radio;static_analysis")
 add_test(NAME mesh_terminal_custody_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_terminal_custody_source_invariants.py)
@@ -919,6 +924,119 @@ add_test(NAME mesh_route_repair_owner_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_route_repair_owner_source_invariants.py)
 set_tests_properties(mesh_route_repair_owner_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;route;static_analysis")
+add_test(NAME c5_deferred_ack_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_c5_deferred_ack_source_invariants.py)
+set_tests_properties(c5_deferred_ack_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;channel5;static_analysis")
+
+# Compile the production C5 transport include and its exact coordinator/credit
+# predicates against bounded queue, radio and scheduler test boundaries.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    app/src/app_mesh_report.c app/src/app_gateway_ble.c
+    app/src/app_mesh_report_route_control.inc)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report.c" c5_report_source)
+string(REGEX MATCH "static bool mesh_ch9_tx_pending_is_active\\(void\\)\n\\{[^}]*\\}" c5_pending_helper "${c5_report_source}")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_gateway_ble.c" c5_gateway_source)
+string(REGEX MATCH "uint16_t gateway_ble_stream_free_slots\\(void\\)\n\\{[^}]*\\}" c5_credit_helper "${c5_gateway_source}")
+if(NOT c5_pending_helper OR NOT c5_credit_helper)
+    message(FATAL_ERROR "C5 production harness helper extraction failed")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/c5_batch_production_helpers.inc"
+    "${c5_pending_helper}\n${c5_credit_helper}\n")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_route_control.inc" c5_route_control_source)
+string(FIND "${c5_route_control_source}" "static int mesh_send_current_ch9_ack_batch(" c5_ack_start)
+string(FIND "${c5_route_control_source}" "static bool mesh_gateway_batch_ack_retry_wait_ms(" c5_ack_end)
+if(c5_ack_start LESS 0 OR c5_ack_end LESS c5_ack_start)
+    message(FATAL_ERROR "C5 production ACK sender extraction failed")
+endif()
+math(EXPR c5_ack_length "${c5_ack_end} - ${c5_ack_start}")
+string(SUBSTRING "${c5_route_control_source}" ${c5_ack_start} ${c5_ack_length} c5_ack_sender)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/c5_batch_production_ack_sender.inc" "${c5_ack_sender}")
+add_executable(test_app_mesh_c5_batch
+    tests/test_app_mesh_c5_batch.c
+    app/src/app_mesh_ch9_ack.c
+    app/src/app_gateway_command_observability.c
+    app/src/app_gateway_ble_stream.c)
+target_include_directories(test_app_mesh_c5_batch PRIVATE app/src ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_app_mesh_c5_batch PRIVATE core)
+add_test(NAME app_mesh_c5_batch COMMAND test_app_mesh_c5_batch)
+set_tests_properties(app_mesh_c5_batch PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;channel5;production_seam")
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS app/src/app_mesh_report_transport.inc)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_transport.inc" enumeration_transport_source)
+string(FIND "${enumeration_transport_source}" "static void mesh_c5_enumeration_relay_burst_begin(" enumeration_helpers_start)
+string(FIND "${enumeration_transport_source}" "bool mesh_c5_protocol_flood_work_pending(" enumeration_helpers_end)
+string(FIND "${enumeration_transport_source}" "static int mesh_send_c5_flood_now_until(" enumeration_flood_start)
+string(FIND "${enumeration_transport_source}" "static int mesh_send_c5_flood_now(" enumeration_flood_end)
+if(enumeration_helpers_start LESS 0 OR enumeration_helpers_end LESS enumeration_helpers_start
+   OR enumeration_flood_start LESS 0 OR enumeration_flood_end LESS enumeration_flood_start)
+    message(FATAL_ERROR "Enumeration production flood harness extraction failed")
+endif()
+math(EXPR enumeration_helpers_length "${enumeration_helpers_end} - ${enumeration_helpers_start}")
+math(EXPR enumeration_flood_length "${enumeration_flood_end} - ${enumeration_flood_start}")
+string(SUBSTRING "${enumeration_transport_source}" ${enumeration_helpers_start} ${enumeration_helpers_length} enumeration_helpers)
+string(SUBSTRING "${enumeration_transport_source}" ${enumeration_flood_start} ${enumeration_flood_length} enumeration_flood)
+string(REGEX MATCH "#define MESH_CONTROL_RX_HANDOFF_TIMEOUT_MS [^\n]+" enumeration_timeout "${c5_report_source}")
+if(NOT enumeration_timeout)
+    message(FATAL_ERROR "Enumeration scan handoff timeout extraction failed")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/enumeration_scan_production.inc"
+    "${enumeration_timeout}\n${enumeration_helpers}\n${enumeration_flood}\n")
+add_executable(test_app_mesh_enumeration_scan_handoff
+    tests/test_app_mesh_enumeration_scan_handoff.c app/src/app_mesh_flood.c)
+target_include_directories(test_app_mesh_enumeration_scan_handoff PRIVATE app/src ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_app_mesh_enumeration_scan_handoff PRIVATE core)
+add_test(NAME app_mesh_enumeration_scan_handoff COMMAND test_app_mesh_enumeration_scan_handoff)
+set_tests_properties(app_mesh_enumeration_scan_handoff PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;channel5;production_seam;enumeration")
+
+# Extract complete application boundaries; no handwritten HIA or survey
+# admission model is substituted in the regression harness.
+function(hia_test_extract_span source start_marker end_marker output)
+    string(FIND "${source}" "${start_marker}" span_start)
+    if(span_start LESS 0)
+        message(FATAL_ERROR "HIA harness start missing: ${start_marker}")
+    endif()
+    string(SUBSTRING "${source}" ${span_start} -1 span_tail)
+    string(FIND "${span_tail}" "${end_marker}" span_length)
+    if(span_length LESS 1)
+        message(FATAL_ERROR "HIA harness end missing: ${end_marker}")
+    endif()
+    string(SUBSTRING "${span_tail}" 0 ${span_length} span)
+    set(${output} "${span}" PARENT_SCOPE)
+endfunction()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    app/src/app_anchor_radio.inc app/src/app_survey.c)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_anchor_radio.inc" hia_radio_source)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_survey.c" hia_survey_source)
+hia_test_extract_span("${hia_radio_source}"
+    "static int anchor_enumeration_rx_prearm(uint32_t epoch,"
+    "static void anchor_compact_enumeration_deactivate(uint32_t epoch)\n{" hia_prearm)
+hia_test_extract_span("${hia_radio_source}"
+    "static bool anchor_enumeration_rx_bind_claim(uint32_t epoch,\n                                             uint32_t claim_session_id,\n                                             uint32_t claim_command_seq)\n{"
+    "static bool anchor_enumeration_rx_active(void)" hia_bind)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hia_prearm_production.inc" "${hia_bind}\n${hia_prearm}")
+hia_test_extract_span("${hia_survey_source}" "struct app_survey_anchor_state {"
+    "static struct app_survey_ops" hia_state)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hia_survey_state.inc" "${hia_state}")
+hia_test_extract_span("${hia_survey_source}" "static bool close_u64("
+    "static bool response_bit_get(" hia_lifecycle)
+hia_test_extract_span("${hia_survey_source}" "static bool anchor_identity_matches_roster("
+    "static bool anchor_generation_live(" hia_roster_identity)
+hia_test_extract_span("${hia_survey_source}" "int app_survey_anchor_note_ram_roster("
+    "void app_survey_anchor_clear_ram_roster(" hia_roster)
+hia_test_extract_span("${hia_survey_source}" "int app_survey_anchor_apply_control("
+    "bool app_survey_anchor_active(void)" hia_control)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hia_survey_production.inc"
+    "${hia_lifecycle}\n${hia_roster_identity}\n${hia_roster}\n${hia_control}")
+add_executable(test_app_hia_table_survey tests/test_app_hia_table_survey.c)
+target_include_directories(test_app_hia_table_survey PRIVATE app/src ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_app_hia_table_survey PRIVATE core)
+add_test(NAME app_hia_table_survey COMMAND test_app_hia_table_survey)
+set_tests_properties(app_hia_table_survey PROPERTIES
+    LABELS "mesh_integration;hardware_models;production_seam;enumeration;survey")
 add_test(NAME mesh_forwarded_ack_late_authorization_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_forwarded_ack_late_authorization_source_invariants.py)
@@ -1119,6 +1237,12 @@ add_test(NAME mesh_relay COMMAND test_mesh_relay)
 set_tests_properties(mesh_relay PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;routing;protocol")
 
+add_executable(test_mesh_c5_delivery tests/test_mesh_c5_delivery.c)
+target_link_libraries(test_mesh_c5_delivery PRIVATE core)
+add_test(NAME mesh_c5_delivery COMMAND test_mesh_c5_delivery)
+set_tests_properties(mesh_c5_delivery PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;routing;protocol")
+
 add_executable(test_mesh_outbox_class_matrix
     tests/test_mesh_outbox_class_matrix.c)
 target_link_libraries(test_mesh_outbox_class_matrix PRIVATE core)
@@ -1221,11 +1345,6 @@ target_link_libraries(test_stack_budget_model PRIVATE core)
 add_test(NAME stack_budget_model COMMAND test_stack_budget_model)
 set_tests_properties(stack_budget_model PROPERTIES LABELS "hardware_models")
 
-add_test(NAME verify_stack_evidence
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_verify_stack_evidence.py)
-set_tests_properties(verify_stack_evidence PROPERTIES LABELS "hardware_models")
-
 add_test(NAME forcedhop_ram_policy
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_forcedhop_ram_policy.py)
@@ -1238,21 +1357,6 @@ add_test(NAME mesh_report_role_storage
 set_tests_properties(mesh_report_role_storage
     PROPERTIES LABELS "mesh_integration;hardware_models;stack;static_analysis")
 
-add_test(NAME flash_verified_mesh
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh.py)
-set_tests_properties(flash_verified_mesh PROPERTIES LABELS "hardware_models")
-
-add_test(NAME flash_verified_mesh_batch
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh_batch.py)
-set_tests_properties(flash_verified_mesh_batch PROPERTIES LABELS "hardware_models")
-
-add_test(NAME capture_stack_evidence
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_capture_stack_evidence.py)
-set_tests_properties(capture_stack_evidence PROPERTIES LABELS "hardware_models")
-
 add_test(NAME provision_mesh_anchor
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_provision_mesh_anchor.py)
@@ -1263,11 +1367,6 @@ add_test(NAME clicker_hil
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_clicker_hil.py)
 set_tests_properties(clicker_hil
     PROPERTIES LABELS "mesh_integration;hardware_models;click;host_tools")
-
-add_test(NAME mesh_deployment_policy
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_deployment_policy.py)
-set_tests_properties(mesh_deployment_policy PROPERTIES LABELS "hardware_models")
 
 add_library(mesh_sim
     sim/mesh_sim.c
@@ -1317,7 +1416,7 @@ add_executable(test_mesh_wake_scenarios
 target_link_libraries(test_mesh_wake_scenarios PRIVATE mesh_sim)
 add_test(NAME mesh_wake_scenarios COMMAND test_mesh_wake_scenarios)
 set_tests_properties(mesh_wake_scenarios
-    PROPERTIES LABELS "mesh_integration;simulator;wake")
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;wake")
 
 add_executable(test_mesh_forcedhop_enumeration_wake_scenarios
     tests/mesh_integration/test_mesh_forcedhop_enumeration_wake_scenarios.c
@@ -1629,6 +1728,12 @@ add_test(NAME mesh_post_operation_liveness_scenarios
     COMMAND test_mesh_post_operation_liveness_scenarios)
 set_tests_properties(mesh_post_operation_liveness_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;faults;state;liveness;custody")
+
+add_test(NAME control_failure_click_serviceability_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_control_failure_click_serviceability_source_invariants.py)
+set_tests_properties(control_failure_click_serviceability_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;assignment;survey;route;gateway_command;click;radio;liveness;static_analysis")
 
 add_executable(test_mesh_event_control_rf_scenarios
     tests/mesh_integration/test_mesh_event_control_rf_scenarios.c

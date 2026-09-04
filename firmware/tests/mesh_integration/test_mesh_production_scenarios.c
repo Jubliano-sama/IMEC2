@@ -607,10 +607,12 @@ static int test_line_depth(uint8_t relay_count)
                 mesh_sim_count_transitions(&world,
                                            MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                            terminal_owner_id) == seq);
+        /* MSG_GATEWAY_ACK_CONFIRM is retired: the gateway ACK is terminal,
+         * so neither the origin nor any relay ever sends a confirm frame. */
         REQUIRE("line_topology", seed,
                 count_transitions_for_message(
                     &world, MESH_SIM_TRANSITION_TX_START,
-                    terminal_owner_id, MSG_GATEWAY_ACK_CONFIRM) == seq);
+                    terminal_owner_id, MSG_GATEWAY_ACK_CONFIRM) == 0u);
         for (uint8_t child = 0u; child < relay_count; child++) {
             REQUIRE("line_topology", seed,
                     count_transitions_for_message(
@@ -766,17 +768,30 @@ static int test_click_preemption_and_retry(void)
         REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
                 run_earliest_connection(&world, connections, 2u) == MESH_SIM_OK);
     }
+    /*
+     * The jittered exponential ACK backoff is shorter than one connection
+     * event, so the transmitter may already have re-armed its retransmit
+     * while this loop advanced past the ACK deadline. Custody of the pending
+     * click is the invariant; only drive the backoff deadline when the
+     * transmitter is still waiting for it.
+     */
     REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
-            world.roles[transmitter].relay.pending.state ==
-                MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    retry_at_ms = world.roles[transmitter].relay.pending.retry_after_ms;
-    REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
-            retry_at_ms > timeout_ms &&
-            mesh_sim_schedule_relay_tick(&world, transmitter,
-                                         (uint64_t)retry_at_ms * 1000u) == MESH_SIM_OK);
-    while (world.now_us < (uint64_t)retry_at_ms * 1000u) {
+            mesh_relay_tx_active(&world.roles[transmitter].relay) &&
+            (world.roles[transmitter].relay.pending.state ==
+                 MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
+             world.roles[transmitter].relay.pending.state ==
+                 MESH_RELAY_TX_WAIT_GATEWAY_ACK));
+    if (world.roles[transmitter].relay.pending.state ==
+        MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        retry_at_ms = world.roles[transmitter].relay.pending.retry_after_ms;
         REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
-                run_earliest_connection(&world, connections, 2u) == MESH_SIM_OK);
+                retry_at_ms > timeout_ms &&
+                mesh_sim_schedule_relay_tick(&world, transmitter,
+                                             (uint64_t)retry_at_ms * 1000u) == MESH_SIM_OK);
+        while (world.now_us < (uint64_t)retry_at_ms * 1000u) {
+            REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
+                    run_earliest_connection(&world, connections, 2u) == MESH_SIM_OK);
+        }
     }
     REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
             mesh_sim_count_transitions(&world,

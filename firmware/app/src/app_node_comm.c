@@ -2493,7 +2493,8 @@ int app_node_comm_submit_control_response(
     uint32_t client_token)
 {
     if (envelope == NULL || absolute_deadline_ms == 0u ||
-        envelope->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        (envelope->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
+         envelope->radio_channel != UWB_CHANNEL_WAKE_CONTACT) ||
         envelope->payload_len > APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ||
         envelope->packet.payload_len != envelope->payload_len) {
         return -EINVAL;

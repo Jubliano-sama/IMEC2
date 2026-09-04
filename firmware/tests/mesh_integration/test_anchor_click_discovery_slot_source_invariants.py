@@ -30,8 +30,7 @@ class AnchorClickDiscoverySlotSourceInvariants(unittest.TestCase):
         production = slot.split("#else", maxsplit=1)[1].split("#endif", maxsplit=1)[0]
 
         self.assertIn("local_anchor_discovery_assignment_get(", production)
-        self.assertIn("assigned_slot_count != slot_count", production)
-        self.assertIn("assigned_slot >= assigned_slot_count", production)
+        self.assertIn("assigned_slot >= slot_count", production)
         self.assertIn("return PROTO_ERR_NOT_FOUND;", production)
         self.assertNotIn("uwb_discovery_slot_for_anchor", production)
         self.assertIn("*anchor_slot = assigned_slot;", production)

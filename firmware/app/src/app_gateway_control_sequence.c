@@ -106,6 +106,35 @@ static int gateway_control_sequence_schedule_maintenance_locked(
     return 0;
 }
 
+static bool gateway_control_sequence_maintenance_needed_locked(void)
+{
+    return gateway_control_sequence_ready &&
+           !gateway_control_sequence_refill_in_flight &&
+           gateway_control_sequence_standby.remaining == 0u &&
+           gateway_control_sequence_active.remaining <=
+               GATEWAY_CONTROL_SEQUENCE_PREFETCH_THRESHOLD;
+}
+
+static int gateway_control_sequence_ensure_maintenance_locked(
+    k_timeout_t delay)
+{
+    int ret;
+
+    if (!gateway_control_sequence_maintenance_needed_locked()) {
+        return 0;
+    }
+    ret = gateway_control_sequence_schedule_maintenance_locked(delay);
+    if (ret < 0) {
+        /*
+         * A failed work submission owns nothing.  Remember the failure, but
+         * leave maintenance_scheduled clear so the next sequence/admission
+         * API call can recreate the missing refill owner.
+         */
+        gateway_control_sequence_refill_error = ret;
+    }
+    return ret;
+}
+
 #if APP_GATEWAY_CONTROL_SEQUENCE_USES_DURABLE_STATE
 static int gateway_control_sequence_reserve_block(
     struct gateway_control_sequence_block *block)
@@ -176,10 +205,10 @@ static int gateway_control_sequence_maintain_at(uint32_t now_ms)
             now_ms,
             gateway_control_sequence_last_reservation_ms,
             APP_GATEWAY_CONTROL_SEQUENCE_REFILL_INTERVAL_MS);
-        (void)gateway_control_sequence_schedule_maintenance_locked(
+        ret = gateway_control_sequence_ensure_maintenance_locked(
             K_MSEC(retry_delay_ms));
         k_mutex_unlock(&gateway_control_sequence_mutex);
-        return -EAGAIN;
+        return ret < 0 ? ret : -EAGAIN;
     }
 
     /* Rate-limit attempts too, so a failing NVS backend cannot become hot. */
@@ -197,9 +226,14 @@ static int gateway_control_sequence_maintain_at(uint32_t now_ms)
         gateway_control_sequence_standby = block;
         gateway_control_sequence_refill_error = 0;
     } else if (ret < 0) {
+        int schedule_ret;
+
         gateway_control_sequence_refill_error = ret;
-        (void)gateway_control_sequence_schedule_maintenance_locked(
+        schedule_ret = gateway_control_sequence_ensure_maintenance_locked(
             K_MSEC(APP_GATEWAY_CONTROL_SEQUENCE_REFILL_INTERVAL_MS));
+        if (schedule_ret < 0) {
+            ret = schedule_ret;
+        }
     } else {
         ret = -ECANCELED;
     }
@@ -271,8 +305,11 @@ int app_gateway_control_sequence_next(uint32_t *sequence)
             (struct gateway_control_sequence_block){0};
     }
     if (gateway_control_sequence_active.remaining == 0u) {
+        int schedule_ret = gateway_control_sequence_ensure_maintenance_locked(
+            K_NO_WAIT);
+
         ret = gateway_control_sequence_refill_error == -EOVERFLOW ?
-              -EOVERFLOW : -EAGAIN;
+              -EOVERFLOW : (schedule_ret < 0 ? schedule_ret : -EAGAIN);
         goto out;
     }
     if (gateway_control_sequence_active.remaining == 0u ||
@@ -288,7 +325,7 @@ int app_gateway_control_sequence_next(uint32_t *sequence)
     if (gateway_control_sequence_standby.remaining == 0u &&
         gateway_control_sequence_active.remaining <=
             GATEWAY_CONTROL_SEQUENCE_PREFETCH_THRESHOLD) {
-        (void)gateway_control_sequence_schedule_maintenance_locked(K_NO_WAIT);
+        (void)gateway_control_sequence_ensure_maintenance_locked(K_NO_WAIT);
     }
 
 out:
@@ -321,6 +358,9 @@ bool app_gateway_control_sequence_admission_available(uint32_t requested_ids)
 
     k_mutex_lock(&gateway_control_sequence_mutex, K_FOREVER);
     available = gateway_control_sequence_available_locked(requested_ids);
+    if (!available) {
+        (void)gateway_control_sequence_ensure_maintenance_locked(K_NO_WAIT);
+    }
     k_mutex_unlock(&gateway_control_sequence_mutex);
     return available;
 }
@@ -350,5 +390,22 @@ void app_gateway_control_sequence_test_reset(void)
     gateway_control_sequence_refill_in_flight = false;
     gateway_control_sequence_maintenance_scheduled = false;
     k_mutex_unlock(&gateway_control_sequence_mutex);
+}
+
+void app_gateway_control_sequence_test_set_schedule_result(int result)
+{
+    k_mutex_lock(&gateway_control_sequence_mutex, K_FOREVER);
+    gateway_control_sequence_maintenance_work.reschedule_result = result;
+    k_mutex_unlock(&gateway_control_sequence_mutex);
+}
+
+uint32_t app_gateway_control_sequence_test_schedule_calls(void)
+{
+    uint32_t calls;
+
+    k_mutex_lock(&gateway_control_sequence_mutex, K_FOREVER);
+    calls = gateway_control_sequence_maintenance_work.reschedule_calls;
+    k_mutex_unlock(&gateway_control_sequence_mutex);
+    return calls;
 }
 #endif

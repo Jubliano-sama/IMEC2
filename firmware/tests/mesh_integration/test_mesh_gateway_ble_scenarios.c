@@ -1379,11 +1379,19 @@ static void verify_adversarial_interleaving_guards(void)
           "BLE-blocks-mesh mutation escaped during exhausted credits");
     CHECK(timeline.mesh_events_disconnected > 0u,
           "BLE-blocks-mesh mutation escaped during disconnect");
+    /*
+     * The host-receipt barrier is deleted: the gateway ACKs as soon as the
+     * report is admitted to its RAM/BLE stream reservation, so records
+     * legitimately accumulate behind a blocked link instead of being held
+     * one-GUI-head-at-a-time. What must still hold is that the accumulation
+     * is bounded by the stream queue depth and that a blocked BLE head never
+     * makes the UWB source forget its packet.
+     */
     CHECK(timeline.upstream_custody_while_ble_blocked > 0u &&
-              timeline.stream_admissions_while_ble_blocked == 0u &&
-              timeline.max_stream_depth == 1u,
-          "BLE backpressure lost upstream custody or admitted another GUI "
-          "head: custody_samples=%u stream_admissions=%u max_stream_depth=%u",
+              timeline.stream_admissions_while_ble_blocked > 0u &&
+              timeline.max_stream_depth <= GATEWAY_BLE_STREAM_QUEUE_DEPTH,
+          "BLE backpressure lost upstream custody or overran the stream "
+          "queue: custody_samples=%u stream_admissions=%u max_stream_depth=%u",
           timeline.upstream_custody_while_ble_blocked,
           timeline.stream_admissions_while_ble_blocked,
           timeline.max_stream_depth);
@@ -1401,11 +1409,20 @@ static void verify_adversarial_interleaving_guards(void)
           timeline.cir_credit_starvation_events,
           timeline.retry_verified ? 1u : 0u,
           timeline.disconnect_exercised ? 1u : 0u);
+    /*
+     * Mesh delivery no longer waits on the BLE host: the gateway ACK is sent
+     * on RAM admission, so the mesh can quiesce while the GUI stream is still
+     * draining. What the timeline must still prove is that BLE completions
+     * genuinely interleaved with live mesh traffic (the first completion lands
+     * before the mesh quiesces) and that every submitted chunk completed.
+     */
     CHECK(timeline.first_ble_completion_us > timeline.first_ble_submit_us &&
-              timeline.last_ble_completion_us <
+              timeline.first_ble_completion_us <
                   timeline.mesh_quiesced_at_us &&
+              timeline.last_ble_completion_us >=
+                  timeline.first_ble_completion_us &&
               timeline.credit_completion_events == ble_chunks_completed,
-          "receipt-gated BLE completion timeline mismatch: first_submit=%llu "
+          "interleaved BLE completion timeline mismatch: first_submit=%llu "
           "first_complete=%llu last_complete=%llu mesh_quiesced=%llu "
           "credit_events=%u chunks=%zu",
           (unsigned long long)timeline.first_ble_submit_us,

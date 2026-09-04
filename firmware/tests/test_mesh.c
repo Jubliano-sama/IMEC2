@@ -18,16 +18,21 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
         MSG_RESULT_OFFER,
         MSG_RESULT_GRANT,
         MSG_COMMAND,
+        MSG_ROUTE_SOLICIT,
     };
-    static const uint8_t channel9_only[] = {
+    static const uint8_t both_channels[] = {
         MSG_CLICK_REPORT,
         MSG_SELF_TEST_REPORT,
         MSG_ANCHOR_HEARTBEAT,
         MSG_MESH_HOP_ACK,
         MSG_GATEWAY_ACK,
-        MSG_GATEWAY_ROUTE_REQ,
+        MSG_GATEWAY_ACK_CONFIRM,
+        MSG_GATEWAY_COLLECTION_EACK,
         MSG_COMMAND_RESULT,
         MSG_RESULT_BUNDLE,
+    };
+    static const uint8_t channel9_only[] = {
+        MSG_GATEWAY_ROUTE_REQ,
         MSG_MESH_EVENT_END,
     };
     static const uint8_t rejected[] = {
@@ -55,15 +60,19 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
             rejected[i], UWB_CHANNEL_MESH_PAYLOAD, true));
     }
 
-    assert(mesh_packet_rf_channel_allowed(
-        MSG_GATEWAY_COLLECTION_EACK, UWB_CHANNEL_WAKE_CONTACT, false));
-    assert(mesh_packet_rf_channel_allowed(
-        MSG_GATEWAY_COLLECTION_EACK, UWB_CHANNEL_MESH_PAYLOAD, false));
+    for (size_t i = 0u; i < sizeof(both_channels); i++) {
+        assert(mesh_packet_rf_channel_allowed(
+            both_channels[i], UWB_CHANNEL_WAKE_CONTACT, false));
+        assert(mesh_packet_rf_channel_allowed(
+            both_channels[i], UWB_CHANNEL_MESH_PAYLOAD, false));
+    }
     assert(!mesh_packet_rf_channel_allowed(
         MSG_MESH_DATA, UWB_CHANNEL_MESH_PAYLOAD, false));
     assert(mesh_packet_rf_channel_allowed(
         MSG_MESH_DATA, UWB_CHANNEL_MESH_PAYLOAD, true));
     assert(!mesh_packet_rf_channel_allowed(
+        MSG_MESH_DATA, UWB_CHANNEL_WAKE_CONTACT, false));
+    assert(mesh_packet_rf_channel_allowed(
         MSG_MESH_DATA, UWB_CHANNEL_WAKE_CONTACT, true));
     assert(!mesh_packet_rf_channel_allowed(MSG_COMMAND, 7u, false));
     assert(!mesh_packet_rf_channel_allowed(0xFFu,
@@ -222,7 +231,7 @@ static void test_channel9_timing_requires_channel5_contact(void)
 
     assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
     assert(timing.mesh_channel == MESH_EVENT_CHANNEL);
-    assert(timing.mesh_channel == UWB_CHANNEL_MESH_PAYLOAD);
+    assert(timing.mesh_channel == UWB_CHANNEL_WAKE_CONTACT);
     assert(timing.route_fresh);
     assert(timing.timing_fresh);
     assert(mesh_event_timing_usable(&timing, 1000u));
@@ -231,7 +240,7 @@ static void test_channel9_timing_requires_channel5_contact(void)
            PROTO_OK);
     assert(tlv_find(payload, payload_len, TLV_MESH_CHANNEL, &value, &value_len) == PROTO_OK);
     assert(value_len == 1u);
-    assert(value[0] == UWB_CHANNEL_MESH_PAYLOAD);
+    assert(value[0] == MESH_EVENT_CHANNEL);
     assert(tlv_find(payload, payload_len, TLV_MESH_EVENT_WINDOW_MS, &value, &value_len) ==
            PROTO_OK);
     assert(value_len == 2u);
@@ -1513,8 +1522,43 @@ static void test_rx_envelope_rejects_result_control_schema_and_addressing(void)
                UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
 }
 
+static void test_batch_hints_do_not_change_semantic_identity(void)
+{
+    uint8_t plain[] = {TLV_REQUESTED_MSG_SEQ, 2u, 17u, 0u};
+    uint8_t hinted[] = {TLV_BATCH_PENDING, 1u, 3u,
+                        TLV_REQUESTED_MSG_SEQ, 2u, 17u, 0u,
+                        TLV_BATCH_REMAINING, 1u, 2u};
+    struct proto_packet packet = {
+        .msg_type = MSG_MESH_DATA, .src_id = 1u, .dst_id = 2u,
+        .session_id = 3u, .seq = 4u, .payload_len = sizeof(plain),
+    };
+    uint8_t expected[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t actual[SEMANTIC_DIGEST_SHA256_LEN];
+
+    assert(mesh_packet_semantic_digest(&packet, plain, sizeof(plain), expected));
+    packet.payload_len = sizeof(hinted);
+    assert(mesh_packet_semantic_digest(&packet, hinted, sizeof(hinted), actual));
+    assert(memcmp(expected, actual, sizeof(expected)) == 0);
+    hinted[2] = 0u;
+    hinted[9] = 0u;
+    assert(mesh_packet_semantic_digest(&packet, hinted, sizeof(hinted), actual));
+    assert(memcmp(expected, actual, sizeof(expected)) == 0);
+    hinted[5]++;
+    assert(mesh_packet_semantic_digest(&packet, hinted, sizeof(hinted), actual));
+    assert(memcmp(expected, actual, sizeof(expected)) != 0);
+
+    /* Opaque frames remain byte-sensitive even when they begin like a hint. */
+    uint8_t opaque[] = {TLV_BATCH_PENDING, 1u, 3u, 0xffu};
+    packet.payload_len = sizeof(opaque);
+    assert(mesh_packet_semantic_digest(&packet, opaque, sizeof(opaque), expected));
+    opaque[2]++;
+    assert(mesh_packet_semantic_digest(&packet, opaque, sizeof(opaque), actual));
+    assert(memcmp(expected, actual, sizeof(expected)) != 0);
+}
+
 int main(void)
 {
+    test_batch_hints_do_not_change_semantic_identity();
     test_rf_channel_admission_is_exhaustive_and_fail_closed();
     test_non_rf_types_fail_semantic_ingress();
     test_gateway_ack_is_end_to_end();

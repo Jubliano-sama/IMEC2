@@ -253,7 +253,9 @@ static void test_strict_roster_missing_list_uses_current_channel9_first(void)
     assert(ctx.noted_channel9_start == current_plan.start_ms);
 
     assert(ctx.sent_channel9.next_hop_id == HOP_CURRENT);
-    assert(ctx.sent_channel9.radio_channel == UWB_CHANNEL_MESH_PAYLOAD);
+    /* Mesh control now rides channel 5 (MESH_EVENT_CHANNEL); the EACK lane
+     * inherits that channel from app_gateway_eack_policy.c. */
+    assert(ctx.sent_channel9.radio_channel == MESH_EVENT_CHANNEL);
     assert(ctx.sent_channel9.earliest_tx_ms == current_plan.start_ms + 5u);
     assert(ctx.sent_channel9.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
     assert(ctx.sent_channel9.packet.src_id == GATEWAY_ID_TEST);
@@ -295,7 +297,7 @@ static void test_strict_roster_missing_list_uses_current_channel9_first(void)
     assert(listed);
 }
 
-static void test_current_channel9_hop_filters_invalid_sources(void)
+static void test_current_event_hop_filters_invalid_sources(void)
 {
     const struct mesh_event_plan current_plan = {
         .action = MESH_EVENT_PLAN_START,
@@ -304,36 +306,54 @@ static void test_current_channel9_hop_filters_invalid_sources(void)
         .window_ms = 100u,
     };
 
-    assert(app_gateway_collection_eack_current_channel9_return_hop(
+    /* A channel that carries no mesh reports at all is still rejected. */
+    assert(app_gateway_collection_eack_current_event_return_hop(
+               HOP_CURRENT,
+               0u,
+               &current_plan,
+               GATEWAY_ID_TEST) == 0u);
+    assert(app_gateway_collection_eack_current_event_return_hop(
                HOP_CURRENT,
                UWB_CHANNEL_WAKE_CONTACT,
                NULL,
                GATEWAY_ID_TEST) == 0u);
-    assert(app_gateway_collection_eack_current_channel9_return_hop(
+    assert(app_gateway_collection_eack_current_event_return_hop(
                0u,
                UWB_CHANNEL_MESH_PAYLOAD,
                NULL,
                GATEWAY_ID_TEST) == 0u);
-    assert(app_gateway_collection_eack_current_channel9_return_hop(
+    assert(app_gateway_collection_eack_current_event_return_hop(
                MESH_BROADCAST_ID,
                UWB_CHANNEL_MESH_PAYLOAD,
                NULL,
                GATEWAY_ID_TEST) == 0u);
-    assert(app_gateway_collection_eack_current_channel9_return_hop(
+    assert(app_gateway_collection_eack_current_event_return_hop(
                GATEWAY_ID_TEST,
                UWB_CHANNEL_MESH_PAYLOAD,
                NULL,
                GATEWAY_ID_TEST) == 0u);
-    assert(app_gateway_collection_eack_current_channel9_return_hop(
+    assert(app_gateway_collection_eack_current_event_return_hop(
                HOP_CURRENT,
                UWB_CHANNEL_MESH_PAYLOAD,
                NULL,
                GATEWAY_ID_TEST) == 0u);
-    assert(app_gateway_collection_eack_current_channel9_return_hop(
+    assert(app_gateway_collection_eack_current_event_return_hop(
                HOP_CURRENT,
                UWB_CHANNEL_MESH_PAYLOAD,
                &current_plan,
                GATEWAY_ID_TEST) == HOP_CURRENT);
+    /* All mesh traffic now rides Channel 5: a result received inside a live
+     * event window there must keep the same fast return hop. */
+    assert(app_gateway_collection_eack_current_event_return_hop(
+               HOP_CURRENT,
+               UWB_CHANNEL_WAKE_CONTACT,
+               &current_plan,
+               GATEWAY_ID_TEST) == HOP_CURRENT);
+    assert(app_gateway_collection_eack_current_event_return_hop(
+               GATEWAY_ID_TEST,
+               UWB_CHANNEL_WAKE_CONTACT,
+               &current_plan,
+               GATEWAY_ID_TEST) == 0u);
 }
 
 static void test_failed_lane_rounds_reach_alternate_then_c5(void)
@@ -514,7 +534,7 @@ static void test_prepare_builds_exact_eack_without_starting_transport(void)
 int main(void)
 {
     test_strict_roster_missing_list_uses_current_channel9_first();
-    test_current_channel9_hop_filters_invalid_sources();
+    test_current_event_hop_filters_invalid_sources();
     test_failed_lane_rounds_reach_alternate_then_c5();
     test_prebuilt_retry_preserves_payload_but_reselects_return_lane();
     test_prepare_builds_exact_eack_without_starting_transport();

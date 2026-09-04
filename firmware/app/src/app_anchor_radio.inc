@@ -84,7 +84,12 @@ static uint32_t anchor_uwb_scan_blocked_retry_ms(void)
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         return ANCHOR_UWB_SCAN_BUSY_RETRY_MS;
     }
-    return anchor_uwb_scan_interval_ms;
+    /*
+     * A blocked cycle never turned the receiver on, so retrying soon costs no
+     * RX budget.  Waiting a whole low-duty period instead can drop the single
+     * hunt an uplink wake train was sized to hit.
+     */
+    return MIN(ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS, anchor_uwb_scan_interval_ms);
 }
 
 static bool anchor_relay_tx_active(void)
@@ -661,11 +666,41 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     anchor_range_window_finalize(&window_report);
 #if !defined(CONFIG_IMEC_ML_ANCHOR)
     {
-        int report_ret =
+        /* Reports upload in schedule order right after the shared burst. */
+        uint32_t delivery_window_start_ms =
+            (uint32_t)schedule_rx_ms +
+            schedule->first_poll_delay_ms +
+            schedule->burst_window_ms +
+            UWB_SCHEDULE_GUARD_MS +
+            MESH_CLICK_DELIVERY_LEAD_MS;
+        int report_ret;
+
+        /*
+         * Publish the cohort before the report is built: every anchor that
+         * served this schedule owes the same post-burst listen window, and an
+         * anchor whose own ranging produced nothing still has to be awake for
+         * its children.  Publishing here (rather than from the report
+         * encoder) keeps that promise independent of having a result.
+         */
+        if ((schedule->flags & FLAG_COUNT_AS_CLICK) != 0u &&
+            schedule->selected_count > 0u &&
+            schedule->selected_count <= RANGE_REPORT_MAX_PARTICIPANT_ANCHORS) {
+            uint64_t cohort[RANGE_REPORT_MAX_PARTICIPANT_ANCHORS];
+
+            for (uint8_t i = 0u; i < schedule->selected_count; i++) {
+                cohort[i] = schedule->entries[i].anchor_id;
+            }
+            app_mesh_report_note_click_listen_window(delivery_window_start_ms,
+                                                     cohort,
+                                                     schedule->selected_count);
+        }
+
+        report_ret =
             build_uwb_schedule_report_if_relevant(&anchor_uwb_session,
                                                   schedule,
                                                   schedule->flags,
-                                                  &window_report);
+                                                  &window_report,
+                                                  delivery_window_start_ms);
 
         if (report_status != NULL) {
             *report_status = report_ret;
@@ -1301,6 +1336,15 @@ discovery_miss:
             claim_handled = true;
             goto claim_complete;
         }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+        reply.hop_depth = (uint8_t)(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS + 1u);
+#else
+        {
+            const struct route_candidate *selected_candidate = route_selected(&mesh_runtime.upstream);
+            reply.hop_depth = (selected_candidate != NULL && selected_candidate->hop_count < UWB_ENUM_MAX_HOPS) ?
+                              (uint8_t)(selected_candidate->hop_count + 1u) : 1u;
+        }
+#endif
 #endif
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -1727,7 +1771,7 @@ complete:
                                   claim->click_event_id,
                                   claim->attempt_index);
     anchor_click_window_set_active(false);
-    if (deferred_mesh_rx_queued) {
+    if (deferred_mesh_rx_queued || mesh_rx_pending_count() > 0u) {
         mesh_stop_role_scan();
         mesh_submit_queued_rx();
     }
@@ -1997,6 +2041,26 @@ static bool anchor_enumeration_rx_table_identity_valid;
 static struct k_spinlock anchor_enumeration_rx_lock;
 static atomic_t anchor_ch5_post_ch9_recovery_scan_pending;
 
+/*
+ * An extended-PHR listener still reports a standard-PHR wake as physical
+ * activity, but it cannot decode the claim.  The clicker repeats complete
+ * claims for WAKE_ADV_MS, so one short cross-PHY probe after that activity is
+ * enough to catch a clean copy without turning the operation listener into a
+ * polling loop.  The acquisition bound covers one scan gap, two control-frame
+ * attempts, and the clicker's packet jitter.
+ */
+#define ANCHOR_PROTOCOL_CLICK_PROBE_ACQUIRE_MS \
+    (MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS + \
+     (2u * UWB_CONTROL_TX_TIMEOUT_MS) + \
+     ((UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US + 999u) / 1000u))
+
+BUILD_ASSERT(ANCHOR_PROTOCOL_CLICK_PROBE_ACQUIRE_MS < WAKE_ADV_MS,
+             "protocol click probe must fit inside one repeated wake train");
+BUILD_ASSERT(ENUMERATION_RESPONSE_HIA_LOCAL_START_DELAY_MS +
+                 (UWB_ENUM_MAX_HOPS * MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS) <=
+             DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS,
+             "HIA response lane must finish inside the unpromoted prearm lease");
+
 static void anchor_enumeration_rx_clear_claim_identity(void)
 {
     anchor_enumeration_rx_claim_session_id = 0u;
@@ -2028,6 +2092,72 @@ static int anchor_enumeration_rx_begin(uint32_t epoch,
 static bool anchor_enumeration_rx_bind_claim(uint32_t epoch,
                                              uint32_t claim_session_id,
                                              uint32_t claim_command_seq);
+static void anchor_compact_enumeration_deactivate(uint32_t epoch);
+
+static bool anchor_enumeration_rx_terminate_epoch(uint32_t epoch,
+                                                   const char *reason)
+{
+    bool terminated;
+    k_spinlock_key_t key;
+
+    if (epoch == 0u) {
+        return false;
+    }
+    key = k_spin_lock(&anchor_enumeration_rx_lock);
+    terminated = protocol_rx_lifecycle_terminate(
+        &anchor_enumeration_rx_lifecycle,
+        PROTOCOL_RX_OPERATION_ENUMERATION,
+        epoch);
+    if (terminated) {
+        anchor_enumeration_rx_clear_phase_identities();
+    }
+    k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (terminated) {
+        anchor_compact_enumeration_deactivate(epoch);
+        status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
+                            epoch,
+                            reason == NULL ? "rollback" : reason);
+        (void)anchor_uwb_scan_schedule_ms(anchor_uwb_scan_interval_ms);
+    }
+    return terminated;
+}
+
+/* A failed CLAIM bind may be a conflicting replay against another exact
+ * active CLAIM.  Roll back only a fresh lifecycle that still has no command
+ * identity; never let the rejected packet terminate the established owner. */
+static bool anchor_enumeration_rx_rollback_unbound_claim(
+    uint32_t epoch,
+    const char *reason)
+{
+    bool terminated = false;
+    k_spinlock_key_t key;
+
+    if (epoch == 0u) {
+        return false;
+    }
+    key = k_spin_lock(&anchor_enumeration_rx_lock);
+    if (anchor_enumeration_rx_lifecycle.operation ==
+            PROTOCOL_RX_OPERATION_ENUMERATION &&
+        anchor_enumeration_rx_lifecycle.generation == epoch &&
+        !anchor_enumeration_rx_claim_identity_valid) {
+        terminated = protocol_rx_lifecycle_terminate(
+            &anchor_enumeration_rx_lifecycle,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            epoch);
+        if (terminated) {
+            anchor_enumeration_rx_clear_phase_identities();
+        }
+    }
+    k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (terminated) {
+        anchor_compact_enumeration_deactivate(epoch);
+        status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
+                            epoch,
+                            reason == NULL ? "claim-bind-failed" : reason);
+        (void)anchor_uwb_scan_schedule_ms(anchor_uwb_scan_interval_ms);
+    }
+    return terminated;
+}
 
 static int anchor_enumeration_rx_prearm(uint32_t epoch,
                                         uint32_t hold_ms,
@@ -2043,10 +2173,10 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
     uint64_t provisional_source_start_ms;
     int32_t block_starts_in_ms;
     uint8_t selected_hop_count = 0u;
+    uint32_t superseded_epoch = 0u;
     uint32_t now_ms;
     uint64_t now_ms_64;
     k_spinlock_key_t key;
-    int ret;
 
     if (epoch == 0u || hold_ms == 0u || hold_ms > INT32_MAX ||
         operation_budget_ms == 0u || operation_budget_ms > INT32_MAX ||
@@ -2095,6 +2225,11 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
         now_ms,
         now_ms + hold_ms);
     if (result == PROTOCOL_RX_BEGIN_BUSY) {
+        if (anchor_enumeration_rx_lifecycle.operation ==
+            PROTOCOL_RX_OPERATION_ENUMERATION) {
+            superseded_epoch =
+                (uint32_t)anchor_enumeration_rx_lifecycle.generation;
+        }
         protocol_rx_lifecycle_init(&anchor_enumeration_rx_lifecycle);
         anchor_enumeration_rx_clear_phase_identities();
         result = protocol_rx_lifecycle_begin(
@@ -2110,15 +2245,17 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
         anchor_enumeration_rx_survey_follows = survey_follows;
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (superseded_epoch != 0u) {
+        anchor_compact_enumeration_deactivate(superseded_epoch);
+        status_debug_printf(
+            "DBG_ENUM_RX_TERMINAL epoch=%u reason=prearm-superseded\n",
+            superseded_epoch);
+    }
     if (result != PROTOCOL_RX_BEGIN_ACCEPTED &&
         result != PROTOCOL_RX_BEGIN_DUPLICATE) {
         return result == PROTOCOL_RX_BEGIN_BUSY ? -EBUSY : -EINVAL;
     }
-    ret = anchor_enumeration_rx_begin(epoch, operation_budget_ms, true);
-    if (ret < 0 ||
-        !anchor_enumeration_rx_bind_claim(epoch, epoch, epoch)) {
-        return ret < 0 ? ret : -ESTALE;
-    }
+    /* HIA keeps the short listener lease; TABLE promotes it when needed. */
     selected = mesh_relay_current_gateway_route(&mesh_runtime, now_ms);
     if (selected != NULL && selected->next_hop_id != 0u &&
         selected->hop_count < UWB_ENUM_MAX_HOPS) {
@@ -2131,6 +2268,10 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
         anchor_enumeration_response_config.hia_deepest_source_start_ms !=
             deepest_source_start_ms) {
         k_mutex_unlock(&anchor_discovery_claim_mutex);
+        if (result == PROTOCOL_RX_BEGIN_ACCEPTED) {
+            (void)anchor_enumeration_rx_terminate_epoch(
+                epoch, "prearm-config-conflict");
+        }
         return -ESTALE;
     }
     anchor_enumeration_response_config =
@@ -2151,6 +2292,17 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
             .active = true,
         };
     k_mutex_unlock(&anchor_discovery_claim_mutex);
+    if (result == PROTOCOL_RX_BEGIN_ACCEPTED) {
+        /* The pipelined exchange starts with HIA and sends no separate CLAIM.
+         * Its accepted epoch is authoritative even after a gateway restart.
+         * A duplicate must preserve any TABLE already accepted in this run. */
+        if (!anchor_enumeration_rx_bind_claim(epoch, epoch, epoch)) {
+            (void)anchor_enumeration_rx_terminate_epoch(
+                epoch, "prearm-bind-failed");
+            return -ESTALE;
+        }
+        (void)local_anchor_discovery_assignment_note_claim(epoch);
+    }
     status_debug_printf(
         "DBG_ENUM_RX_PREARM epoch=%u hold=%u budget=%u survey=%u duplicate=%u observed_hop=%u selected_hop=%u compact_start=%llu deepest_start=%llu\n",
         epoch,
@@ -2180,6 +2332,7 @@ static int anchor_enumeration_rx_begin(uint32_t epoch,
                                        bool allow_supersede)
 {
     enum protocol_rx_begin_result result;
+    uint32_t superseded_epoch = 0u;
     uint32_t now_ms;
     k_spinlock_key_t key;
 
@@ -2196,6 +2349,11 @@ static int anchor_enumeration_rx_begin(uint32_t epoch,
         now_ms,
         now_ms + operation_budget_ms);
     if (result == PROTOCOL_RX_BEGIN_BUSY && allow_supersede) {
+        if (anchor_enumeration_rx_lifecycle.operation ==
+            PROTOCOL_RX_OPERATION_ENUMERATION) {
+            superseded_epoch =
+                (uint32_t)anchor_enumeration_rx_lifecycle.generation;
+        }
         protocol_rx_lifecycle_init(&anchor_enumeration_rx_lifecycle);
         anchor_enumeration_rx_clear_phase_identities();
         result = protocol_rx_lifecycle_begin(
@@ -2221,6 +2379,12 @@ static int anchor_enumeration_rx_begin(uint32_t epoch,
         anchor_enumeration_rx_prearmed = false;
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (superseded_epoch != 0u) {
+        anchor_compact_enumeration_deactivate(superseded_epoch);
+        status_debug_printf(
+            "DBG_ENUM_RX_TERMINAL epoch=%u reason=claim-superseded\n",
+            superseded_epoch);
+    }
     if (result != PROTOCOL_RX_BEGIN_ACCEPTED &&
         result != PROTOCOL_RX_BEGIN_DUPLICATE) {
         return result == PROTOCOL_RX_BEGIN_BUSY ? -EBUSY : -EINVAL;
@@ -2333,6 +2497,8 @@ static bool anchor_enumeration_rx_active(void)
                  PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5;
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
     if (expired) {
+        anchor_compact_enumeration_deactivate(
+            (uint32_t)expired_generation);
         status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=timeout\n",
                             (uint32_t)expired_generation);
     }
@@ -2408,6 +2574,7 @@ static enum protocol_rx_recovery_result anchor_enumeration_rx_note_recovery(
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
     if (result == PROTOCOL_RX_RECOVERY_TERMINATED) {
+        anchor_compact_enumeration_deactivate(epoch);
         status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
                             epoch,
                             reason == NULL ? "failure" : reason);
@@ -3001,6 +3168,88 @@ static int anchor_compact_enumeration_handle_raw(
 }
 
 /*
+ * Probe the standard wake PHY only after an extended-PHR receive reported
+ * physical activity.  A captured click is left in `frame` for the ordinary
+ * anchor wake decoder; every other outcome restores the extended control PHY
+ * before returning.  The caller owns the radio guard throughout.
+ */
+static int anchor_protocol_rx_probe_standard_click(
+    uint8_t *frame,
+    size_t *frame_len,
+    uint8_t *quality)
+{
+    struct uwb_wake_claim_frame claim = {0};
+    enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+    uint32_t started_ms;
+    int receive_ret;
+    int restore_ret;
+    int ret;
+
+    if (frame == NULL || frame_len == NULL || quality == NULL) {
+        return -EINVAL;
+    }
+
+    started_ms = k_uptime_get_32();
+    *frame_len = 0u;
+    *quality = 0u;
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        status_debug_printf(
+            "DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=%u outcome=config-fail ret=%d\n",
+            k_uptime_get_32() - started_ms,
+            ret);
+        return ret;
+    }
+
+    receive_ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
+        ANCHOR_PROTOCOL_CLICK_PROBE_ACQUIRE_MS,
+        ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
+        frame,
+        UWB_MESH_MAX_FRAME_LEN,
+        frame_len,
+        quality,
+        NULL,
+        &rx_failure);
+    if (receive_ret == 0 &&
+        uwb_decode_wake_claim(frame, *frame_len, &claim) == PROTO_OK &&
+        app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags, true)) {
+        status_debug_printf(
+            "DBG_PROTOCOL_RX_CLICK_PROBE_CAPTURE src=0x%llx event=%u attempt=%u q=%u\n",
+            (unsigned long long)claim.clicker_id,
+            claim.click_event_id,
+            claim.attempt_index,
+            *quality);
+        status_debug_printf(
+            "DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=%u outcome=capture ret=0\n",
+            k_uptime_get_32() - started_ms);
+        return 1;
+    }
+
+    restore_ret = dwm3000_driver_configure_wake_mesh_control_mode();
+    if (restore_ret < 0) {
+        status_debug_printf(
+            "DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=%u outcome=restore-fail ret=%d\n",
+            k_uptime_get_32() - started_ms,
+            restore_ret);
+        return restore_ret;
+    }
+    if (receive_ret < 0 && receive_ret != -ETIMEDOUT &&
+        !app_anchor_rx_failure_detected_preamble(rx_failure)) {
+        status_debug_printf(
+            "DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=%u outcome=rx-fail ret=%d\n",
+            k_uptime_get_32() - started_ms,
+            receive_ret);
+        return receive_ret;
+    }
+
+    status_debug_printf(
+        "DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=%u outcome=miss ret=%d\n",
+        k_uptime_get_32() - started_ms,
+        receive_ret);
+    return 0;
+}
+
+/*
  * Keep extended-PHR RX armed across the expanding lane, without cell gaps.
  * Compact BUNDLE/ACK frames remain short, while the same listener can hand
  * the full assignment TABLE straight to the normal mesh decoder as soon as
@@ -3055,6 +3304,11 @@ static int anchor_run_compact_enumeration_lane(
         uint32_t started_cycles;
         int tx_ret;
         bool lane_started = now_ms >= config.start_ms;
+
+        if (!anchor_enumeration_rx_active()) {
+            anchor_compact_enumeration_deactivate(config.epoch);
+            return -ETIMEDOUT;
+        }
 
         if (lane_started && !anchor_compact_enumeration_window(
                                 now_ms, &config, &timing)) {
@@ -3134,6 +3388,19 @@ static int anchor_run_compact_enumeration_lane(
         if (ret == -ECANCELED) {
             return ret;
         }
+        if (app_anchor_rx_failure_detected_preamble(*rx_failure)) {
+            int probe_ret = anchor_protocol_rx_probe_standard_click(
+                frame, frame_len, quality);
+
+            if (probe_ret > 0) {
+                status_debug_note(
+                    "DBG_ENUM_COMPACT_CLICK_PREEMPT\n");
+                return 0;
+            }
+            if (probe_ret < 0) {
+                return probe_ret;
+            }
+        }
         /* A collision/CRC loss consumes this attempt; the next round retries. */
         status_debug_printf(
             "DBG_ENUM_COMPACT_RX_RETRY depth=%u round=%u offset_ms=%u ret=%d fail=%u\n",
@@ -3183,6 +3450,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool survey_radio_work_pending = false;
     bool protocol_flood_pending = false;
     bool post_ch9_recovery_scan = false;
+    bool click_listen_active = false;
+    uint32_t click_listen_remaining_ms = 0u;
     bool ch9_receive_prepare_pending = false;
     uint32_t ch9_retry_ms = 0u;
     uint32_t ch9_receive_prepare_delay_ms = 0u;
@@ -3190,6 +3459,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint32_t survey_radio_work_wait_ms = 0u;
     uint32_t relay_tx_retry_ms = 0u;
     uint32_t scan_rx_ms = ANCHOR_UWB_SCAN_RX_MS;
+    uint32_t scan_activity_completion_ms =
+        ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS;
     uint32_t mesh_rx_queue_depth = 0u;
     bool mesh_rx_response_busy = false;
     uint32_t blocked_retry_ms = anchor_uwb_scan_blocked_retry_ms();
@@ -3213,12 +3484,14 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         return;
     }
     if (radio_guard_uwb_poisoned()) {
+        status_debug_printf("DBG_SCAN_SKIPPED reason=%s\n", "radio-poisoned");
         LOG_ERR("anchor scan suppressed while radio parking is poisoned: %d",
                 radio_guard_uwb_poison_error());
         return;
     }
     if (anchor_click_handoff_pending() || anchor_click_window_active()) {
         /* A received click must keep priority until its lease is resolved. */
+        status_debug_printf("DBG_SCAN_SKIPPED reason=%s\n", "click-handoff");
         anchor_uwb_scan_schedule_ms(ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS);
         return;
     }
@@ -3233,6 +3506,16 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     protocol_flood_pending = mesh_c5_protocol_flood_work_pending();
     post_ch9_recovery_scan =
         atomic_get(&anchor_ch5_post_ch9_recovery_scan_pending) != 0;
+    /*
+     * Post-burst click delivery listen (Channel 5 Delivery Protocol section
+     * 5).  Anchors are sorted into the delivery grid by gateway depth, so a
+     * parent's own slot always precedes its children's; by the time a child
+     * transmits, this anchor's own report has left and the listener owes it
+     * a mesh-control receiver rather than a standard-PHR wake hunt.
+     */
+    click_listen_active = !protocol_continuous_rx &&
+        app_mesh_report_click_listen_active(k_uptime_get_32(),
+                                            &click_listen_remaining_ms);
     if (enumeration_continuous_rx && local_protocol_response_active) {
         /*
          * Keep one continuous receive window for the gateway's one-shot
@@ -3258,6 +3541,9 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         scan_rx_ms = MESH_ROUTE_TEST_CH5_GAP_SCAN_MS;
     } else if (control_followup_boost_active) {
         scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS;
+    } else if (click_listen_active) {
+        scan_rx_ms = MIN(MESH_CLICK_DELIVERY_LISTEN_SLICE_MS,
+                         MAX(click_listen_remaining_ms, 1u));
     }
     if (enumeration_continuous_rx) {
         compact_lane_start_wait_ms =
@@ -3352,6 +3638,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                                 retry_ms,
                                 anchor_uwb_scan_interval_ms);
         }
+        status_debug_printf("DBG_SCAN_SKIPPED reason=%s\n", "blocked");
         anchor_uwb_scan_schedule_ms(retry_ms);
         return;
     }
@@ -3369,6 +3656,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                                 blocked_retry_ms,
                                 anchor_uwb_scan_interval_ms);
         }
+        status_debug_printf("DBG_SCAN_SKIPPED reason=%s\n", "guard-fail");
         anchor_uwb_scan_schedule_ms(blocked_retry_ms);
         return;
     }
@@ -3418,7 +3706,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         goto scan_complete;
     }
 
-    ret = protocol_continuous_rx ?
+    ret = (protocol_continuous_rx || click_listen_active) ?
         dwm3000_driver_configure_wake_mesh_control_mode() :
         dwm3000_driver_configure_wake_mode();
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && ret != 0) {
@@ -3431,6 +3719,10 @@ protocol_rx_window:
         survey_continuous_rx = app_survey_anchor_rx_continuous();
         protocol_continuous_rx = enumeration_continuous_rx ||
                                  survey_continuous_rx;
+        scan_activity_completion_ms =
+            (protocol_continuous_rx || click_listen_active) ?
+            ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS :
+            ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS;
         survey_radio_work_pending = survey_continuous_rx &&
             app_survey_anchor_radio_work_pending(
                 (uint64_t)k_uptime_get(), &survey_radio_work_wait_ms);
@@ -3496,7 +3788,7 @@ protocol_rx_window:
         ret = scan_activity_deadline_ms == 0 ?
             dwm3000_driver_receive_frame_continuous_extend_on_activity(
                 scan_rx_ms,
-                ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
+                scan_activity_completion_ms,
                 frame,
                 UWB_MESH_MAX_FRAME_LEN,
                 &frame_len,
@@ -3505,7 +3797,7 @@ protocol_rx_window:
                 &rx_failure) :
             dwm3000_driver_receive_frame_continuous_extend_on_activity_until(
                 scan_rx_ms,
-                ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
+                scan_activity_completion_ms,
                 scan_activity_deadline_ms,
                 frame,
                 UWB_MESH_MAX_FRAME_LEN,
@@ -3556,6 +3848,32 @@ protocol_rx_window:
                     scan_reserve_ms);
             }
 
+            if (ret != 0 && ret != -ETIMEDOUT && ret != -ECANCELED &&
+                app_anchor_rx_failure_detected_preamble(rx_failure)) {
+                int probe_ret = anchor_protocol_rx_probe_standard_click(
+                    frame, &frame_len, &quality);
+
+                if (probe_ret > 0) {
+                    if (survey_continuous_rx &&
+                        !app_survey_anchor_preempt_for_click() &&
+                        app_survey_anchor_active()) {
+                        ret = -ECANCELED;
+                        status_debug_printf(
+                            "DBG_PROTOCOL_RX_CLICK_PREEMPT_FAIL owner=survey ret=%d\n",
+                            ret);
+                        goto scan_complete;
+                    }
+                    status_debug_printf(
+                        "DBG_PROTOCOL_RX_CLICK_PREEMPT owner=%s\n",
+                        survey_continuous_rx ? "survey" : "enumeration");
+                    ret = 0;
+                    goto scan_frame_ready;
+                }
+                if (probe_ret < 0) {
+                    ret = probe_ret;
+                }
+            }
+
             if (ret == -ETIMEDOUT && !protocol_owned_work_due) {
                 if (enumeration_continuous_rx &&
                     (anchor_compact_enumeration_window(
@@ -3574,6 +3892,27 @@ protocol_rx_window:
                 app_watchdog_note_radio_progress();
                 goto protocol_rx_window;
             }
+        } else if (click_listen_active && ret != 0 && ret != -ETIMEDOUT &&
+                   ret != -ECANCELED &&
+                   app_anchor_rx_failure_detected_preamble(rx_failure)) {
+            /*
+             * A standard-PHR wake train that starts while this anchor is in
+             * the post-burst mesh-control listen shows up only as a PHY
+             * header error.  Probe for a click so the listen window can never
+             * swallow one; the probe restores the mesh-control PHY itself.
+             */
+            int probe_ret = anchor_protocol_rx_probe_standard_click(
+                frame, &frame_len, &quality);
+
+            if (probe_ret > 0) {
+                status_debug_printf("DBG_CLICK_LISTEN_PREEMPT ret=%d\n",
+                                    probe_ret);
+                ret = 0;
+                goto scan_frame_ready;
+            }
+            if (probe_ret < 0) {
+                ret = probe_ret;
+            }
         }
     }
 scan_frame_ready:
@@ -3589,7 +3928,7 @@ scan_frame_ready:
                             preamble_detected ? 1u : 0u,
                             quality,
                             scan_rx_elapsed_us,
-                            ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS);
+                            scan_activity_completion_ms);
     }
     uwb_anchor_note_idle_scan(&anchor_uwb_session,
                               ANCHOR_UWB_STARTUP_US,
@@ -3615,16 +3954,19 @@ scan_frame_ready:
                                 decode_ret);
         }
         if (decode_ret == PROTO_OK) {
-            if ((anchor_enumeration_rx_active() ||
-                 app_survey_anchor_rx_continuous()) &&
+            if (app_survey_anchor_rx_continuous() &&
                 app_mesh_c5_wake_claim_requires_anchor_handoff(
                     claim.flags, true)) {
+                if (!app_survey_anchor_preempt_for_click() &&
+                    app_survey_anchor_active()) {
+                    ret = -ECANCELED;
+                    status_debug_printf(
+                        "DBG_PROTOCOL_RX_CLICK_PREEMPT_FAIL owner=survey ret=%d\n",
+                        ret);
+                    goto scan_complete;
+                }
                 status_debug_printf(
-                    "DBG_PROTOCOL_RX_CLICK_DEFER src=0x%llx event=%u\n",
-                    (unsigned long long)claim.clicker_id,
-                    claim.click_event_id);
-                app_watchdog_note_radio_progress();
-                goto protocol_rx_window;
+                    "DBG_PROTOCOL_RX_CLICK_PREEMPT owner=survey\n");
             }
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                 !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
@@ -3823,7 +4165,8 @@ scan_complete:
         protocol_continuous_rx = enumeration_continuous_rx ||
                                  survey_continuous_rx;
         low_power_ret = anchor_enter_low_power(
-            protocol_continuous_rx ? APP_RADIO_LOW_POWER_IDLE :
+            (protocol_continuous_rx || click_listen_active) ?
+                APP_RADIO_LOW_POWER_IDLE :
                 app_radio_low_power_mode_for_connection(
                     mesh_anchor_connected_radio_active()),
             "low-duty-scan-release");
@@ -3909,6 +4252,11 @@ scan_complete:
                anchor_enumeration_rx_active() ||
                app_survey_anchor_rx_continuous()) {
         next_scan_delay_ms = 0u;
+    } else if (!deferred_mesh_rx_queued &&
+               app_mesh_report_click_listen_active(k_uptime_get_32(), NULL)) {
+        /* Rearm the post-burst listener immediately; a queued mesh RX handoff
+         * already owns a shorter rearm and must drain (and hop-ACK) first. */
+        next_scan_delay_ms = 0u;
     }
     LOG_DBG("anchor UWB diagnostics: last_ret=%d last_rx_failure=%s last_preamble=%u scans=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u claims=%u collisions=%u wins=%u losses=%u replies=%u schedules=%u ds_ok=%u ds_fail=%u timing_rejections=%u mesh_packets=%u sample_order=%u scan_startup_us=%u scan_pll_us=%u scan_rx_us=%u awake_us=%u false_cooldowns=%u",
                 ret,
@@ -3935,6 +4283,16 @@ scan_complete:
                 anchor_uwb_session.diagnostics.scan_rx_time_us,
                 anchor_uwb_session.diagnostics.awake_time_us,
                 anchor_uwb_session.diagnostics.false_wake_cooldowns);
+    if (!rx_attempted &&
+        next_scan_delay_ms > ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS) {
+        /*
+         * A cycle that owned the radio but never armed the receiver must not
+         * cost a whole low-duty period.  An uplink wake train spans only one
+         * or two scan periods, so one skipped hunt is a lost train.
+         */
+        status_debug_printf("DBG_SCAN_SKIPPED reason=%s\n", "no-rx-attempt");
+        next_scan_delay_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
+    }
     {
         const struct proto_packet scan_identity = {
             .src_id = DEVICE_ID,

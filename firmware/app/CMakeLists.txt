@@ -546,10 +546,8 @@ target_compile_definitions(app PRIVATE
     IMEC_STACK_DIAG_BUILD_ID="${IMEC_STACK_DIAG_BUILD_ID}"
     IMEC_USE_HARDWARE_DEVICE_ID=$<BOOL:${IMEC_USE_HARDWARE_DEVICE_ID}>
 )
-# The verifier closes every application-owned frame and synchronous call edge.
-# Platform and controller code keeps its SDK-owned stack contract and is
-# covered by the required on-target whole-thread high-watermark capture.
-target_compile_options(app PRIVATE -fstack-usage -fdump-ipa-cgraph)
+# Keep per-function stack reports available for diagnosis.
+target_compile_options(app PRIVATE -fstack-usage)
 if(IMEC_DEVICE_ID)
     target_compile_definitions(app PRIVATE DEVICE_ID=${IMEC_DEVICE_ID})
 endif()

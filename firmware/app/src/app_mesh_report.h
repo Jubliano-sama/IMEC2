@@ -188,7 +188,36 @@ int build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
     const struct uwb_range_schedule_frame *schedule,
     uint8_t schedule_flags,
-    const struct anchor_range_window_report *report);
+    const struct anchor_range_window_report *report,
+    uint32_t delivery_window_start_ms);
+/*
+ * True when this packet is the first fragment of the local click report that
+ * owns a delivery slot in the current burst. *due_ms then carries the next
+ * boundary of this anchor's residue class on the shared delivery grid, which
+ * is the instant its first transmission belongs at even when post-burst work
+ * pushed the hand-off past the nominal slot.
+ */
+bool app_mesh_report_click_delivery_due_ms(const struct proto_packet *packet,
+                                           uint32_t now_ms,
+                                           uint32_t *due_ms,
+                                           uint32_t *window_start_ms,
+                                           uint8_t *slot_index,
+                                           uint8_t *slot_count);
+/*
+ * Post-burst click delivery listen window (Channel 5 Delivery Protocol §5).
+ *
+ * The anchor publishes the cohort of the burst it just served together with
+ * the shared delivery window start.  While the window is open this anchor
+ * keeps a channel-5 mesh-control receiver armed and answers children's
+ * uplinks with MSG_MESH_HOP_ACK, and a child whose next hop is a member of
+ * the same cohort skips the wake train.
+ */
+void app_mesh_report_note_click_listen_window(uint32_t window_start_ms,
+                                              const uint64_t *participant_ids,
+                                              uint8_t participant_count);
+bool app_mesh_report_click_listen_active(uint32_t now_ms,
+                                         uint32_t *remaining_ms);
+bool app_mesh_report_click_participant(uint64_t node_id, uint32_t now_ms);
 uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity);
 void mesh_stop_role_scan(void);
 void mesh_restart_role_scan(void);
@@ -340,7 +369,6 @@ bool mesh_queue_from_frame_deferred_radio(const uint8_t *frame,
                                           uint64_t *previous_hop_id);
 /* BLE completion boundary for a gateway-local ACK-required host item. */
 void mesh_gateway_host_receipt_ingress_queued(void);
-void mesh_gateway_host_receipt_ready(void);
 bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
                                           size_t frame_len,
                                           uint8_t link_quality);

@@ -29,12 +29,36 @@ from .protocol import (
     MSG_SELF_TEST_REPORT,
     MSG_SURVEY_EVENT,
     Packet,
+    TLV_BATCH_PENDING,
+    TLV_BATCH_REMAINING,
     decode_survey_event,
     is_gateway_assignment_publisher_event,
     validate_gateway_command_event_packet,
     validate_gateway_local_command_result_packet,
     validate_self_test_report_packet,
 )
+
+
+def _without_batch_hints(payload: bytes) -> bytes:
+    """Match firmware identity while retaining malformed records verbatim."""
+    kept = bytearray()
+    seen = set()
+    offset = 0
+    while offset < len(payload):
+        if offset + 2 > len(payload):
+            return payload
+        kind, length = payload[offset:offset + 2]
+        end = offset + 2 + length
+        if end > len(payload):
+            return payload
+        if kind in (TLV_BATCH_PENDING, TLV_BATCH_REMAINING):
+            if length != 1 or kind in seen:
+                return payload
+            seen.add(kind)
+        else:
+            kept.extend(payload[offset:end])
+        offset = end
+    return bytes(kept)
 
 
 DEFAULT_MAX_ENTRIES = 1024
@@ -258,9 +282,13 @@ class GatewayPacketDeduplicator:
                 _CachedPacket(packet.flags, bytes(packet.payload)),
             )
         if packet.msg_type != MSG_GATEWAY_COMMAND_EVENT:
+            payload = bytes(packet.payload)
+            if packet.msg_type in (MSG_CLICK_REPORT, MSG_SELF_TEST_REPORT,
+                                   MSG_ANCHOR_HEARTBEAT, MSG_MESH_DATA):
+                payload = _without_batch_hints(payload)
             return (
                 self._identity(packet, self._gateway_id),
-                _CachedPacket(packet.flags, bytes(packet.payload)),
+                _CachedPacket(packet.flags, payload),
             )
 
         try:

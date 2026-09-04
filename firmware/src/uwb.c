@@ -891,7 +891,8 @@ static int validate_discovery_reply(const struct uwb_discovery_reply_frame *fram
         frame->anchor_slot >= UWB_DISCOVERY_SLOT_COUNT ||
         !discovery_reply_status_valid(frame->status) ||
         frame->rx_quality > 100u ||
-        !flags_valid(frame->flags)) {
+        !flags_valid(frame->flags) ||
+        frame->hop_depth > UWB_ENUM_MAX_HOPS) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
@@ -1182,6 +1183,7 @@ int uwb_encode_discovery_reply(const struct uwb_discovery_reply_frame *frame,
     out[38] = frame->rx_quality;
     proto_put_u16_le(&out[39], frame->battery_mv);
     out[41] = frame->flags;
+    out[42] = frame->hop_depth;
     append_crc(out, UWB_DISCOVERY_REPLY_LEN - UWB_FRAME_CRC_LEN);
     *written = UWB_DISCOVERY_REPLY_LEN;
     return PROTO_OK;
@@ -1218,6 +1220,7 @@ int uwb_decode_discovery_reply(const uint8_t *data,
     frame->rx_quality = data[38];
     frame->battery_mv = proto_get_u16_le(&data[39]);
     frame->flags = data[41];
+    frame->hop_depth = data[42];
     return validate_discovery_reply(frame);
 }
 

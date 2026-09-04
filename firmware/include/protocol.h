@@ -152,6 +152,13 @@ enum msg_type {
     MSG_RESULT_GRANT = 0x43,
     MSG_RESULT_BUNDLE = 0x44,
     MSG_GATEWAY_COLLECTION_EACK = 0x45,
+    /*
+     * Channel-5 route solicit.  An anchor without a usable gateway route
+     * broadcasts it behind a wake train; a neighbour that owns a route
+     * re-originates it toward the gateway, and the gateway answers with one
+     * rate-limited Here-I-Am wave.  Carries no reply of its own.
+     */
+    MSG_ROUTE_SOLICIT = 0x46,
 
     MSG_GATEWAY_COMMAND_EVENT = 0x56,
     /* Host-to-gateway receipt; valid over serial/COBS, never over UWB. */
@@ -172,6 +179,42 @@ enum pkt_flags {
     FLAG_ERROR = 0x40,
     FLAG_RANGE_ONLY = 0x80,
 };
+
+/*
+ * FLAG_MORE_FOLLOWS - batch-continuation hint for the gateway receive path.
+ *
+ * A sender that is about to transmit another frame back-to-back sets this on
+ * the earlier frame so the gateway keeps the receiver armed for one short
+ * lookahead window instead of releasing the radio and paying a full re-arm.
+ * When it is clear the gateway releases the radio immediately after the frame
+ * it just queued, which is the fast path for a single report and the ACK that
+ * answers it.
+ *
+ * WIRE STATUS: the one-byte `flags` field is fully allocated - bits 0x01
+ * through 0x80 all carry live meaning above, and both proto_packet_validate()
+ * and the uwb.c/uwb_session.c schedule validators reject any flag outside
+ * their permitted set.  There is therefore no free bit to assign without
+ * bumping PROTO_VERSION or widening the header, and this change is required
+ * to keep the wire format byte-identical.  The hint consequently has no wire
+ * representation yet: the value is 0, no encoder can emit it, every decoder
+ * reads it as clear, and proto_packet_more_follows() always answers false.
+ *
+ * That is exactly the intended default behaviour (the gateway never hunts).
+ * When a bit becomes free, or the header gains an extension byte, change only
+ * the value below and the accessor starts reporting the peer's hint; every
+ * consumer already routes through proto_packet_more_follows().  Old firmware
+ * that never sets the bit keeps working unchanged in both directions.
+ */
+#define FLAG_MORE_FOLLOWS 0x00u
+
+/*
+ * True when the sender asked the receiver to keep hunting for a back-to-back
+ * follower.  Single chokepoint for the (currently unassigned) wire bit.
+ */
+static inline bool proto_packet_flags_more_follows(uint8_t flags)
+{
+    return FLAG_MORE_FOLLOWS != 0u && (flags & FLAG_MORE_FOLLOWS) != 0u;
+}
 
 enum tlv_type {
     TLV_DEVICE_ROLE = 0x01,
@@ -408,6 +451,25 @@ enum tlv_type {
     TLV_SURVEY_PARTIAL_REASONS = 0xCA,
     TLV_SURVEY_SKIPPED_PLAN = 0xCB,
     TLV_SURVEY_BATCH = 0xCC,
+    /*
+     * Channel-5 delivery protocol batch/backpressure TLVs.
+     *
+     * TLV_BATCH_PENDING rides a report frame and states how many further
+     * frames the sender still holds for this exact next hop, not counting the
+     * frame that carries it.  Absent means zero.
+     *
+     * TLV_BATCH_CREDIT rides MSG_MESH_HOP_ACK / MSG_GATEWAY_ACK and states how
+     * many further frames the responder can take from this sender right now.
+     * Zero means stop.  Its presence is also the marker that distinguishes a
+     * new-firmware ACK (which may legitimately accept nothing) from an old
+     * ACK that always names exactly one accepted identity.
+     *
+     * TLV_BATCH_REMAINING rides every follower frame of a burst and states how
+     * many frames of that burst are still to come; zero on the last one.
+     */
+    TLV_BATCH_PENDING = 0xCD,
+    TLV_BATCH_CREDIT = 0xCE,
+    TLV_BATCH_REMAINING = 0xCF,
 };
 
 enum gateway_route_adv_mode {

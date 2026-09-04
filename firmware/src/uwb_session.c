@@ -649,6 +649,7 @@ int uwb_clicker_note_discovery_reply(struct uwb_clicker_session *session,
             candidate->rx_quality = reply->rx_quality;
         }
         candidate->anchor_slot = reply->anchor_slot;
+        candidate->hop_depth = reply->hop_depth;
         return PROTO_OK;
     }
 
@@ -661,6 +662,7 @@ int uwb_clicker_note_discovery_reply(struct uwb_clicker_session *session,
     candidate->anchor_slot = reply->anchor_slot;
     candidate->rx_quality = reply->rx_quality;
     candidate->sample_count = session->config.samples_per_anchor;
+    candidate->hop_depth = reply->hop_depth;
     session->candidate_count++;
     return PROTO_OK;
 }
@@ -736,6 +738,45 @@ static int select_next_candidate(const struct uwb_clicker_session *session,
     return selected;
 }
 
+static const struct uwb_anchor_candidate *candidate_for_anchor(
+    const struct uwb_clicker_session *session,
+    uint64_t anchor_id)
+{
+    for (uint8_t i = 0u; i < session->candidate_count; i++) {
+        if (session->candidates[i].anchor_id == anchor_id) {
+            return &session->candidates[i];
+        }
+    }
+    return NULL;
+}
+
+static uint8_t candidate_delivery_depth(const struct uwb_anchor_candidate *c)
+{
+    return (c == NULL || c->hop_depth == 0u) ? 1u : c->hop_depth;
+}
+
+/* Lower gateway depth first, then lower enumeration slot, then lower id. */
+static bool schedule_entry_orders_before(
+    const struct uwb_clicker_session *session,
+    const struct uwb_range_schedule_entry *a,
+    const struct uwb_range_schedule_entry *b)
+{
+    const struct uwb_anchor_candidate *ca = candidate_for_anchor(session, a->anchor_id);
+    const struct uwb_anchor_candidate *cb = candidate_for_anchor(session, b->anchor_id);
+    uint8_t depth_a = candidate_delivery_depth(ca);
+    uint8_t depth_b = candidate_delivery_depth(cb);
+    uint8_t slot_a = ca == NULL ? UINT8_MAX : ca->anchor_slot;
+    uint8_t slot_b = cb == NULL ? UINT8_MAX : cb->anchor_slot;
+
+    if (depth_a != depth_b) {
+        return depth_a < depth_b;
+    }
+    if (slot_a != slot_b) {
+        return slot_a < slot_b;
+    }
+    return a->anchor_id < b->anchor_id;
+}
+
 int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
                                      uint16_t reply_delay_us,
                                      uint16_t first_poll_delay_ms,
@@ -807,8 +848,30 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
         }
         used[selected] = true;
         schedule->entries[i].anchor_id = session->candidates[selected].anchor_id;
-        schedule->entries[i].seq = (uint8_t)(1u + i);
         schedule->entries[i].sample_count = session->config.samples_per_anchor;
+    }
+    /*
+     * Selection picks the best-heard anchors; the on-air order is the report
+     * delivery order.  Anchors closest to the gateway go first so a deeper
+     * anchor's parent has already finished its own uplink and is listening
+     * when the child's turn comes.  The enumeration slot breaks ties, so the
+     * order is identical on every participant without further negotiation.
+     */
+    for (uint8_t i = 1u; i < selected_count; i++) {
+        struct uwb_range_schedule_entry entry = schedule->entries[i];
+        uint8_t j = i;
+
+        while (j > 0u &&
+               schedule_entry_orders_before(session,
+                                            &entry,
+                                            &schedule->entries[j - 1u])) {
+            schedule->entries[j] = schedule->entries[j - 1u];
+            j--;
+        }
+        schedule->entries[j] = entry;
+    }
+    for (uint8_t i = 0u; i < selected_count; i++) {
+        schedule->entries[i].seq = (uint8_t)(1u + i);
     }
     if (uwb_validate_range_schedule(schedule) != PROTO_OK) {
         memset(schedule, 0, sizeof(*schedule));
@@ -1290,6 +1353,7 @@ int uwb_anchor_build_discovery_reply(struct uwb_anchor_session *session,
     reply->rx_quality = rx_quality;
     reply->battery_mv = battery_mv;
     reply->flags = discover->flags;
+    reply->hop_depth = 1u;
 
     session->state = UWB_ANCHOR_DISCOVERY_REPLIED;
     session->diagnostics.discovery_replies++;
@@ -1487,4 +1551,44 @@ int uwb_session_validate_reply_timing(uint16_t poll_to_resp_us,
     }
 
     return PROTO_OK;
+}
+
+uint32_t uwb_click_delivery_slot_due_ms(uint32_t window_start_ms,
+                                        uint8_t slot_index,
+                                        uint8_t slot_count,
+                                        uint16_t slot_ms,
+                                        uint32_t now_ms)
+{
+    uint32_t base_ms;
+    uint32_t period_ms;
+    uint32_t elapsed_ms;
+    uint32_t cycles;
+
+    if (slot_ms == 0u) {
+        return now_ms;
+    }
+    if (slot_count <= slot_index) {
+        /*
+         * A schedule that no longer describes this anchor still has to keep
+         * one exclusive residue class, so widen the grid instead of dropping
+         * the separation guarantee.
+         */
+        slot_count = (uint8_t)(slot_index + 1u);
+    }
+
+    base_ms = window_start_ms + (uint32_t)slot_index * (uint32_t)slot_ms;
+    if ((int32_t)(base_ms - now_ms) >= 0) {
+        return base_ms;
+    }
+
+    /*
+     * The slot already passed. Every anchor derives the same physical window
+     * base from the shared schedule frame, so advancing by whole schedule
+     * periods keeps each anchor in its own residue class: two anchors can
+     * never land on the same boundary no matter how late they are.
+     */
+    period_ms = (uint32_t)slot_count * (uint32_t)slot_ms;
+    elapsed_ms = now_ms - base_ms;
+    cycles = (elapsed_ms + period_ms - 1u) / period_ms;
+    return base_ms + (cycles * period_ms);
 }

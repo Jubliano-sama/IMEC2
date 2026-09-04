@@ -717,6 +717,34 @@ static void test_gateway_control_sequence_refill_failure_is_rate_limited(void)
     assert(store.write_calls == writes + 1u);
 }
 
+static void test_gateway_control_sequence_schedule_failure_recreates_refill_owner(
+    void)
+{
+    struct fake_store store = {0};
+    uint32_t expected = gateway_control_first_sequence();
+    uint32_t schedule_calls;
+    const uint32_t half_block =
+        APP_GATEWAY_CONTROL_SEQUENCE_BLOCK_SIZE / 2u;
+
+    test_uptime_ms = 0;
+    install_store(&store, APP_DURABLE_STATE_ROLE_GATEWAY, TEST_DEVICE_A);
+    app_gateway_control_sequence_test_reset();
+    assert(app_gateway_control_sequence_init() == 0);
+
+    app_gateway_control_sequence_test_set_schedule_result(-ENOMEM);
+    consume_gateway_control_sequences(half_block, &expected);
+    schedule_calls = app_gateway_control_sequence_test_schedule_calls();
+    assert(schedule_calls > 0u);
+
+    /* The failed submission left no phantom owner; an ordinary admission
+     * check can publish the missing maintenance work once scheduling works. */
+    app_gateway_control_sequence_test_set_schedule_result(0);
+    assert(!app_gateway_control_sequence_admission_available(
+        APP_GATEWAY_CONTROL_SEQUENCE_BLOCK_SIZE));
+    assert(app_gateway_control_sequence_test_schedule_calls() ==
+           schedule_calls + 1u);
+}
+
 static void test_gateway_control_sequence_reboot_skips_ram_blocks(void)
 {
     struct fake_store store = {0};
@@ -1019,6 +1047,7 @@ int main(void)
     test_gateway_control_sequence_receiptable_skip_is_ram_only();
     test_gateway_control_sequence_prefetch_is_daily_and_admission_floor_is_protected();
     test_gateway_control_sequence_refill_failure_is_rate_limited();
+    test_gateway_control_sequence_schedule_failure_recreates_refill_owner();
     test_gateway_control_sequence_reboot_skips_ram_blocks();
     test_gateway_control_sequence_final_partial_block_fails_closed();
     test_boot_incarnation_advances_across_one_sided_reboots();

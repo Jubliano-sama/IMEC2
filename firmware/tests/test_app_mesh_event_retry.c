@@ -1126,6 +1126,7 @@ static void test_known_parent_enters_repair_after_four_failed_contacts(void)
 {
     enum { RETAINED_ROUTE_RETRIES = 3 };
     struct app_mesh_known_parent_contact_retry_state state = {0};
+    uint8_t observed = 0u;
     struct app_mesh_rf_retry_key key = {
         .source_id = LOCAL_ID,
         .destination_id = UINT64_C(0x9999888877776666),
@@ -1151,7 +1152,8 @@ static void test_known_parent_enters_repair_after_four_failed_contacts(void)
                PEER_ID,
                &key,
                RETAINED_ROUTE_RETRIES,
-               NULL) == APP_MESH_KNOWN_PARENT_CONTACT_REPAIR_ROUTE);
+               &observed) == APP_MESH_KNOWN_PARENT_CONTACT_REPAIR_ROUTE);
+    assert(observed == RETAINED_ROUTE_RETRIES + 1u);
     assert(!state.active);
 }
 

@@ -144,12 +144,17 @@ def exercise_production_owner_source_invariants() -> None:
         retained_click,
     )
     queue = route_listener.index("mesh_queue_from_frame_at_internal(", classify)
-    wins = route_listener.index(
-        "if (click_captured && gateway_operation_retained)", queue
+    retained = route_listener.index(
+        "gateway_operation_retained = true", queue
     )
-    handoff = route_listener.index("mesh_handoff_anchor_click_claim(", wins)
-    assert retained_click < classify < queue < wins < handoff
-    assert "mesh_handoff_anchor_click_claim(" not in route_listener[wins:handoff]
+    handoff = route_listener.index(
+        "mesh_handoff_anchor_click_claim(", retained
+    )
+    resume = route_listener.index(
+        "DBG_C5_GATEWAY_OPERATION_QUEUED_AFTER_CLICK", handoff
+    )
+    assert retained_click < classify < queue < retained < handoff < resume
+    assert "gateway-operation-before-click" not in route_listener
 
 
 def main() -> None:

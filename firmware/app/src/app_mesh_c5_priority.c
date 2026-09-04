@@ -139,6 +139,20 @@ bool app_mesh_c5_route_capture_relevant(
         return state->dst_id == state->local_id;
     }
 
+    /*
+     * Uplink custody handed to this parent (Channel 5 Delivery Protocol
+     * section 3/4).  Without this the listener a wake train opened dropped
+     * the very frame the train was sent to collect as "unrelated", so the
+     * child never saw MSG_MESH_HOP_ACK and retrained forever.
+     */
+    if (state->uplink_capture_allowed &&
+        app_mesh_c5_route_capture_completes_uplink(state->msg_type)) {
+        return targeted_control_previous_hop_valid(state) &&
+               state->previous_hop_id == state->target_id &&
+               state->src_id != state->local_id &&
+               state->dst_id != MESH_BROADCAST_ID;
+    }
+
     if ((state->control_followup || state->gateway_control_priority) &&
         control_origin_id != MESH_BROADCAST_ID &&
         state->src_id == control_origin_id) {
@@ -176,6 +190,22 @@ bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type)
 {
     return msg_type == MSG_ROUTE_REPLY ||
            msg_type == MSG_GATEWAY_ROUTE_ADV;
+}
+
+bool app_mesh_c5_route_capture_completes_uplink(uint8_t msg_type)
+{
+    switch (msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_MESH_DATA:
+    case MSG_ROUTE_SOLICIT:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool app_mesh_c5_route_capture_yields_to_competing_request(uint8_t msg_type)
@@ -234,6 +264,9 @@ bool app_mesh_c5_gateway_operation_outranks_unaccepted_click(
 {
     enum command_id command_id = CMD_VENDOR_BASE;
 
+    /* This classifies which control must be durably queued before the listener
+     * changes radio owners. It does not authorize discarding a valid click
+     * claim; once queued, these operations can resume after click handoff. */
     if (msg_type == MSG_GATEWAY_ROUTE_ADV) {
         return true;
     }
@@ -285,12 +318,16 @@ bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
                                            size_t frame_len,
                                            size_t standard_frame_max_len)
 {
-    return frame_len > standard_frame_max_len ||
-           msg_type == MSG_COMMAND ||
-           msg_type == MSG_ROUTE_REQ ||
-           msg_type == MSG_ROUTE_REPLY ||
-           msg_type == MSG_GATEWAY_ROUTE_ADV ||
-           event_control_type(msg_type);
+    /*
+     * Every mesh packet on channel 5 uses the one extended-PHR control PHY.
+     * Only the clicker-facing UWB frames (wake claim, discovery, schedule,
+     * DS-TWR) use the standard-PHR wake PHY, so a receiver waiting for a
+     * hop or gateway ACK never has to guess which PHY the reply will use.
+     */
+    (void)msg_type;
+    (void)frame_len;
+    (void)standard_frame_max_len;
+    return true;
 }
 
 bool app_mesh_c5_wake_claim_preempts_mesh(uint8_t claim_flags)

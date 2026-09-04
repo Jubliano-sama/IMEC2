@@ -669,6 +669,42 @@ int gateway_ble_stream_enqueue_retained_packet(
                           true);
 }
 
+/*
+ * The reservation digest is the anti-stale proof that a commit carries the
+ * exact bytes that were admitted.  When the caller presents the very buffer
+ * that digest was taken over, re-running SHA-256 across a 300-byte report
+ * only repeats work that already succeeded, and it does so inside the
+ * gateway's receive-to-ACK path.  Every other buffer is still hashed and
+ * compared, so a genuinely different payload cannot commit.
+ */
+static bool reservation_payload_proven(
+    const struct gateway_ble_stream_state *state,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    if (payload_len != state->reservation_payload_len) {
+        return false;
+    }
+    if (payload != NULL && payload == state->reservation_payload_source) {
+        return true;
+    }
+    return semantic_digest_sha256(payload, payload_len, payload_digest) &&
+           semantic_digest_equal(payload_digest,
+                                 state->reservation_payload_digest,
+                                 sizeof(payload_digest));
+}
+
+static void reservation_clear(struct gateway_ble_stream_state *state)
+{
+    state->reservation_payload_len = 0u;
+    state->reservation_payload_source = NULL;
+    memset(state->reservation_payload_digest,
+           0,
+           sizeof(state->reservation_payload_digest));
+}
+
 int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
                                       const struct proto_packet *packet,
                                       const uint8_t *payload,
@@ -731,6 +767,7 @@ int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
 
     *reservation_item(state) = item;
     state->reservation_payload_len = (uint16_t)payload_len;
+    state->reservation_payload_source = payload;
     if (!semantic_digest_sha256(
             payload,
             payload_len,
@@ -738,7 +775,7 @@ int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
         memset(reservation_item(state),
                0,
                sizeof(*reservation_item(state)));
-        state->reservation_payload_len = 0u;
+        reservation_clear(state);
         return -EINVAL;
     }
     state->reservation_active = true;
@@ -754,7 +791,6 @@ int gateway_ble_stream_commit_reservation(
     const struct gateway_ble_stream_item *reserved;
     enum gateway_ble_stream_class packet_class;
     struct gateway_ble_stream_item item;
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t insert_index;
     int ret;
 
@@ -765,43 +801,27 @@ int gateway_ble_stream_commit_reservation(
     if (!state->reservation_active) {
         return -ENOENT;
     }
-    if (state->host_custody_source_payload_active) {
-        return -EBUSY;
-    }
+    /* Several host-custody records may be retained at once: mesh custody is
+     * released at admission, and the host retires each head in order. */
     reserved = reservation_item_const(state);
-    if (payload_len != state->reservation_payload_len ||
-        !packet_identity_matches(packet, &reserved->packet) ||
-        !semantic_digest_sha256(payload,
-                                payload_len,
-                                payload_digest) ||
-        !semantic_digest_equal(payload_digest,
-                               state->reservation_payload_digest,
-                               sizeof(payload_digest))) {
+    if (!packet_identity_matches(packet, &reserved->packet) ||
+        !reservation_payload_proven(state, payload, payload_len)) {
         return -ESTALE;
     }
-
-    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
-                                                      packet->flags);
-    ret = build_record(packet,
-                       payload,
-                       payload_len,
-                       packet_class,
-                       reserved->received_at_ms,
-                       reserved->queued_at_ms,
-                       NULL,
-                       0u,
-                       &item);
-    if (ret < 0 || item.len != reserved->len ||
-        item.packet_type != reserved->packet_type ||
-        item.priority != reserved->priority) {
-        return ret < 0 ? ret : -ESTALE;
-    }
     if (state->count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
-        state->pool_used + item.len > sizeof(state->record_pool)) {
+        state->pool_used + reserved->len > sizeof(state->record_pool)) {
         return -ENOSPC;
     }
 
-    item.offset = state->pool_used;
+    /*
+     * The reservation already sized this record, so serialize straight into
+     * the pool.  A separate sizing pass would repeat the record's CRC16 over
+     * the whole payload for no new information; the reserved length, type and
+     * priority are re-checked below before the item is published, and the
+     * bytes written past pool_used stay unowned scratch until then.
+     */
+    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
+                                                      packet->flags);
     ret = build_record(packet,
                        payload,
                        payload_len,
@@ -814,6 +834,11 @@ int gateway_ble_stream_commit_reservation(
     if (ret < 0) {
         return ret;
     }
+    if (item.len != reserved->len ||
+        item.packet_type != reserved->packet_type ||
+        item.priority != reserved->priority) {
+        return -ESTALE;
+    }
 
     insert_index = state->count;
     item.offset = state->pool_used;
@@ -824,10 +849,7 @@ int gateway_ble_stream_commit_reservation(
     state->count++;
     state->host_custody_source_payload_active = true;
     state->reservation_active = false;
-    state->reservation_payload_len = 0u;
-    memset(state->reservation_payload_digest,
-           0,
-           sizeof(state->reservation_payload_digest));
+    reservation_clear(state);
     if (insert_index != GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u) {
         memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
     }
@@ -847,7 +869,6 @@ int gateway_ble_stream_commit_bundle_projection_reservation(
     const struct gateway_ble_stream_item *reserved;
     enum gateway_ble_stream_class packet_class;
     struct gateway_ble_stream_item item;
-    uint8_t raw_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     size_t destination_offset;
     size_t projected_payload_len = 0u;
     uint8_t *destination_payload;
@@ -862,18 +883,11 @@ int gateway_ble_stream_commit_bundle_projection_reservation(
     if (!state->reservation_active) {
         return -ENOENT;
     }
-    if (state->host_custody_source_payload_active) {
-        return -EBUSY;
-    }
+    /* Several host-custody records may be retained at once: mesh custody is
+     * released at admission, and the host retires each head in order. */
     reserved = reservation_item_const(state);
-    if (raw_payload_len != state->reservation_payload_len ||
-        !packet_identity_matches(packet, &reserved->packet) ||
-        !semantic_digest_sha256(raw_payload,
-                                raw_payload_len,
-                                raw_payload_digest) ||
-        !semantic_digest_equal(raw_payload_digest,
-                               state->reservation_payload_digest,
-                               sizeof(raw_payload_digest))) {
+    if (!packet_identity_matches(packet, &reserved->packet) ||
+        !reservation_payload_proven(state, raw_payload, raw_payload_len)) {
         return -ESTALE;
     }
     if (state->count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
@@ -923,10 +937,7 @@ int gateway_ble_stream_commit_bundle_projection_reservation(
     state->count++;
     state->host_custody_source_payload_active = true;
     state->reservation_active = false;
-    state->reservation_payload_len = 0u;
-    memset(state->reservation_payload_digest,
-           0,
-           sizeof(state->reservation_payload_digest));
+    reservation_clear(state);
     if (insert_index != GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u) {
         memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
     }
@@ -943,10 +954,7 @@ void gateway_ble_stream_cancel_reservation(
         return;
     }
     memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
-    state->reservation_payload_len = 0u;
-    memset(state->reservation_payload_digest,
-           0,
-           sizeof(state->reservation_payload_digest));
+    reservation_clear(state);
     state->reservation_active = false;
 }
 

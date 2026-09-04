@@ -133,7 +133,7 @@ class ClickerHilContractTest(unittest.TestCase):
 
         self.assertEqual(
             b"".join(call.args[1] for call in write.call_args_list),
-            b"READY\n",
+            b"\nREADY\n",
             "a live attachment may query readiness but must not inject a gesture",
         )
         self.assertIsNotNone(failure)
@@ -150,7 +150,7 @@ class ClickerHilContractTest(unittest.TestCase):
 
         self.assertEqual(
             b"".join(call.args[1] for call in write.call_args_list),
-            b"READY\n\nCLICK\n",
+            b"\nREADY\n\nCLICK\n",
         )
         self.assertIsNone(failure)
 

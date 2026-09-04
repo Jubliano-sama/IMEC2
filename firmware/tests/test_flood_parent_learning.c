@@ -4,8 +4,8 @@
  * proves a live upstream edge, so the anchor stores the physical ingress hop
  * as an upstream candidate toward the gateway before answering the flood.
  * Cost-based selection keeps any existing better parent, stale epochs never
- * clobber newer route bookkeeping, and same-parent refreshes preserve
- * failure and hold-down state.
+ * clobber newer route bookkeeping, and a fresh accepted Here-I-Am refresh
+ * clears failure and hold-down state for the physically observed parent.
  */
 #include "gateway_command.h"
 #include "mesh.h"
@@ -174,7 +174,7 @@ static void test_stale_epoch_does_not_clobber_newer_bookkeeping(void)
 	CHECK(upstream_candidate_count(&anchor) == 1u);
 }
 
-static void test_same_parent_refresh_preserves_failure_state(void)
+static void test_same_parent_refresh_clears_failure_state(void)
 {
 	struct mesh_relay anchor;
 	struct proto_packet flood = flood_command(FLOOD_ORIGIN_TTL - 1u);
@@ -198,8 +198,9 @@ static void test_same_parent_refresh_preserves_failure_state(void)
 	stored->hold_down_until_ms = 5000u;
 	stored->hold_down_valid = true;
 
-	/* Re-learning the same parent must not reset its failure counters or
-	 * clear a still-active hold-down. */
+	/* This boundary is reached only for a newly accepted route sequence; exact
+	 * duplicates are rejected by the caller. The new physical observation
+	 * rehabilitates a parent that may have moved since its prior failure. */
 	CHECK(mesh_relay_note_flood_parent_candidate(
 		      &anchor, &flood, PARENT, 100u, FLOOD_ORIGIN_TTL,
 		      ROUTE_EPOCH, 1010u) == PROTO_OK);
@@ -211,9 +212,9 @@ static void test_same_parent_refresh_preserves_failure_state(void)
 		stored = NULL;
 	}
 	CHECK(stored != NULL);
-	CHECK(stored->failure_count == 2u);
-	CHECK(stored->hold_down_valid);
-	CHECK(stored->hold_down_until_ms == 5000u);
+	CHECK(stored->failure_count == 0u);
+	CHECK(!stored->hold_down_valid);
+	CHECK(stored->hold_down_until_ms == 0u);
 	CHECK(stored->last_seen_ms == 1010u);
 }
 
@@ -306,7 +307,7 @@ int main(void)
 	test_empty_upstream_learns_claim_parent();
 	test_existing_better_route_not_downgraded();
 	test_stale_epoch_does_not_clobber_newer_bookkeeping();
-	test_same_parent_refresh_preserves_failure_state();
+	test_same_parent_refresh_clears_failure_state();
 	test_malformed_flood_parents_fail_closed();
 
 	if (failures != 0u) {

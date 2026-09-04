@@ -30,4 +30,4 @@ Set-Location -LiteralPath $taskRepoRoot
 
 Write-Host "IMEC mesh build/flash environment is ready."
 Write-Host "Build anchor: west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor -- -DIMEC_BUILD_PRESET=mesh_anchor"
-Write-Host "Stage only through the verified wrapper: python firmware/scripts/flash_verified_mesh.py --build-dir build/mesh-anchor --probe-id <probe-id> --stage-only"
+Write-Host "Flash with: west flash --runner pyocd --build-dir <build-dir> -- --dev-id <probe-id> --frequency 4000000"

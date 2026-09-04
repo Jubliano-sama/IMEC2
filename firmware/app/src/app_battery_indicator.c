@@ -2,6 +2,7 @@
 
 #include "app_board.h"
 #include "app_config.h"
+#include "app_watchdog.h"
 #include "battery_status.h"
 
 #include <zephyr/kernel.h>
@@ -24,6 +25,9 @@ BUILD_ASSERT(BATTERY_INDICATOR_LED_ON_MS <
 BUILD_ASSERT(BATTERY_INDICATOR_LED_ON_MS <
                  BATTERY_INDICATOR_CLICKER_PERIOD_MS,
              "clicker battery pulse must fit inside its period");
+BUILD_ASSERT(BATTERY_INDICATOR_CLICKER_PERIOD_MS <
+                 APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
+             "clicker battery wake must service the watchdog before timeout");
 
 K_MUTEX_DEFINE(battery_indicator_mutex);
 
@@ -91,6 +95,10 @@ static void battery_indicator_work_handler(struct k_work *work)
             period_ms - BATTERY_INDICATOR_LED_ON_MS);
         k_mutex_unlock(&battery_indicator_mutex);
         return;
+    }
+
+    if (DEVICE_ROLE == ROLE_CLICKER) {
+        app_watchdog_clicker_idle_checkpoint();
     }
 
     ret = battery_sample_lithium_mv(&battery_mv);

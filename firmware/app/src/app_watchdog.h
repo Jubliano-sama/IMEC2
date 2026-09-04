@@ -47,6 +47,7 @@ static inline bool app_watchdog_action_lease_stale(
 }
 
 int app_watchdog_init(void);
+void app_watchdog_clicker_idle_checkpoint(void);
 void app_watchdog_note_radio_progress(void);
 uint32_t app_watchdog_clicker_action_begin(void);
 bool app_watchdog_note_clicker_action_progress(uint32_t generation);

@@ -54,13 +54,19 @@ bool mesh_sim_phy_acquisition_compatible(enum mesh_sim_phy lhs,
         return false;
     }
 
-    /* SFD timeout is a receiver deadline, not an acquisition shape.  Wake
-     * and ranging use the same CH5 preamble/SFD/PAC, while mesh-control keeps
-     * those acquisition fields and changes only the PHR mode. */
+    /*
+     * Acquisition is preamble-code correlation followed by SFD detection: it
+     * needs the same channel and the same SFD shape.  Preamble length and PAC
+     * size are not part of it - a receiver detects the transmitter's preamble
+     * sequence whatever its length, and its own PAC only sets how much of that
+     * preamble it must integrate (modeled in partial_outcome()).  So the
+     * channel-5 wake PHY (PLEN4096/PAC32) and the channel-5 mesh-control PHY
+     * (PLEN1024/PAC8) still acquire each other's frames and part company only
+     * at the PHR.  SFD timeout is a receiver deadline, not an acquisition
+     * shape, and is likewise excluded.
+     */
     return left->channel == right->channel &&
-           left->preamble_symbols == right->preamble_symbols &&
-           left->sfd_symbols == right->sfd_symbols &&
-           left->pac_symbols == right->pac_symbols;
+           left->sfd_symbols == right->sfd_symbols;
 }
 
 bool mesh_sim_phy_decode_compatible(enum mesh_sim_phy lhs,

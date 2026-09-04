@@ -3102,19 +3102,32 @@ static int test_airtime_mutated_retry_is_dropped(void)
 
     set_phase("mutated-retry-delay-gateway-ack");
     CHECK(run_connection(&world, upstream_connection, true) == MESH_SIM_OK);
+    /*
+     * The jittered exponential ACK backoff is much shorter than one upstream
+     * connection period, so the origin may already have re-armed its own
+     * retransmit while the dropped gateway ACK was in flight. Either way it
+     * keeps exclusive custody of the identical pending packet.
+     */
     CHECK(world.roles[origin].relay.pending.state ==
-          MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+              MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
+          world.roles[origin].relay.pending.state ==
+              MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    CHECK(packet_identity_matches(&world.roles[origin].relay.pending.packet,
+                                  &packet));
 
     set_phase("mutated-retry-ready");
-    CHECK(mesh_sim_schedule_relay_tick(
-              &world,
-              origin,
-              (uint64_t)world.roles[origin].relay.pending.retry_after_ms *
-                  1000u) == MESH_SIM_OK);
-    CHECK(mesh_sim_run_until(
-              &world,
-              (uint64_t)world.roles[origin].relay.pending.retry_after_ms *
-                  1000u) == MESH_SIM_OK);
+    if (world.roles[origin].relay.pending.state ==
+        MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        CHECK(mesh_sim_schedule_relay_tick(
+                  &world,
+                  origin,
+                  (uint64_t)world.roles[origin].relay.pending.retry_after_ms *
+                      1000u) == MESH_SIM_OK);
+        CHECK(mesh_sim_run_until(
+                  &world,
+                  (uint64_t)world.roles[origin].relay.pending.retry_after_ms *
+                      1000u) == MESH_SIM_OK);
+    }
     CHECK(world.roles[origin].relay.pending.state ==
           MESH_RELAY_TX_WAIT_GATEWAY_ACK);
 
@@ -3139,7 +3152,17 @@ static int test_airtime_mutated_retry_is_dropped(void)
     set_phase("mutated-retry-send-conflict");
     transmission_count_before = world.transmission_count;
     reception_count_before = world.reception_count;
-    CHECK(run_connection(&world, child_connection, false) == MESH_SIM_OK);
+    /*
+     * The retransmit is now armed one short jittered backoff after the ACK
+     * window, which can fall between two child connection events, so the
+     * mutated copy leaves the queue at one of the next scheduled child
+     * windows instead of always the immediate next one.
+     */
+    for (size_t attempt = 0u;
+         attempt < 3u && world.transmission_count == transmission_count_before;
+         attempt++) {
+        CHECK(run_connection(&world, child_connection, false) == MESH_SIM_OK);
+    }
     CHECK(world.transmission_count == transmission_count_before + 1u);
     CHECK(world.reception_count == reception_count_before + 1u);
     tx = &world.transmissions[transmission_count_before];

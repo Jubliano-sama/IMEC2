@@ -606,6 +606,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .rx_quality = 88u,
         .battery_mv = 3010u,
         .flags = claim.flags,
+        .hop_depth = 1u,
     };
     const struct uwb_range_release_frame release =
         valid_range_release_for_claim(&claim);
@@ -794,6 +795,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_reply.rx_quality == reply.rx_quality);
     assert(decoded_reply.battery_mv == reply.battery_mv);
     assert(decoded_reply.flags == reply.flags);
+    assert(decoded_reply.hop_depth == reply.hop_depth);
 
     assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
     assert(written == UWB_RANGE_RELEASE_LEN);
@@ -1106,6 +1108,14 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
 
     assert(uwb_encode_discovery_reply(&reply, buf, sizeof(buf), &written) == PROTO_OK);
     buf[41] = 0u;
+    refresh_frame_crc(buf, written);
+    assert(uwb_decode_discovery_reply(buf,
+                                      written,
+                                      &(struct uwb_discovery_reply_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_discovery_reply(&reply, buf, sizeof(buf), &written) == PROTO_OK);
+    buf[42] = UWB_ENUM_MAX_HOPS + 1u;
     refresh_frame_crc(buf, written);
     assert(uwb_decode_discovery_reply(buf,
                                       written,

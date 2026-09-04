@@ -3,6 +3,7 @@
 #include "report.h"
 
 #include <assert.h>
+#include <string.h>
 
 static struct uwb_clicker_config clicker_config(void)
 {
@@ -425,13 +426,58 @@ static void test_clicker_discovers_50_and_schedules_best_8_only(void)
     assert(schedule.selected_count == UWB_RANGE_SCHEDULE_MAX_ANCHORS);
     assert(schedule.selected_count == 8u);
 
+    /* Selection keeps the eight best-heard anchors (slots 42..49); the
+     * on-air order is delivery order, so equal-depth entries sort by slot. */
     for (uint8_t i = 0u; i < schedule.selected_count; i++) {
         uint64_t expected_anchor = UINT64_C(0xAA00000000000000) +
-                                   UWB_DISCOVERY_SLOT_COUNT - i;
+                                   UWB_DISCOVERY_SLOT_COUNT -
+                                   UWB_RANGE_SCHEDULE_MAX_ANCHORS + 1u + i;
 
         assert(schedule.entries[i].anchor_id == expected_anchor);
+        assert(schedule.entries[i].seq == (uint8_t)(1u + i));
         assert(schedule.entries[i].sample_count == config.samples_per_anchor);
     }
+}
+
+static void test_clicker_orders_schedule_by_gateway_depth_then_slot(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_range_schedule_frame schedule;
+    struct uwb_clicker_config config = clicker_config();
+    struct uwb_discovery_reply_frame reply;
+
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    clicker_begin_discovery(&session);
+    /* Best-heard anchor is two hops deep; a quiet one is a direct anchor. */
+    reply = reply_for(&session, UINT64_C(0xD2), 7u, 99u);
+    reply.hop_depth = 2u;
+    assert(uwb_clicker_note_discovery_reply(&session, &reply) == PROTO_OK);
+    reply = reply_for(&session, UINT64_C(0xD1), 9u, 40u);
+    reply.hop_depth = 1u;
+    assert(uwb_clicker_note_discovery_reply(&session, &reply) == PROTO_OK);
+    reply = reply_for(&session, UINT64_C(0xD0), 3u, 60u);
+    reply.hop_depth = 0u; /* legacy reply: treated as direct */
+    assert(uwb_clicker_note_discovery_reply(&session, &reply) == PROTO_OK);
+    reply = reply_for(&session, UINT64_C(0xD3), 1u, 80u);
+    reply.hop_depth = 3u;
+    assert(uwb_clicker_note_discovery_reply(&session, &reply) == PROTO_OK);
+
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            UWB_DS_TWR_REPLY_DELAY_US,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
+    assert(schedule.selected_count == 4u);
+    assert(schedule.entries[0].anchor_id == UINT64_C(0xD0));
+    assert(schedule.entries[1].anchor_id == UINT64_C(0xD1));
+    assert(schedule.entries[2].anchor_id == UINT64_C(0xD2));
+    assert(schedule.entries[3].anchor_id == UINT64_C(0xD3));
+    for (uint8_t i = 0u; i < schedule.selected_count; i++) {
+        assert(schedule.entries[i].seq == (uint8_t)(1u + i));
+    }
+    /* The clicker's own copy must be the same order it transmitted, or the
+     * DS-TWR polls address the wrong anchor in each slot. */
+    assert(memcmp(&session.schedule, &schedule, sizeof(schedule)) == 0);
 }
 
 static void test_clicker_discovers_sparse_50_slots_with_6_present_and_schedules_all_6(void)
@@ -475,10 +521,9 @@ static void test_clicker_discovers_sparse_50_slots_with_6_present_and_schedules_
     assert(uwb_clicker_build_range_schedule(&session, UWB_DS_TWR_REPLY_DELAY_US, 3u, UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS, &schedule) == PROTO_OK);
     assert(schedule.selected_count == sizeof(present_slots) / sizeof(present_slots[0]));
 
+    /* All six are direct anchors, so delivery order follows the slot order. */
     for (uint8_t i = 0u; i < schedule.selected_count; i++) {
-        uint64_t expected_anchor = present_base +
-                                   (sizeof(present_slots) / sizeof(present_slots[0])) -
-                                   i;
+        uint64_t expected_anchor = present_base + 1u + i;
 
         assert(schedule.entries[i].anchor_id == expected_anchor);
         assert(schedule.entries[i].sample_count == config.samples_per_anchor);
@@ -1181,7 +1226,8 @@ static void test_round_robin_sample_order_completes_before_success(void)
     struct uwb_range_schedule_frame schedule;
     struct uwb_range_step step;
     struct uwb_clicker_config config = clicker_config();
-    const uint64_t expected[] = {3u, 1u, 4u, 2u, 3u, 1u, 4u, 2u};
+    /* Equal-depth anchors range in slot order regardless of link quality. */
+    const uint64_t expected[] = {1u, 2u, 3u, 4u, 1u, 2u, 3u, 4u};
     const uint8_t expected_rounds[] = {0u, 0u, 0u, 0u, 1u, 1u, 1u, 1u};
 
     config.max_anchor_count = 4u;
@@ -1191,10 +1237,10 @@ static void test_round_robin_sample_order_completes_before_success(void)
     add_reply(&session, 3u, 2u, 100u);
     add_reply(&session, 4u, 3u, 80u);
     assert(uwb_clicker_build_range_schedule(&session, UWB_DS_TWR_REPLY_DELAY_US, 3u, UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS, &schedule) == PROTO_OK);
-    assert(schedule.entries[0].anchor_id == 3u);
-    assert(schedule.entries[1].anchor_id == 1u);
-    assert(schedule.entries[2].anchor_id == 4u);
-    assert(schedule.entries[3].anchor_id == 2u);
+    assert(schedule.entries[0].anchor_id == 1u);
+    assert(schedule.entries[1].anchor_id == 2u);
+    assert(schedule.entries[2].anchor_id == 3u);
+    assert(schedule.entries[3].anchor_id == 4u);
 
     for (size_t i = 0u; i < 8u; i++) {
         assert(uwb_clicker_next_range_step(&session, &step) == PROTO_OK);
@@ -3090,12 +3136,132 @@ static void test_anchor_scan_accounting_and_timing_rejection(void)
            PROTO_ERR_MALFORMED);
 }
 
+
+static void test_click_delivery_slot_grid_places_each_anchor_in_one_class(void)
+{
+    const uint32_t window_ms = 1000u;
+    const uint16_t slot_ms = 35u;
+
+    /* Before and at the boundary the nominal slot is used verbatim. */
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, slot_ms, 900u) ==
+           1000u);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, slot_ms, 1000u) ==
+           1000u);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 1u, 2u, slot_ms, 900u) ==
+           1035u);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 3u, 4u, slot_ms, 0u) ==
+           1105u);
+
+    /* One millisecond late costs a whole schedule period, never a slot. */
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, slot_ms, 1001u) ==
+           1070u);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 1u, 2u, slot_ms, 1036u) ==
+           1105u);
+
+    /* Both anchors arriving very late stay one slot apart, never together. */
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, slot_ms, 1300u) ==
+           1350u);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 1u, 2u, slot_ms, 1300u) ==
+           1315u);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, slot_ms, 1300u) !=
+           uwb_click_delivery_slot_due_ms(window_ms, 1u, 2u, slot_ms, 1300u));
+
+    /* Every residue class stays distinct for a full schedule, however late. */
+    for (uint32_t now_ms = 1000u; now_ms < 1400u; now_ms++) {
+        uint32_t due_ms[4];
+
+        for (uint8_t slot = 0u; slot < 4u; slot++) {
+            due_ms[slot] = uwb_click_delivery_slot_due_ms(window_ms,
+                                                          slot,
+                                                          4u,
+                                                          slot_ms,
+                                                          now_ms);
+            assert(due_ms[slot] >= now_ms);
+            assert(((due_ms[slot] - window_ms) / slot_ms) % 4u == slot);
+            assert((due_ms[slot] - window_ms) % slot_ms == 0u);
+        }
+        for (uint8_t slot = 1u; slot < 4u; slot++) {
+            for (uint8_t other = 0u; other < slot; other++) {
+                assert(due_ms[slot] != due_ms[other]);
+            }
+        }
+    }
+}
+
+static void test_click_delivery_slot_grid_handles_wrap_and_degenerate_input(void)
+{
+    const uint32_t window_ms = UINT32_MAX - 20u;
+
+    /* The uptime clock wraps; the grid must follow it rather than saturate. */
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, 35u,
+                                          UINT32_MAX - 30u) == window_ms);
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 1u, 2u, 35u,
+                                          UINT32_MAX - 30u) ==
+           (uint32_t)(window_ms + 35u));
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, 35u,
+                                          (uint32_t)(window_ms + 1u)) ==
+           (uint32_t)(window_ms + 70u));
+
+    /* A zero slot disables the grid instead of dividing by zero. */
+    assert(uwb_click_delivery_slot_due_ms(window_ms, 0u, 2u, 0u, 12345u) ==
+           12345u);
+    /* A schedule that no longer lists this anchor keeps an exclusive class. */
+    assert(uwb_click_delivery_slot_due_ms(1000u, 2u, 0u, 35u, 1000u) == 1070u);
+    assert(uwb_click_delivery_slot_due_ms(1000u, 2u, 0u, 35u, 1071u) == 1175u);
+}
+
+static void test_click_delivery_slot_grid_matches_schedule_order(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_range_schedule_frame schedule;
+    struct uwb_clicker_config config = clicker_config();
+    const uint32_t window_ms = 5000u;
+
+    /* A bounded two-anchor geometry, as in the two-anchor delivery bench. */
+    config.flags = FLAG_DIAGNOSTIC;
+    config.min_anchor_count = 2u;
+    config.max_anchor_count = 2u;
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    add_reply(&session, UINT64_C(0xDD00000000000001), 0u, 100u);
+    add_reply(&session, UINT64_C(0xDD00000000000002), 1u, 100u);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            UWB_DS_TWR_REPLY_DELAY_US,
+                                            5u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
+
+    /*
+     * Slot k of the schedule the clicker built is the same k the anchor
+     * report encoder uses, so the nominal delivery instants march in
+     * schedule order one MESH-side slot apart.
+     */
+    assert(schedule.selected_count >= 2u);
+    for (uint8_t i = 0u; i < schedule.selected_count; i++) {
+        uint32_t due_ms = uwb_click_delivery_slot_due_ms(window_ms,
+                                                          i,
+                                                          schedule.selected_count,
+                                                          35u,
+                                                          window_ms);
+
+        assert(due_ms == window_ms + ((uint32_t)i * 35u));
+        if (i > 0u) {
+            assert(due_ms - 35u ==
+                   uwb_click_delivery_slot_due_ms(window_ms,
+                                                  (uint8_t)(i - 1u),
+                                                  schedule.selected_count,
+                                                  35u,
+                                                  window_ms));
+        }
+    }
+}
+
 int main(void)
 {
     test_clicker_builds_wake_claim_and_rejects_bad_timing();
     test_clicker_contention_delay_bounds_and_diagnostics();
     test_clicker_politeness_decodes_relevant_uwb_packets();
     test_clicker_discovers_50_and_schedules_best_8_only();
+    test_clicker_orders_schedule_by_gateway_depth_then_slot();
     test_clicker_discovers_sparse_50_slots_with_6_present_and_schedules_all_6();
     test_clicker_runs_round_robin_until_400_ms_burst_is_full();
     test_clicker_separates_single_anchor_exchanges();
@@ -3140,5 +3306,8 @@ int main(void)
     test_anchor_new_claim_clears_stale_schedule();
     test_anchor_abort_clears_epoch_and_scheduled_window();
     test_anchor_scan_accounting_and_timing_rejection();
+    test_click_delivery_slot_grid_places_each_anchor_in_one_class();
+    test_click_delivery_slot_grid_handles_wrap_and_degenerate_input();
+    test_click_delivery_slot_grid_matches_schedule_order();
     return 0;
 }

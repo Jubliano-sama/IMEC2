@@ -108,6 +108,15 @@ int app_gateway_command_result_rebind(
     const struct proto_packet *command,
     enum command_id command_id,
     const struct proto_packet *result_command);
+/* Resolve the immutable terminal command identity for this reservation.  The
+ * caller may provide either the original host envelope or the prepared mesh
+ * envelope; after rebind the prepared identity always wins. */
+int app_gateway_command_result_terminal_command(
+    const struct app_gateway_command_result_queue *queue,
+    uint32_t token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    struct proto_packet *terminal_command);
 int app_gateway_command_result_release(
     struct app_gateway_command_result_queue *queue,
     uint32_t token);

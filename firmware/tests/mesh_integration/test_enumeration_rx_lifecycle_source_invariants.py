@@ -103,7 +103,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "gateway_state.cleanup_deadline_ms = gateway_state.self_stop_ms"
         )
         schedule = cleanup.index(
-            "gateway_work_reschedule(gateway_state.cleanup_deadline_ms)",
+            "gateway_work_reschedule_owned(gateway_state.cleanup_deadline_ms",
             release,
         )
         self.assertLess(release, schedule)
@@ -175,12 +175,32 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
     def test_explicit_abort_retains_active_owner_until_cleanup(self) -> None:
         abort = function_body(APP_SURVEY, "app_survey_gateway_abort")
+        cleanup = function_body(
+            APP_SURVEY, "gateway_begin_abort_cleanup_locked"
+        )
 
-        begin = abort.index("gateway_begin_cleanup_locked(&event)")
-        send = abort.index("ops.send_control(&control, &abort_handle)", begin)
-        self.assertLess(begin, send)
-        self.assertIn("ops.control_detach(abort_handle)", abort[send:])
-        self.assertNotIn("gateway_begin_cleanup_locked(", abort[send:])
+        begin = abort.index(
+            "gateway_begin_abort_cleanup_locked(&event, now_ms)"
+        )
+        abandon = abort.index("ops.control_abandon(pending_handle)", begin)
+        wake = abort.index("ops.wake_gateway_rx()", abandon)
+        self.assertLess(begin, abandon)
+        self.assertLess(abandon, wake)
+
+        cleanup_begin = cleanup.index("gateway_begin_cleanup_locked(event)")
+        before_deadline = cleanup.index(
+            "now_ms < gateway_state.cleanup_deadline_ms", cleanup_begin
+        )
+        pending = cleanup.index(
+            "gateway_state.cleanup_abort_pending = true", before_deadline
+        )
+        schedule = cleanup.index(
+            'gateway_work_reschedule_owned(now_ms, "cleanup-abort")',
+            pending,
+        )
+        self.assertLess(cleanup_begin, before_deadline)
+        self.assertLess(before_deadline, pending)
+        self.assertLess(pending, schedule)
         for premature_release in (
             "gateway_state.active = false",
             "gateway_terminal_publish(",
@@ -741,7 +761,9 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertNotIn("dwm3000_driver_configure", rearm)
         self.assertNotIn("anchor_enter_low_power", rearm)
         self.assertIn(
-            "protocol_continuous_rx ? APP_RADIO_LOW_POWER_IDLE", scan
+            "(protocol_continuous_rx || click_listen_active) ?\n"
+            "                APP_RADIO_LOW_POWER_IDLE",
+            scan,
         )
         self.assertIn(
             "survey_continuous_rx = app_survey_anchor_rx_continuous()", scan
@@ -859,8 +881,11 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             selection_start : scan.index("route_waiting_active =", selection_start)
         ]
         configure = scan[
-            scan.index("ret = protocol_continuous_rx ?") :
-            scan.index("if (ret == 0)", scan.index("ret = protocol_continuous_rx ?"))
+            scan.index("ret = (protocol_continuous_rx || click_listen_active) ?") :
+            scan.index(
+                "if (ret == 0)",
+                scan.index("ret = (protocol_continuous_rx || click_listen_active) ?"),
+            )
         ]
         recovery = scan[
             scan.index("dwm3000_driver_force_recovery()") :
@@ -1505,47 +1530,76 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(logical_send, handoff_end)
         self.assertLess(handoff_end, final_rearm)
 
-        # TABLE and relayed anchor controls share one ref-counted burst
-        # owner. It is acquired before the copy loop and released after the
-        # all-copies completeness check on every exit.
+        # TABLE and relayed controls acquire the burst latch only around a
+        # physically due wake/data operation. Admission waits and inter-copy
+        # gaps remain scan-serviceable.
         quick = burst_send.index(
             "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
         )
-        owner_if = burst_send.index(
+        copy_loop = burst_send.index("attempt < attempt_count", quick)
+        inter_copy_wait = burst_send.index("mesh_wait_until_ms(", copy_loop)
+        wake_owner_begin = burst_send.index(
+            "mesh_c5_enumeration_relay_burst_begin(&tx)", inter_copy_wait
+        )
+        wake_owner_if = burst_send.rfind(
+            "if (", inter_copy_wait, wake_owner_begin
+        )
+        wake_owner_condition = burst_send[
+            wake_owner_if:burst_send.index(
+                "{", wake_owner_if, wake_owner_begin
+            )
+        ]
+        wake = burst_send.index(
+            "mesh_send_route_wake_train_with_duration(", wake_owner_begin
+        )
+        wake_owner_end = burst_send.index(
+            "mesh_c5_enumeration_relay_burst_end()", wake
+        )
+        data_owner_if = burst_send.index(
             "if (compact_primary_control || gateway_enumeration_quick_copies)",
-            quick,
+            wake_owner_end,
         )
-        owner_condition = burst_send[owner_if:burst_send.index("{", owner_if)]
-        owner_begin = burst_send.index(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", owner_if
+        data_owner_begin = burst_send.index(
+            "mesh_c5_enumeration_relay_burst_begin(&tx)", data_owner_if
         )
-        copy_loop = burst_send.index(
-            "attempt < attempt_count", owner_begin
+        physical_copy = burst_send.index(
+            "app_mesh_flood_send_opportunity", data_owner_begin
+        )
+        data_owner_end = burst_send.index(
+            "mesh_c5_enumeration_relay_burst_end()", physical_copy
         )
         completeness = burst_send.index(
-            "aggregate_result.sent_count != attempt_count", copy_loop
+            "aggregate_result.sent_count != attempt_count", data_owner_end
         )
         out_label = burst_send.index("out:", completeness)
-        owner_end = burst_send.index(
+        cleanup_owner_end = burst_send.index(
             "mesh_c5_enumeration_relay_burst_end()", out_label
         )
-        self.assertIn("compact_primary_control", owner_condition)
         self.assertIn(
             "compact_primary_control = enumeration_control ||",
-            burst_send[:owner_if],
+            burst_send[:copy_loop],
         )
-        self.assertIn("gateway_enumeration_quick_copies", owner_condition)
-        self.assertLess(owner_begin, copy_loop)
-        self.assertLess(copy_loop, completeness)
+        self.assertIn("compact_primary_control", wake_owner_condition)
+        self.assertIn(
+            "gateway_enumeration_quick_copies", wake_owner_condition
+        )
+        self.assertLess(copy_loop, inter_copy_wait)
+        self.assertLess(inter_copy_wait, wake_owner_begin)
+        self.assertLess(wake_owner_begin, wake)
+        self.assertLess(wake, wake_owner_end)
+        self.assertLess(wake_owner_end, data_owner_begin)
+        self.assertLess(data_owner_begin, physical_copy)
+        self.assertLess(physical_copy, data_owner_end)
+        self.assertLess(data_owner_end, completeness)
         self.assertLess(completeness, out_label)
-        self.assertLess(out_label, owner_end)
+        self.assertLess(out_label, cleanup_owner_end)
         self.assertEqual(
             burst_send.count("mesh_c5_enumeration_relay_burst_begin(&tx)"),
-            1,
+            2,
         )
         self.assertEqual(
             burst_send.count("mesh_c5_enumeration_relay_burst_end()"),
-            1,
+            3,
         )
 
         # A physical-copy send still reaches its generic restart call, so the
@@ -2007,7 +2061,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             lane[accept:radio_finish],
         )
 
-    def test_anchor_enumeration_relay_holds_scan_handoff_across_copy_waits(
+    def test_anchor_enumeration_relay_yields_scan_between_due_copies(
         self,
     ) -> None:
         submit = function_body(
@@ -2032,75 +2086,55 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         scanner = function_body(RADIO, "anchor_uwb_scan_work_handler")
 
-        outer_classify = submit.index("mesh_c5_flood_enumeration_identity(")
-        outer_begin = submit.index(
-            "mesh_c5_enumeration_relay_burst_begin(out)", outer_classify
-        )
-        immediate_send = submit.index(
-            "mesh_send_c5_flood_now_intent(", outer_begin
-        )
+        immediate_send = submit.index("mesh_send_c5_flood_now_intent(")
         immediate_result = submit.index(
             "if (ret == 0 && result.sent_count > 0u)", immediate_send
         )
-        immediate_end = submit.index(
-            "mesh_c5_enumeration_relay_burst_end()", immediate_result
-        )
         deferred_store = submit.index(
-            "mesh_c5_flood_store_deferred(", immediate_end
+            "mesh_c5_flood_store_deferred(", immediate_result
         )
-        deferred_end = submit.index(
-            "mesh_c5_enumeration_relay_burst_end()", deferred_store
-        )
-        self.assertLess(outer_classify, outer_begin)
-        self.assertLess(outer_begin, immediate_send)
         self.assertLess(immediate_send, immediate_result)
-        self.assertLess(immediate_result, immediate_end)
-        self.assertLess(immediate_end, deferred_store)
-        self.assertLess(deferred_store, deferred_end)
+        self.assertLess(immediate_result, deferred_store)
+        self.assertNotIn("mesh_c5_enumeration_relay_burst_begin", submit)
+        self.assertNotIn("mesh_c5_enumeration_relay_burst_end", submit)
 
         classify = burst.index("mesh_c5_flood_enumeration_identity(")
-        burst_begin = burst.index(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", classify
-        )
         first_defer_check = burst.index(
-            "mesh_c5_flood_defer_active_cb(&flood_ctx)", burst_begin
+            "mesh_c5_flood_defer_active_cb(&flood_ctx)", classify
         )
         loop = burst.index("attempt < attempt_count", first_defer_check)
         inter_copy_wait = burst.index("mesh_wait_until_ms(", loop)
-        physical_copy = burst.index(
-            "app_mesh_flood_send_opportunity", inter_copy_wait
+        due_defer_check = burst.index(
+            "mesh_c5_flood_defer_active_cb(&flood_ctx)", inter_copy_wait
         )
-        next_copy = burst.index("attempt + 1u < attempt_count", physical_copy)
+        burst_begin = burst.index(
+            "mesh_c5_enumeration_relay_burst_begin(&tx)", due_defer_check
+        )
+        physical_copy = burst.index(
+            "app_mesh_flood_send_opportunity", burst_begin
+        )
+        burst_end = burst.index(
+            "mesh_c5_enumeration_relay_burst_end()", physical_copy
+        )
+        next_copy = burst.index("attempt + 1u < attempt_count", burst_end)
         next_copy_guard = burst.index(
             "MESH_ENUMERATION_RELAY_COPY_GUARD_MS", next_copy
         )
         cleanup = burst.index("\nout:", next_copy_guard)
-        result_accounting = burst.index("*result = aggregate_result", cleanup)
-        activation_accounting = burst.index(
-            "protocol_rx_downstream_activation_mark", result_accounting
-        )
-        burst_end = burst.index(
-            "mesh_c5_enumeration_relay_burst_end()",
-            activation_accounting,
-        )
-        final_return = burst.index("return ret", burst_end)
-        self.assertLess(classify, burst_begin)
-        self.assertLess(burst_begin, first_defer_check)
         self.assertLess(first_defer_check, loop)
         self.assertLess(loop, inter_copy_wait)
+        self.assertLess(inter_copy_wait, due_defer_check)
+        self.assertLess(due_defer_check, burst_begin)
+        self.assertLess(burst_begin, physical_copy)
         self.assertLess(inter_copy_wait, physical_copy)
+        self.assertLess(physical_copy, burst_end)
         self.assertLess(physical_copy, next_copy)
         self.assertLess(next_copy, next_copy_guard)
         self.assertLess(next_copy_guard, cleanup)
-        self.assertLess(cleanup, result_accounting)
-        self.assertLess(result_accounting, activation_accounting)
-        self.assertLess(activation_accounting, burst_end)
-        self.assertLess(burst_end, final_return)
         self.assertNotIn(
-            "mesh_c5_enumeration_relay_burst_end()",
-            burst[burst_begin:cleanup],
+            "mesh_c5_enumeration_relay_burst_begin",
+            burst[inter_copy_wait:due_defer_check],
         )
-        self.assertNotIn("return ", burst[burst_begin:cleanup])
 
         self.assertIn(
             "atomic_inc(&mesh_c5_enumeration_relay_burst_count)", begin
@@ -2117,7 +2151,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         active_gate = pending.index(
             "mesh_c5_enumeration_relay_burst_active()"
         )
-        deferred_gate = pending.index("mesh_c5_flood_deferred.valid")
+        deferred_gate = pending.index("mesh_c5_flood_deferred_entry_due(")
         self.assertLess(active_gate, deferred_gate)
 
         scanner_pending = scanner.index(
@@ -2405,7 +2439,11 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("mesh_route_adv_deferred.valid", all_pending)
         self.assertNotIn("MSG_GATEWAY_ROUTE_ADV", all_pending)
         self.assertIn("mesh_c5_flood_deferred.valid", protocol_pending)
-        self.assertIn("mesh_route_adv_deferred.valid", protocol_pending)
+        self.assertIn("&mesh_route_adv_deferred", protocol_pending)
+        self.assertIn(
+            "mesh_c5_flood_deferred_entry_due(entry, now_ms)",
+            protocol_pending,
+        )
         self.assertIn("mesh_c5_flood_deferred_lock", protocol_pending)
         self.assertNotRegex(
             protocol_pending,

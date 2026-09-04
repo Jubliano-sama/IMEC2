@@ -173,6 +173,7 @@ static void gateway_enumeration_pipeline_start(
     int32_t start_delta_ms =
         (int32_t)(gateway_wake_start_ms - now_ms_32);
     uint64_t gateway_wake_start_64;
+    int ret;
 
     if (start_delta_ms >= 0) {
         gateway_wake_start_64 = now_ms + (uint32_t)start_delta_ms;
@@ -215,7 +216,25 @@ static void gateway_enumeration_pipeline_start(
             .claim_collection_deadline_ms,
         ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS);
     k_mutex_unlock(&gateway_discovery_assignment_mutex);
-    (void)mesh_start_uwb_rx("enumeration-hia-pipeline");
+    ret = mesh_start_uwb_rx("enumeration-hia-pipeline");
+    if (ret < 0) {
+        /*
+         * This callback owns only the inactive HIA prearm.  A failed RX
+         * start must not leave a response lane that later host admission
+         * mistakes for a live listener.  Clear only the exact still-prearmed
+         * epoch; a concurrently admitted assignment is a different owner.
+         */
+        k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+        if (gateway_enumeration_prearm_valid_locked() &&
+            gateway_discovery_assignment_state.epoch == epoch &&
+            gateway_discovery_assignment_state.response_lane_hia_pipeline) {
+            LOG_ERR("gateway enumeration HIA RX start failed: epoch=%u ret=%d",
+                    epoch,
+                    ret);
+            gateway_enumeration_prearm_reset_locked();
+        }
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    }
 }
 
 static uint32_t gateway_discovery_assignment_next_generation(void)
@@ -618,6 +637,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
     uint16_t expected_count;
     uint16_t missing_count;
     int publish_ret;
+    int ret;
 
     if (!gateway_discovery_assignment_state.active ||
         gateway_discovery_assignment_state.stage !=
@@ -676,12 +696,20 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         gateway_discovery_assignment_state.duplicate_count;
     app_gateway_assignment_publisher_stage_table_ready(&table_event);
     if (gateway_discovery_assignment_state.result_reservation_token != 0u) {
-        gateway_emit_host_command_result_reserved(
+        ret = gateway_commit_host_command_result_reserved(
             gateway_discovery_assignment_state.result_reservation_token,
             &gateway_discovery_assignment_state.host_command,
             CMD_ASSIGN_DISCOVERY_SLOTS,
             COMMAND_OK,
             published_count);
+        if (ret < 0) {
+            LOG_ERR("discovery assignment result custody conversion failed: epoch=%u ret=%d",
+                    gateway_discovery_assignment_state.epoch,
+                    ret);
+            app_watchdog_stop_feeding();
+            return;
+        }
+        gateway_discovery_assignment_state.result_reservation_token = 0u;
     }
     event = gateway_observability_event(
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
@@ -698,14 +726,27 @@ static void gateway_discovery_assignment_complete_success_locked(void)
     event.reason = table_event.reason;
     event.duplicate_count =
         gateway_discovery_assignment_state.duplicate_count;
-    (void)gateway_observe_command_event(&event, true);
+    if (!app_gateway_assignment_publisher_capture_terminal(&event)) {
+        LOG_ERR("discovery assignment terminal publisher custody unavailable: epoch=%u",
+                gateway_discovery_assignment_state.epoch);
+        app_watchdog_stop_feeding();
+        return;
+    }
+    ret = gateway_assignment_publication_detach_rf_owner(&event);
+    if (ret < 0) {
+        LOG_ERR("discovery assignment publisher ownership transfer failed: epoch=%u ret=%d",
+                gateway_discovery_assignment_state.epoch,
+                ret);
+        app_watchdog_stop_feeding();
+        return;
+    }
+    ret = gateway_operation_owner_release(
+        &gateway_assignment_operation_lease);
+    if (ret < 0) {
+        return;
+    }
     gateway_discovery_assignment_state.active = false;
     gateway_discovery_assignment_state.round_open = false;
-    /* The publisher retains this exact operation lease through host send. */
-    if (gateway_discovery_assignment_state.replay) {
-        (void)gateway_operation_owner_release(
-            &gateway_assignment_operation_lease);
-    }
     (void)k_work_cancel_delayable(
         &gateway_discovery_assignment_finalize_work);
 }
@@ -2782,6 +2823,7 @@ static bool gateway_discovery_assignment_service_delivery(void)
     bool effective_delivered;
     bool table_delivery_is_redrive;
     uint32_t handle;
+    int ret;
 
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
     kind = gateway_discovery_assignment_state.delivery_kind;
@@ -2917,9 +2959,18 @@ static bool gateway_discovery_assignment_service_delivery(void)
                     .response_lane_start_ms,
                 (uint32_t)collection_deadline_ms,
                 wait_ms);
+            ret = mesh_start_uwb_rx("compact-enumeration");
+            if (ret < 0) {
+                LOG_ERR("gateway compact enumeration RX start failed: epoch=%u ret=%d",
+                        gateway_discovery_assignment_state.epoch,
+                        ret);
+                gateway_discovery_assignment_fail_locked(
+                    COMMAND_RADIO_ERROR, (uint8_t)(-ret));
+                k_mutex_unlock(&gateway_discovery_assignment_mutex);
+                return true;
+            }
             (void)gateway_discovery_assignment_reschedule(
                 K_MSEC(wait_ms), "compact-response-lane");
-            (void)mesh_start_uwb_rx("compact-enumeration");
             k_mutex_unlock(&gateway_discovery_assignment_mutex);
             return true;
         } else if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE) {
@@ -2969,14 +3020,9 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
 
     ARG_UNUSED(work);
 
-    /*
-     * This work is admitted only after the gateway-priority arbiter observes
-     * the receive boundary.  Release its level-triggered abort owner before
-     * the work submits the node-communication flood; otherwise every radio
-     * attempt sees the stale priority abort and defers before RF starts.
-     */
-    dwm3000_driver_clear_receive_abort(
-        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+    /* The priority arbiter retired this generation's abort synchronously
+     * before admitting any successor; delayed work must not clear the shared
+     * level bit here. */
     app_gateway_enumeration_response_publish_pending();
 
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
@@ -4020,6 +4066,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
     const struct gateway_command_options *command_options;
     enum command_id command_id = CMD_VENDOR_BASE;
     enum gateway_command_tracking_mode tracking_mode;
+    uint16_t fallback_seq = 0u;
     bool sent_now = false;
     int ret;
 
@@ -4036,12 +4083,30 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
     }
     (void)gateway_command_extract_id(payload, payload_len, &command_id);
 
+    if (packet->seq == 0u) {
+        struct proto_packet terminal_command;
+        uint32_t token = gateway_command_result_get_dispatch_token();
+
+        if (token != 0u &&
+            gateway_command_result_terminal_command(
+                token,
+                packet,
+                command_id,
+                &terminal_command) == 0 &&
+            terminal_command.seq != 0u) {
+            /* A retry must reconstruct the first prepared wire identity. */
+            fallback_seq = terminal_command.seq;
+        } else {
+            fallback_seq = gateway_next_command_seq();
+        }
+    }
+
     orchestrator = mesh_gateway_command_orchestrator_context();
     ret = app_mesh_command_orchestrator_prepare_flood(
         orchestrator,
         DEVICE_ID,
         k_uptime_get_32(),
-        packet->seq == 0u ? gateway_next_command_seq() : 0u);
+        fallback_seq);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway rejected BLE host command: %d", ret);
         gateway_emit_host_command_result(packet,
@@ -4598,9 +4663,22 @@ static int gateway_host_command_cancel_admitted(
     void *ctx,
     const struct app_gateway_command_identity *identity)
 {
+    int ret;
+
     ARG_UNUSED(ctx);
 
-    return gateway_host_command_lifecycle_cancel_locked(identity);
+    ret = gateway_host_command_lifecycle_cancel_locked(identity);
+    if (ret == 0) {
+        /*
+         * A terminal priority-submission failure leaves the physical FIFO
+         * item behind as a lifecycle tombstone.  No route worker exists to
+         * consume that tombstone, so explicitly publish a bounded FIFO kick.
+         * The worker will discard only the exact cancelled identity before
+         * moving on to later admissions.
+         */
+        gateway_host_command_submit_next_queued();
+    }
+    return ret;
 }
 
 static void gateway_host_command_emit_result(
@@ -4790,11 +4868,13 @@ static int gateway_host_command_schedule_priority_retry(
     gateway_host_command_retry_pending = true;
     ret = k_work_reschedule(&gateway_host_command_retry_work,
                             K_MSEC(delay_ms));
-    if (ret < 0 &&
-        !app_gateway_command_ingress_contention_retryable(ret)) {
+    if (ret < 0) {
         gateway_host_command_retry_pending = false;
         gateway_host_command_priority_retry_reset();
-        return ret;
+        /* The retryable errno described the failed work submission, but no
+         * retry owner exists.  Translate it to a terminal error so ingress
+         * cannot mistake this for retained retry custody. */
+        return -EIO;
     }
     return 0;
 }
@@ -4841,7 +4921,14 @@ static void gateway_host_command_retry_work_handler(struct k_work *work)
             return;
         }
         if (app_gateway_command_ingress_contention_retryable(ret)) {
-            (void)gateway_host_command_schedule_priority_retry(cutoff, ret);
+            int retry_ret = gateway_host_command_schedule_priority_retry(
+                cutoff, ret);
+
+            if (retry_ret < 0) {
+                (void)gateway_host_command_retire_failed_generation(
+                    cutoff, cutoff, retry_ret);
+                gateway_host_command_submit_next_queued();
+            }
             return;
         }
         {
@@ -4907,8 +4994,6 @@ static void gateway_host_command_work_handler(struct k_work *work)
     int ret;
 
     ARG_UNUSED(work);
-    dwm3000_driver_clear_receive_abort(
-        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     gateway_host_command_retry_pending = false;
 
     if (k_msgq_peek(&gateway_host_command_msgq, &item) != 0) {
@@ -5107,11 +5192,18 @@ static void gateway_host_command_work_handler(struct k_work *work)
         ret = k_work_reschedule(&gateway_host_command_retry_work,
                                 K_MSEC(delay_ms));
         if (ret < 0) {
+            int retry_ret;
+
             gateway_host_command_retry_pending = false;
             if (app_gateway_command_ingress_contention_retryable(ret)) {
-                (void)gateway_host_command_schedule_priority_retry(
+                retry_ret = gateway_host_command_schedule_priority_retry(
                     item.admission_id, ret);
-            } else {
+                if (retry_ret >= 0) {
+                    return;
+                }
+                ret = retry_ret;
+            }
+            {
                 (void)gateway_host_command_retire_failed_generation(
                     item.admission_id,
                     item.admission_id,

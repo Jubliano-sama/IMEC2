@@ -26,11 +26,22 @@ static const struct dwm3000_phy_timing phy_profiles[] = {
         .channel = DWM3000_TIMING_CHANNEL5,
         .phr_mode = DWM3000_TIMING_PHR_STANDARD,
     },
+    /*
+     * The channel-5 mesh-control PHY is the wake PHY with an extended PHR and
+     * a short acquisition train: wake_mesh_control_config in dwm3000_driver.c
+     * keeps DWM3000_PHY_CHANNEL, the codes and DWM3000_PHY_SFD_TYPE (16-symbol
+     * DW SFD) but overrides txPreambLength/rxPAC/sfdTO plus phrMode/phrRate.
+     * Control frames are only exchanged between nodes that are already awake
+     * and listening, so the wake PHY's 4096-symbol preamble bought nothing
+     * here and cost 4185 us of SHR per frame; 1024 symbols cost 1059 us.
+     * The wake and range profiles above keep the long train the duty-cycled
+     * sniffers need.  test_dwm3000_models.c pins the resulting airtimes.
+     */
     [DWM3000_TIMING_PHY_CH5_MESH_CONTROL] = {
-        .preamble_symbols = DWM3000_TIMING_CH5_PREAMBLE_SYMBOLS,
+        .preamble_symbols = DWM3000_TIMING_CH5_CONTROL_PREAMBLE_SYMBOLS,
         .sfd_symbols = DWM3000_TIMING_CH5_SFD_SYMBOLS,
-        .pac_symbols = DWM3000_TIMING_CH5_PAC_SYMBOLS,
-        .sfd_timeout_symbols = DWM3000_TIMING_CH5_SFD_TIMEOUT_SYMBOLS,
+        .pac_symbols = DWM3000_TIMING_CH5_CONTROL_PAC_SYMBOLS,
+        .sfd_timeout_symbols = DWM3000_TIMING_CH5_CONTROL_SFD_TIMEOUT_SYMBOLS,
         .max_frame_bytes_without_fcs =
             DWM3000_TIMING_EXTENDED_PSDU_MAX_BYTES - DWM3000_TIMING_FCS_BYTES,
         .channel = DWM3000_TIMING_CHANNEL5,

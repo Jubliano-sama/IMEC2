@@ -172,6 +172,116 @@ def command_event_packet(
 
 
 class GatewayPacketDeduplicatorTests(unittest.TestCase):
+    def test_c5_attempt_hints_do_not_change_report_identity(self) -> None:
+        semantic_payload = self_test_packet().payload
+        for msg_type in (
+            MSG_CLICK_REPORT,
+            MSG_SELF_TEST_REPORT,
+            MSG_ANCHOR_HEARTBEAT,
+            MSG_MESH_DATA,
+        ):
+            original = (
+                self_test_packet()
+                if msg_type == MSG_SELF_TEST_REPORT
+                else host_packet(
+                    msg_type,
+                    semantic_payload,
+                    flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+                )
+            )
+            variants = (
+                semantic_payload,
+                b"\xcd\x01\x03" + semantic_payload,
+                semantic_payload + b"\xcf\x01\x02",
+                b"\xcd\x01\x01" + semantic_payload + b"\xcf\x01\x00",
+                b"\xcf\x01\x01" + semantic_payload + b"\xcd\x01\x00",
+            )
+            # Either a bare or already batched first delivery becomes the
+            # canonical record; later hop/attempt hints cannot conflict.
+            for first_payload in variants:
+                with self.subTest(msg_type=msg_type, first_payload=first_payload):
+                    cache = GatewayPacketDeduplicator(max_entries=4)
+                    first = replace(
+                        original,
+                        payload=first_payload,
+                        tlvs=parse_tlvs(first_payload),
+                    )
+                    self.assertEqual(cache.observe(first).disposition, PacketDisposition.NEW)
+                    for payload in variants:
+                        replay = replace(
+                            original,
+                            payload=payload,
+                            tlvs=parse_tlvs(payload),
+                            raw_transport=b"wire-record:" + payload,
+                        )
+                        self.assertEqual(
+                            cache.observe(replay).disposition,
+                            PacketDisposition.DUPLICATE,
+                        )
+                        # Host receipts still need the exact received bytes.
+                        self.assertEqual(replay.payload, payload)
+                        self.assertEqual(replay.raw_transport, b"wire-record:" + payload)
+                        self.assertEqual(replay.tlvs, parse_tlvs(payload))
+                    changed = bytearray(semantic_payload)
+                    changed[-1] ^= 1  # A battery reading is semantic data.
+                    mutated_payload = b"\xcd\x01\x03" + bytes(changed)
+                    mutated = replace(
+                        original,
+                        payload=mutated_payload,
+                        tlvs=parse_tlvs(mutated_payload),
+                    )
+                    self.assertEqual(cache.observe(mutated).disposition, PacketDisposition.CONFLICT)
+                    self.assertEqual(cache.observe(first).disposition, PacketDisposition.DUPLICATE)
+                    self.assertEqual(cache.size, 1)
+
+    def test_malformed_c5_hints_never_normalize_to_canonical_report(self) -> None:
+        semantic_payload = self_test_packet().payload
+        malformed_suffixes = (
+            b"\xcd\x01\x03\xff",  # Truncated header after a valid hint.
+            b"\xcd\x01\x03\x02\x02\x01",  # Truncated semantic value.
+            b"\xcd\x00",  # Wrong hint width, with a complete envelope.
+            b"\xcf\x02\x00\x01",
+            b"\xcd\x01\x03\xcd\x01\x03",  # Duplicate equal hint.
+            b"\xcf\x01\x02\xcf\x01\x00",  # Duplicate changed hint.
+        )
+        for msg_type in (
+            MSG_CLICK_REPORT,
+            MSG_SELF_TEST_REPORT,
+            MSG_ANCHOR_HEARTBEAT,
+            MSG_MESH_DATA,
+        ):
+            original = (
+                self_test_packet()
+                if msg_type == MSG_SELF_TEST_REPORT
+                else host_packet(
+                    msg_type,
+                    semantic_payload,
+                    flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+                )
+            )
+            for suffix in malformed_suffixes:
+                with self.subTest(msg_type=msg_type, suffix=suffix):
+                    cache = GatewayPacketDeduplicator(max_entries=4)
+                    self.assertEqual(cache.observe(original).disposition, PacketDisposition.NEW)
+                    payload = semantic_payload + suffix
+                    malformed = replace(
+                        original,
+                        payload=payload,
+                        tlvs=parse_tlvs(payload, allow_truncated_tail=True),
+                    )
+                    self.assertEqual(cache.observe(malformed).disposition, PacketDisposition.CONFLICT)
+                    self.assertEqual(cache.observe(original).disposition, PacketDisposition.DUPLICATE)
+                    self.assertEqual(cache.size, 1)
+
+    def test_c5_hint_normalization_does_not_apply_to_command_payloads(self) -> None:
+        for msg_type in (MSG_COMMAND_RESULT, MSG_RESULT_BUNDLE):
+            with self.subTest(msg_type=msg_type):
+                cache = GatewayPacketDeduplicator(max_entries=4)
+                original = host_packet(msg_type, b"\x02\x02\xb8\x0b")
+                changed = replace(original, payload=original.payload + b"\xcd\x01\x03")
+                self.assertEqual(cache.observe(original).disposition, PacketDisposition.NEW)
+                self.assertEqual(cache.observe(changed).disposition, PacketDisposition.CONFLICT)
+
     def test_clicker_identity_namespaces_same_anchor_event_and_fragment(self) -> None:
         cache = GatewayPacketDeduplicator(max_entries=4)
         event_seq = 7

@@ -59,6 +59,7 @@
 #include "uwb.h"
 #include "uwb_session.h"
 
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
@@ -74,6 +75,133 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 static struct protocol_rx_downstream_activation
     mesh_enumeration_downstream_activation;
 static bool mesh_enumeration_downstream_survey_follows;
+
+/*
+ * Post-burst click delivery listen window (Channel 5 Delivery Protocol §5).
+ *
+ * The anchor scan thread publishes the cohort and the window as soon as the
+ * range schedule has been served; the mesh-route thread and the report worker
+ * read it to decide whether a next hop is known to be listening.  Everything
+ * here is RAM-only and survives exactly one burst.
+ */
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    IS_ENABLED(CONFIG_IMEC_CLICK_DELIVERY_PARENT_LISTEN)
+#define APP_MESH_CLICK_LISTEN_SUPPORTED 1
+#else
+#define APP_MESH_CLICK_LISTEN_SUPPORTED 0
+#endif
+
+#if APP_MESH_CLICK_LISTEN_SUPPORTED
+struct app_click_listen_window {
+    /* A FLAG_COUNT_AS_CLICK schedule is capped at this cohort size by
+     * build_uwb_schedule_report_if_relevant(); static RAM on the anchor is
+     * too tight to reserve the larger diagnostic schedule bound. */
+    uint64_t participants[RANGE_REPORT_MAX_PARTICIPANT_ANCHORS];
+    uint32_t start_ms;
+    uint32_t until_ms;
+    uint8_t count;
+    bool valid;
+};
+
+static struct app_click_listen_window anchor_click_listen_window;
+static struct k_spinlock anchor_click_listen_lock;
+#endif
+
+void app_mesh_report_note_click_listen_window(uint32_t window_start_ms,
+                                              const uint64_t *participant_ids,
+                                              uint8_t participant_count)
+{
+#if APP_MESH_CLICK_LISTEN_SUPPORTED
+    struct app_click_listen_window published = {0};
+    k_spinlock_key_t key;
+
+    if (participant_ids == NULL || participant_count == 0u ||
+        participant_count > RANGE_REPORT_MAX_PARTICIPANT_ANCHORS) {
+        return;
+    }
+    for (uint8_t i = 0u; i < participant_count; i++) {
+        published.participants[i] = participant_ids[i];
+    }
+    published.count = participant_count;
+    published.start_ms = window_start_ms;
+    published.until_ms = window_start_ms +
+                         MESH_CLICK_DELIVERY_LISTEN_MS(participant_count);
+    published.valid = true;
+
+    key = k_spin_lock(&anchor_click_listen_lock);
+    anchor_click_listen_window = published;
+    k_spin_unlock(&anchor_click_listen_lock, key);
+
+    status_debug_printf("DBG_CLICK_LISTEN start=%u until=%u n=%u\n",
+                        published.start_ms,
+                        published.until_ms,
+                        (unsigned int)participant_count);
+#else
+    (void)window_start_ms;
+    (void)participant_ids;
+    (void)participant_count;
+#endif
+}
+
+bool app_mesh_report_click_listen_active(uint32_t now_ms,
+                                         uint32_t *remaining_ms)
+{
+#if APP_MESH_CLICK_LISTEN_SUPPORTED
+    struct app_click_listen_window window;
+    k_spinlock_key_t key;
+
+    key = k_spin_lock(&anchor_click_listen_lock);
+    window = anchor_click_listen_window;
+    k_spin_unlock(&anchor_click_listen_lock, key);
+    if (!window.valid) {
+        return false;
+    }
+    /*
+     * The window opens with the shared delivery grid.  Before that the anchor
+     * is still ranging or building its report and must not hold the radio.
+     */
+    if ((int32_t)(now_ms - window.start_ms) < 0 ||
+        (int32_t)(now_ms - window.until_ms) >= 0) {
+        return false;
+    }
+    if (remaining_ms != NULL) {
+        *remaining_ms = window.until_ms - now_ms;
+    }
+    return true;
+#else
+    (void)now_ms;
+    (void)remaining_ms;
+    return false;
+#endif
+}
+
+bool app_mesh_report_click_participant(uint64_t node_id, uint32_t now_ms)
+{
+#if APP_MESH_CLICK_LISTEN_SUPPORTED
+    struct app_click_listen_window window;
+    k_spinlock_key_t key;
+
+    if (node_id == 0u) {
+        return false;
+    }
+    key = k_spin_lock(&anchor_click_listen_lock);
+    window = anchor_click_listen_window;
+    k_spin_unlock(&anchor_click_listen_lock, key);
+    if (!window.valid || (int32_t)(now_ms - window.until_ms) >= 0) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < window.count; i++) {
+        if (window.participants[i] == node_id) {
+            return true;
+        }
+    }
+    return false;
+#else
+    (void)node_id;
+    (void)now_ms;
+    return false;
+#endif
+}
 
 #define MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS 50u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_COUNT 2u
@@ -93,30 +221,43 @@ static bool mesh_enumeration_downstream_survey_follows;
 #define MESH_ROUTE_TEST_REPLY_CAPTURE_MAX 4u
 #define MESH_ROUTE_REPLY_READY_POLL_MS 25u
 #define MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX 64u
-#define MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS 6000u
-#define MESH_TOPOLOGY_PARENT_CONTACT_RETRIES 1u
+#define MESH_EVENT_PROPOSE_OWNER_LIFETIME_MS 6000u
 #define MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS 25000u
+/* One ACCEPT response is expected 80 ms after PROPOSE.  A 250 ms receive turn
+ * covers that response plus radio/worker margin without making the requester
+ * inherit a multi-second response retry owned by the parent. */
+#define MESH_EVENT_ACCEPT_REPLY_WAIT_MS 250u
+/* A healthy one-report child link can send in its first event and close in its
+ * next event. Retry after that expected release point, plus bounded per-node
+ * jitter, so shared-parent contenders spread out without polling the relay. */
+#define MESH_EVENT_PARENT_RELEASE_EXPECTED_MS \
+    (MESH_EVENT_DEFAULT_FIRST_DELAY_MS + MESH_EVENT_DEFAULT_INTERVAL_MS + \
+     MESH_EVENT_DEFAULT_GUARD_MS)
+#define MESH_EVENT_PARENT_RETRY_JITTER_MS \
+    (MESH_EVENT_DEFAULT_INTERVAL_MS / 4u)
+#define MESH_EVENT_PARENT_RETRY_AFTER_TIMEOUT_MIN_MS \
+    (MESH_EVENT_PARENT_RELEASE_EXPECTED_MS - MESH_EVENT_ACCEPT_REPLY_WAIT_MS)
 /* Initial attempt plus three retained-route retries serves four children that
- * contend for one relay without misclassifying cadence contention as route
- * loss. The existing contact cadence and radio windows remain unchanged. */
+ * contend for one relay before an alternate route or discovery is used. */
 #define MESH_KNOWN_PARENT_CONTACT_RETRIES 3u
-#define MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS
 #define MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS 1000u
-#define MESH_EVENT_NEGOTIATION_DEADLINE_MS \
-    (MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS + \
-     MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS)
-_Static_assert(MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS >=
-                   ((MESH_TOPOLOGY_PARENT_CONTACT_RETRIES + 1u) *
-                    MESH_EVENT_NEGOTIATION_DEADLINE_MS),
-               "topology contact deadline must cover every bounded attempt");
+#define MESH_EVENT_ACCEPT_REPLAY_LIFETIME_MS 6000u
+#define MESH_EVENT_NEGOTIATION_DEADLINE_MS MESH_EVENT_ACCEPT_REPLY_WAIT_MS
 _Static_assert(MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS <
                    DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS,
                "topology contact deadline must fit direct response custody");
+_Static_assert(MESH_EVENT_ACCEPT_REPLY_WAIT_MS >
+                   MESH_RADIO_EVENT_ACCEPT_DELAY_MS +
+                   MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS,
+               "ACCEPT reply window must cover response delay and slop");
+_Static_assert(MESH_EVENT_PARENT_RELEASE_EXPECTED_MS >
+                   MESH_EVENT_ACCEPT_REPLY_WAIT_MS,
+               "parent retry must follow the ACCEPT receive turn");
 _Static_assert(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS <=
                    UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
                "enumeration activation wake train must fit the wake wire");
 #define MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS \
-    MESH_EVENT_NEGOTIATION_DEADLINE_MS
+    MESH_EVENT_ACCEPT_REPLAY_LIFETIME_MS
 #define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
 #define MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS 20u
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
@@ -174,7 +315,7 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
     APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS
 #define MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS \
     APP_MESH_DIRECT_GATEWAY_ACK_RX_MS
-#define MESH_GATEWAY_DIRECT_PROBE_ACK_RX_SLICE_MS 25u
+#define MESH_GATEWAY_DIRECT_PROBE_ACK_RX_SLICE_MS 60u
 #define MESH_GATEWAY_DIRECT_PROBE_ATTEMPTS \
     APP_MESH_DIRECT_GATEWAY_ROUTE_ATTEMPTS
 #define MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MIN_MS \
@@ -201,6 +342,24 @@ BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_ATTEMPT_MS +
              "direct gateway retry must recheck C5 inside one wake train");
 #define MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS \
     APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS
+/* Fixed delay between a channel-5 report's frame end and the gateway ACK so
+ * the sender is always back in RX before the short ACK preamble starts.  A
+ * parent anchor answering MSG_MESH_HOP_ACK uses the same turnaround. */
+#define MESH_GATEWAY_C5_ACK_GUARD_MS 8u
+/*
+ * The anchor holding the last delivery slot opens it at
+ * window + (n-1) * MESH_CLICK_DELIVERY_SLOT_MS and then waits
+ * APP_MESH_PARENT_HOP_ACK_RX_MS for its parent.  The post-burst listen window
+ * must still be open when that wait expires, or the last child in the grid is
+ * the one child whose parent stopped listening.
+ */
+BUILD_ASSERT(MESH_CLICK_DELIVERY_SLOT_MS + MESH_CLICK_DELIVERY_LISTEN_TAIL_MS >=
+             APP_MESH_PARENT_HOP_ACK_RX_MS,
+             "post-burst listen must outlast the last slot's hop ACK wait");
+/* Wake the report worker this long before a click delivery slot: the PHY
+ * configure guard plus scheduling slack, so the slot boundary is still ahead
+ * when the uplink path computes it. */
+#define MESH_CLICK_SLOT_WAKE_LEAD_MS (MESH_CH9_TX_CONFIG_GUARD_MS + 5u)
 #define MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS \
     (MESH_CH9_TX_CONFIG_GUARD_MS + MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS + \
      MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS)
@@ -288,10 +447,9 @@ BUILD_ASSERT(MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS +
                  MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS <=
              INT32_MAX,
              "event replay and queue retention must be wrap-safe");
-BUILD_ASSERT(MESH_EVENT_NEGOTIATION_DEADLINE_MS >=
-                 MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS +
-                 MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS,
-             "event proposer must listen through queueing and ACCEPT retry");
+BUILD_ASSERT(MESH_EVENT_ACCEPT_REPLAY_LIFETIME_MS >=
+                 MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS,
+             "event replay lifetime must cover queued duplicate control");
 BUILD_ASSERT(MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS <= UINT16_MAX,
              "mesh route-test route-reply ETA must fit in the uint16_t TLV");
 BUILD_ASSERT(MESH_ROUTE_TEST_CH9_TX_OFFSET_MS + MESH_CH9_TX_SLOT_TRAILER_MS <
@@ -451,10 +609,8 @@ struct mesh_event_control_record {
     uint8_t payload[MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX];
     uint64_t peer_id;
     uint32_t encoded_delay_ms;
-    uint8_t prepared_rf_attempts;
     uint8_t payload_len;
     bool valid;
-    bool transmit_phase_frozen;
 };
 
 struct mesh_event_accept_retry_context {
@@ -479,7 +635,6 @@ struct mesh_event_accept_completed {
     struct mesh_event_control_record response;
     struct app_mesh_event_request_identity request;
     uint32_t expires_at_ms;
-    uint16_t retry_round;
 };
 
 BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 208u,
@@ -640,6 +795,15 @@ static K_MUTEX_DEFINE(mesh_uwb_rx_rearm_lock);
 static uint32_t mesh_uwb_rx_rearm_delay_ms;
 static uint32_t mesh_uwb_rx_rearm_generation;
 static bool mesh_uwb_rx_rearm_pending;
+/*
+ * The gateway continuous channel-5 receive loop drains queued RX inline and
+ * can emit a causal ACK from inside that drain.  The generic TX teardown then
+ * calls mesh_restart_role_scan(), which finds its own worker busy, defers a
+ * rearm and lets that stale work fire behind a loop that is about to arm the
+ * receiver itself.  While this owner is set, the running loop guarantees the
+ * next arm, so the deferred hop is pure latency and is skipped.
+ */
+static k_tid_t mesh_inline_rx_rearm_owner;
 static struct app_mesh_rf_retry_state mesh_route_request_wake_rf_retry;
 static struct app_mesh_rf_retry_state mesh_route_request_control_rf_retry;
 static struct app_mesh_rf_retry_state mesh_retransmit_rf_retry;
@@ -688,6 +852,15 @@ static const struct k_work_queue_config mesh_route_work_q_config = {
 static const struct app_mesh_report_callbacks *mesh_report_callbacks;
 
 static struct app_mesh_ch9_ack_table mesh_ch9_ack_table;
+static uint64_t mesh_c5_rx_burst_peer;
+#if DEVICE_ROLE == ROLE_ANCHOR
+static bool mesh_c5_tx_bank_owned;
+#endif
+static int mesh_c5_try_batch(void);
+static void mesh_c5_update_credit(void);
+static bool mesh_c5_collect_ack(const struct mesh_outbound *ack, const struct mesh_rx_pending *rx);
+static void mesh_c5_capture_followers(const struct mesh_outbound *ack, const struct mesh_rx_pending *rx);
+static void mesh_c5_flush_batch_ack(void);
 
 struct mesh_ch9_tx_pending_entry {
     struct mesh_outbound outbound;
@@ -745,14 +918,16 @@ BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
 static struct mesh_gateway_ack_store mesh_gateway_ack_store;
 static bool mesh_gateway_ack_store_initialized;
 static bool mesh_gateway_ack_store_attached;
-BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 10072u,
+BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 5384u,
              "gateway ACK store RAM contract changed");
 #endif
 
 static bool mesh_ch9_tx_pending_is_active(void)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
-    return mesh_ch9_tx_pending.active;
+    /* C5 owns its synchronous RF wait through the radio lease. Retained
+     * C5 bytes are backlog, not an old-channel ACK wait that blocks draining. */
+    return mesh_ch9_tx_pending.active && !mesh_c5_tx_bank_owned;
 #else
     return false;
 #endif
@@ -881,21 +1056,6 @@ static struct app_mesh_queue_head_owner report_tx_queue_head_owner;
 static struct mesh_relay_result mesh_work_result;
 static struct mesh_outbound mesh_tx_timeout_pending_waiting;
 static struct mesh_rx_pending mesh_rx_work_pending;
-#if DEVICE_ROLE == ROLE_GATEWAY
-/* The retained RX item is the only firmware custody record needed while the
- * GUI notification is in flight.  The BLE callback only flips the boundary
- * and resubmits the mesh owner; it never mutates relay state from BT context. */
-static atomic_t mesh_gateway_host_delivery_pending_state;
-static atomic_t mesh_gateway_host_receipt_received_state;
-static atomic_t mesh_gateway_host_delivery_semantic_accepted_state;
-static atomic_t mesh_gateway_host_delivery_semantic_finalized_state;
-static atomic_t mesh_gateway_host_delivery_relay_committed_state;
-static atomic_t mesh_gateway_host_delivery_ack_handoff_state;
-static int mesh_gateway_host_delivery_semantic_acceptance;
-static struct mesh_outbound mesh_gateway_host_delivery_ack;
-static bool mesh_gateway_host_delivery_ack_valid;
-static struct k_work_delayable mesh_gateway_host_delivery_retry_work;
-#endif
 static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
 static K_MUTEX_DEFINE(mesh_direct_gateway_probe_scratch_lock);
 static struct mesh_outbound mesh_direct_gateway_probe_scratch;
@@ -1261,6 +1421,8 @@ static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id);
 static uint32_t mesh_identity_backoff_ms(uint64_t node_id,
                                          uint64_t parent_id,
                                          uint8_t deferral_count);
+static uint32_t mesh_parent_contact_retry_delay_ms(uint64_t parent_id,
+                                                   uint8_t failure_count);
 static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
                                            uint64_t peer_id,
                                            const char *reason);
@@ -1336,7 +1498,8 @@ static bool mesh_queue_from_frame_at_internal(
     uint64_t current_channel9_peer_id,
     bool submit_work,
     bool *valid_mesh_frame,
-    uint64_t *previous_hop_id);
+    uint64_t *previous_hop_id,
+    uint8_t *packet_flags_out);
 static uint64_t mesh_expand_uptime32(uint32_t timestamp_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_outbound_is_local_origin_priority(
@@ -1355,3 +1518,27 @@ static void mesh_retire_assignment_channel9_peer(uint64_t peer_id,
 #include "app_mesh_report_event_tx.inc"
 #include "app_mesh_report_delivery.inc"
 #include "app_mesh_report_rx.inc"
+#include "app_mesh_report_c5_batch.inc"
+
+#if defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
+/*
+ * Stack evidence replay must never run between a frame decode and its RX
+ * re-arm, or while a hop ACK is still on the air: the sampler walks every
+ * thread stack and blocks on RTT buffer space. These three reads are the
+ * cheapest live radio-path state this translation unit already owns.
+ */
+static bool mesh_stack_diag_radio_critical(void)
+{
+    return mesh_inline_rx_rearm_owner != NULL ||
+           app_mesh_rx_handoff_control_active(&mesh_rx_handoff) ||
+           mesh_relay_tx_active(&mesh_runtime);
+}
+
+static int mesh_stack_diag_hook_init(void)
+{
+    app_stack_workload_diag_set_critical_hook(mesh_stack_diag_radio_critical);
+    return 0;
+}
+
+SYS_INIT(mesh_stack_diag_hook_init, APPLICATION, 99);
+#endif

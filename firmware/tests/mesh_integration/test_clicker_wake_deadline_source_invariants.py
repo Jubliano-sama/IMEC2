@@ -584,9 +584,16 @@ for preempt_owner in (
 assert "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY" in MESH_ARBITRATION
 assert "dwm3000_driver_request_receive_abort(" in MESH_ARBITRATION
 assert "dwm3000_driver_clear_receive_abort(" in MESH_ARBITRATION
+arbiter_drive = source_function_body(MESH_ARBITRATION, "drive_schedule_locked")
+scheduled = arbiter_drive.index("if (ret >= 0)")
+arbiter_clear = arbiter_drive.index(
+    "dwm3000_driver_clear_receive_abort(", scheduled
+)
+arbiter_release = arbiter_drive.index("pending_work = NULL", scheduled)
+assert scheduled < arbiter_clear < arbiter_release
 assert "DWM3000_RECEIVE_ABORT_MESH_CONTROL" in MESH_COORDINATION
 assert MESH_TRANSPORT.count("DWM3000_RECEIVE_ABORT_MESH_CONTROL") >= 2
-assert "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY" in GATEWAY_CONTROL
+assert "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY" not in GATEWAY_CONTROL
 assert "DWM3000_RECEIVE_ABORT_NODE_COMM" not in MESH_ARBITRATION
 assert "DWM3000_RECEIVE_ABORT_MESH_CONTROL" not in MESH_ARBITRATION
 
@@ -637,10 +644,10 @@ assert re.search(
     "Channel-9 coordinator capture"
 )
 
-# Every work item admitted through the gateway-priority arbiter owns its
-# level-triggered receive-abort bit until the scheduled handler reaches the
-# safe boundary. Derive this list from the submit sites so a future internal
-# priority handler cannot silently omit the matching release.
+# Every work item admitted through the gateway-priority arbiter has its
+# generation's level-triggered abort retired by the arbiter while the handoff
+# lock still excludes a successor. A delayed generation-A handler must never
+# clear the shared bit after generation B has requested it.
 gateway_priority_work_items = set(re.findall(
     r"\bmesh_gateway_command_priority_submit\s*\(\s*&([A-Za-z0-9_]+)\s*\)",
     GATEWAY_CONTROL,
@@ -657,23 +664,8 @@ for work_item in gateway_priority_work_items:
     )
     handler_name = init_matches[0]
     handler = source_function_body(GATEWAY_CONTROL, handler_name)
-    release = handler.find(
-        "dwm3000_driver_clear_receive_abort(\n"
-        "        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY)"
-    )
-    assert release >= 0, (
-        f"{handler_name} retains the gateway-priority receive-abort owner"
-    )
-
-    entry = handler.index("ARG_UNUSED(work);") + len("ARG_UNUSED(work);")
-    first_stateful_call = re.search(
-        r"\b(?:gateway_[A-Za-z0-9_]+|k_(?:mutex|msgq)_[A-Za-z0-9_]+)\s*\(",
-        handler[entry:],
-    )
-    assert first_stateful_call is not None
-    assert release < entry + first_stateful_call.start(), (
-        f"{handler_name} must release the gateway-priority abort owner at "
-        "its safe-boundary entry"
+    assert "dwm3000_driver_clear_receive_abort(" not in handler, (
+        f"{handler_name} can erase a successor gateway-priority abort"
     )
 
 main = source_function_body(MAIN, "main")

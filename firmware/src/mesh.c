@@ -87,6 +87,7 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_RESULT_OFFER:
     case MSG_RESULT_GRANT:
     case MSG_COMMAND:
+    case MSG_ROUTE_SOLICIT:
         return channel5;
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
@@ -94,15 +95,16 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_MESH_HOP_ACK:
     case MSG_GATEWAY_ACK:
     case MSG_GATEWAY_ACK_CONFIRM:
-    case MSG_GATEWAY_ROUTE_REQ:
+        return true;
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_MESH_EVENT_END:
-        return channel9;
     case MSG_GATEWAY_COLLECTION_EACK:
         return true;
+    case MSG_GATEWAY_ROUTE_REQ:
+    case MSG_MESH_EVENT_END:
+        return channel9;
     case MSG_MESH_DATA:
-        return synthetic_mesh_data_enabled && channel9;
+        return synthetic_mesh_data_enabled;
     case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:
@@ -1105,12 +1107,40 @@ bool mesh_packet_semantic_digest(
     uint8_t header[1u + 1u + sizeof(uint64_t) + sizeof(uint64_t) +
                    sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t)];
     size_t offset = 0u;
+    size_t semantic_len = payload_len;
+    bool tlv_payload = true;
+    uint8_t hint_mask = 0u;
 
     if (packet == NULL || digest == NULL ||
         packet->payload_len != payload_len ||
         payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
         (payload_len != 0u && payload == NULL)) {
         return false;
+    }
+
+    /* Batch hints describe this physical attempt, never the retained packet.
+     * Keep the old digest byte-for-byte for packets with no hints, including
+     * opaque payloads used by the transport. Validate a complete TLV envelope
+     * before interpreting any bytes as hints. */
+    for (size_t i = 0u; i < payload_len;) {
+        if (payload_len - i < 2u || payload[i + 1u] > payload_len - i - 2u) {
+            tlv_payload = false;
+            break;
+        }
+        i += 2u + payload[i + 1u];
+    }
+    if (tlv_payload) {
+        for (size_t i = 0u; i < payload_len; i += 2u + payload[i + 1u]) {
+            uint8_t bit = payload[i] == TLV_BATCH_PENDING ? 1u :
+                          payload[i] == TLV_BATCH_REMAINING ? 2u : 0u;
+            if (bit != 0u) {
+                if (payload[i + 1u] != 1u || (hint_mask & bit) != 0u) {
+                    return false;
+                }
+                hint_mask |= bit;
+                semantic_len -= 3u;
+            }
+        }
     }
 
     header[offset++] = packet->msg_type;
@@ -1123,17 +1153,30 @@ bool mesh_packet_semantic_digest(
     offset += sizeof(uint32_t);
     proto_put_u16_le(&header[offset], packet->seq);
     offset += sizeof(uint16_t);
-    proto_put_u16_le(&header[offset], (uint16_t)payload_len);
+    proto_put_u16_le(&header[offset], (uint16_t)semantic_len);
     offset += sizeof(uint16_t);
 
-    return offset == sizeof(header) &&
-           semantic_digest_sha256_init(&context) &&
-           semantic_digest_sha256_update(&context,
-                                         domain,
-                                         sizeof(domain) - 1u) &&
-           semantic_digest_sha256_update(&context, header, sizeof(header)) &&
-           semantic_digest_sha256_update(&context, payload, payload_len) &&
-           semantic_digest_sha256_final(&context, digest);
+    if (offset != sizeof(header) ||
+        !semantic_digest_sha256_init(&context) ||
+        !semantic_digest_sha256_update(&context, domain, sizeof(domain) - 1u) ||
+        !semantic_digest_sha256_update(&context, header, sizeof(header))) {
+        return false;
+    }
+    if (hint_mask == 0u) {
+        if (!semantic_digest_sha256_update(&context, payload, payload_len)) {
+            return false;
+        }
+    } else {
+        for (size_t i = 0u; i < payload_len; i += 2u + payload[i + 1u]) {
+            if (payload[i] != TLV_BATCH_PENDING &&
+                payload[i] != TLV_BATCH_REMAINING &&
+                !semantic_digest_sha256_update(&context, &payload[i],
+                                                2u + payload[i + 1u])) {
+                return false;
+            }
+        }
+    }
+    return semantic_digest_sha256_final(&context, digest);
 }
 
 int mesh_append_ack_semantic_identity(
@@ -1365,6 +1408,31 @@ static int ack_payload_diagnostic_lists(
     if (session_ret == PROTO_OK || packet_id_ret == PROTO_OK ||
         ack_packet->session_id == 0u) {
         return PROTO_ERR_MALFORMED;
+    }
+    {
+        struct mesh_ack_semantic_identity first;
+        uint8_t credit = 0u;
+
+        /*
+         * An explicit refusal (no custody slot, no BLE slot, or no route)
+         * names no accepted identity at all.  Only new firmware can produce
+         * that shape, and TLV_BATCH_CREDIT is its marker: an old ACK never
+         * carries it and always names exactly one identity, so this cannot
+         * silently reinterpret a truncated legacy frame.
+         */
+        if (mesh_ack_semantic_identity_at(payload,
+                                          payload_len,
+                                          0u,
+                                          &first) == PROTO_ERR_NOT_FOUND) {
+            if (find_u8_tlv(payload,
+                            payload_len,
+                            TLV_BATCH_CREDIT,
+                            &credit) != PROTO_OK) {
+                return PROTO_ERR_MALFORMED;
+            }
+            *entry_count = 0u;
+            return PROTO_OK;
+        }
     }
     *entry_count = 1u;
     return PROTO_OK;
@@ -2609,5 +2677,240 @@ int mesh_init_command_result(struct proto_packet *packet,
     packet->ttl = MESH_DEFAULT_TTL;
     packet->payload_len = payload_len;
     packet->message_age_ms = 0u;
+    return PROTO_OK;
+}
+
+/* ------------------------------------------------------------------------
+ * Channel-5 delivery protocol: ACK depth/credit and batch TLVs.
+ * ------------------------------------------------------------------------ */
+
+int mesh_append_ack_flow_control(uint8_t *payload,
+                                 size_t payload_cap,
+                                 size_t *offset,
+                                 const struct mesh_ack_flow_control *flow)
+{
+    int ret;
+
+    if (payload == NULL || offset == NULL || flow == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (flow->depth_valid) {
+        ret = tlv_append_u8(payload,
+                            payload_cap,
+                            offset,
+                            TLV_HOP_COUNT,
+                            flow->depth);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    if (flow->credit_valid) {
+        if (flow->credit > MESH_BATCH_CREDIT_MAX) {
+            return PROTO_ERR_ARG;
+        }
+        ret = tlv_append_u8(payload,
+                            payload_cap,
+                            offset,
+                            TLV_BATCH_CREDIT,
+                            flow->credit);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    if (flow->retry_after_valid) {
+        ret = tlv_append_u16(payload,
+                             payload_cap,
+                             offset,
+                             TLV_RETRY_AFTER_MS,
+                             flow->retry_after_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    return PROTO_OK;
+}
+
+int mesh_ack_flow_control_parse(const struct proto_packet *ack_packet,
+                                const uint8_t *ack_payload,
+                                size_t ack_payload_len,
+                                struct mesh_ack_flow_control *flow)
+{
+    struct mesh_ack_semantic_identity identity;
+    uint8_t depth = 0u;
+    uint8_t credit = 0u;
+    uint16_t retry_after_ms = 0u;
+    int ret;
+
+    if (ack_packet == NULL || ack_payload == NULL || flow == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if ((ack_packet->msg_type != MSG_GATEWAY_ACK &&
+         ack_packet->msg_type != MSG_MESH_HOP_ACK) ||
+        ack_packet->payload_len != ack_payload_len) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(flow, 0, sizeof(*flow));
+    flow->depth = MESH_ROUTE_DEPTH_UNREACHABLE;
+
+    ret = find_u8_tlv(ack_payload, ack_payload_len, TLV_HOP_COUNT, &depth);
+    if (ret == PROTO_OK) {
+        flow->depth = depth;
+        flow->depth_valid = true;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = find_u8_tlv(ack_payload, ack_payload_len, TLV_BATCH_CREDIT, &credit);
+    if (ret == PROTO_OK) {
+        if (credit > MESH_BATCH_CREDIT_MAX) {
+            return PROTO_ERR_MALFORMED;
+        }
+        flow->credit = credit;
+        flow->credit_valid = true;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = find_u16_tlv(ack_payload,
+                       ack_payload_len,
+                       TLV_RETRY_AFTER_MS,
+                       &retry_after_ms);
+    if (ret == PROTO_OK) {
+        flow->retry_after_ms = retry_after_ms;
+        flow->retry_after_valid = true;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (uint8_t i = 0u; i <= MESH_ACK_SEMANTIC_IDENTITY_MAX; i++) {
+        ret = mesh_ack_semantic_identity_at(ack_payload,
+                                            ack_payload_len,
+                                            i,
+                                            &identity);
+        if (ret == PROTO_ERR_NOT_FOUND) {
+            break;
+        }
+        if (ret != PROTO_OK || i == MESH_ACK_SEMANTIC_IDENTITY_MAX) {
+            return PROTO_ERR_MALFORMED;
+        }
+        flow->identity_count = (uint8_t)(i + 1u);
+    }
+    return PROTO_OK;
+}
+
+bool mesh_ack_flow_control_is_dead_end(const struct mesh_ack_flow_control *flow)
+{
+    return flow != NULL &&
+           flow->depth_valid &&
+           flow->depth == MESH_ROUTE_DEPTH_UNREACHABLE &&
+           flow->identity_count == 0u;
+}
+
+bool mesh_ack_flow_control_is_backpressure(
+    const struct mesh_ack_flow_control *flow)
+{
+    return flow != NULL &&
+           flow->identity_count == 0u &&
+           flow->credit_valid &&
+           flow->credit == 0u &&
+           flow->depth_valid &&
+           flow->depth != MESH_ROUTE_DEPTH_UNREACHABLE;
+}
+
+uint8_t mesh_batch_credit_from_free_slots(uint16_t free_slots)
+{
+    uint16_t usable;
+
+    if (free_slots <= MESH_CUSTODY_OWN_RESERVE) {
+        return 0u;
+    }
+    usable = (uint16_t)(free_slots - MESH_CUSTODY_OWN_RESERVE);
+    return usable > MESH_BATCH_CREDIT_MAX ? MESH_BATCH_CREDIT_MAX :
+                                            (uint8_t)usable;
+}
+
+int mesh_append_batch_pending(uint8_t *payload,
+                              size_t payload_cap,
+                              size_t *offset,
+                              uint8_t pending)
+{
+    if (payload == NULL || offset == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (pending == 0u) {
+        /* Absent means zero: never spend wire bytes on the common case. */
+        return PROTO_OK;
+    }
+    return tlv_append_u8(payload,
+                         payload_cap,
+                         offset,
+                         TLV_BATCH_PENDING,
+                         pending);
+}
+
+int mesh_batch_pending_from_payload(const uint8_t *payload,
+                                    size_t payload_len,
+                                    uint8_t *pending)
+{
+    uint8_t value = 0u;
+    int ret;
+
+    if (pending == NULL || (payload_len > 0u && payload == NULL)) {
+        return PROTO_ERR_ARG;
+    }
+    *pending = 0u;
+    if (payload_len == 0u) {
+        return PROTO_OK;
+    }
+    ret = find_u8_tlv(payload, payload_len, TLV_BATCH_PENDING, &value);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *pending = value;
+    return PROTO_OK;
+}
+
+int mesh_append_batch_remaining(uint8_t *payload,
+                                size_t payload_cap,
+                                size_t *offset,
+                                uint8_t remaining)
+{
+    if (payload == NULL || offset == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (remaining == 0u) {
+        return PROTO_OK;
+    }
+    return tlv_append_u8(payload,
+                         payload_cap,
+                         offset,
+                         TLV_BATCH_REMAINING,
+                         remaining);
+}
+
+int mesh_batch_remaining_from_payload(const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint8_t *remaining)
+{
+    uint8_t value = 0u;
+    int ret;
+
+    if (remaining == NULL || (payload_len > 0u && payload == NULL)) {
+        return PROTO_ERR_ARG;
+    }
+    *remaining = 0u;
+    if (payload_len == 0u) {
+        return PROTO_OK;
+    }
+    ret = find_u8_tlv(payload, payload_len, TLV_BATCH_REMAINING, &value);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *remaining = value;
     return PROTO_OK;
 }

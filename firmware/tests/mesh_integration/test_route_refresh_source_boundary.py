@@ -265,6 +265,51 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
             retention_guard,
         )
 
+    def test_terminal_priority_submission_failure_cannot_orphan_fifo_tombstone(self):
+        cancel = function_body(
+            self.anchor, "gateway_host_command_cancel_admitted"
+        )
+        cancel_state = cancel.index(
+            "gateway_host_command_lifecycle_cancel_locked(identity)"
+        )
+        kick = cancel.index("gateway_host_command_submit_next_queued()")
+
+        self.assertLess(cancel_state, kick)
+        self.assertIn("if (ret == 0)", cancel[cancel_state:kick])
+
+    def test_priority_retry_schedule_failure_is_terminally_owned(self):
+        schedule = function_body(
+            self.anchor, "gateway_host_command_schedule_priority_retry"
+        )
+        retry_worker = function_body(
+            self.anchor, "gateway_host_command_retry_work_handler"
+        )
+        dispatch_worker = function_body(
+            self.anchor, "gateway_host_command_work_handler"
+        )
+        reschedule = schedule.index(
+            "k_work_reschedule(&gateway_host_command_retry_work"
+        )
+        failed = schedule.index("if (ret < 0)", reschedule)
+        failure_path = schedule[failed:]
+
+        self.assertIn("gateway_host_command_retry_pending = false", failure_path)
+        self.assertIn("gateway_host_command_priority_retry_reset()", failure_path)
+        self.assertIn("return -EIO", failure_path)
+        self.assertNotIn(
+            "app_gateway_command_ingress_contention_retryable(ret)",
+            failure_path,
+        )
+        for worker in (retry_worker, dispatch_worker):
+            with self.subTest(worker=worker.split("(", 1)[0]):
+                self.assertIn(
+                    "gateway_host_command_schedule_priority_retry(", worker
+                )
+                self.assertIn(
+                    "gateway_host_command_retire_failed_generation(", worker
+                )
+                self.assertIn("gateway_host_command_submit_next_queued()", worker)
+
     def test_route_refresh_completion_retains_full_host_command_identity(self):
         state = self.refresh[
             self.refresh.index("struct route_refresh_state {") :

@@ -25,20 +25,17 @@ extern "C" {
 
 /*
  * This table is the review baseline for the production-candidate presets.
- * Keep it machine-readable: firmware/scripts/verify_stack_evidence.py parses
- * these rows and compares them with each exact Zephyr build's generated data.
- * Anchor enumeration now retains a 456-byte semantic custody lane in BSS
- * across radio-owner handoffs. Its 8.5 KiB static reserve remains separate
- * from every measured stack margin and is still enforced before flashing.
+ * The prototype's user-approved static RAM reserve is 4 KiB for anchors and
+ * gateway. This is separate from every measured per-thread stack margin.
  */
 /* STACK_BUDGET_POLICY_BEGIN */
 #define STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X)                              \
     X(CLICKER, "mesh_clicker", 4096u, 6144u, 6784u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
-      0u, 6912u, true, true, true, true, false)                               \
+      0u, 4096u, true, true, true, true, false)                               \
     X(GATEWAY, "mesh_gateway", 4416u, 8512u, 8384u, 8192u, 320u, 1536u, 1536u,  \
-      1792u, 2816u, true, true, true, true, false)
+      1792u, 4096u, true, true, true, true, false)
 
 #if STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES != 1536u
 #error "gateway logging stack constant and deployable policy diverged"
@@ -46,7 +43,7 @@ extern "C" {
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
     X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 5376u, 9472u, 8192u, \
-      320u, 2048u, 0u, 0u, 6912u, true, true, true, true, false)              \
+      320u, 2048u, 0u, 0u, 4096u, true, true, true, true, false)              \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 9216u, 8192u, 320u, 0u, 0u, \
       0u, 18432u, true, true, true, true, false)                              \
     X(TRANSMITTER_FORCEDHOP, "mesh_transmitter_forcedhop", 4096u, 8192u, \
@@ -104,6 +101,12 @@ extern "C" {
     X("app_clicker.c", "clicker_action_work_handler", "clicker_action")     \
     X("app_clicker.c", "clicker_action_submit_retry_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_release_work_handler", "system_workqueue") \
+    X("app_stack_workload_diag.c", "stack_workload_diag_defer_work_handler", "system_workqueue") \
+    X("app_stack_workload_diag.c", "stack_workload_diag_defer_work_handler", "stack_diag") \
+    X("app_stack_workload_diag.c", "stack_workload_diag_queue_init", "main") \
+    X("app_mesh_report.c", "mesh_stack_diag_hook_init", "main")             \
+    X("app_mesh_report.c", "mesh_stack_diag_radio_critical", "system_workqueue") \
+    X("app_mesh_report.c", "mesh_stack_diag_radio_critical", "stack_diag")  \
     X("app_clicker.c", "click_button_rearm_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_work_handler", "system_workqueue")       \
     X("app_clicker.c", "self_test_arm_timeout_handler", "system_workqueue")   \

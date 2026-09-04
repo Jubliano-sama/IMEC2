@@ -26,14 +26,14 @@ struct uwb_wake_claim_frame;
     (MESH_RELAY_ANCHOR_DOWNLINK_ROUTES - MESH_RELAY_DOWNLINK_ROUTES)
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX MESH_CONNECTED_MAX_ANCHORS
-#define MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN 4u
+#define MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN 2u
+/* Shared growth pool: a burst source may hold a few more recent identities. */
+#define MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY 6u
 #define MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN \
-    MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH
+    (MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN + \
+     MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY)
 #define MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY \
     (MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX * \
-     MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN)
-#define MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY \
-    (MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN - \
      MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN)
 #define MESH_RELAY_GATEWAY_ACK_CAPACITY \
     (MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY + \
@@ -50,12 +50,93 @@ struct uwb_wake_claim_frame;
 #define MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES \
     ((MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY + 7u) / 8u)
 #define MESH_RELAY_FLOOD_SEEN_SIZE 16u
+/*
+ * Channel-5 delivery protocol (see Documentation/Channel 5 Delivery Protocol).
+ *
+ * A parent that answers an uplink with depth MESH_ROUTE_DEPTH_UNREACHABLE has
+ * no route of its own.  That is not an RF failure: the frame was heard and
+ * refused, so the sender keeps custody, parks that candidate for this long and
+ * re-selects immediately instead of burning one of its bounded RF retries.
+ */
+#define MESH_PARENT_DEAD_END_HOLD_MS 5000u
+/*
+ * A neighbour with a finite depth answers a broadcast MSG_ROUTE_SOLICIT with a
+ * unicast route advert after a uniform delay in [0, this).  The application
+ * owns the draw; the core only states the bound so replies from a whole
+ * neighbourhood do not collide.
+ */
+#define MESH_SOLICIT_REPLY_JITTER_MS 40u
+/*
+ * A receiver that admitted a frame announcing further burst members keeps its
+ * radio armed for at most this long between frames before it gives up waiting
+ * and sends the single batch ACK it owes.
+ */
+#define MESH_BATCH_FOLLOWER_GAP_MS 6u
+/* Default refusal delay when the application does not supply one. */
+#define MESH_RELAY_BACKPRESSURE_RETRY_AFTER_MS 120u
+/* Explicit refusal retries are jittered +/- this percentage of retry_after. */
+#define MESH_RELAY_BACKPRESSURE_JITTER_PERCENT 25u
+/* Local free-slot count has never been supplied by the application. */
+#define MESH_RELAY_FREE_SLOTS_UNKNOWN 0xFFu
+/*
+ * Packets this relay handed to a parent and has not seen gateway-ACKed.  A
+ * former parent that lost its route may hand any of them straight back, even
+ * to their originator; the memo is what makes that a re-adoption instead of a
+ * duplicate drop.  Four covers one click burst per parent with margin.
+ */
+#define MESH_RELAY_HANDOFF_MEMO_SLOTS 4u
+/*
+ * Expiry sweeps over the gateway ACK history are pure, idempotent functions of
+ * (store contents, now_ms). A repeat pass is skipped while neither input has
+ * changed, which collapses the four to six sweeps one received packet used to
+ * trigger into one. See gateway_ack_history_expire_stale().
+ */
+#define MESH_RELAY_SWEEP_INTERVAL_MS 250u
+/*
+ * Longest payload the per-relay semantic digest memo retains. Mesh reports on
+ * this network are ~300 bytes, so this covers click reports, hop ACKs and
+ * ordinary command results with margin while costing far less RAM than the
+ * 957-byte extended-frame maximum on a part that is already at 96% RAM. A
+ * longer payload is still digested correctly, just without the memo.
+ */
+#define MESH_RELAY_DIGEST_CACHE_PAYLOAD_MAX 512u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES ROUTE_MAX_FAILURES
 #define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 1000u
 #define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 60000u
+/*
+ * Channel-5 ACK retransmit backoff.  Every mesh packet now waits one ACK
+ * window on channel 5, so a missed gateway/hop ACK must be repaired quickly
+ * instead of parking the packet for seconds.  The first retry follows the
+ * expired ACK window after a short jittered gap, each further attempt doubles
+ * that base, and the complete delay is hard-capped.  Jitter is symmetric
+ * (+/-50% of the base) so co-located senders that miss the same ACK do not
+ * retransmit in lockstep.
+ */
+#define MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS 100u
+#define MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS 2000u
+#define MESH_RELAY_ACK_RETRY_BACKOFF_MIN_MS \
+    (MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS - \
+     (MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS / 2u))
+#define MESH_RELAY_ACK_RETRY_BACKOFF_FIRST_MAX_MS \
+    (MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS + \
+     (MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS / 2u))
+_Static_assert(MESH_RELAY_ACK_RETRY_BACKOFF_FIRST_MAX_MS <= 200u,
+               "first ACK retry must follow the ACK window within ~200 ms");
+_Static_assert(MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS >=
+                   MESH_RELAY_ACK_RETRY_BACKOFF_FIRST_MAX_MS,
+               "ACK retry cap must not undercut the first retry");
+/*
+ * Legacy supervision envelope.  The actual retransmit schedule is the
+ * exponential backoff above; this stays the conservative upper bound that
+ * channel-9 supervision, gateway ACK retention and source-age retention are
+ * sized against, so it must remain >= the real schedule.
+ */
 #define MESH_RELAY_RETRY_BACKOFF_MAX_MS \
     (ROUTE_RETRY_BACKOFF_MAX_MS + (ROUTE_RETRY_BACKOFF_MAX_MS / 2u))
+_Static_assert(MESH_RELAY_RETRY_BACKOFF_MAX_MS >=
+                   MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS,
+               "supervision envelope must cover the ACK retry cap");
 #define MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS \
     ((ROUTE_GATEWAY_ACK_TIMEOUT_MS * (ROUTE_RETRIES_PER_CANDIDATE + 1u)) + \
      ROUTE_RETRY_BACKOFF_FIRST_MS + (ROUTE_RETRY_BACKOFF_FIRST_MS / 2u) + \
@@ -219,6 +300,8 @@ enum c5_contact_purpose {
     C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD = 5u,
     C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT = 6u,
     C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION = 7u,
+    /* Gateway-bound data handed to a parent anchor behind a wake train. */
+    C5_CONTACT_PURPOSE_UPLINK = 8u,
 };
 
 struct c5_contact_context {
@@ -338,6 +421,14 @@ enum mesh_relay_action {
      * into the parent's RAM custody. The source may retire its Channel-9
      * exchange. The authoritative TABLE now commits enumeration directly. */
     MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED = 1u << 4,
+    /*
+     * The next hop answered explicitly instead of staying silent: either a
+     * dead-end ACK (depth UNREACHABLE, nothing accepted) or backpressure
+     * (real depth, credit 0, retry-after).  Custody is retained and the relay
+     * has already re-selected or rescheduled; the application must re-arm its
+     * transmit timer and must NOT count this as an RF failure.
+     */
+    MESH_RELAY_ACTION_TX_HOP_DEFERRED = 1u << 5,
     MESH_RELAY_ACTION_DROP = 1u << 6,
     /* The original gateway ACK was authenticated. The immutable source packet
      * remains the owner while its compact ACK_CONFIRM is generated transiently. */
@@ -565,20 +656,15 @@ _Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 44u,
 _Static_assert(MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN >=
                    MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN,
                "gateway ACK per-origin capacity must cover its guarantee");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ==
-                   MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH,
-               "gateway ACK history must cover one complete anchor backlog");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY == 200u,
-               "gateway ACK history must guarantee four slots to 50 members");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_OVERFLOW_CAPACITY == 12u,
-               "gateway ACK overflow must extend one member from four to 16");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 27u,
+_Static_assert(MESH_RELAY_GATEWAY_ACK_GUARANTEED_CAPACITY == 100u,
+               "gateway ACK history must guarantee two slots to 50 members");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 14u,
                "gateway ACK candidate bitmap must cover every identity");
-_Static_assert(sizeof(struct mesh_gateway_ack_store) == 10072u,
+_Static_assert(sizeof(struct mesh_gateway_ack_store) == 5384u,
                "gateway ACK store must fit role-overlaid static storage");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 212u,
-               "gateway ACK history must preserve fleet and backlog bounds");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 214u,
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 106u,
+               "gateway ACK history must preserve fleet and burst bounds");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 108u,
                "gateway ACK history must reserve both pair cleanup results");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY <= UINT8_MAX,
                "per-origin identity counts must not overflow");
@@ -742,6 +828,72 @@ struct mesh_relay_diagnostics {
     uint8_t busy_response_count;
 };
 
+#define MESH_RELAY_HANDOFF_VALID 0x01u
+#define MESH_RELAY_HANDOFF_GATEWAY_ACKED 0x02u
+
+/*
+ * One packet this relay originated and handed to a parent.  Kept until the
+ * gateway ACK for it is observed, so a packet returned by a parent that has
+ * since lost its route can be recognised as ours and re-adopted.
+ */
+struct mesh_relay_handoff_memo {
+    uint64_t parent_id;
+    uint32_t session_id;
+    uint16_t seq;
+    uint8_t flags;
+};
+
+/*
+ * Batch sequencing state.  The core owns the arithmetic (how many frames are
+ * still owed, how many the peer has just authorised, what REMAINING each
+ * follower must carry); the application owns radio timing.
+ */
+struct mesh_relay_batch_state {
+    /* Peer whose burst the receive side is currently admitting. */
+    uint64_t rx_peer_id;
+    /* Latest instant at which a follower frame is still expected. */
+    uint32_t rx_deadline_ms;
+    /* Frames the sender still holds for the current next hop. */
+    uint8_t tx_pending;
+    /* Frames the last ACK authorised from that backlog. */
+    uint8_t tx_credit;
+    /* Followers the receive side is still waiting for. */
+    uint8_t rx_remaining;
+    /* Free admission slots the application last reported for this node. */
+    uint8_t local_free_slots;
+};
+
+/* One semantic commitment over a (packet header, payload) pair. */
+struct mesh_packet_digest {
+    uint8_t sha[SEMANTIC_DIGEST_SHA256_LEN];
+    bool valid;
+};
+
+/*
+ * Single-entry memo for mesh_packet_semantic_digest(). One received packet is
+ * digested by duplicate classification, ACK-history admission, ACK
+ * construction, ACK-history store/confirm and duplicate store: six SHA-256
+ * passes over the same bytes, roughly 0.4 ms each on a 64 MHz nRF52833
+ * without hardware crypto.
+ *
+ * The memo is keyed on the complete digest preimage (every committed header
+ * field plus the payload bytes), never on pointers, so a hit returns exactly
+ * the digest a recomputation would produce. Comparing the key costs one
+ * memcmp of the payload, roughly two orders of magnitude cheaper than the
+ * hash it replaces.
+ */
+struct mesh_relay_digest_cache {
+    struct mesh_packet_digest digest;
+    uint64_t src_id;
+    uint64_t dst_id;
+    uint32_t session_id;
+    uint16_t seq;
+    uint16_t payload_len;
+    uint8_t msg_type;
+    uint8_t flags;
+    uint8_t payload[MESH_RELAY_DIGEST_CACHE_PAYLOAD_MAX];
+};
+
 struct mesh_relay {
     enum mesh_relay_role role;
     uint64_t local_id;
@@ -779,6 +931,21 @@ struct mesh_relay {
     uint32_t gateway_route_adv_seq;
     /* Monotonic RAM-local owner identity for transit ACK handoffs. */
     uint32_t next_handoff_owner_generation;
+    /* Memoized semantic digest of the packet currently being processed. */
+    struct mesh_relay_digest_cache digest_cache;
+    /* Timestamp of the last gateway ACK-history expiry sweep. */
+    uint32_t gateway_ack_sweep_at_ms;
+    bool gateway_ack_sweep_valid;
+    /* Channel-5 delivery: batch sequencing and admission credit. */
+    struct mesh_relay_batch_state batch;
+    /* Channel-5 delivery: outstanding parent handoffs, for re-adoption. */
+    struct mesh_relay_handoff_memo handoff_memo[MESH_RELAY_HANDOFF_MEMO_SLOTS];
+    uint8_t handoff_memo_next;
+    /*
+     * The local upstream is known lost: every advert and ACK this node emits
+     * carries MESH_ROUTE_DEPTH_UNREACHABLE until a fresh parent is selected.
+     */
+    bool upstream_poisoned;
 };
 
 struct mesh_relay_result {
@@ -912,8 +1079,9 @@ int mesh_relay_note_gateway_control_reverse_route(
  * origin_ttl is the TTL used by the gateway before any relay forwarded the
  * frame and the stored upstream hop count is derived from the received
  * packet TTL against it. Cost-based selection keeps any existing better
- * parent selected, and a same-parent refresh preserves its failure and
- * hold-down state instead of resetting them.
+ * parent selected. A later validated Here-I-Am sequence is fresh physical
+ * evidence and clears the observed parent's failures and hold-down; exact
+ * duplicate sequences are rejected before this boundary.
  */
 int mesh_relay_note_flood_parent_candidate(struct mesh_relay *relay,
                                            const struct proto_packet *packet,
@@ -1218,6 +1386,27 @@ void mesh_relay_note_channel9_missed(struct mesh_relay *relay,
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);
+/*
+ * Shorten the gateway-ACK deadline that mesh_relay_note_tx_sent() armed for
+ * this exact packet to the moment the application's own synchronous ACK
+ * receive turn ends.  ROUTE_GATEWAY_ACK_TIMEOUT_MS stays the fail-safe upper
+ * bound for senders that cannot observe the ACK slice themselves; a sender
+ * that already listened for the complete first-hop ACK window must not make
+ * the relay core wait another two seconds before its ordinary miss handling
+ * (failure accounting, jittered retry backoff, route repair) runs.
+ *
+ * The deadline is only ever moved earlier, and only while the packet is still
+ * waiting for its first proof of first-hop progress: once a hop ACK has been
+ * observed the window belongs to the longer multi-hop gateway-ACK return path
+ * that the caller's short receive turn says nothing about.
+ *
+ * Returns PROTO_OK when the deadline now expires at or before deadline_ms,
+ * PROTO_ERR_STALE when first-hop progress already owns the window, and
+ * PROTO_ERR_MALFORMED when no matching packet is waiting for a gateway ACK.
+ */
+int mesh_relay_note_gateway_ack_window_elapsed(struct mesh_relay *relay,
+                                               const struct mesh_outbound *sent,
+                                               uint32_t deadline_ms);
 int mesh_relay_validate_route_request(const struct mesh_relay *relay,
                                       const struct proto_packet *packet,
                                       const uint8_t *payload,
@@ -1255,6 +1444,128 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
                                 uint32_t now_ms,
                                 uint32_t random_value,
                                 struct mesh_relay_result *result);
+
+/* ---------------------------------------------------------------------------
+ * Channel-5 delivery protocol: depth, credit, explicit backpressure, batching
+ * and local route repair.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * This node's current gateway depth.  Zero for the gateway; otherwise the
+ * selected parent's advertised depth plus one, or
+ * MESH_ROUTE_DEPTH_UNREACHABLE when the upstream is poisoned, held down,
+ * expired or absent.  This is the value every route advert, solicit reply and
+ * ACK this node emits must carry.
+ */
+uint8_t mesh_relay_local_depth(const struct mesh_relay *relay, uint32_t now_ms);
+/*
+ * Declare the local upstream lost (parent dead end, retries exhausted on every
+ * candidate, or advert expiry).  Depth immediately reads UNREACHABLE.
+ */
+void mesh_relay_poison_upstream(struct mesh_relay *relay);
+bool mesh_relay_upstream_poisoned(const struct mesh_relay *relay);
+
+/*
+ * Application-supplied admission capacity: the number of free slots this node
+ * can still take frames into right now.  The gateway supplies its BLE-stream
+ * free-record count; an anchor supplies its free custody slots.  Until this is
+ * called the core assumes one slot when it is idle and none while it is busy.
+ */
+void mesh_relay_set_local_free_slots(struct mesh_relay *relay,
+                                     uint16_t free_slots);
+/* Credit this node currently advertises: free slots minus the own reserve. */
+uint8_t mesh_relay_local_credit(const struct mesh_relay *relay);
+
+/*
+ * Build the explicit refusal a receiver owes a sender it cannot admit: an ACK
+ * of the matching type naming no accepted identity, carrying this node's real
+ * depth, TLV_BATCH_CREDIT 0 and TLV_RETRY_AFTER_MS.  Use this instead of
+ * dropping the frame silently.  retry_after_ms of zero selects
+ * MESH_RELAY_BACKPRESSURE_RETRY_AFTER_MS.
+ */
+int mesh_relay_build_backpressure_ack(struct mesh_relay *relay,
+                                      const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint64_t previous_hop_id,
+                                      uint16_t retry_after_ms,
+                                      uint32_t now_ms,
+                                      struct mesh_relay_result *result);
+
+/*
+ * Unicast route advert answering a broadcast MSG_ROUTE_SOLICIT.  Returns
+ * PROTO_ERR_NOT_FOUND when this node has no finite depth to offer.  The
+ * application delays the transmission by a uniform draw in
+ * [0, MESH_SOLICIT_REPLY_JITTER_MS).
+ */
+int mesh_relay_build_solicit_reply(const struct mesh_relay *relay,
+                                   const struct proto_packet *solicit,
+                                   uint64_t previous_hop_id,
+                                   uint32_t now_ms,
+                                   struct mesh_outbound *out);
+
+/*
+ * Batch sequencing.  The application declares how many further frames it holds
+ * for the current next hop; the core stamps TLV_BATCH_PENDING on the first
+ * frame, converts the ACK's credit into burst-eligible followers, and stamps
+ * TLV_BATCH_REMAINING on each of them.
+ */
+int mesh_relay_note_batch_pending(struct mesh_relay *relay,
+                                  uint8_t frames_for_next_hop);
+uint8_t mesh_relay_batch_pending(const struct mesh_relay *relay);
+uint8_t mesh_relay_batch_credit(const struct mesh_relay *relay);
+/* Stamp TLV_BATCH_PENDING on a first burst frame under construction. */
+int mesh_relay_append_batch_pending(const struct mesh_relay *relay,
+                                    uint8_t *payload,
+                                    size_t payload_cap,
+                                    size_t *offset);
+/*
+ * Claim the next burst-eligible follower.  Returns PROTO_OK and the value the
+ * frame must carry in TLV_BATCH_REMAINING while credit is left, or
+ * PROTO_ERR_NOT_FOUND when the burst is over and the sender must wait for the
+ * batch ACK.
+ */
+int mesh_relay_next_burst_frame(struct mesh_relay *relay,
+                                uint8_t *remaining_out);
+void mesh_relay_reset_batch(struct mesh_relay *relay);
+
+/*
+ * Receive side: note an admitted frame's batch framing, then ask whether more
+ * of that burst is still expected.  While it is, the caller keeps the radio
+ * armed and defers its single batch ACK.
+ */
+int mesh_relay_note_rx_batch_frame(struct mesh_relay *relay,
+                                   uint64_t previous_hop_id,
+                                   const uint8_t *payload,
+                                   size_t payload_len,
+                                   uint32_t now_ms);
+bool mesh_relay_rx_expects_more(const struct mesh_relay *relay,
+                                uint32_t now_ms);
+uint32_t mesh_relay_rx_batch_deadline_ms(const struct mesh_relay *relay);
+void mesh_relay_clear_rx_batch(struct mesh_relay *relay);
+
+/*
+ * Loop freedom.  A candidate is forwardable only when its advertised depth is
+ * strictly lower than this node's, except that a node whose own depth is
+ * UNREACHABLE may use any finite-depth neighbour - including a former child.
+ */
+bool mesh_relay_depth_is_forwardable(const struct mesh_relay *relay,
+                                     uint8_t candidate_depth,
+                                     uint32_t now_ms);
+
+/*
+ * Re-adoption.  A packet whose src_id is this node, returned by the parent it
+ * was handed to and never gateway-ACKed, is ours again rather than a duplicate.
+ */
+void mesh_relay_note_parent_handoff(struct mesh_relay *relay,
+                                    const struct proto_packet *packet,
+                                    uint64_t parent_id);
+bool mesh_relay_should_readopt_returned_packet(const struct mesh_relay *relay,
+                                               const struct proto_packet *packet,
+                                               uint64_t previous_hop_id);
+void mesh_relay_note_handoff_gateway_acked(struct mesh_relay *relay,
+                                           uint32_t session_id,
+                                           uint16_t seq);
 int mesh_relay_handle_rx(struct mesh_relay *relay,
                          const struct proto_packet *packet,
                          const uint8_t *payload,

@@ -241,6 +241,45 @@ static void test_result_commit_matches_explicitly_rebound_command(void)
     assert(app_gateway_command_result_queue_depth(&queue) == 1u);
 }
 
+static void test_prepared_identity_is_immutable_and_resolvable_from_original(void)
+{
+    struct app_gateway_command_result_queue queue;
+    struct proto_packet original = command_packet(0u, CMD_SET_ROLE);
+    struct proto_packet first = original;
+    struct proto_packet second = original;
+    struct proto_packet terminal = {0};
+    uint32_t token = 0u;
+
+    original.session_id = 0u;
+    first.src_id = UINT64_C(0x9999888877776666);
+    first.session_id = 7001u;
+    first.seq = 71u;
+    second = first;
+    second.session_id++;
+    second.seq++;
+
+    app_gateway_command_result_queue_init(&queue);
+    assert(app_gateway_command_result_reserve(&queue, &token) == 0);
+    assert(app_gateway_command_result_bind(
+               &queue, token, &original, CMD_SET_ROLE) == 0);
+    assert(app_gateway_command_result_rebind(
+               &queue, token, &original, CMD_SET_ROLE, &first) == 0);
+    assert(app_gateway_command_result_rebind(
+               &queue, token, &original, CMD_SET_ROLE, &first) == 0);
+    assert(app_gateway_command_result_rebind(
+               &queue, token, &original, CMD_SET_ROLE, &second) == -ESTALE);
+    assert(app_gateway_command_result_terminal_command(
+               &queue, token, &original, CMD_SET_ROLE, &terminal) == 0);
+    assert(terminal.src_id == first.src_id);
+    assert(terminal.dst_id == first.dst_id);
+    assert(terminal.session_id == first.session_id);
+    assert(terminal.seq == first.seq);
+    assert(app_gateway_command_result_terminal_command(
+               &queue, token, &second, CMD_SET_ROLE, &terminal) == -ENOENT);
+    assert(app_gateway_command_result_release_terminal(
+               &queue, token, &first, CMD_SET_ROLE) == 0);
+}
+
 static void test_rebound_identity_selects_exact_same_id_reservation(void)
 {
     struct app_gateway_command_result_queue queue;
@@ -495,6 +534,7 @@ int main(void)
     test_compact_slot_reconstructs_exact_result_fields();
     test_stream_full_and_overflow_full_stop_command_admission();
     test_result_commit_matches_explicitly_rebound_command();
+    test_prepared_identity_is_immutable_and_resolvable_from_original();
     test_rebound_identity_selects_exact_same_id_reservation();
     test_identical_seq_zero_commands_keep_opaque_reservations();
     test_rebound_terminal_release_cannot_leak_or_cross_tokens();

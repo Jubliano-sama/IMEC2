@@ -4,6 +4,7 @@
 #include "mesh.h"
 #include "mesh_radio_timing.h"
 #include "report.h"
+#include "semantic_digest.h"
 #include "uwb.h"
 
 #include <assert.h>
@@ -3635,6 +3636,12 @@ static void test_collection_eack_missing_list_absent_node_confirms_delivery(void
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_MALFORMED);
     assert(result.actions == MESH_RELAY_ACTION_DROP);
+    /*
+     * digest_cache is a pure memo of the semantic digest of the last packet
+     * this relay hashed. It carries no protocol state, so exclude it from the
+     * bytewise "a rejected packet mutates nothing" comparison.
+     */
+    before_malformed.digest_cache = relay.digest_cache;
     assert(memcmp(&relay, &before_malformed, sizeof(relay)) == 0);
     eack_packet.payload_len = (uint16_t)eack_payload_len;
 
@@ -7714,12 +7721,9 @@ static void test_alternate_parent_selection_preserves_immediate_retry(void)
 static void test_local_gateway_bound_tx_waits_for_gateway_ack(void)
 {
     struct mesh_relay relay;
-    struct mesh_relay restored_confirm;
     struct route_candidate route = direct_gateway_route(ANCHOR_B, 5u, 80u);
     struct proto_packet report;
     struct mesh_outbound tx;
-    struct mesh_outbound confirm;
-    struct mesh_relay_outbox_snapshot confirm_snapshot;
     struct mesh_relay_result result;
     struct proto_packet ack;
     struct proto_packet stale_ack;
@@ -7806,59 +7810,16 @@ static void test_local_gateway_bound_tx_waits_for_gateway_ack(void)
                                 90u,
                                 5100u,
                                 &result) == PROTO_OK);
-    assert(result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(mesh_relay_tx_active(&relay));
-    assert(relay.pending.packet.msg_type == report.msg_type);
-    assert(relay.pending.gateway_ack_confirm_pending);
-    assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
-    assert(relay.pending.radio_channel == UWB_CHANNEL_MESH_PAYLOAD);
-    assert(relay.outbox_record.valid);
-    assert(mesh_relay_export_outbox_snapshot(&relay,
-                                             5100u,
-                                             &confirm_snapshot) == PROTO_OK);
-    mesh_relay_init(&restored_confirm,
-                    MESH_RELAY_ROLE_ANCHOR,
-                    ANCHOR_A,
-                    GATEWAY,
-                    5u);
-    assert(mesh_relay_restore_outbox_snapshot(&restored_confirm,
-                                              &confirm_snapshot,
-                                              6100u) == PROTO_OK);
-    assert(restored_confirm.pending.packet.msg_type == report.msg_type);
-    assert(!restored_confirm.pending.gateway_ack_confirm_pending);
-    assert(restored_confirm.pending.gateway_ack_recovery_flags != 0u);
-    assert(restored_confirm.pending.state ==
-           MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(restored_confirm.pending.radio_channel ==
-           UWB_CHANNEL_MESH_PAYLOAD);
-    assert(route_upsert_candidate(&restored_confirm.upstream, &route) ==
-           PROTO_OK);
-    assert(mesh_relay_tick(&restored_confirm, 6101u, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_NONE);
-    assert(mesh_relay_tick(
-               &restored_confirm,
-               6100u + MESH_RELAY_GATEWAY_ACK_RECOVERY_QUARANTINE_MS,
-               &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    assert(result.retransmit.packet.msg_type == report.msg_type);
-    assert(memcmp(result.retransmit.payload, payload, payload_len) == 0);
-    assert(result.retransmit.radio_channel == UWB_CHANNEL_MESH_PAYLOAD);
-    assert(mesh_relay_tick(&relay, 5101u, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    assert(result.retransmit.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-    assert(result.retransmit.radio_channel == UWB_CHANNEL_MESH_PAYLOAD);
-    confirm = result.retransmit;
-    mesh_relay_note_tx_sent(&relay, &confirm, 5101u);
-    build_gateway_ack_for_packet(&ack,
-                                 ack_payload,
-                                 sizeof(ack_payload),
-                                 &ack_payload_len,
-                                 ANCHOR_A,
-                                 4u,
-                                 &confirm.packet,
-                                 confirm.payload,
-                                 confirm.payload_len);
+    assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
+    assert(!mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_IDLE);
+    assert(!relay.pending.gateway_ack_confirm_pending);
+    assert(!relay.outbox_record.valid);
+    assert(relay.outbox_record.delivery_state ==
+           MESH_RELAY_DELIVERY_GATEWAY_ACKED);
+    assert(relay.outbox_record.gateway_acked);
+
+    /* A duplicate copy of the terminal ACK is inert once custody retired. */
     assert(mesh_relay_handle_rx(&relay,
                                 &ack,
                                 ack_payload,
@@ -7867,520 +7828,10 @@ static void test_local_gateway_bound_tx_waits_for_gateway_ack(void)
                                 90u,
                                 5110u,
                                 &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-    assert(mesh_relay_tx_active(&relay));
-    assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-               &relay,
-               &confirm.packet,
-               confirm.payload,
-               confirm.payload_len,
-               5111u) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_NONE);
     assert(!mesh_relay_tx_active(&relay));
-    assert(!relay.outbox_record.valid);
-    assert(relay.outbox_record.delivery_state ==
-           MESH_RELAY_DELIVERY_GATEWAY_ACKED);
-    assert(relay.outbox_record.gateway_acked);
-}
-
-static void test_gateway_reset_replays_immutable_original_after_new_epoch(void)
-{
-    struct mesh_relay source;
-    struct mesh_relay new_gateway;
-    struct mesh_gateway_ack_store gateway_ack_store;
-    struct route_candidate old_route = direct_gateway_route(GATEWAY, 5u, 90u);
-    struct proto_packet report;
-    struct proto_packet old_ack;
-    struct mesh_outbound original_tx;
-    struct mesh_outbound first_confirm;
-    struct mesh_outbound first_replay;
-    struct mesh_outbound second_replay;
-    struct mesh_outbound final_confirm;
-    struct mesh_outbound newer_adv;
-    struct proto_packet expected_same_boot_confirm;
-    struct mesh_relay_result source_result;
-    struct mesh_relay_result gateway_result;
-    struct mesh_gateway_ack_confirm_identity confirm_identity;
-    uint8_t report_payload[128];
-    uint8_t old_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
-    uint8_t expected_same_boot_confirm_payload[
-        MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
-    size_t report_payload_len;
-    size_t old_ack_payload_len = 0u;
-    size_t expected_same_boot_confirm_payload_len = 0u;
-    uint32_t first_replay_ms;
-    uint32_t delayed_old_ack_ms;
-    uint32_t second_replay_ms;
-
-    mesh_relay_init(&source,
-                    MESH_RELAY_ROLE_ANCHOR,
-                    ANCHOR_A,
-                    GATEWAY,
-                    5u);
-    assert(route_upsert_candidate(&source.upstream, &old_route) == PROTO_OK);
-    report_payload_len = build_valid_click_report(&report,
-                                                  ANCHOR_A,
-                                                  900u,
-                                                  9u,
-                                                  1200,
-                                                  report_payload,
-                                                  sizeof(report_payload));
-    assert(mesh_relay_start_tx(&source,
-                               &report,
-                               report_payload,
-                               report_payload_len,
-                               1000u,
-                               &original_tx) == PROTO_OK);
-    mesh_relay_note_tx_sent(&source, &original_tx, 1000u);
-    build_gateway_ack_for_packet(&old_ack,
-                                 old_ack_payload,
-                                 sizeof(old_ack_payload),
-                                 &old_ack_payload_len,
-                                 ANCHOR_A,
-                                 2u,
-                                 &report,
-                                 report_payload,
-                                 report_payload_len);
-
-    assert(mesh_relay_handle_rx(&source,
-                                &old_ack,
-                                old_ack_payload,
-                                old_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                1010u,
-                                &source_result) == PROTO_OK);
-    assert(source_result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(source.pending.gateway_ack_confirm_pending);
-    assert(source.pending.gateway_ack_confirm_route_epoch == 5u);
-    assert(source.pending.packet.msg_type == report.msg_type);
-    assert(source.pending.payload_len == report_payload_len);
-    assert(memcmp(source.pending.payload,
-                  report_payload,
-                  report_payload_len) == 0);
-
-    /* Same-boot retries materialize the exact compact proof without changing
-     * the original owner bytes. */
-    assert(mesh_relay_pending_gateway_ack_confirm_wire(
-               &source,
-               1011u,
-               &expected_same_boot_confirm,
-               expected_same_boot_confirm_payload,
-               sizeof(expected_same_boot_confirm_payload),
-               &expected_same_boot_confirm_payload_len) == PROTO_OK);
-    assert(mesh_relay_tick(&source, 1011u, &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    assert(source_result.retransmit.packet.msg_type ==
-           MSG_GATEWAY_ACK_CONFIRM);
-    first_confirm = source_result.retransmit;
-    assert(first_confirm.packet.flags == expected_same_boot_confirm.flags);
-    assert(first_confirm.packet.src_id == expected_same_boot_confirm.src_id);
-    assert(first_confirm.packet.dst_id == expected_same_boot_confirm.dst_id);
-    assert(first_confirm.packet.session_id ==
-           expected_same_boot_confirm.session_id);
-    assert(first_confirm.packet.seq == expected_same_boot_confirm.seq);
-    assert(first_confirm.packet.ttl == expected_same_boot_confirm.ttl);
-    assert(first_confirm.packet.message_age_ms ==
-           expected_same_boot_confirm.message_age_ms);
-    assert(first_confirm.payload_len ==
-           expected_same_boot_confirm_payload_len);
-    assert(memcmp(first_confirm.payload,
-                  expected_same_boot_confirm_payload,
-                  expected_same_boot_confirm_payload_len) == 0);
-    mesh_relay_note_tx_sent(&source, &first_confirm, 1011u);
-    assert(source.pending.packet.msg_type == report.msg_type);
-    assert(memcmp(source.pending.payload,
-                  report_payload,
-                  report_payload_len) == 0);
-
-    /* A reset gateway has empty ACK history, but a strictly newer validated
-     * route epoch is same-wire proof that replay may target a new incarnation. */
-    mesh_relay_init(&new_gateway,
-                    MESH_RELAY_ROLE_GATEWAY,
-                    GATEWAY,
-                    GATEWAY,
-                    6u);
-    assert(mesh_relay_attach_gateway_ack_store(&new_gateway,
-                                               &gateway_ack_store) == PROTO_OK);
-    assert(mesh_relay_build_gateway_route_adv(&new_gateway,
-                                              1u,
-                                              1100u,
-                                              &newer_adv) == PROTO_OK);
-    assert(mesh_relay_handle_rx(&source,
-                                &newer_adv.packet,
-                                newer_adv.payload,
-                                newer_adv.payload_len,
-                                GATEWAY,
-                                95u,
-                                1110u,
-                                &source_result) == PROTO_OK);
-    assert(has_action(&source_result,
-                      MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING));
-    assert(!source.pending.gateway_ack_confirm_pending);
-    assert(source.pending.gateway_ack_recovery_flags != 0u);
-
-    /* An indistinguishable old ACK arriving before physical replay is ignored. */
-    assert(mesh_relay_handle_rx(&source,
-                                &old_ack,
-                                old_ack_payload,
-                                old_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                1111u,
-                                &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_NONE);
-    assert(!source.pending.gateway_ack_confirm_pending);
-
-    first_replay_ms =
-        1110u + MESH_RELAY_GATEWAY_ACK_RECOVERY_QUARANTINE_MS;
-    assert(mesh_relay_tick(&source,
-                           first_replay_ms,
-                           &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    first_replay = source_result.retransmit;
-    assert(first_replay.packet.msg_type == report.msg_type);
-    assert(first_replay.payload_len == report_payload_len);
-    assert(memcmp(first_replay.payload,
-                  report_payload,
-                  report_payload_len) == 0);
-    mesh_relay_note_tx_sent(&source, &first_replay, first_replay_ms);
-
-    /* The ACK wire has no incarnation. Even an old ACK that arrives after the
-     * replay can arm another confirm, so newer-epoch authorization survives
-     * and turns its missing confirmation into another exact original replay. */
-    delayed_old_ack_ms = first_replay_ms + 100u;
-    assert(mesh_relay_handle_rx(&source,
-                                &old_ack,
-                                old_ack_payload,
-                                old_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                delayed_old_ack_ms,
-                                &source_result) == PROTO_OK);
-    assert(source_result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(source.pending.gateway_ack_confirm_pending);
-    assert(source.pending.gateway_ack_recovery_flags != 0u);
-    assert(mesh_relay_tick(
-               &source,
-               delayed_old_ack_ms +
-                   MESH_RELAY_GATEWAY_ACK_CONFIRM_REPLAY_MS,
-               &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_NONE);
-    assert(!source.pending.gateway_ack_confirm_pending);
-
-    second_replay_ms =
-        delayed_old_ack_ms + MESH_RELAY_GATEWAY_ACK_CONFIRM_REPLAY_MS +
-        MESH_RELAY_GATEWAY_ACK_RECOVERY_QUARANTINE_MS;
-    assert(mesh_relay_tick(&source,
-                           second_replay_ms,
-                           &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    second_replay = source_result.retransmit;
-    assert(second_replay.packet.msg_type == report.msg_type);
-    assert(second_replay.payload_len == report_payload_len);
-    assert(memcmp(second_replay.payload,
-                  report_payload,
-                  report_payload_len) == 0);
-    mesh_relay_note_tx_sent(&source, &second_replay, second_replay_ms);
-
-    /* The replay re-enters the ordinary gateway host-acceptance boundary. */
-    assert(mesh_relay_handle_rx(&new_gateway,
-                                &second_replay.packet,
-                                second_replay.payload,
-                                second_replay.payload_len,
-                                ANCHOR_A,
-                                95u,
-                                second_replay_ms + 1u,
-                                &gateway_result) == PROTO_OK);
-    assert(has_action(&gateway_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-    assert(!has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
-    assert(mesh_relay_commit_gateway_delivery(
-               &new_gateway,
-               &second_replay.packet,
-               second_replay.payload,
-               second_replay.payload_len,
-               ANCHOR_A,
-               second_replay_ms + 2u,
-               &gateway_result) == PROTO_OK);
-    assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
-    assert(mesh_relay_handle_rx(&source,
-                                &gateway_result.gateway_ack.packet,
-                                gateway_result.gateway_ack.payload,
-                                gateway_result.gateway_ack.payload_len,
-                                GATEWAY,
-                                95u,
-                                second_replay_ms + 3u,
-                                &source_result) == PROTO_OK);
-    assert(source_result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(mesh_relay_tick(&source,
-                           second_replay_ms + 4u,
-                           &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    final_confirm = source_result.retransmit;
-    assert(final_confirm.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-    mesh_relay_note_tx_sent(&source,
-                            &final_confirm,
-                            second_replay_ms + 4u);
-
-    assert(mesh_relay_gateway_ack_confirm_history_match(
-               &new_gateway,
-               &final_confirm.packet,
-               final_confirm.payload,
-               final_confirm.payload_len,
-               &confirm_identity) == PROTO_OK);
-    assert(mesh_relay_commit_gateway_delivery(
-               &new_gateway,
-               &final_confirm.packet,
-               final_confirm.payload,
-               final_confirm.payload_len,
-               ANCHOR_A,
-               second_replay_ms + 5u,
-               &gateway_result) == PROTO_OK);
-    assert(mesh_relay_handle_rx(&source,
-                                &gateway_result.gateway_ack.packet,
-                                gateway_result.gateway_ack.payload,
-                                gateway_result.gateway_ack.payload_len,
-                                GATEWAY,
-                                95u,
-                                second_replay_ms + 6u,
-                                &source_result) == PROTO_OK);
-    assert(source_result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-    assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-               &source,
-               &final_confirm.packet,
-               final_confirm.payload,
-               final_confirm.payload_len,
-               second_replay_ms + 7u) == PROTO_OK);
-    assert(!mesh_relay_tx_active(&source));
-}
-
-static void test_transit_ack_confirm_without_original_expires_explicitly(void)
-{
-    struct mesh_relay relay;
-    struct route_candidate route = direct_gateway_route(GATEWAY, 6u, 90u);
-    struct mesh_downlink_entry *source_downlink;
-    struct proto_packet original;
-    struct proto_packet confirm;
-    struct proto_packet delayed_ack;
-    struct mesh_outbound tx;
-    struct mesh_relay_result result;
-    uint8_t original_payload[128];
-    uint8_t confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
-    uint8_t delayed_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
-    size_t original_payload_len;
-    size_t confirm_payload_len = 0u;
-    size_t delayed_ack_payload_len = 0u;
-    const uint32_t started_ms = 1000u;
-    const uint32_t expiry_ms =
-        started_ms + COMMAND_RESULT_EXPIRY_DEFAULT_S * 1000u;
-
-    mesh_relay_init(&relay,
-                    MESH_RELAY_ROLE_ANCHOR,
-                    ANCHOR_B,
-                    GATEWAY,
-                    6u);
-    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
-    source_downlink = test_downlink_at_mutable(&relay, 0u);
-    *source_downlink = (struct mesh_downlink_entry) {
-        .target_id = ANCHOR_A,
-        .next_hop_id = ANCHOR_A,
-        .gateway_id = GATEWAY,
-        .route_epoch = 6u,
-        .last_seen_ms = started_ms,
-        .hop_count = 1u,
-        .quality = 90u,
-        .valid = true,
-    };
-
-    original_payload_len = build_valid_click_report(&original,
-                                                     ANCHOR_A,
-                                                     901u,
-                                                     10u,
-                                                     1300,
-                                                     original_payload,
-                                                     sizeof(original_payload));
-    assert(mesh_gateway_ack_confirm_payload_build(
-               &original,
-               original_payload,
-               original_payload_len,
-               confirm_payload,
-               sizeof(confirm_payload),
-               &confirm_payload_len) == PROTO_OK);
-    assert(mesh_init_gateway_ack_confirm(&confirm,
-                                         ANCHOR_A,
-                                         GATEWAY,
-                                         original.session_id,
-                                         original.seq) == PROTO_OK);
-    assert(mesh_relay_start_tx(&relay,
-                               &confirm,
-                               confirm_payload,
-                               confirm_payload_len,
-                               started_ms,
-                               &tx) == PROTO_OK);
-    assert(mesh_relay_bind_transit_previous_hop(&relay,
-                                                &tx,
-                                                ANCHOR_A) == PROTO_OK);
-    assert(relay.pending.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-    assert(!relay.pending.gateway_ack_confirm_pending);
-    assert(relay.pending.gateway_ack_recovery_flags == 0u);
-    assert(relay.outbox_record.expiry_s == COMMAND_RESULT_EXPIRY_DEFAULT_S);
-    mesh_relay_note_tx_sent(&relay, &tx, started_ms);
-
-    build_gateway_ack_for_packet(&delayed_ack,
-                                 delayed_ack_payload,
-                                 sizeof(delayed_ack_payload),
-                                 &delayed_ack_payload_len,
-                                 ANCHOR_A,
-                                 11u,
-                                 &confirm,
-                                 confirm_payload,
-                                 confirm_payload_len);
-    assert(mesh_relay_handle_rx(&relay,
-                                &delayed_ack,
-                                delayed_ack_payload,
-                                delayed_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                expiry_ms - 1u,
-                                &result) == PROTO_OK);
-    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
-    assert(has_action(
-        &result,
-        MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING));
-    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
-
-    /* There is no source original behind this transit-only confirm. Even a
-     * gateway ACK retained until the final legal millisecond cannot create
-     * recovery bytes; terminal expiry is explicit instead of infinite debt. */
-    assert(mesh_relay_tick(&relay, expiry_ms, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL);
-    assert(result.status == MESH_RELAY_ERR_OUTBOX_EXPIRED);
-    assert(result.terminal.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-    assert(relay.pending.state == MESH_RELAY_TX_WAIT_TERMINAL_COMMIT);
-    assert(mesh_relay_commit_terminal_release(&relay,
-                                              &result.terminal.packet,
-                                              result.terminal.payload,
-                                              result.terminal.payload_len) ==
-           PROTO_OK);
-    assert(!mesh_relay_tx_active(&relay));
-}
-
-static void test_delayed_old_ack_at_retention_boundary_expires_original(void)
-{
-    struct mesh_relay source;
-    struct mesh_relay gateway;
-    struct route_candidate old_route = direct_gateway_route(GATEWAY, 5u, 90u);
-    struct proto_packet report;
-    struct proto_packet old_ack;
-    struct mesh_outbound original_tx;
-    struct mesh_outbound newer_adv;
-    struct mesh_relay_result result;
-    uint8_t report_payload[128];
-    uint8_t old_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
-    size_t report_payload_len;
-    size_t old_ack_payload_len = 0u;
-    uint32_t replay_ms;
-    uint32_t expiry_ms;
-
-    mesh_relay_init(&source,
-                    MESH_RELAY_ROLE_ANCHOR,
-                    ANCHOR_A,
-                    GATEWAY,
-                    5u);
-    assert(route_upsert_candidate(&source.upstream, &old_route) == PROTO_OK);
-    report_payload_len = build_valid_click_report(&report,
-                                                  ANCHOR_A,
-                                                  902u,
-                                                  12u,
-                                                  1400,
-                                                  report_payload,
-                                                  sizeof(report_payload));
-    assert(mesh_relay_start_tx(&source,
-                               &report,
-                               report_payload,
-                               report_payload_len,
-                               1000u,
-                               &original_tx) == PROTO_OK);
-    mesh_relay_note_tx_sent(&source, &original_tx, 1000u);
-    build_gateway_ack_for_packet(&old_ack,
-                                 old_ack_payload,
-                                 sizeof(old_ack_payload),
-                                 &old_ack_payload_len,
-                                 ANCHOR_A,
-                                 13u,
-                                 &report,
-                                 report_payload,
-                                 report_payload_len);
-    assert(mesh_relay_handle_rx(&source,
-                                &old_ack,
-                                old_ack_payload,
-                                old_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                1010u,
-                                &result) == PROTO_OK);
-    assert(result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-
-    mesh_relay_init(&gateway,
-                    MESH_RELAY_ROLE_GATEWAY,
-                    GATEWAY,
-                    GATEWAY,
-                    6u);
-    assert(mesh_relay_build_gateway_route_adv(&gateway,
-                                              1u,
-                                              1100u,
-                                              &newer_adv) == PROTO_OK);
-    assert(mesh_relay_handle_rx(&source,
-                                &newer_adv.packet,
-                                newer_adv.payload,
-                                newer_adv.payload_len,
-                                GATEWAY,
-                                95u,
-                                1110u,
-                                &result) == PROTO_OK);
-    assert(has_action(&result,
-                      MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING));
-    replay_ms = 1110u + MESH_RELAY_GATEWAY_ACK_RECOVERY_QUARANTINE_MS;
-    assert(mesh_relay_tick(&source, replay_ms, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    assert(result.retransmit.packet.msg_type == report.msg_type);
-    mesh_relay_note_tx_sent(&source, &result.retransmit, replay_ms);
-
-    expiry_ms = source.outbox_record.created_uptime_ms +
-        source.outbox_record.expiry_s * 1000u;
-    assert(mesh_relay_handle_rx(&source,
-                                &old_ack,
-                                old_ack_payload,
-                                old_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                expiry_ms - 1u,
-                                &result) == PROTO_OK);
-    assert(result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(source.pending.gateway_ack_confirm_pending);
-
-    /* Transit may legally retain the indistinguishable pre-reset ACK for the
-     * entire one-day horizon. At the source horizon there is no time left for
-     * another confirm/replay cycle, so fail explicitly with the immutable
-     * original instead of promoting the late ACK_CONFIRM to unbounded debt. */
-    assert(mesh_relay_tick(&source, expiry_ms, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL);
-    assert(result.status == MESH_RELAY_ERR_OUTBOX_EXPIRED);
-    assert(result.terminal.packet.msg_type == report.msg_type);
-    assert(result.terminal.payload_len == report_payload_len);
-    assert(memcmp(result.terminal.payload,
-                  report_payload,
-                  report_payload_len) == 0);
-    assert(mesh_relay_commit_terminal_release(&source,
-                                              &result.terminal.packet,
-                                              result.terminal.payload,
-                                              result.terminal.payload_len) ==
-           PROTO_OK);
-    assert(!mesh_relay_tx_active(&source));
+    assert(mesh_relay_tick(&relay, 5111u, &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_NONE);
 }
 
 static void test_cancel_tx_if_matches_never_releases_another_exact_owner(void)
@@ -8438,7 +7889,6 @@ static void test_local_gateway_bound_tx_accepts_batched_gateway_ack(void)
     struct route_candidate route = direct_gateway_route(ANCHOR_B, 5u, 80u);
     struct proto_packet report;
     struct mesh_outbound tx;
-    struct mesh_outbound confirm;
     struct mesh_relay_result result;
     struct proto_packet ack;
     uint8_t ack_payload[160];
@@ -8537,38 +7987,12 @@ static void test_local_gateway_bound_tx_accepts_batched_gateway_ack(void)
                                 90u,
                                 5100u,
                                 &result) == PROTO_OK);
-    assert(result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(mesh_relay_tx_active(&relay));
-    assert(mesh_relay_tick(&relay, 5101u, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    confirm = result.retransmit;
-    mesh_relay_note_tx_sent(&relay, &confirm, 5101u);
-    build_gateway_ack_for_packet(&ack,
-                                 ack_payload,
-                                 sizeof(ack_payload),
-                                 &ack_payload_len,
-                                 ANCHOR_A,
-                                 3u,
-                                 &confirm.packet,
-                                 confirm.payload,
-                                 confirm.payload_len);
-    assert(mesh_relay_handle_rx(&relay,
-                                &ack,
-                                ack_payload,
-                                ack_payload_len,
-                                ANCHOR_B,
-                                90u,
-                                5110u,
-                                &result) == PROTO_OK);
     assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-    assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-               &relay,
-               &confirm.packet,
-               confirm.payload,
-               confirm.payload_len,
-               5111u) == PROTO_OK);
     assert(!mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_IDLE);
+    assert(relay.outbox_record.gateway_acked);
+    assert(mesh_relay_tick(&relay, 5101u, &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_NONE);
 }
 
 static void test_start_tx_initializes_earliest_tx_time(void)
@@ -8622,7 +8046,6 @@ static void test_relayed_tx_waits_for_gateway_ack_after_next_hop_send(void)
     struct proto_packet report;
     struct proto_packet ack;
     struct mesh_outbound tx;
-    struct mesh_outbound confirm;
     struct mesh_relay_outbox_snapshot snapshot;
     struct mesh_relay_outbox_snapshot malformed_snapshot;
     struct mesh_pending_tx pending_before;
@@ -8802,47 +8225,17 @@ static void test_relayed_tx_waits_for_gateway_ack_after_next_hop_send(void)
                                 90u,
                                 6100u,
                                 &result) == PROTO_OK);
-    assert(result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
+    assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(!has_action(
         &result, MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING));
-    assert(relay.pending.gateway_ack_confirm_pending);
-    assert(relay.outbox_record.valid);
-    assert(!relay.outbox_record.gateway_acked);
-    assert(mesh_relay_tick(&relay, 6101u, &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    assert(result.retransmit.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-    assert(result.retransmit.packet.src_id == ANCHOR_A);
-    assert(result.retransmit.next_hop_id == GATEWAY);
-    confirm = result.retransmit;
-    mesh_relay_note_tx_sent(&relay, &confirm, 6101u);
-    build_gateway_ack_for_packet(&ack,
-                                 ack_payload,
-                                 sizeof(ack_payload),
-                                 &ack_payload_len,
-                                 ANCHOR_A,
-                                 3u,
-                                 &confirm.packet,
-                                 confirm.payload,
-                                 confirm.payload_len);
-    assert(mesh_relay_handle_rx(&relay,
-                                &ack,
-                                ack_payload,
-                                ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                6110u,
-                                &result) == PROTO_OK);
-    assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-    assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-               &relay,
-               &confirm.packet,
-               confirm.payload,
-               confirm.payload_len,
-               6111u) == PROTO_OK);
+    assert(!relay.pending.gateway_ack_confirm_pending);
     assert(!mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_IDLE);
     assert(!relay.outbox_record.valid);
+    assert(relay.outbox_record.gateway_acked);
+    assert(relay.outbox_record.delivery_state ==
+           MESH_RELAY_DELIVERY_GATEWAY_ACKED);
 
     assert(mesh_relay_tick(&relay, 7000u, &result) == PROTO_OK);
     assert(result.actions == MESH_RELAY_ACTION_NONE);
@@ -8895,7 +8288,12 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(result.actions == MESH_RELAY_ACTION_NONE);
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.retry_after_ms == now_ms + route_retry_backoff_ms(1u));
+    assert(relay.pending.retry_after_ms == now_ms + mesh_relay_retry_backoff_ms(1u, 0u));
+    /* The first retry follows the expired ACK window by a short jittered gap. */
+    assert(relay.pending.retry_after_ms - now_ms >=
+           MESH_RELAY_ACK_RETRY_BACKOFF_MIN_MS);
+    assert(relay.pending.retry_after_ms - now_ms <=
+           MESH_RELAY_ACK_RETRY_BACKOFF_FIRST_MAX_MS);
     assert(mesh_relay_tx_active(&relay));
 
     now_ms = relay.pending.retry_after_ms;
@@ -8903,7 +8301,7 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.next_hop_id == GATEWAY);
     assert(result.retransmit.packet.message_age_ms ==
-           123u + ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u + route_retry_backoff_ms(1u));
+           123u + ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u + mesh_relay_retry_backoff_ms(1u, 0u));
     assert(mesh_relay_tx_active(&relay));
     mesh_relay_note_tx_sent(&relay, &result.retransmit, now_ms);
 
@@ -8911,7 +8309,12 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(result.actions == MESH_RELAY_ACTION_NONE);
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.retry_after_ms == now_ms + route_retry_backoff_ms(2u));
+    assert(relay.pending.retry_after_ms == now_ms + mesh_relay_retry_backoff_ms(2u, 0u));
+    /* Every further attempt doubles until the cap. */
+    assert(relay.pending.retry_after_ms - now_ms ==
+           2u * mesh_relay_retry_backoff_ms(1u, 0u));
+    assert(relay.pending.retry_after_ms - now_ms <=
+           MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS);
     assert(mesh_relay_tx_active(&relay));
 
     now_ms = relay.pending.retry_after_ms;
@@ -8919,7 +8322,7 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.packet.message_age_ms ==
            123u + ((ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u) * 2u) +
-           route_retry_backoff_ms(1u) + route_retry_backoff_ms(2u));
+           mesh_relay_retry_backoff_ms(1u, 0u) + mesh_relay_retry_backoff_ms(2u, 0u));
     assert(mesh_relay_tx_active(&relay));
     mesh_relay_note_tx_sent(&relay, &result.retransmit, now_ms);
 
@@ -8927,7 +8330,11 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(result.actions == MESH_RELAY_ACTION_NONE);
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.retry_after_ms == now_ms + route_retry_backoff_ms(3u));
+    assert(relay.pending.retry_after_ms == now_ms + mesh_relay_retry_backoff_ms(3u, 0u));
+    assert(relay.pending.retry_after_ms - now_ms ==
+           4u * mesh_relay_retry_backoff_ms(1u, 0u));
+    assert(relay.pending.retry_after_ms - now_ms <=
+           MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS);
     assert(mesh_relay_tx_active(&relay));
 
     now_ms = relay.pending.retry_after_ms;
@@ -8935,8 +8342,8 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.packet.message_age_ms ==
            123u + ((ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u) * 3u) +
-           route_retry_backoff_ms(1u) + route_retry_backoff_ms(2u) +
-           route_retry_backoff_ms(3u));
+           mesh_relay_retry_backoff_ms(1u, 0u) + mesh_relay_retry_backoff_ms(2u, 0u) +
+           mesh_relay_retry_backoff_ms(3u, 0u));
     assert(mesh_relay_tx_active(&relay));
     mesh_relay_note_tx_sent(&relay, &result.retransmit, now_ms);
 
@@ -8972,6 +8379,143 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(downlink_after_failure->route_epoch == 9u);
     assert(find_event_timing(&relay, GATEWAY) == NULL);
     assert(find_event_timing(&relay, ANCHOR_B) == NULL);
+}
+
+/*
+ * The sender listens through its own short first-hop ACK window, so the relay
+ * core must start its retry ladder at the end of that window instead of
+ * burning the whole fail-safe ROUTE_GATEWAY_ACK_TIMEOUT_MS first.
+ */
+static void test_app_ack_window_notice_starts_backoff_at_app_window(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 9u, 70u);
+    struct proto_packet report;
+    struct mesh_outbound tx;
+    struct mesh_outbound unrelated;
+    struct mesh_relay_result result;
+    uint8_t payload[1] = {0x51u};
+    const uint32_t sent_ms = 99328u;
+    const uint32_t app_window_end_ms = sent_ms + 252u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 9u);
+    route.last_seen_ms = sent_ms;
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 90u, 9u,
+                                    sizeof(payload)) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay, &report, payload, sizeof(payload),
+                               sent_ms, &tx) == PROTO_OK);
+    mesh_relay_note_tx_sent(&relay, &tx, sent_ms);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    assert(relay.pending.gateway_ack_deadline_ms ==
+           sent_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS);
+
+    /* A different packet must never collapse this packet's window. */
+    unrelated = tx;
+    unrelated.packet.seq = (uint16_t)(tx.packet.seq + 1u);
+    assert(mesh_relay_note_gateway_ack_window_elapsed(&relay,
+                                                      &unrelated,
+                                                      app_window_end_ms) ==
+           PROTO_ERR_MALFORMED);
+    assert(relay.pending.gateway_ack_deadline_ms ==
+           sent_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS);
+
+    assert(mesh_relay_note_gateway_ack_window_elapsed(&relay,
+                                                      &tx,
+                                                      app_window_end_ms) ==
+           PROTO_OK);
+    assert(relay.pending.gateway_ack_deadline_ms == app_window_end_ms);
+
+    /* The notice only ever shortens: a later window cannot extend custody. */
+    assert(mesh_relay_note_gateway_ack_window_elapsed(
+               &relay,
+               &tx,
+               sent_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS + 500u) == PROTO_OK);
+    assert(relay.pending.gateway_ack_deadline_ms == app_window_end_ms);
+
+    assert(mesh_relay_tick_with_random(&relay, app_window_end_ms - 1u, 0u,
+                                       &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_NONE);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+
+    assert(mesh_relay_tick_with_random(&relay, app_window_end_ms, 0u,
+                                       &result) == PROTO_OK);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    /* The backoff ladder now starts from the end of the sender's window. */
+    assert(relay.pending.retry_after_ms ==
+           app_window_end_ms + mesh_relay_retry_backoff_ms(1u, 0u));
+    assert(relay.pending.retry_after_ms - sent_ms <
+           ROUTE_GATEWAY_ACK_TIMEOUT_MS);
+    assert(mesh_relay_tx_active(&relay));
+
+    /* Only a packet actually waiting for its first ACK can be shortened. */
+    assert(mesh_relay_note_gateway_ack_window_elapsed(&relay, &tx,
+                                                      app_window_end_ms) ==
+           PROTO_ERR_MALFORMED);
+}
+
+/*
+ * Once the first hop has proven progress the remaining window belongs to the
+ * multi-hop gateway-ACK return path, which the sender's short local receive
+ * turn says nothing about.
+ */
+static void test_app_ack_window_notice_never_shortens_hop_ack_progress(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(ANCHOR_B, 9u, 70u);
+    struct proto_packet report;
+    struct proto_packet hop_ack;
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    uint8_t payload[1] = {0x52u};
+    uint8_t ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
+    size_t ack_payload_len = 0u;
+    const uint32_t sent_ms = 99328u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 9u);
+    route.hop_count = 1u;
+    route.last_seen_ms = sent_ms;
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 93u, 9u,
+                                    sizeof(payload)) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay, &report, payload, sizeof(payload),
+                               sent_ms, &tx) == PROTO_OK);
+    assert(tx.next_hop_id == ANCHOR_B);
+    mesh_relay_note_tx_sent(&relay, &tx, sent_ms);
+
+    build_hop_ack_for_packet(&hop_ack,
+                             ANCHOR_B,
+                             ANCHOR_A,
+                             700u,
+                             ack_payload,
+                             sizeof(ack_payload),
+                             &ack_payload_len,
+                             &tx.packet,
+                             tx.payload,
+                             tx.payload_len);
+    assert(mesh_relay_handle_rx(&relay,
+                                &hop_ack,
+                                ack_payload,
+                                ack_payload_len,
+                                ANCHOR_B,
+                                80u,
+                                sent_ms + 15u,
+                                &result) == PROTO_OK);
+    {
+        /* Either the exact hop ACK transferred custody outright, or it opened
+         * the longer progress window. In both cases the sender's short local
+         * window must not be able to collapse what the hop ACK earned. */
+        const uint32_t progress_deadline_ms =
+            relay.pending.gateway_ack_deadline_ms;
+        const int notice_ret = mesh_relay_note_gateway_ack_window_elapsed(
+            &relay, &tx, sent_ms + 252u);
+
+        assert(relay.pending.state != MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+               relay.pending.hop_ack_observed_since_send);
+        assert(notice_ret == PROTO_ERR_STALE ||
+               notice_ret == PROTO_ERR_MALFORMED);
+        assert(relay.pending.gateway_ack_deadline_ms == progress_deadline_ms);
+    }
 }
 
 static void test_child_retry_is_acked_while_transit_custody_has_no_parent(void)
@@ -9173,14 +8717,14 @@ static void test_gateway_ack_timeout_handles_ms_wrap(void)
     assert(result.actions == MESH_RELAY_ACTION_NONE);
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
     retry_ms = relay.pending.retry_after_ms;
-    assert(retry_ms == timed_out_ms + route_retry_backoff_ms(1u));
+    assert(retry_ms == timed_out_ms + mesh_relay_retry_backoff_ms(1u, 0u));
     assert(mesh_relay_tx_active(&relay));
 
     assert(mesh_relay_tick(&relay, retry_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.next_hop_id == GATEWAY);
     assert(result.retransmit.packet.message_age_ms ==
-           ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u + route_retry_backoff_ms(1u));
+           ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u + mesh_relay_retry_backoff_ms(1u, 0u));
     assert(mesh_relay_tx_active(&relay));
 }
 
@@ -10347,6 +9891,139 @@ static void test_gateway_route_advertisement_retains_distinct_parent_copy(void)
     assert(route_selected(&anchor.upstream) == candidate_a);
 }
 
+static void test_gateway_route_advertisement_refresh_reenables_parent(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay parent;
+    struct mesh_relay anchor;
+    struct mesh_outbound advertisement;
+    struct mesh_relay_result at_parent;
+    struct mesh_relay_result at_anchor;
+    const struct route_candidate *candidate;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 9u);
+    mesh_relay_init(&parent, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 9u);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 9u);
+
+    assert(mesh_relay_build_gateway_route_adv(&gateway,
+                                              77u,
+                                              1000u,
+                                              &advertisement) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&parent,
+                                &advertisement.packet,
+                                advertisement.payload,
+                                advertisement.payload_len,
+                                GATEWAY,
+                                95u,
+                                1010u,
+                                &at_parent) == PROTO_OK);
+    assert(has_action(&at_parent, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    assert(mesh_relay_handle_rx(&anchor,
+                                &at_parent.gateway_route_adv.packet,
+                                at_parent.gateway_route_adv.payload,
+                                at_parent.gateway_route_adv.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1020u,
+                                &at_anchor) == PROTO_OK);
+
+    for (uint8_t retry = 0u;
+         retry < ROUTE_RETRIES_PER_CANDIDATE;
+         retry++) {
+        assert(route_record_failure_at(&anchor.upstream,
+                                       ROUTE_FAILURE_GATEWAY_ACK,
+                                       1100u + retry) ==
+               ROUTE_DELIVERY_RETRY_CURRENT);
+    }
+    candidate = find_route_candidate(&anchor, ANCHOR_A);
+    assert(candidate != NULL);
+    assert(candidate->failure_count == ROUTE_RETRIES_PER_CANDIDATE);
+    assert(!candidate->hold_down_valid);
+
+    /* A fresh Here-I-Am is a new physical observation. Even within the same
+     * gateway epoch it clears failures accumulated before that observation. */
+    assert(mesh_relay_build_gateway_route_adv(&gateway,
+                                              78u,
+                                              1300u,
+                                              &advertisement) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&parent,
+                                &advertisement.packet,
+                                advertisement.payload,
+                                advertisement.payload_len,
+                                GATEWAY,
+                                96u,
+                                1310u,
+                                &at_parent) == PROTO_OK);
+    assert(has_action(&at_parent, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    assert(mesh_relay_handle_rx(&anchor,
+                                &at_parent.gateway_route_adv.packet,
+                                at_parent.gateway_route_adv.payload,
+                                at_parent.gateway_route_adv.payload_len,
+                                ANCHOR_A,
+                                72u,
+                                1320u,
+                                &at_anchor) == PROTO_OK);
+    candidate = find_route_candidate(&anchor, ANCHOR_A);
+    assert(candidate != NULL);
+    assert(candidate->last_seen_ms == 1320u);
+    assert(candidate->link_quality == 72u);
+    assert(candidate->failure_count == 0u);
+    assert(!candidate->hold_down_valid);
+    assert(candidate->hold_down_until_ms == 0u);
+    assert(route_selected(&anchor.upstream) == candidate);
+
+    for (uint8_t retry = 0u;
+         retry < ROUTE_RETRIES_PER_CANDIDATE;
+         retry++) {
+        assert(route_record_failure_at(&anchor.upstream,
+                                       ROUTE_FAILURE_GATEWAY_ACK,
+                                       1400u + retry) ==
+               ROUTE_DELIVERY_RETRY_CURRENT);
+    }
+    assert(route_record_failure_at(&anchor.upstream,
+                                   ROUTE_FAILURE_GATEWAY_ACK,
+                                   1410u) == ROUTE_DELIVERY_DISCOVER);
+    candidate = find_route_candidate(&anchor, ANCHOR_A);
+    assert(candidate != NULL);
+    assert(candidate->failure_count == 0u);
+    assert(candidate->hold_down_valid);
+    assert(candidate->hold_down_until_ms ==
+           1410u + ROUTE_PARENT_HOLDDOWN_MS);
+    assert(route_selected(&anchor.upstream) == NULL);
+
+    /* Hold-down governs selection only until another authoritative route
+     * observation says the physical topology has changed. */
+    assert(mesh_relay_build_gateway_route_adv(&gateway,
+                                              79u,
+                                              1500u,
+                                              &advertisement) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&parent,
+                                &advertisement.packet,
+                                advertisement.payload,
+                                advertisement.payload_len,
+                                GATEWAY,
+                                97u,
+                                1510u,
+                                &at_parent) == PROTO_OK);
+    assert(has_action(&at_parent, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    assert(mesh_relay_handle_rx(&anchor,
+                                &at_parent.gateway_route_adv.packet,
+                                at_parent.gateway_route_adv.payload,
+                                at_parent.gateway_route_adv.payload_len,
+                                ANCHOR_A,
+                                70u,
+                                1520u,
+                                &at_anchor) == PROTO_OK);
+    candidate = find_route_candidate(&anchor, ANCHOR_A);
+    assert(candidate != NULL);
+    assert(candidate->last_seen_ms == 1520u);
+    assert(candidate->link_quality == 70u);
+    assert(candidate->failure_count == 0u);
+    assert(!candidate->hold_down_valid);
+    assert(candidate->hold_down_until_ms == 0u);
+    assert(route_selected(&anchor.upstream) == candidate);
+}
+
 static void test_gateway_route_epoch_serial_wrap_and_ambiguity(void)
 {
     struct mesh_relay gateway;
@@ -10647,11 +10324,57 @@ static void test_route_discovery_ready_resets_attempt_budget(void)
 
 static void test_retry_and_route_discovery_backoff_apply_jitter(void)
 {
-    assert(mesh_relay_retry_backoff_ms(1u, 0u) == 1500u);
-    assert(mesh_relay_retry_backoff_ms(1u, 5u) == 1505u);
-    assert(mesh_relay_retry_backoff_ms(1u, 750u) == 2250u);
-    assert(mesh_relay_retry_backoff_ms(2u, 7u) == 3007u);
-    assert(mesh_relay_retry_backoff_ms(3u, 3000u) == 9000u);
+    const uint32_t base_ms = MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS;
+    const uint32_t cap_ms = MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS;
+    uint32_t previous_low_ms = 0u;
+
+    /*
+     * A missed ACK is repaired one short jittered gap after the ACK window,
+     * and every further attempt doubles that gap up to a hard cap.
+     */
+    assert(mesh_relay_retry_backoff_ms(0u, 0u) == base_ms / 2u);
+    assert(mesh_relay_retry_backoff_ms(1u, 0u) == base_ms / 2u);
+    assert(mesh_relay_retry_backoff_ms(1u, base_ms / 2u) == base_ms);
+    assert(mesh_relay_retry_backoff_ms(1u, base_ms) ==
+           base_ms + (base_ms / 2u));
+    assert(mesh_relay_retry_backoff_ms(1u, base_ms) ==
+           MESH_RELAY_ACK_RETRY_BACKOFF_FIRST_MAX_MS);
+    /* Jitter stays bounded: the modulo window wraps back to the low edge. */
+    assert(mesh_relay_retry_backoff_ms(1u, base_ms + 1u) == base_ms / 2u);
+    /* Doubling, then saturation at the cap. */
+    assert(mesh_relay_retry_backoff_ms(2u, 0u) == base_ms);
+    assert(mesh_relay_retry_backoff_ms(3u, 0u) == base_ms * 2u);
+    assert(mesh_relay_retry_backoff_ms(4u, 0u) == base_ms * 4u);
+    assert(mesh_relay_retry_backoff_ms(5u, 0u) == base_ms * 8u);
+    assert(mesh_relay_retry_backoff_ms(6u, 0u) == cap_ms / 2u);
+    assert(mesh_relay_retry_backoff_ms(7u, 0u) == cap_ms / 2u);
+    assert(mesh_relay_retry_backoff_ms(7u, cap_ms) == cap_ms);
+    assert(mesh_relay_retry_backoff_ms(UINT8_MAX, UINT32_MAX) <= cap_ms);
+    for (uint8_t failure = 1u; failure <= 24u; failure++) {
+        const uint32_t low_ms = mesh_relay_retry_backoff_ms(failure, 0u);
+        uint32_t high_ms = low_ms;
+
+        for (uint32_t seed = 0u; seed < 64u; seed++) {
+            uint32_t delay_ms = mesh_relay_retry_backoff_ms(
+                failure, seed * UINT32_C(0x9e3779b9));
+
+            /* Deterministic for a given (attempt, randomness) pair. */
+            assert(delay_ms == mesh_relay_retry_backoff_ms(
+                       failure, seed * UINT32_C(0x9e3779b9)));
+            assert(delay_ms >= MESH_RELAY_ACK_RETRY_BACKOFF_MIN_MS);
+            assert(delay_ms >= low_ms);
+            assert(delay_ms <= cap_ms);
+            assert(delay_ms <= low_ms * 3u);
+            if (delay_ms > high_ms) {
+                high_ms = delay_ms;
+            }
+        }
+        /* Monotone non-decreasing schedule that never exceeds the cap. */
+        assert(low_ms >= previous_low_ms);
+        assert(high_ms <= cap_ms);
+        previous_low_ms = low_ms;
+    }
+    assert(previous_low_ms == cap_ms / 2u);
     assert(mesh_relay_route_discovery_backoff_ms(1u, 0u) == 1000u);
     assert(mesh_relay_route_discovery_backoff_ms(3u, 7u) == 4007u);
     assert(mesh_relay_route_discovery_backoff_ms(5u, 11u) == 16011u);
@@ -11647,14 +11370,13 @@ static void test_local_acks_require_expected_physical_hop(void)
                                 80u,
                                 1210u,
                                 &result) == PROTO_OK);
-    /* A gateway ACK arms the compact confirmation without replacing the
-     * original terminal bytes. */
-    assert(has_action(&result,
-                      MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING));
-    assert(mesh_relay_tx_active(&origin));
-    assert(origin.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(origin.pending.packet.msg_type == report.msg_type);
-    assert(origin.pending.gateway_ack_confirm_pending);
+    /* The gateway ACK over the expected physical hop is terminal proof. */
+    assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
+    assert(!mesh_relay_tx_active(&origin));
+    assert(origin.pending.state == MESH_RELAY_TX_IDLE);
+    assert(!origin.pending.gateway_ack_confirm_pending);
+    assert(!origin.outbox_record.valid);
+    assert(origin.outbox_record.gateway_acked);
 }
 
 static void test_hop_ack_outbox_survives_reset_until_gateway_ack(void)
@@ -11783,18 +11505,15 @@ static void test_hop_ack_outbox_survives_reset_until_gateway_ack(void)
                                 80u,
                                 retry_ms + 10u,
                                 &result) == PROTO_OK);
-    /* The gateway ACK arms a compact confirmation while retaining the exact
-     * original result for same-boot retry. */
-    assert(has_action(&result,
-                      MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING));
-    assert(mesh_relay_tx_active(&restored));
-    assert(restored.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(restored.pending.packet.msg_type == result_packet.msg_type);
-    assert(restored.pending.gateway_ack_confirm_pending);
-    assert(restored.outbox_record.valid);
+    /* The gateway ACK is terminal: the restored custody retires at once. */
+    assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
+    assert(!mesh_relay_tx_active(&restored));
+    assert(restored.pending.state == MESH_RELAY_TX_IDLE);
+    assert(!restored.pending.gateway_ack_confirm_pending);
+    assert(!restored.outbox_record.valid);
     assert(restored.outbox_record.delivery_state ==
-           MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK);
-    assert(!restored.outbox_record.gateway_acked);
+           MESH_RELAY_DELIVERY_GATEWAY_ACKED);
+    assert(restored.outbox_record.gateway_acked);
 }
 
 static void test_gateway_reaches_anchor_behind_relay_and_receives_result(void)
@@ -12320,6 +12039,168 @@ static void test_gateway_ordinary_command_result_duplicate_remains_sticky(void)
 
 
 
+/*
+ * Per-packet SHA-256 budget. Receiving one gateway report used to hash the
+ * same 345-byte preimage six times (duplicate classify, ACK-history
+ * admission, ACK construction, ACK-history store, ACK-history confirm,
+ * duplicate store) and an anchor hop ACK three times, roughly 0.4 ms each on
+ * the 64 MHz target without hardware crypto. The relay must digest a received
+ * packet at most once.
+ */
+static void test_relay_digests_received_packet_once(void)
+{
+    static struct mesh_gateway_ack_store ack_store;
+    struct route_candidate anchor_route =
+        direct_gateway_route(GATEWAY, 21u, 90u);
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct mesh_relay_result result;
+    struct mesh_outbound gateway_ack;
+    struct proto_packet packet;
+    struct proto_packet second_packet;
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t altered_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t second_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t payload_len;
+    size_t second_payload_len;
+    unsigned long digests;
+    bool contains;
+
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    21u);
+    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) ==
+           PROTO_OK);
+    payload_len = build_valid_click_report(&packet,
+                                           ANCHOR_A,
+                                           0x51u,
+                                           7u,
+                                           1500,
+                                           payload,
+                                           sizeof(payload));
+    packet.flags |= FLAG_GATEWAY_ACK_REQUIRED;
+    packet.ttl = MESH_DEFAULT_TTL;
+
+    semantic_digest_sha256_call_count_reset();
+    assert(mesh_relay_handle_rx(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                ANCHOR_A,
+                                90u,
+                                5000u,
+                                &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &packet,
+                                              payload,
+                                              payload_len,
+                                              ANCHOR_A,
+                                              5001u,
+                                              &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    digests = semantic_digest_sha256_call_count();
+    printf("gateway rx+commit sha256 per %zu-byte report: %lu\n",
+           payload_len,
+           digests);
+    assert(digests <= 1u);
+
+    /*
+     * The memoized commitment must be the commitment. Verify the emitted ACK
+     * against an independently computed digest, and against a payload that
+     * differs by one byte.
+     */
+    gateway_ack = result.gateway_ack;
+    assert(mesh_ack_payload_contains_packet(&gateway_ack.packet,
+                                            gateway_ack.payload,
+                                            gateway_ack.payload_len,
+                                            &packet,
+                                            payload,
+                                            payload_len,
+                                            &contains) == PROTO_OK);
+    assert(contains);
+    memcpy(altered_payload, payload, payload_len);
+    altered_payload[payload_len - 1u] ^= 0xffu;
+    assert(mesh_ack_payload_contains_packet(&gateway_ack.packet,
+                                            gateway_ack.payload,
+                                            gateway_ack.payload_len,
+                                            &packet,
+                                            altered_payload,
+                                            payload_len,
+                                            &contains) == PROTO_OK);
+    assert(!contains);
+
+    /* A second packet must evict the memo rather than reuse its digest. */
+    second_payload_len = build_valid_click_report(&second_packet,
+                                                  ANCHOR_A,
+                                                  0x52u,
+                                                  8u,
+                                                  1600,
+                                                  second_payload,
+                                                  sizeof(second_payload));
+    second_packet.flags |= FLAG_GATEWAY_ACK_REQUIRED;
+    second_packet.ttl = MESH_DEFAULT_TTL;
+    assert(mesh_relay_handle_rx(&gateway,
+                                &second_packet,
+                                second_payload,
+                                second_payload_len,
+                                ANCHOR_A,
+                                90u,
+                                5010u,
+                                &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &second_packet,
+                                              second_payload,
+                                              second_payload_len,
+                                              ANCHOR_A,
+                                              5011u,
+                                              &result) == PROTO_OK);
+    gateway_ack = result.gateway_ack;
+    assert(mesh_ack_payload_contains_packet(&gateway_ack.packet,
+                                            gateway_ack.payload,
+                                            gateway_ack.payload_len,
+                                            &second_packet,
+                                            second_payload,
+                                            second_payload_len,
+                                            &contains) == PROTO_OK);
+    assert(contains);
+    assert(mesh_ack_payload_contains_packet(&gateway_ack.packet,
+                                            gateway_ack.payload,
+                                            gateway_ack.payload_len,
+                                            &packet,
+                                            payload,
+                                            payload_len,
+                                            &contains) == PROTO_OK);
+    assert(!contains);
+
+    mesh_relay_init(&anchor,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_B,
+                    GATEWAY,
+                    21u);
+    assert(route_upsert_candidate(&anchor.upstream, &anchor_route) ==
+           PROTO_OK);
+    semantic_digest_sha256_call_count_reset();
+    assert(mesh_relay_handle_rx(&anchor,
+                                &packet,
+                                payload,
+                                payload_len,
+                                ANCHOR_A,
+                                90u,
+                                5100u,
+                                &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    digests = semantic_digest_sha256_call_count();
+    printf("anchor hop-ack sha256 per %zu-byte report: %lu\n",
+           payload_len,
+           digests);
+    assert(digests <= 1u);
+}
+
 static void test_gateway_ack_history_isolates_noisy_origin(void)
 {
     static struct mesh_gateway_ack_store ack_store;
@@ -12471,51 +12352,7 @@ static void build_gateway_ack_history_assignment_result(
 }
 
 
-static void fill_unconfirmed_gateway_ack_partition(
-    struct mesh_relay *gateway,
-    uint64_t origin_id,
-    uint16_t ordinal_base,
-    uint32_t *now_ms)
-{
-    struct mesh_relay_result result;
-    struct proto_packet packet;
-    uint8_t payload[8];
-    size_t payload_len;
-
-    assert(gateway != NULL);
-    assert(now_ms != NULL);
-    for (uint16_t i = 0u;
-         i < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
-         i++) {
-        build_gateway_ack_history_self_test(&packet,
-                                            payload,
-                                            sizeof(payload),
-                                            &payload_len,
-                                            origin_id,
-                                            (uint16_t)(ordinal_base + i));
-        assert(mesh_relay_handle_rx(gateway,
-                                    &packet,
-                                    payload,
-                                    payload_len,
-                                    origin_id,
-                                    90u,
-                                    *now_ms,
-                                    &result) == PROTO_OK);
-        assert(result.status == PROTO_OK);
-        assert(result.actions == MESH_RELAY_ACTION_DELIVER_LOCAL);
-        assert(mesh_relay_commit_gateway_delivery(gateway,
-                                                  &packet,
-                                                  payload,
-                                                  payload_len,
-                                                  origin_id,
-                                                  *now_ms + 1u,
-                                                  &result) == PROTO_OK);
-        assert(result.actions == MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
-        *now_ms += 2u;
-    }
-}
-
-static void test_gateway_ack_history_holds_full_source_backlog_before_confirm(void)
+static void test_gateway_ack_history_holds_full_source_backlog(void)
 {
     enum {
         backlog_depth = MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN,
@@ -12545,9 +12382,8 @@ static void test_gateway_ack_history_holds_full_source_backlog_before_confirm(vo
                                             (uint16_t)(80u + i));
     }
 
-    /* Accumulate the source's complete queue before receiving even one
-     * ACK_CONFIRM. This crosses the old four-identity limit while preserving
-     * every report as exact replay authority. */
+    /* Accumulate the source's complete queue. Every terminal gateway ACK
+     * leaves a replaceable tombstone that remains exact replay authority. */
     for (uint16_t i = 0u; i < backlog_depth; i++) {
         assert(mesh_relay_handle_rx(&gateway,
                                     &records[i],
@@ -12567,7 +12403,7 @@ static void test_gateway_ack_history_holds_full_source_backlog_before_confirm(vo
                                                   now_ms++,
                                                   &result) == PROTO_OK);
         assert(result.actions == MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
-        assert(mesh_relay_gateway_identity_confirmation_pending(
+        assert(!mesh_relay_gateway_identity_confirmation_pending(
             &gateway,
             records[i].src_id,
             records[i].msg_type,
@@ -12577,7 +12413,7 @@ static void test_gateway_ack_history_holds_full_source_backlog_before_confirm(vo
     }
 
     /* Lost gateway ACKs replay from history without sending any report to the
-     * host twice. Then exact ACK_CONFIRM proofs release every live debt. */
+     * host twice. */
     for (uint16_t i = 0u; i < backlog_depth; i++) {
         assert(mesh_relay_handle_rx(&gateway,
                                     &records[i],
@@ -12591,7 +12427,6 @@ static void test_gateway_ack_history_holds_full_source_backlog_before_confirm(vo
         assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
         assert(has_action(&result, MESH_RELAY_ACTION_DROP));
         assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-
         confirm_gateway_history_record(&gateway,
                                        &records[i],
                                        payloads[i],
@@ -12605,7 +12440,7 @@ static void test_gateway_ack_history_holds_full_source_backlog_before_confirm(vo
             now_ms));
     }
 
-    /* A new head-of-line report can replace one confirmed history entry, so
+    /* A new head-of-line report replaces the source's oldest tombstone, so
      * the source progresses instead of looping on a full cache. */
     assert(mesh_relay_handle_rx(&gateway,
                                 &records[backlog_depth],
@@ -12646,8 +12481,8 @@ static void test_gateway_ack_overflow_preserves_all_origin_guarantees(void)
     assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) ==
            PROTO_OK);
 
-    /* The first source consumes all 12 shared overflow identities. Every
-     * other supported origin must still retain its four guaranteed slots. */
+    /* The first source consumes every shared overflow identity. Every other
+     * supported origin must still retain its guaranteed slots. */
     for (uint16_t owner = 0u;
          owner < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX;
          owner++) {
@@ -12689,8 +12524,9 @@ static void test_gateway_ack_overflow_preserves_all_origin_guarantees(void)
                (MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX - 1u) *
                    MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN);
 
-    /* With the shared overflow exhausted, a second source cannot take a fifth
-     * slot until one of its own four identities is confirmed. */
+    /* With the shared overflow exhausted, a second source cannot grow. Its
+     * next report replaces its own oldest tombstone instead of failing or
+     * stealing another origin's guaranteed slot. */
     build_gateway_ack_history_self_test(
         &packet,
         payload,
@@ -12704,229 +12540,41 @@ static void test_gateway_ack_overflow_preserves_all_origin_guarantees(void)
                                 payload_len,
                                 packet.src_id,
                                 90u,
-                                now_ms,
-                                &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_NO_SPACE);
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-}
-
-
-
-
-
-
-static void test_gateway_origin_reboot_releases_unconfirmable_ack_debt(void)
-{
-    static struct mesh_gateway_ack_store ack_store;
-    struct mesh_relay gateway;
-    struct mesh_relay_result result;
-    struct proto_packet records[
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + 1u];
-    uint8_t payloads[
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + 1u][8];
-    size_t payload_lens[
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + 1u] = {0u};
-    const uint32_t now_ms = 19000u;
-
-    mesh_relay_init(&gateway,
-                    MESH_RELAY_ROLE_GATEWAY,
-                    GATEWAY,
-                    GATEWAY,
-                    921u);
-    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) ==
-           PROTO_OK);
-    for (uint16_t i = 0u;
-         i <= MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
-         i++) {
-        build_gateway_ack_history_self_test(&records[i],
-                                            payloads[i],
-                                            sizeof(payloads[i]),
-                                            &payload_lens[i],
-                                            ANCHOR_A,
-                                            (uint16_t)(120u + i));
-    }
-    for (uint16_t i = 0u;
-         i < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
-         i++) {
-        assert(mesh_relay_handle_rx(&gateway,
-                                    &records[i],
-                                    payloads[i],
-                                    payload_lens[i],
-                                    ANCHOR_A,
-                                    90u,
-                                    now_ms + i,
-                                    &result) == PROTO_OK);
-        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-        assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                                  &records[i],
-                                                  payloads[i],
-                                                  payload_lens[i],
-                                                  ANCHOR_A,
-                                                  now_ms + i,
-                                                  &result) == PROTO_OK);
-    }
-
-    assert(mesh_relay_handle_rx(&gateway,
-                                &records[
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                payloads[
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                payload_lens[
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                ANCHOR_A,
-                                90u,
-                                now_ms +
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN,
-                                &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_NO_SPACE);
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-
-    assert(mesh_relay_note_gateway_origin_reboot(&gateway, ANCHOR_A) ==
-           PROTO_OK);
-    assert(mesh_relay_handle_rx(&gateway,
-                                &records[
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                payloads[
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                payload_lens[
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                ANCHOR_A,
-                                90u,
-                                now_ms +
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN +
-                                    1u,
+                                now_ms++,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
-    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(result.actions == MESH_RELAY_ACTION_DELIVER_LOCAL);
     assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                              &records[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              payloads[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              payload_lens[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              ANCHOR_A,
-                                              now_ms +
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN +
-                                                  1u,
+                                              &packet,
+                                              payload,
+                                              payload_len,
+                                              packet.src_id,
+                                              now_ms++,
                                               &result) == PROTO_OK);
-    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(result.actions == MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
 
-    /* The surviving pre-reboot commitments remain duplicate authority. */
-    assert(mesh_relay_handle_rx(&gateway,
-                                &records[1],
-                                payloads[1],
-                                payload_lens[1],
-                                ANCHOR_A,
-                                90u,
-                                now_ms +
-                                    MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN +
-                                    2u,
-                                &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_STALE);
-    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-}
-
-static void test_gateway_ack_batch_and_roster_transitions_preserve_live_debt(void)
-{
-    static struct mesh_gateway_ack_store ack_store;
-    struct mesh_relay gateway;
-    struct mesh_relay_result result;
-    struct proto_packet records[
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + 1u];
-    uint8_t payloads[
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + 1u][16];
-    size_t payload_lens[
-        MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + 1u] = {0u};
-
-    mesh_relay_init(&gateway,
-                    MESH_RELAY_ROLE_GATEWAY,
-                    GATEWAY,
-                    GATEWAY,
-                    93u);
-    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) ==
-           PROTO_OK);
-    for (uint16_t i = 0u;
-         i <= MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
-         i++) {
-        uint32_t batch_id =
-            i < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ?
-                UINT32_C(0x11110000) :
-                UINT32_C(0x22220000);
-
-        assert(tlv_append_u32(payloads[i],
-                              sizeof(payloads[i]),
-                              &payload_lens[i],
-                              TLV_MESH_CH9_BATCH_ID,
-                              batch_id) == PROTO_OK);
-        assert(tlv_append_u8(payloads[i],
-                             sizeof(payloads[i]),
-                             &payload_lens[i],
-                             TLV_MESH_CH9_BATCH_FLAGS,
-                             i + 1u ==
-                                     MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ||
-                                 i == MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ?
-                                 MESH_CH9_BATCH_FLAG_FINAL : 0u) == PROTO_OK);
-        assert(report_init_self_test_packet(&records[i],
-                                            ANCHOR_A,
-                                            GATEWAY,
-                                            UINT32_C(0x71720000) + i,
-                                            (uint16_t)(60u + i),
-                                            (uint8_t)payload_lens[i]) ==
-               PROTO_OK);
-        records[i].msg_type = MSG_MESH_DATA;
-        records[i].flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
-    }
-    for (uint16_t i = 0u;
-         i < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
-         i++) {
-        assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                                  &records[i],
-                                                  payloads[i],
-                                                  payload_lens[i],
-                                                  ANCHOR_B,
-                                                  20000u + i,
-                                                  &result) == PROTO_OK);
-    }
-    assert(mesh_relay_reconcile_gateway_ack_membership(
-               &gateway, NULL, 0u) == PROTO_OK);
-    assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                              &records[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              payloads[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              payload_lens[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              ANCHOR_B,
-                                              20000u +
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN,
-                                              &result) == PROTO_ERR_NO_SPACE);
-    confirm_gateway_history_record(&gateway,
-                                   &records[0],
-                                   payloads[0],
-                                   payload_lens[0]);
-    assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                              &records[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              payloads[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              payload_lens[
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN],
-                                              ANCHOR_B,
-                                              20001u +
-                                                  MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN,
-                                              &result) == PROTO_OK);
-    for (uint16_t i = 1u;
-         i < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
-         i++) {
-        confirm_gateway_history_record(&gateway,
-                                       &records[i],
-                                       payloads[i],
-                                       payload_lens[i]);
+    /* The other origins' most recent identities stay exact and ACK-sticky. */
+    for (uint16_t owner = 2u;
+         owner < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX;
+         owner++) {
+        build_gateway_ack_history_self_test(
+            &packet,
+            payload,
+            sizeof(payload),
+            &payload_len,
+            origin_base + owner,
+            MESH_RELAY_GATEWAY_ACK_GUARANTEED_IDENTITIES_PER_ORIGIN - 1u);
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &packet,
+                                    payload,
+                                    payload_len,
+                                    packet.src_id,
+                                    90u,
+                                    now_ms++,
+                                    &result) == PROTO_OK);
+        assert(result.status == PROTO_ERR_STALE);
+        assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+        assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
     }
 }
 
@@ -13306,7 +12954,7 @@ static void test_gateway_ack_candidate_replaces_only_source_oldest_identity(void
     assert(mesh_relay_reconcile_gateway_ack_membership(
                &gateway, promoted_roster, 1u) == PROTO_OK);
 
-    /* Capacity reuse is legal only after the source's exact terminal proof. */
+    /* Every retained identity is already terminal history. */
     build_gateway_ack_history_self_test(
         &prior,
         prior_payload,
@@ -13398,40 +13046,8 @@ static void test_gateway_ack_candidate_replaces_only_source_oldest_identity(void
     assert(result.status == PROTO_ERR_STALE);
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
 
-    /* Only the confirmed oldest identity was displaced. Reaccepting it would
-     * create another live debt, so the full unconfirmed partition fails
-     * closed until another exact ACK_CONFIRM permits source-local reuse. */
-    build_gateway_ack_history_self_test(
-        &prior,
-        prior_payload,
-        sizeof(prior_payload),
-        &prior_payload_len,
-        candidate_id,
-        0u);
-    assert(mesh_relay_handle_rx(&gateway,
-                                &prior,
-                                prior_payload,
-                                prior_payload_len,
-                                candidate_id,
-                                90u,
-                                now_ms,
-                                &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_NO_SPACE);
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
-
-    build_gateway_ack_history_self_test(
-        &prior,
-        prior_payload,
-        sizeof(prior_payload),
-        &prior_payload_len,
-        candidate_id,
-        1u);
-    confirm_gateway_history_record(&gateway,
-                                   &prior,
-                                   prior_payload,
-                                   prior_payload_len);
+    /* Only the oldest identity was displaced. Reaccepting it displaces the
+     * next-oldest source-local tombstone, never another origin's history. */
     build_gateway_ack_history_self_test(
         &prior,
         prior_payload,
@@ -13457,36 +13073,30 @@ static void test_gateway_ack_candidate_replaces_only_source_oldest_identity(void
                                               now_ms + 2u,
                                               &result) == PROTO_OK);
 
-    /* The newly accepted ordinal zero displaced only confirmed ordinal one;
-     * the remaining priors and the assignment remain exact. */
-    build_gateway_ack_history_self_test(
-        &prior,
-        prior_payload,
-        sizeof(prior_payload),
-        &prior_payload_len,
-        candidate_id,
-        1u);
+    /* The newly accepted ordinal zero displaced only the source's
+     * shortest-lived identity, the assignment result; every remaining prior
+     * stays exact. */
     {
         struct mesh_gateway_ack_confirm_identity identity;
-        struct proto_packet prior_confirm;
-        uint8_t prior_confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
-        size_t prior_confirm_payload_len = 0u;
+        struct proto_packet assignment_confirm;
+        uint8_t assignment_confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+        size_t assignment_confirm_payload_len = 0u;
 
-        build_gateway_ack_confirm_for_record(&prior,
-                                             prior_payload,
-                                             prior_payload_len,
-                                             &prior_confirm,
-                                             prior_confirm_payload,
-                                             sizeof(prior_confirm_payload),
-                                             &prior_confirm_payload_len);
+        build_gateway_ack_confirm_for_record(&assignment,
+                                             assignment_payload,
+                                             assignment_payload_len,
+                                             &assignment_confirm,
+                                             assignment_confirm_payload,
+                                             sizeof(assignment_confirm_payload),
+                                             &assignment_confirm_payload_len);
         assert(mesh_relay_gateway_ack_confirm_history_match(
                    &gateway,
-                   &prior_confirm,
-                   prior_confirm_payload,
-                   prior_confirm_payload_len,
+                   &assignment_confirm,
+                   assignment_confirm_payload,
+                   assignment_confirm_payload_len,
                    &identity) == PROTO_ERR_NOT_FOUND);
     }
-    for (uint16_t ordinal = 2u;
+    for (uint16_t ordinal = 0u;
          ordinal < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
          ordinal++) {
         build_gateway_ack_history_self_test(
@@ -13501,10 +13111,6 @@ static void test_gateway_ack_candidate_replaces_only_source_oldest_identity(void
                                        prior_payload,
                                        prior_payload_len);
     }
-    confirm_gateway_history_record(&gateway,
-                                   &assignment,
-                                   assignment_payload,
-                                   assignment_payload_len);
 }
 
 static void test_gateway_route_probe_churn_cannot_exhaust_ack_history(void)
@@ -15839,6 +15445,8 @@ static void test_exact_required_route_hops_filter_responder_and_origin(void)
                                 &rejected_reply_result) == PROTO_OK);
     assert(rejected_reply_result.status == PROTO_ERR_STALE);
     assert(rejected_reply_result.actions == MESH_RELAY_ACTION_DROP);
+    /* Pure digest memo, not protocol state. See the comment above. */
+    origin_before.digest_cache = origin.digest_cache;
     assert(memcmp(&origin, &origin_before, sizeof(origin)) == 0);
 }
 
@@ -17762,9 +17370,7 @@ static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
     struct mesh_relay gateway;
     struct route_candidate route = direct_gateway_route(GATEWAY, 71u, 90u);
     struct proto_packet report;
-    struct proto_packet confirm_ack;
     struct mesh_outbound tx;
-    struct mesh_outbound confirm;
     struct mesh_relay_result gateway_result;
     struct mesh_relay_result origin_result;
     struct mesh_event_timing timing = {0};
@@ -17772,9 +17378,7 @@ static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
     struct mesh_channel5_requirements requirements = clear_channel5_requirements();
     struct mesh_event_params params = channel9_params(3000u);
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    uint8_t confirm_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
     size_t payload_len;
-    size_t confirm_ack_payload_len = 0u;
 
     mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 71u);
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 71u);
@@ -17845,43 +17449,14 @@ static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
                                 90u,
                                 3020u,
                                 &origin_result) == PROTO_OK);
-    assert(origin_result.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-    assert(mesh_relay_tx_active(&origin));
-    assert(origin.pending.packet.msg_type == report.msg_type);
-    assert(origin.pending.gateway_ack_confirm_pending);
+    assert(origin_result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
+    assert(!mesh_relay_tx_active(&origin));
+    assert(origin.pending.state == MESH_RELAY_TX_IDLE);
+    assert(!origin.pending.gateway_ack_confirm_pending);
+    assert(origin.outbox_record.gateway_acked);
 
     assert(mesh_relay_tick(&origin, 3021u, &origin_result) == PROTO_OK);
-    assert(origin_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-    assert(origin_result.retransmit.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-    confirm = origin_result.retransmit;
-    mesh_relay_note_tx_sent(&origin, &confirm, 3021u);
-
-    build_gateway_ack_for_packet(&confirm_ack,
-                                 confirm_ack_payload,
-                                 sizeof(confirm_ack_payload),
-                                 &confirm_ack_payload_len,
-                                 ANCHOR_A,
-                                 3u,
-                                 &confirm.packet,
-                                 confirm.payload,
-                                 confirm.payload_len);
-    assert(mesh_relay_handle_rx(&origin,
-                                &confirm_ack,
-                                confirm_ack_payload,
-                                confirm_ack_payload_len,
-                                GATEWAY,
-                                90u,
-                                3030u,
-                                &origin_result) == PROTO_OK);
-    assert(origin_result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-    assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-               &origin,
-               &confirm.packet,
-               confirm.payload,
-               confirm.payload_len,
-               3031u) == PROTO_OK);
-    assert(!mesh_relay_tx_active(&origin));
+    assert(origin_result.actions == MESH_RELAY_ACTION_NONE);
 }
 
 static void test_channel9_payload_event_closes_while_outbox_waits_gateway_ack(void)
@@ -20039,11 +19614,12 @@ static void test_transit_reverse_route_commits_only_after_exact_custody(void)
                                 95u,
                                 1120u,
                                 &admission) == PROTO_OK);
-    assert(admission.actions ==
-           MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
+    assert(admission.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
     assert(!has_action(&admission, MESH_RELAY_ACTION_FORWARD));
-    assert(relay.pending.gateway_ack_confirm_pending);
-    assert(relay.pending.transit_previous_hop_id == ANCHOR_B);
+    assert(!relay.pending.gateway_ack_confirm_pending);
+    assert(relay.pending.state == MESH_RELAY_TX_IDLE);
+    assert(!mesh_relay_tx_active(&relay));
+    assert(relay.outbox_record.gateway_acked);
 }
 
 static size_t build_ordinary_gateway_report(uint8_t msg_type,
@@ -20239,13 +19815,22 @@ static void test_ordinary_report_source_retires_on_exact_parent_hop_ack(void)
                                            digest));
         memcpy(wrong_digest, digest, sizeof(wrong_digest));
         wrong_digest[sizeof(wrong_digest) - 1u] ^= UINT8_C(0x01);
+        /* Recovery may still own a discovery timer when the exact parent
+         * ACK wins. Only successful custody commit can retire that timer. */
+        assert(mesh_relay_prepare_route_request(&source, GATEWAY,
+                                                 1031u, 0u, &tx) == PROTO_OK);
+        assert(source.route_discovery.active);
         assert(mesh_relay_commit_next_hop_custody_terminal(
                    &source, &packet, wrong_digest) == PROTO_ERR_MALFORMED);
         assert(mesh_relay_tx_active(&source));
+        assert(source.route_discovery.active);
         assert(mesh_relay_commit_next_hop_custody_terminal(
                    &source, &packet, digest) == PROTO_OK);
         assert(!mesh_relay_tx_active(&source));
         assert(!source.outbox_record.valid);
+        assert(!source.route_discovery.active);
+        assert(!mesh_relay_route_discovery_backoff_pending(
+            &source, GATEWAY, 1032u, NULL));
     }
 }
 
@@ -20645,20 +20230,16 @@ static void test_gateway_adjacent_relay_consumes_exact_gateway_ack(void)
         struct proto_packet packet;
         struct proto_packet wrong_ack;
         struct proto_packet exact_ack;
-        struct proto_packet confirm_ack;
         struct mesh_outbound retained;
-        struct mesh_outbound confirm;
         struct mesh_relay_result admission;
         struct mesh_relay_result result;
         uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
         uint8_t wrong_payload[UWB_MESH_MAX_PAYLOAD_LEN];
         uint8_t wrong_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
         uint8_t exact_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
-        uint8_t confirm_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
         size_t payload_len;
         size_t wrong_ack_payload_len = 0u;
         size_t exact_ack_payload_len = 0u;
-        size_t confirm_ack_payload_len = 0u;
 
         mesh_relay_init(
             &relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 80u);
@@ -20731,54 +20312,23 @@ static void test_gateway_adjacent_relay_consumes_exact_gateway_ack(void)
                                     95u,
                                     3050u,
                                     &result) == PROTO_OK);
-        assert(result.actions ==
-               MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
+        assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
         assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
         assert(!has_action(
             &result,
             MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING));
-        assert(mesh_relay_tx_active(&relay));
-        assert(relay.pending.gateway_ack_confirm_pending);
-        assert(relay.pending.packet.src_id == ANCHOR_A);
+        assert(!mesh_relay_tx_active(&relay));
+        assert(relay.pending.state == MESH_RELAY_TX_IDLE);
+        assert(!relay.pending.gateway_ack_confirm_pending);
+        assert(!relay.outbox_record.valid);
+        assert(relay.outbox_record.gateway_acked);
 
         assert(mesh_relay_tick(&relay, 3051u, &result) == PROTO_OK);
-        assert(result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-        assert(result.retransmit.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-        assert(result.retransmit.packet.src_id == ANCHOR_A);
-        assert(result.retransmit.next_hop_id == GATEWAY);
-        confirm = result.retransmit;
-        mesh_relay_note_tx_sent(&relay, &confirm, 3051u);
-        build_gateway_ack_for_packet(&confirm_ack,
-                                     confirm_ack_payload,
-                                     sizeof(confirm_ack_payload),
-                                     &confirm_ack_payload_len,
-                                     ANCHOR_A,
-                                     (uint16_t)(260u + i),
-                                     &confirm.packet,
-                                     confirm.payload,
-                                     confirm.payload_len);
-        assert(mesh_relay_handle_rx(&relay,
-                                    &confirm_ack,
-                                    confirm_ack_payload,
-                                    confirm_ack_payload_len,
-                                    GATEWAY,
-                                    95u,
-                                    3060u,
-                                    &result) == PROTO_OK);
-        assert(result.actions == MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-        assert(mesh_relay_tx_active(&relay));
-        assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-                   &relay,
-                   &confirm.packet,
-                   confirm.payload,
-                   confirm.payload_len,
-                   3061u) == PROTO_OK);
-        assert(!mesh_relay_tx_active(&relay));
-        assert(!relay.outbox_record.valid);
+        assert(result.actions == MESH_RELAY_ACTION_NONE);
     }
 }
 
-static void test_relayed_gateway_history_replaces_only_after_ack_confirm(void)
+static void test_relayed_gateway_history_retains_exact_identities(void)
 {
     static const uint64_t sources[] = {ANCHOR_A, ANCHOR_C, ANCHOR_D};
     static const uint8_t msg_types[] = {
@@ -20811,10 +20361,8 @@ static void test_relayed_gateway_history_replaces_only_after_ack_confirm(void)
              child < sizeof(sources) / sizeof(sources[0]);
              child++) {
             struct proto_packet packet;
-            struct mesh_gateway_ack_confirm_identity confirm_identity;
             struct mesh_outbound retained;
             struct mesh_outbound gateway_ack;
-            struct mesh_outbound confirm;
             struct mesh_relay_result relay_result;
             struct mesh_relay_result gateway_result;
             uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
@@ -20874,7 +20422,9 @@ static void test_relayed_gateway_history_replaces_only_after_ack_confirm(void)
                    sources[child]);
             assert(gateway_result.gateway_ack.next_hop_id == ANCHOR_B);
             gateway_ack = gateway_result.gateway_ack;
-            assert(mesh_relay_gateway_identity_confirmation_pending(
+            /* The gateway ACK is terminal, so the retained identity is a
+             * replaceable tombstone rather than outstanding confirmation. */
+            assert(!mesh_relay_gateway_identity_confirmation_pending(
                 &gateway,
                 retained.packet.src_id,
                 retained.packet.msg_type,
@@ -20882,8 +20432,8 @@ static void test_relayed_gateway_history_replaces_only_after_ack_confirm(void)
                 retained.packet.seq,
                 now_ms));
 
-            /* Until ACK_CONFIRM arrives, the exact history remains live and
-             * repairs a lost gateway ACK without semantic redelivery. */
+            /* The exact history repairs a lost gateway ACK without semantic
+             * redelivery. */
             assert(mesh_relay_handle_rx(&gateway,
                                         &retained.packet,
                                         retained.payload,
@@ -20907,80 +20457,14 @@ static void test_relayed_gateway_history_replaces_only_after_ack_confirm(void)
                                         now_ms++,
                                         &relay_result) == PROTO_OK);
             assert(relay_result.actions ==
-                   MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
+                   MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
             assert(!has_action(&relay_result, MESH_RELAY_ACTION_FORWARD));
+            assert(!mesh_relay_tx_active(&relay));
+            assert(relay.pending.state == MESH_RELAY_TX_IDLE);
+            assert(relay.outbox_record.gateway_acked);
             assert(mesh_relay_tick(&relay, now_ms++, &relay_result) ==
                    PROTO_OK);
-            assert(relay_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-            confirm = relay_result.retransmit;
-            assert(confirm.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-            assert(confirm.packet.src_id == sources[child]);
-            assert(confirm.packet.dst_id == GATEWAY);
-            assert(confirm.packet.ttl == retained.packet.ttl);
-            assert(confirm.packet.ttl < MESH_GATEWAY_ACK_TTL);
-            assert(confirm.next_hop_id == GATEWAY);
-            assert(mesh_packet_rx_semantics_validate(&confirm.packet,
-                                                     confirm.payload,
-                                                     confirm.payload_len,
-                                                     ANCHOR_B,
-                                                     GATEWAY,
-                                                     GATEWAY) == PROTO_OK);
-            mesh_relay_note_tx_sent(&relay, &confirm, now_ms++);
-
-            assert(mesh_relay_handle_rx(&gateway,
-                                        &confirm.packet,
-                                        confirm.payload,
-                                        confirm.payload_len,
-                                        ANCHOR_B,
-                                        95u,
-                                        now_ms++,
-                                        &gateway_result) == PROTO_OK);
-            assert(gateway_result.actions ==
-                   MESH_RELAY_ACTION_DELIVER_LOCAL);
-            assert(mesh_relay_gateway_ack_confirm_history_match(
-                       &gateway,
-                       &confirm.packet,
-                       confirm.payload,
-                       confirm.payload_len,
-                       &confirm_identity) == PROTO_OK);
-            assert(confirm_identity.msg_type == retained.packet.msg_type);
-            assert(confirm_identity.session_id == retained.packet.session_id);
-            assert(confirm_identity.seq == retained.packet.seq);
-            assert(!mesh_relay_gateway_identity_confirmation_pending(
-                &gateway,
-                retained.packet.src_id,
-                retained.packet.msg_type,
-                retained.packet.session_id,
-                retained.packet.seq,
-                now_ms));
-            assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                                      &confirm.packet,
-                                                      confirm.payload,
-                                                      confirm.payload_len,
-                                                      ANCHOR_B,
-                                                      now_ms++,
-                                                      &gateway_result) ==
-                   PROTO_OK);
-            assert(gateway_result.actions ==
-                   MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
-            assert(gateway_result.gateway_ack.next_hop_id == ANCHOR_B);
-            assert(mesh_relay_handle_rx(&relay,
-                                        &gateway_result.gateway_ack.packet,
-                                        gateway_result.gateway_ack.payload,
-                                        gateway_result.gateway_ack.payload_len,
-                                        GATEWAY,
-                                        95u,
-                                        now_ms++,
-                                        &relay_result) == PROTO_OK);
-            assert(relay_result.actions ==
-                   MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-            assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-                       &relay,
-                       &confirm.packet,
-                       confirm.payload,
-                       confirm.payload_len,
-                       now_ms++) == PROTO_OK);
-            assert(!mesh_relay_tx_active(&relay));
+            assert(relay_result.actions == MESH_RELAY_ACTION_NONE);
 
             if (round + 1u ==
                 sizeof(msg_types) / sizeof(msg_types[0])) {
@@ -21031,7 +20515,7 @@ static void test_relayed_gateway_history_replaces_only_after_ack_confirm(void)
     }
 }
 
-static void test_direct_gateway_history_survives_lost_ack_and_confirm_ack(void)
+static void test_direct_gateway_history_survives_lost_ack(void)
 {
     enum {
         report_count =
@@ -21051,10 +20535,8 @@ static void test_direct_gateway_history_survives_lost_ack_and_confirm_ack(void)
 
     for (uint16_t ordinal = 0u; ordinal < report_count; ordinal++) {
         struct proto_packet packet;
-        struct mesh_gateway_ack_confirm_identity confirm_identity;
         struct mesh_outbound tx;
         struct mesh_outbound first_gateway_ack;
-        struct mesh_outbound confirm;
         struct mesh_relay_result source_result;
         struct mesh_relay_result gateway_result;
         uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
@@ -21097,7 +20579,9 @@ static void test_direct_gateway_history_survives_lost_ack_and_confirm_ack(void)
                MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
         assert(gateway_result.gateway_ack.next_hop_id == ANCHOR_A);
         first_gateway_ack = gateway_result.gateway_ack;
-        assert(mesh_relay_gateway_identity_confirmation_pending(
+        /* The gateway ACK is terminal: the identity is never outstanding
+         * confirmation debt, only replaceable duplicate-detect history. */
+        assert(!mesh_relay_gateway_identity_confirmation_pending(
             &gateway,
             tx.packet.src_id,
             tx.packet.msg_type,
@@ -21139,88 +20623,24 @@ static void test_direct_gateway_history_survives_lost_ack_and_confirm_ack(void)
                                     now_ms++,
                                     &source_result) == PROTO_OK);
         assert(source_result.actions ==
-               MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING);
-        assert(source.pending.gateway_ack_confirm_pending);
-        assert(mesh_relay_tick(&source, now_ms++, &source_result) ==
-               PROTO_OK);
-        assert(source_result.actions == MESH_RELAY_ACTION_RETRANSMIT);
-        confirm = source_result.retransmit;
-        assert(confirm.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-        assert(confirm.packet.src_id == ANCHOR_A);
-        assert(confirm.next_hop_id == GATEWAY);
-        mesh_relay_note_tx_sent(&source, &confirm, now_ms++);
+               MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
+        assert(!source.pending.gateway_ack_confirm_pending);
+        assert(!mesh_relay_tx_active(&source));
+        assert(source.pending.state == MESH_RELAY_TX_IDLE);
+        assert(!source.outbox_record.valid);
+        assert(source.outbox_record.gateway_acked);
 
-        assert(mesh_relay_handle_rx(&gateway,
-                                    &confirm.packet,
-                                    confirm.payload,
-                                    confirm.payload_len,
-                                    ANCHOR_A,
-                                    95u,
-                                    now_ms++,
-                                    &gateway_result) == PROTO_OK);
-        assert(gateway_result.actions == MESH_RELAY_ACTION_DELIVER_LOCAL);
-        assert(mesh_relay_gateway_ack_confirm_history_match(
-                   &gateway,
-                   &confirm.packet,
-                   confirm.payload,
-                   confirm.payload_len,
-                   &confirm_identity) == PROTO_OK);
-        assert(confirm_identity.msg_type == tx.packet.msg_type);
-        assert(confirm_identity.session_id == tx.packet.session_id);
-        assert(confirm_identity.seq == tx.packet.seq);
-        assert(mesh_relay_commit_gateway_delivery(&gateway,
-                                                  &confirm.packet,
-                                                  confirm.payload,
-                                                  confirm.payload_len,
-                                                  ANCHOR_A,
-                                                  now_ms++,
-                                                  &gateway_result) ==
-               PROTO_OK);
-        assert(gateway_result.actions ==
-               MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
-        assert(!mesh_relay_gateway_identity_confirmation_pending(
-            &gateway,
-            tx.packet.src_id,
-            tx.packet.msg_type,
-            tx.packet.session_id,
-            tx.packet.seq,
-            now_ms));
-
-        /* Drop the first ACK of ACK_CONFIRM as well. The duplicate terminal
-         * proof must be ACKed again without consuming another history slot. */
-        assert(mesh_relay_handle_rx(&gateway,
-                                    &confirm.packet,
-                                    confirm.payload,
-                                    confirm.payload_len,
-                                    ANCHOR_A,
-                                    95u,
-                                    now_ms++,
-                                    &gateway_result) == PROTO_OK);
-        assert(gateway_result.status == PROTO_ERR_STALE);
-        assert(has_action(
-            &gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
-        assert(!has_action(
-            &gateway_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-        assert(gateway_result.gateway_ack.next_hop_id == ANCHOR_A);
-
+        /* A late duplicate of the replayed ACK is inert at the source. */
         assert(mesh_relay_handle_rx(&source,
-                                    &gateway_result.gateway_ack.packet,
-                                    gateway_result.gateway_ack.payload,
-                                    gateway_result.gateway_ack.payload_len,
+                                    &first_gateway_ack.packet,
+                                    first_gateway_ack.payload,
+                                    first_gateway_ack.payload_len,
                                     GATEWAY,
                                     95u,
                                     now_ms++,
                                     &source_result) == PROTO_OK);
-        assert(source_result.actions ==
-               MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED);
-        assert(mesh_relay_commit_gateway_ack_confirm_terminal(
-                   &source,
-                   &confirm.packet,
-                   confirm.payload,
-                   confirm.payload_len,
-                   now_ms++) == PROTO_OK);
+        assert(source_result.actions == MESH_RELAY_ACTION_NONE);
         assert(!mesh_relay_tx_active(&source));
-        assert(!source.outbox_record.valid);
     }
 }
 
@@ -21516,8 +20936,8 @@ int main(void)
     test_exact_hop_custody_restarts_same_parent_retry_budget();
     test_stale_route_debt_does_not_consume_fresh_packet_retries();
     test_gateway_adjacent_relay_consumes_exact_gateway_ack();
-    test_relayed_gateway_history_replaces_only_after_ack_confirm();
-    test_direct_gateway_history_survives_lost_ack_and_confirm_ack();
+    test_relayed_gateway_history_retains_exact_identities();
+    test_direct_gateway_history_survives_lost_ack();
     test_relay_replays_hop_ack_for_accepted_gateway_report_duplicate();
     test_range_retry_attempts_do_not_conflict_in_relay_dedup();
     test_pending_retry_requires_exact_payload();
@@ -21593,14 +21013,13 @@ int main(void)
     test_collection_retry_uses_fresh_random_for_same_identity_round();
     test_alternate_parent_selection_preserves_immediate_retry();
     test_local_gateway_bound_tx_waits_for_gateway_ack();
-    test_gateway_reset_replays_immutable_original_after_new_epoch();
-    test_transit_ack_confirm_without_original_expires_explicitly();
-    test_delayed_old_ack_at_retention_boundary_expires_original();
     test_cancel_tx_if_matches_never_releases_another_exact_owner();
     test_local_gateway_bound_tx_accepts_batched_gateway_ack();
     test_start_tx_initializes_earliest_tx_time();
     test_relayed_tx_waits_for_gateway_ack_after_next_hop_send();
     test_gateway_ack_timeout_retries_then_requests_route_discovery();
+    test_app_ack_window_notice_starts_backoff_at_app_window();
+    test_app_ack_window_notice_never_shortens_hop_ack_progress();
     test_child_retry_is_acked_while_transit_custody_has_no_parent();
     test_gateway_ack_timeout_handles_ms_wrap();
     test_deferred_retransmit_waits_for_actual_radio_send();
@@ -21622,6 +21041,7 @@ int main(void)
     test_gateway_route_activation_countdowns_share_wave_clock();
     test_weak_direct_route_is_retained_until_fallback_round();
     test_gateway_route_advertisement_retains_distinct_parent_copy();
+    test_gateway_route_advertisement_refresh_reenables_parent();
     test_gateway_route_epoch_serial_wrap_and_ambiguity();
     test_route_ancestry_blocks_three_node_cycle_and_accepts_churn();
     test_gateway_route_advertisement_snapshot_rebuild_is_exact();
@@ -21644,11 +21064,10 @@ int main(void)
     test_gateway_reaches_anchor_behind_relay_and_receives_result();
     test_crc16_collision_cannot_alias_duplicate_or_gateway_ack_history();
     test_gateway_ack_confirm_barrier_requires_exact_accepted_history();
-    test_gateway_origin_reboot_releases_unconfirmable_ack_debt();
-    test_gateway_ack_batch_and_roster_transitions_preserve_live_debt();
-    test_gateway_ack_history_holds_full_source_backlog_before_confirm();
+    test_gateway_ack_history_holds_full_source_backlog();
     test_gateway_ack_overflow_preserves_all_origin_guarantees();
     test_gateway_ordinary_command_result_duplicate_remains_sticky();
+    test_relay_digests_received_packet_once();
     test_gateway_ack_history_isolates_noisy_origin();
     test_gateway_ack_history_rejects_malformed_batch_metadata();
     test_gateway_ack_history_reserves_maximum_append_only_roster();

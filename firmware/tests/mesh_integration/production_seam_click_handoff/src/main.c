@@ -375,6 +375,11 @@ void mesh_submit_queued_rx(void)
 {
 }
 
+uint32_t mesh_rx_pending_count(void)
+{
+    return 0u;
+}
+
 void report_tx_schedule(uint32_t delay_ms)
 {
     ARG_UNUSED(delay_ms);

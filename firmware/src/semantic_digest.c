@@ -186,6 +186,20 @@ bool semantic_digest_sha256_update(
     return true;
 }
 
+#ifdef SEMANTIC_DIGEST_ENABLE_CALL_COUNTER
+static unsigned long semantic_digest_sha256_calls;
+
+unsigned long semantic_digest_sha256_call_count(void)
+{
+    return semantic_digest_sha256_calls;
+}
+
+void semantic_digest_sha256_call_count_reset(void)
+{
+    semantic_digest_sha256_calls = 0u;
+}
+#endif
+
 bool semantic_digest_sha256_final(
     struct semantic_digest_sha256_context *context,
     uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN])
@@ -212,6 +226,9 @@ bool semantic_digest_sha256_final(
         put_u32_be(&digest[i * 4u], context->state[i]);
     }
     memset(context, 0, sizeof(*context));
+#ifdef SEMANTIC_DIGEST_ENABLE_CALL_COUNTER
+    semantic_digest_sha256_calls++;
+#endif
     return true;
 }
 

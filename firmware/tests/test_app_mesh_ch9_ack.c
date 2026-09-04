@@ -1386,6 +1386,68 @@ static void test_ack_table_pressure_rejects_without_eviction_and_reuses_slot(voi
     assert(table.batches[1].peer_id == TRANSMITTER_ID);
 }
 
+static void test_ack_send_failure_attempt_budget_releases_peer_slot(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound ack = ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    struct app_mesh_ch9_ack_batch_entry entry = ack_batch_entry(1u, 1u, 1u);
+    uint32_t delay_ms = 0u;
+
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &ack,
+                                        &entry,
+                                        NULL) == PROTO_OK);
+    for (uint8_t attempt = 1u;
+         attempt < APP_MESH_CH9_ACK_SEND_FAILURE_MAX;
+         attempt++) {
+        assert(app_mesh_ch9_ack_table_note_send_failure(
+                   &table,
+                   RELAY_ID,
+                   UINT32_C(1000) + attempt,
+                   attempt,
+                   &delay_ms) == PROTO_OK);
+        assert(delay_ms > 0u);
+        assert(app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
+    }
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table,
+               RELAY_ID,
+               UINT32_C(2000),
+               UINT32_C(99),
+               &delay_ms) == PROTO_ERR_STALE);
+    assert(delay_ms == 0u);
+    assert(!app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
+    assert(app_mesh_ch9_ack_table_peer_count(&table) == 0u);
+}
+
+static void test_ack_send_failure_lifetime_releases_peer_slot(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound ack = ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    struct app_mesh_ch9_ack_batch_entry entry = ack_batch_entry(1u, 1u, 1u);
+    uint32_t delay_ms = 0u;
+    const uint32_t first_failure_ms = UINT32_C(1000);
+
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &ack,
+                                        &entry,
+                                        NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table,
+               RELAY_ID,
+               first_failure_ms,
+               UINT32_C(1),
+               &delay_ms) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table,
+               RELAY_ID,
+               first_failure_ms + APP_MESH_CH9_ACK_OWNER_LIFETIME_MS,
+               UINT32_C(2),
+               &delay_ms) == PROTO_ERR_STALE);
+    assert(delay_ms == 0u);
+    assert(!app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
+}
+
 struct ack_flush_fixture {
     struct mesh_outbound outbound;
     int ret;
@@ -1799,13 +1861,61 @@ static void test_duplicate_sender_retry_does_not_reset_ack_retry_round(void)
         &table, RELAY_ID, retry_not_before_ms));
 }
 
+static void test_c5_flow_ack_batch_preserves_exact_identities(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound ack = ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    struct mesh_outbound built;
+    const uint32_t sessions[] = {0x101u, 0x102u, 0x103u};
+    const uint16_t seqs[] = {11u, 12u, 13u};
+    const uint32_t packet_ids[] = {101u, 102u, 103u};
+    struct mesh_ack_semantic_identity identities[3];
+    struct mesh_ack_flow_control flow = {
+        .depth = 1u, .credit = 3u, .depth_valid = true, .credit_valid = true,
+    };
+
+    ack.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    for (size_t i = 0u; i < 3u; i++) {
+        struct app_mesh_ch9_ack_batch_entry entry =
+            ack_batch_entry(sessions[i], seqs[i], packet_ids[i]);
+        bind_ack_to_batch_entry(&ack, &entry);
+        assert(mesh_ack_semantic_identity_at(ack.payload, ack.payload_len,
+                                             0u, &identities[i]) == PROTO_OK);
+        size_t len = ack.payload_len;
+        assert(mesh_append_ack_flow_control(ack.payload, sizeof(ack.payload),
+                                             &len, &flow) == PROTO_OK);
+        ack.payload_len = (uint16_t)len;
+        ack.packet.payload_len = (uint16_t)len;
+        assert(queue_raw_ack(&table, &ack, &entry, NULL) == PROTO_OK);
+    }
+    assert(app_mesh_ch9_ack_table_build_peer(&table, RELAY_ID, &built) == PROTO_OK);
+    assert(built.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+    assert_built_ack_entries(&built, sessions, seqs, packet_ids, 3u);
+    for (size_t i = 0u; i < 3u; i++) {
+        struct mesh_ack_semantic_identity actual;
+        assert(mesh_ack_semantic_identity_at(built.payload, built.payload_len,
+                                             (uint8_t)i, &actual) == PROTO_OK);
+        assert(memcmp(actual.digest, identities[i].digest,
+                      sizeof(actual.digest)) == 0);
+    }
+    struct mesh_ack_flow_control parsed;
+    assert(mesh_ack_flow_control_parse(&built.packet, built.payload,
+                                       built.payload_len, &parsed) == PROTO_OK);
+    assert(parsed.depth_valid && parsed.depth == flow.depth);
+    assert(parsed.credit_valid && parsed.credit == flow.credit);
+    assert(parsed.identity_count == 3u);
+}
+
 int main(void)
 {
+    test_c5_flow_ack_batch_preserves_exact_identities();
     test_ack_table_interleaves_two_peers();
     test_ack_table_timeout_clear_is_peer_scoped();
     test_ack_table_duplicate_is_scoped_by_session_and_sequence();
     test_ack_table_rejects_same_id_different_semantic_packet();
     test_ack_table_pressure_rejects_without_eviction_and_reuses_slot();
+    test_ack_send_failure_attempt_budget_releases_peer_slot();
+    test_ack_send_failure_lifetime_releases_peer_slot();
     test_ack_table_flush_retains_failure_and_clears_only_sent_peer();
     test_forwarded_gateway_ack_does_not_replace_other_peer();
     test_overlapping_forwarded_gateway_acks_preserve_first_peer_custody();

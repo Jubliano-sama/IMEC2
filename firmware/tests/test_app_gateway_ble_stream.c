@@ -479,6 +479,7 @@ static void test_retained_assignment_event_survives_click_eviction(void)
     uint8_t event_payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
     uint8_t payload[1] = {0u};
     size_t event_payload_len = 0u;
+    int click_ret;
 
     gateway_ble_stream_init(&state);
     gateway_command_observability_init(&observability);
@@ -505,17 +506,24 @@ static void test_retained_assignment_event_survives_click_eviction(void)
                                              payload, sizeof(payload),
                                              0u, 3u, true) == 1);
 
-    assert(gateway_ble_stream_enqueue_packet(&state, &click,
-                                             payload, sizeof(payload),
-                                             0u, 4u, true) == 1);
-    click.seq++;
-    assert(gateway_ble_stream_enqueue_packet(&state, &click,
-                                             payload, sizeof(payload),
-                                             0u, 5u, true) == 1);
-    click.seq++;
-    assert(gateway_ble_stream_enqueue_packet(&state, &click,
-                                             payload, sizeof(payload),
-                                             0u, 6u, true) == -ENOSPC);
+    /* The RAM-admission gateway ACK must not fail while a connecting host
+     * still holds command events and receipts, so the slot count grew from
+     * three to GATEWAY_BLE_STREAM_QUEUE_DEPTH. Clicks evict lower-priority
+     * diagnostics first, so keep offering clicks until the queue refuses
+     * one instead of hard-coding the old three-slot arithmetic. */
+    click_ret = 1;
+    for (uint32_t attempt = 0u;
+         attempt < (uint32_t)(4u * GATEWAY_BLE_STREAM_QUEUE_DEPTH) &&
+             click_ret == 1;
+         attempt++) {
+        click_ret = gateway_ble_stream_enqueue_packet(&state, &click,
+                                                      payload,
+                                                      sizeof(payload),
+                                                      0u, 4u + attempt,
+                                                      true);
+        click.seq++;
+    }
+    assert(click_ret == -ENOSPC);
     assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
     assert(gateway_ble_stream_head_packet(&state, &head) == 0);
     assert(head.msg_type == MSG_GATEWAY_COMMAND_EVENT);
@@ -804,11 +812,14 @@ static void test_pool_boundary_preserves_retained_click_custody(void)
         packet(MSG_UWB_ANCHOR_DIAG_FRAGMENT, 0u, 2u);
     struct proto_packet status = packet(MSG_ANCHOR_HEARTBEAT, 0u, 3u);
     uint16_t pool_before;
+    uint8_t depth_before;
+    int burst_ret;
 
     fill_payload(payload, sizeof(payload));
 
-    /* The documented click/CIR burst occupies every queue slot and must
-     * remain admissible after the pool was reduced to the deployable budget. */
+    /* The documented click/CIR burst must remain admissible after the pool
+     * was reduced to the deployable budget. The queue now has six slots, so
+     * the byte pool - not the slot count - is what bounds the burst. */
     gateway_ble_stream_init(&state);
     assert(gateway_ble_stream_enqueue_packet(&state,
                                              &click,
@@ -837,20 +848,31 @@ static void test_pool_boundary_preserves_retained_click_custody(void)
     assert(state.pool_used == GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES);
     assert(state.pool_used + GATEWAY_BLE_STREAM_RECORD_POOL_SAFETY_MARGIN_BYTES <=
            GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
-    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
-        state.items[i].retain_until_sent = true;
-    }
-    pool_before = state.pool_used;
+    /* Offer minimal retained clicks until the byte pool refuses one. The
+     * six-slot queue no longer runs out first, so the refusal has to come
+     * from the pool boundary, and retained head custody must survive it. */
     click.seq = 99u;
-    assert(gateway_ble_stream_enqueue_packet(&state,
-                                             &click,
-                                             payload,
-                                             1u,
-                                             0u,
-                                             4u,
-                                             true) == -ENOSPC);
+    burst_ret = 1;
+    do {
+        for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+            state.items[i].retain_until_sent = true;
+        }
+        pool_before = state.pool_used;
+        depth_before = gateway_ble_stream_depth(&state);
+        burst_ret = gateway_ble_stream_enqueue_packet(&state,
+                                                      &click,
+                                                      payload,
+                                                      1u,
+                                                      0u,
+                                                      4u,
+                                                      true);
+        click.seq++;
+    } while (burst_ret == 1);
+    assert(burst_ret == -ENOSPC);
     assert(state.pool_used == pool_before);
-    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    assert(gateway_ble_stream_depth(&state) == depth_before);
+    assert((size_t)state.pool_used + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN + 1u >
+           GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
     assert(state.items[0].packet.msg_type == MSG_CLICK_REPORT);
     assert(state.items[0].packet.seq == 1u);
     assert(state.items[0].retain_until_sent);
@@ -896,7 +918,9 @@ static void test_pool_boundary_preserves_retained_click_custody(void)
                                              13u,
                                              true) == -ENOSPC);
     assert(state.pool_used == pool_before);
-    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    /* Three records exhausted the byte pool while three of the six queue
+     * slots are still free: the refusal above came from the pool alone. */
+    assert(gateway_ble_stream_depth(&state) == 3u);
     assert(state.items[0].packet.msg_type == MSG_CLICK_REPORT);
 
     /* With one queue slot still available, make the attempted record exceed
@@ -1320,7 +1344,10 @@ static void test_reservation_uses_priority_eviction_and_survives_drain(void)
                                              10u,
                                              true) == 1);
     assert(state.reservation_active);
-    assert(gateway_ble_stream_depth(&state) == 2u);
+    /* The reservation holds the last slot and evicts exactly one
+     * lower-priority status record, whatever the queue depth is. */
+    assert(gateway_ble_stream_depth(&state) ==
+           GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u);
     gateway_ble_stream_get_diagnostics(&state, 10u, &diag);
     assert(diag.drops_priority == 1u);
 
@@ -1331,7 +1358,8 @@ static void test_reservation_uses_priority_eviction_and_survives_drain(void)
                                     true,
                                     1u) == 1u);
     assert(state.reservation_active);
-    assert(gateway_ble_stream_depth(&state) == 1u);
+    assert(gateway_ble_stream_depth(&state) ==
+           GATEWAY_BLE_STREAM_QUEUE_DEPTH - 2u);
     assert(gateway_ble_stream_enqueue_packet(&state,
                                              &other,
                                              payload,

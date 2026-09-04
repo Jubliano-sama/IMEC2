@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import re
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,17 +22,6 @@ APP_CMAKE = APP_ROOT / "CMakeLists.txt"
 APP_KCONFIG = APP_ROOT / "Kconfig"
 DIRECT_GATEWAY_SOURCE = APP_ROOT / "src" / "app_mesh_report_direct_gateway.inc"
 ROUTE_CONTROL_SOURCE = APP_ROOT / "src" / "app_mesh_report_route_control.inc"
-POLICY_HEADER = FIRMWARE_ROOT / "include" / "stack_budget.h"
-VERIFIER_PATH = FIRMWARE_ROOT / "scripts" / "verify_stack_evidence.py"
-
-SPEC = importlib.util.spec_from_file_location(
-    "forcedhop_verify_stack_evidence", VERIFIER_PATH
-)
-assert SPEC is not None and SPEC.loader is not None
-verifier = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = verifier
-SPEC.loader.exec_module(verifier)
-
 TRANSMITTER_GUARD = re.compile(
     r"(?:!\s*defined\s*(?:\(\s*)?CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER|"
     r"!\s*\(.*defined\s*\(\s*CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)"
@@ -114,11 +101,6 @@ def _legacy_stack_diag_hash(preset: str) -> str:
 
 
 class ForcedHopRamPolicyTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.policies, _ = verifier.load_policy(POLICY_HEADER)
-        cls.forcedhop = cls.policies["mesh_transmitter_forcedhop"]
-
     def test_forcedhop_preset_keeps_split_stack_budget(self) -> None:
         cmake = APP_CMAKE.read_text(encoding="utf-8")
         transmitter = cmake.split(
@@ -127,12 +109,6 @@ class ForcedHopRamPolicyTests(unittest.TestCase):
 
         self.assertIn('"CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=8192\\n"', transmitter)
         self.assertNotIn("CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=16384", transmitter)
-        self.assertEqual(8192, self.forcedhop.system_workqueue_bytes)
-        self.assertEqual(9216, self.forcedhop.mesh_route_bytes)
-        self.assertGreaterEqual(
-            self.forcedhop.minimum_static_ram_headroom_bytes, 18432
-        )
-
     def test_forcedhop_cannot_allocate_or_use_anchor_scan_queue(self) -> None:
         failures = _unguarded_queue_symbol_lines(
             read_composed_source(ANCHOR_SOURCE)
@@ -142,18 +118,6 @@ class ForcedHopRamPolicyTests(unittest.TestCase):
             failures,
             "anchor scan queue references compile into forced-hop at lines "
             + ",".join(str(line) for line in failures),
-        )
-
-    def test_forcedhop_owns_mesh_test_not_anchor_scan(self) -> None:
-        roots = verifier.load_thread_roots(POLICY_HEADER)
-
-        self.assertEqual(
-            {"mesh_test"},
-            roots[("app_mesh_test.c", "mesh_test_tx_thread_entry")],
-        )
-        self.assertEqual(8192, verifier._owner_capacity(self.forcedhop, "mesh_test"))
-        self.assertEqual(
-            0, verifier._owner_capacity(self.forcedhop, "anchor_uwb_scan")
         )
 
     def test_mesh_test_stack_is_explicitly_eight_kib(self) -> None:

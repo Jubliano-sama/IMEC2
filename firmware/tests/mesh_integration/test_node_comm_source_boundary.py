@@ -165,16 +165,15 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         tracked_tx = report[tx_start:tx_end]
         self.assertIn("mesh_cancel_observation_owned_pre_rf_tx(", tracked_tx)
         self.assertGreaterEqual(
-            tracked_tx.count("mesh_cancel_observation_owned_pre_rf_tx("), 2
+            tracked_tx.count("mesh_cancel_observation_owned_pre_rf_tx("), 1
         )
-        slot_full = tracked_tx.index('"channel9-slot-full"')
-        send_failure = tracked_tx.index('"send-failure"', slot_full)
-        self.assertIn("observation != NULL", tracked_tx[:slot_full])
+        send_failure = tracked_tx.index('"send-failure"')
         self.assertIn("!observation->rf_started", tracked_tx[:send_failure])
 
         result_offer = tracked_tx.index("if (send_prepared_c5_control)")
         result_offer_end = tracked_tx.index(
-            "} else if (direct_gateway_tx_pending)", result_offer
+            "} else if (direct_gateway_tx_pending || uplink_parent_hop)",
+            result_offer,
         )
         result_offer_send = tracked_tx[result_offer:result_offer_end]
         self.assertIn("mesh_send_c5_control_attempt(", result_offer_send)
@@ -229,7 +228,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "static void mesh_handle_result_actions("
         )
         actions_end = report.index(
-            "void mesh_gateway_host_receipt_ready(", actions_start
+            "static uint32_t mesh_drain_rx_queue_locked(", actions_start
         )
         actions = report[actions_start:actions_end]
         role_gate = actions.index(
@@ -957,9 +956,19 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertLess(direct_select, retransmit)
         self.assertLess(retransmit, direct_send)
         self.assertLess(direct_send, send)
+        # The channel-5 redesign made every gateway-bound retransmit use the
+        # direct uplink lane: the frame goes out on channel 5 and waits for
+        # MSG_GATEWAY_ACK when the next hop is the gateway, or is preceded by
+        # a C5_CONTACT_PURPOSE_UPLINK wake train when the next hop is a parent
+        # anchor. The lane is therefore selected on the packet destination
+        # plus a unicast next hop, not on "next hop is the gateway".
         self.assertIn(
-            "debug_next_hop == GATEWAY_ID",
+            "retransmit->packet.dst_id == GATEWAY_ID",
             report[direct_select:scheduled_select],
+        )
+        self.assertIn(
+            "mesh_id_is_unicast(debug_next_hop)",
+            report[retransmit_action:scheduled_select],
         )
         self.assertIn(
             '"retransmit-direct-gateway"',

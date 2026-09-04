@@ -43,6 +43,18 @@ bool semantic_digest_equal(const uint8_t *left,
                            const uint8_t *right,
                            size_t digest_len);
 
+#ifdef SEMANTIC_DIGEST_ENABLE_CALL_COUNTER
+/*
+ * Test-only instrumentation. The native test build defines this so a test can
+ * assert how many SHA-256 computations one received packet costs. Production
+ * (Zephyr) builds never define it, so no counter exists in firmware images.
+ * The counter advances once per completed digest, i.e. once per successful
+ * semantic_digest_sha256_final().
+ */
+unsigned long semantic_digest_sha256_call_count(void);
+void semantic_digest_sha256_call_count_reset(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

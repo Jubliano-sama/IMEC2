@@ -11,6 +11,9 @@ ASYNC_ROUTE = (
     Path(__file__).resolve().parents[2]
     / "app/src/app_mesh_async_route_request.c"
 )
+ANCHOR_RADIO = (
+    Path(__file__).resolve().parents[2] / "app/src/app_anchor_radio.inc"
+)
 
 
 def body(source: str, signature: str, next_signature: str) -> str:
@@ -31,6 +34,7 @@ def main() -> None:
     priority = PRIORITY.read_text(encoding="utf-8")
     ack_policy = ACK_POLICY.read_text(encoding="utf-8")
     async_route = ASYNC_ROUTE.read_text(encoding="utf-8")
+    anchor_radio = ANCHOR_RADIO.read_text(encoding="utf-8")
     c5_send = body(
         source,
         "static int mesh_send_c5_control_attempt(",
@@ -251,8 +255,13 @@ def main() -> None:
     # classes.  The dedicated helpers make opt-in reviewable at every call
     # site; their closed classifier rejects ordinary route discovery, floods,
     # reports, EVENT_PROPOSE, and all future message types by default.
+    # MSG_GATEWAY_ACK joined the causal set with the channel-5 redesign: the
+    # gateway answers a report on channel 5 as soon as the report is admitted
+    # to its RAM/BLE stream reservation, so the ACK is the synchronous
+    # response to the frame that is still holding the lane.
     causal_types = (
         "MSG_MESH_HOP_ACK",
+        "MSG_GATEWAY_ACK",
         "MSG_ROUTE_REPLY",
         "MSG_ROUTE_REPLY_ACK",
         "MSG_RELAY_BUSY",
@@ -417,10 +426,8 @@ def main() -> None:
     assert active < wake_branch < wake
 
     # A click observed inside a gateway-operation listener is still owned by
-    # the clicker. The anchor keeps only a bounded local observation until it
-    # has classified and queued assignment or Here-I-Am control. Once
-    # that queue admission succeeds, the operation wins and no click handoff
-    # can establish competing anchor/radio custody.
+    # the clicker. Queue the exact control first, hand off the valid click after
+    # bounded radio cleanup, then resume the retained operation.
     retain_click = route_listener.index("DBG_C5_CONTROL_CLICK_RETAIN")
     classify_operation = route_listener.index(
         "app_mesh_c5_gateway_operation_outranks_unaccepted_click(",
@@ -432,22 +439,131 @@ def main() -> None:
     retain_operation = route_listener.index(
         "gateway_operation_retained = true", queue_control
     )
-    operation_wins = route_listener.index(
-        "if (click_captured && gateway_operation_retained)",
-        retain_operation,
-    )
     click_handoff = route_listener.index(
-        "mesh_handoff_anchor_click_claim(", operation_wins
+        "mesh_handoff_anchor_click_claim(", retain_operation
+    )
+    operation_resumes = route_listener.index(
+        "if (gateway_operation_retained && mesh_rx_pending_count() > 0u)",
+        click_handoff,
+    )
+    retained_marker = route_listener.index(
+        "DBG_C5_GATEWAY_OPERATION_QUEUED_AFTER_CLICK", operation_resumes
     )
     assert (retain_click < classify_operation < queue_control <
-            retain_operation < operation_wins < click_handoff)
-    winning_branch = route_listener[operation_wins:click_handoff]
-    assert "gateway-operation-before-click" in winning_branch
-    assert "mesh_submit_owned_work(" in winning_branch
-    assert winning_branch.index("mesh_submit_owned_work(") < \
-        winning_branch.index("mesh_restart_role_scan();")
-    assert "MESH_ROUTE_LISTENER_RETURN(-EAGAIN)" in winning_branch
-    assert "mesh_handoff_anchor_click_claim(" not in winning_branch
+            retain_operation < click_handoff < operation_resumes <
+            retained_marker)
+    assert "gateway-operation-before-click" not in route_listener
+    assert "DBG_C5_GATEWAY_OPERATION_WINS_CLICK" not in route_listener
+
+    click_completion = body(
+        anchor_radio,
+        "static bool anchor_run_mesh_click_wake_claim(",
+        "static bool anchor_handle_mesh_click_wake_claim(",
+    )
+    release = click_completion.index("radio_guard_uwb_release_finish(")
+    release_failure = click_completion.index("if (release_ret < 0)", release)
+    release_failure_return = click_completion.index(
+        "return false;", release_failure
+    )
+    pending = click_completion.index(
+        "deferred_mesh_rx_queued || mesh_rx_pending_count() > 0u",
+        release_failure_return,
+    )
+    resume = click_completion.index("mesh_submit_queued_rx();", pending)
+    assert release < release_failure < release_failure_return < pending < resume
+
+    # --- Post-burst click delivery listen (Channel 5 Delivery Protocol S5) ---
+    scan = body(
+        anchor_radio,
+        "static void anchor_uwb_scan_work_handler(",
+        "static int anchor_start_uwb_scan(",
+    )
+    listen_gate = scan.index(
+        "click_listen_active = !protocol_continuous_rx &&"
+    )
+    listen_slice = scan.index(
+        "scan_rx_ms = MIN(MESH_CLICK_DELIVERY_LISTEN_SLICE_MS,", listen_gate
+    )
+    listen_phy = scan.index(
+        "ret = (protocol_continuous_rx || click_listen_active) ?", listen_slice
+    )
+    assert listen_gate < listen_slice < listen_phy
+    # The listen window is a mesh-control (extended-PHR) receiver, never the
+    # standard-PHR wake hunt: children send ordinary uplink frames into it.
+    assert "dwm3000_driver_configure_wake_mesh_control_mode()" in scan[
+        listen_phy : scan.index("if (ret == 0)", listen_phy)
+    ]
+    # Rearming between slices must stay a wake-from-idle, never a from-reset
+    # PHY configure, or the gaps swallow 1024-symbol preambles.
+    assert (
+        "(protocol_continuous_rx || click_listen_active) ?\n"
+        "                APP_RADIO_LOW_POWER_IDLE"
+    ) in scan
+    # A cycle that owned the radio but never armed the receiver must not cost
+    # a whole low-duty period; an uplink wake train spans only a few periods.
+    skipped = scan.index('DBG_SCAN_SKIPPED reason=%s\\n", "no-rx-attempt"')
+    assert "next_scan_delay_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;" in scan[
+        skipped : skipped + 400
+    ]
+    for reason in ("radio-poisoned", "click-handoff", "blocked", "guard-fail"):
+        assert (
+            'DBG_SCAN_SKIPPED reason=%s\\n", "' + reason + '"'
+        ) in scan
+
+    # --- Uplink next hop: skip the train for a listening participant ---
+    tracked_tx = body(
+        source,
+        "static int mesh_start_tracked_tx_with_retry(",
+        "\nint mesh_start_tracked_tx(",
+    )
+    parent_hop = tracked_tx.index(
+        "uplink_parent_hop = tx.next_hop_id != GATEWAY_ID"
+    )
+    participant = tracked_tx.index(
+        "app_mesh_report_click_participant(tx.next_hop_id, now_ms)", parent_hop
+    )
+    listening = tracked_tx.index(
+        "app_mesh_report_click_listen_active(now_ms, NULL)", participant
+    )
+    skip_wake = tracked_tx.index("uplink_wake_needed = false;", listening)
+    next_hop_marker = tracked_tx.index("DBG_UPLINK_NEXT_HOP", skip_wake)
+    assert parent_hop < participant < listening < skip_wake < next_hop_marker
+    # Skipping the train must never shrink the hop ACK wait to the gateway
+    # window: the responder is still an anchor route thread.
+    assert "plan.window_ms = uplink_parent_hop ?" in tracked_tx
+    assert "APP_MESH_PARENT_HOP_ACK_RX_MS" in tracked_tx
+    # A non-participating parent is on its low-duty cadence, so the train is
+    # sized from that cadence rather than the fixed WAKE_ADV_MS default.
+    train = tracked_tx.index(
+        "mesh_send_route_wake_train_with_duration(", next_hop_marker
+    )
+    assert "mesh_uplink_wake_train_ms()" in tracked_tx[
+        train : tracked_tx.index("DBG_UPLINK_WAKE", train)
+    ]
+    assert "MESH_UPLINK_WAKE_TRAIN_MS_FOR_INTERVAL(anchor_uwb_scan_interval_ms)" \
+        in source
+
+    # --- Parent hop ACK: fixed channel-5 guard, then the causal response ---
+    hop_ack = source.index(
+        "if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) &&"
+    )
+    hop_guard = source.index(
+        "MESH_GATEWAY_C5_ACK_GUARD_MS - hop_ack_dms", hop_ack
+    )
+    hop_send = source.index(
+        "mesh_send_outbound_causal_response(hop_ack,", hop_guard
+    )
+    hop_marker = source.index("DBG_HOP_ACK_TX", hop_send)
+    assert hop_ack < hop_guard < hop_send < hop_marker
+
+    # --- A wake train keeps the purpose its caller opened the contact with ---
+    keep_purpose = source.index(
+        "Keep the purpose the caller opened this contact with"
+    )
+    accept = source.index("mesh_c5_contact_accept(target_id,", keep_purpose)
+    assert "purpose," in source[accept : accept + 160]
+    assert "C5_CONTACT_PURPOSE_ROUTE_SOLICIT" not in source[accept : accept + 160]
+    assert 'case C5_CONTACT_PURPOSE_UPLINK:\n        return "uplink";' in source
 
 
 if __name__ == "__main__":

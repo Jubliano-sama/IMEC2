@@ -93,6 +93,14 @@ static int drive_schedule_locked(
                                          &event,
                                          &transition);
         if (ret >= 0) {
+            /*
+             * Retire this generation's level-triggered abort while the
+             * handoff lock still prevents a successor from requesting the
+             * same bit.  A delayed generation-A worker must never clear a
+             * generation-B abort after B has been admitted.
+             */
+            dwm3000_driver_clear_receive_abort(
+                DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
             pending_work = NULL;
             return 0;
         }

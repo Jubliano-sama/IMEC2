@@ -33,6 +33,14 @@ struct app_mesh_c5_route_capture_state {
     bool gateway_control_priority;
     bool require_relayed_gateway_control;
     bool targeted_control_relay;
+    /*
+     * This listener is a parent's post-wake receive turn, so the child that
+     * woke it may hand over gateway-bound custody here. The frame is addressed
+     * onward to the gateway, so the only identity this layer can check is the
+     * physical edge: it must arrive directly from the peer this contact was
+     * opened for.
+     */
+    bool uplink_capture_allowed;
 };
 
 struct app_mesh_c5_route_adv_timing {
@@ -101,6 +109,7 @@ bool app_mesh_c5_contact_accepted(
 bool app_mesh_c5_route_capture_relevant(
     const struct app_mesh_c5_route_capture_state *state);
 bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type);
+bool app_mesh_c5_route_capture_completes_uplink(uint8_t msg_type);
 bool app_mesh_c5_route_capture_yields_to_competing_request(uint8_t msg_type);
 bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type);
 bool app_mesh_c5_route_capture_requires_inline_timing_install(

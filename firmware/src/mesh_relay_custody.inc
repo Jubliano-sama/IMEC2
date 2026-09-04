@@ -339,7 +339,8 @@ static void outbox_record_track_pending(struct mesh_relay *relay,
 
     record = &relay->outbox_record;
     memset(record, 0, sizeof(*record));
-    if (!relay_semantic_packet_digest(&pending->packet,
+    if (!relay_semantic_packet_digest(relay,
+                                      &pending->packet,
                                       pending->payload,
                                       pending->payload_len,
                                       record->semantic_digest)) {
@@ -1119,13 +1120,57 @@ static void refresh_downlink(struct mesh_relay *relay,
     }
 }
 
+/*
+ * Same TLV as mesh_append_ack_semantic_identity(), but the acknowledged
+ * packet's commitment comes from the relay's digest memo instead of a fresh
+ * SHA-256 over bytes the receive path has already hashed. The memo is keyed on
+ * the complete preimage, so the emitted value is identical.
+ */
+static int relay_append_ack_semantic_identity(
+    const struct mesh_relay *relay,
+    uint8_t *ack_payload,
+    size_t ack_payload_cap,
+    size_t *offset,
+    const struct proto_packet *acknowledged_packet,
+    const uint8_t *acknowledged_payload,
+    size_t acknowledged_payload_len)
+{
+    uint8_t value[MESH_ACK_SEMANTIC_IDENTITY_VALUE_LEN];
+
+    if (ack_payload == NULL || offset == NULL ||
+        acknowledged_packet == NULL ||
+        acknowledged_packet->session_id == 0u ||
+        acknowledged_packet->seq == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    proto_put_u32_le(value, acknowledged_packet->session_id);
+    proto_put_u16_le(&value[sizeof(uint32_t)], acknowledged_packet->seq);
+    if (!relay_semantic_packet_digest(
+            relay,
+            acknowledged_packet,
+            acknowledged_payload,
+            acknowledged_payload_len,
+            &value[sizeof(uint32_t) + sizeof(uint16_t)])) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    return tlv_append_bytes(ack_payload,
+                            ack_payload_cap,
+                            offset,
+                            TLV_MESH_ACK_SEMANTIC_IDENTITY,
+                            value,
+                            (uint8_t)sizeof(value));
+}
+
 static int build_gateway_ack(struct mesh_relay *relay,
                              const struct proto_packet *packet,
                              const uint8_t *payload,
                              size_t acknowledged_payload_len,
                              uint64_t previous_hop_id,
+                             uint32_t now_ms,
                              struct mesh_outbound *out)
 {
+    struct mesh_ack_flow_control flow;
     size_t ack_payload_len = 0u;
     int ret;
 
@@ -1136,12 +1181,27 @@ static int build_gateway_ack(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = mesh_append_ack_semantic_identity(out->payload,
-                                            sizeof(out->payload),
-                                            &ack_payload_len,
-                                            packet,
-                                            payload,
-                                            acknowledged_payload_len);
+    /*
+     * Depth 0 at the gateway; credit is the free BLE-stream slot count the
+     * application reported, minus the own-report reserve.  Flow control is
+     * emitted before the identities so the accepted-identity list stays the
+     * tail of the payload, exactly as older firmware laid it out.
+     */
+    relay_ack_flow_control(relay, now_ms, &flow);
+    ret = mesh_append_ack_flow_control(out->payload,
+                                       sizeof(out->payload),
+                                       &ack_payload_len,
+                                       &flow);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = relay_append_ack_semantic_identity(relay,
+                                             out->payload,
+                                             sizeof(out->payload),
+                                             &ack_payload_len,
+                                             packet,
+                                             payload,
+                                             acknowledged_payload_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -1178,15 +1238,21 @@ static int build_hop_ack(struct mesh_relay *relay,
                          const uint8_t *payload,
                          size_t acknowledged_payload_len,
                          uint64_t previous_hop_id,
+                         uint32_t now_ms,
                          struct mesh_outbound *out)
 {
+    struct mesh_ack_flow_control flow;
     size_t ack_payload_len = 0u;
     int ret;
 
     if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
         !id_is_unicast(previous_hop_id) ||
         previous_hop_id == relay->local_id ||
-        packet->src_id == relay->local_id ||
+        (packet->src_id == relay->local_id &&
+         /* A re-adopted packet of ours is owed an ACK like any other hop. */
+         !mesh_relay_should_readopt_returned_packet(relay,
+                                                    packet,
+                                                    previous_hop_id)) ||
         packet->dst_id == relay->local_id ||
         packet->dst_id == MESH_BROADCAST_ID) {
         return PROTO_ERR_STALE;
@@ -1199,12 +1265,22 @@ static int build_hop_ack(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = mesh_append_ack_semantic_identity(out->payload,
-                                            sizeof(out->payload),
-                                            &ack_payload_len,
-                                            packet,
-                                            payload,
-                                            acknowledged_payload_len);
+    /* The responder's own gateway depth and remaining admission credit. */
+    relay_ack_flow_control(relay, now_ms, &flow);
+    ret = mesh_append_ack_flow_control(out->payload,
+                                       sizeof(out->payload),
+                                       &ack_payload_len,
+                                       &flow);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = relay_append_ack_semantic_identity(relay,
+                                             out->payload,
+                                             sizeof(out->payload),
+                                             &ack_payload_len,
+                                             packet,
+                                             payload,
+                                             acknowledged_payload_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -1844,8 +1920,14 @@ static bool pending_requires_gateway_ack_confirm(
     const struct mesh_relay *relay,
     const struct mesh_pending_tx *pending)
 {
-    return pending != NULL && !pending->gateway_ack_confirm_pending &&
-           pending_can_generate_gateway_ack_confirm(relay, pending);
+    /*
+     * The gateway ACK is terminal proof: the gateway only sends it after the
+     * report is admitted to its RAM stream, so no end-to-end ACK_CONFIRM
+     * round trip is needed and the source retires custody immediately.
+     */
+    (void)relay;
+    (void)pending;
+    return false;
 }
 
 int mesh_relay_pending_gateway_ack_confirm_wire(
@@ -2020,9 +2102,11 @@ static int handle_local_ack(struct mesh_relay *relay,
                             size_t payload_len,
                             uint64_t previous_hop_id,
                             uint32_t now_ms,
+                            uint32_t random_value,
                             struct mesh_relay_result *result)
 {
     bool transit_gateway_ack;
+    bool flow_handled = false;
     int ret;
 
     transit_gateway_ack = gateway_ack_targets_pending_transit_origin(relay,
@@ -2030,6 +2114,29 @@ static int handle_local_ack(struct mesh_relay *relay,
     if ((packet->dst_id != relay->local_id && !transit_gateway_ack) ||
         (packet->msg_type != MSG_GATEWAY_ACK &&
          packet->msg_type != MSG_MESH_HOP_ACK)) {
+        return PROTO_OK;
+    }
+
+    /*
+     * Depth and credit come first: an ACK that accepts nothing is an explicit
+     * answer (dead end or backpressure), not an identity match failure, and it
+     * must never be scored as a lost frame.  A positive ACK only records the
+     * peer's depth and credit here and then falls through to custody release.
+     */
+    ret = relay_handle_ack_flow_control(relay,
+                                        packet,
+                                        payload,
+                                        payload_len,
+                                        previous_hop_id,
+                                        now_ms,
+                                        random_value,
+                                        result,
+                                        &flow_handled);
+    if (ret != PROTO_OK) {
+        result->status = ret;
+        return ret;
+    }
+    if (flow_handled) {
         return PROTO_OK;
     }
 
@@ -2069,7 +2176,9 @@ static int handle_local_ack(struct mesh_relay *relay,
         }
         if (transit_gateway_ack) {
             if (pending_is_assignment_response(relay,
-                                               &relay->pending)) {
+                                               &relay->pending) ||
+                packet_uses_report_hop_custody(relay,
+                                               &relay->pending.packet)) {
                 /* The child already stopped after this relay accepted exact
                  * custody. The gateway ACK now terminates the relay's copy;
                  * forwarding it would recreate the removed end-to-end tail. */
@@ -2083,18 +2192,6 @@ static int handle_local_ack(struct mesh_relay *relay,
                     relay->pending.next_hop_id,
                     relay->gateway_id,
                     now_ms);
-                return PROTO_OK;
-            }
-            if (packet_uses_report_hop_custody(relay,
-                                               &relay->pending.packet)) {
-                ret = pending_transition_to_gateway_ack_confirm(relay,
-                                                                now_ms);
-                if (ret != PROTO_OK) {
-                    result->status = ret;
-                    return ret;
-                }
-                result->actions |=
-                    MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING;
                 return PROTO_OK;
             }
             /*
@@ -2167,6 +2264,9 @@ static int handle_local_ack(struct mesh_relay *relay,
         }
         if (relay->pending.packet.src_id == relay->local_id &&
             pending_is_assignment_response(relay, &relay->pending)) {
+            mesh_relay_note_parent_handoff(relay,
+                                           &relay->pending.packet,
+                                           previous_hop_id);
             pending_transfer_next_hop_custody(relay,
                                               previous_hop_id,
                                               now_ms);
@@ -2192,7 +2292,11 @@ static int handle_local_ack(struct mesh_relay *relay,
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
         mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
         outbox_record_mark_gateway_acked(relay, now_ms);
+        mesh_relay_note_handoff_gateway_acked(relay,
+                                              relay->pending.packet.session_id,
+                                              relay->pending.packet.seq);
         relay->pending.state = MESH_RELAY_TX_IDLE;
+        relay_clear_upstream_poison(relay);
         (void)route_record_candidate_success_at(
             &relay->upstream,
             relay->pending.next_hop_id,
@@ -2203,6 +2307,11 @@ static int handle_local_ack(struct mesh_relay *relay,
                 relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF)) {
         if (pending_uses_next_hop_custody(relay, &relay->pending)) {
             if (relay->pending.packet.src_id == relay->local_id) {
+                /* Remember exactly which parent took our bytes; if that parent
+                 * later loses its route it may hand them straight back. */
+                mesh_relay_note_parent_handoff(relay,
+                                               &relay->pending.packet,
+                                               previous_hop_id);
                 pending_transfer_next_hop_custody(relay,
                                                   previous_hop_id,
                                                   now_ms);
@@ -2269,7 +2378,8 @@ int mesh_relay_commit_next_hop_custody_terminal(
         relay->pending.packet.session_id != packet->session_id ||
         relay->pending.packet.seq != packet->seq ||
         relay->pending.packet.payload_len != packet->payload_len ||
-        !relay_semantic_packet_digest(&relay->pending.packet,
+        !relay_semantic_packet_digest(relay,
+                                      &relay->pending.packet,
                                       relay->pending.payload,
                                       relay->pending.payload_len,
                                       pending_digest) ||
@@ -2282,6 +2392,7 @@ int mesh_relay_commit_next_hop_custody_terminal(
         return PROTO_ERR_MALFORMED;
     }
 
+    mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
     relay->outbox_record.valid = false;
     relay->pending.state = MESH_RELAY_TX_IDLE;
     return PROTO_OK;
@@ -2371,11 +2482,13 @@ int mesh_relay_commit_terminal_release(
         relay->pending.packet.payload_len != packet->payload_len ||
         relay->pending.payload_len != payload_len ||
         packet->payload_len != payload_len ||
-        !relay_semantic_packet_digest(&relay->pending.packet,
+        !relay_semantic_packet_digest(relay,
+                                      &relay->pending.packet,
                                       relay->pending.payload,
                                       relay->pending.payload_len,
                                       pending_digest) ||
-        !relay_semantic_packet_digest(packet,
+        !relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       provided_digest) ||
@@ -2388,6 +2501,7 @@ int mesh_relay_commit_terminal_release(
         return PROTO_ERR_MALFORMED;
     }
 
+    mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
     relay->outbox_record.valid = false;
     relay->pending.result_offer_active = false;
     relay->pending.state = MESH_RELAY_TX_IDLE;
@@ -3172,6 +3286,7 @@ static int add_gateway_ack_action(struct mesh_relay *relay,
                                   const uint8_t *payload,
                                   size_t payload_len,
                                   uint64_t previous_hop_id,
+                                  uint32_t now_ms,
                                   struct mesh_relay_result *result)
 {
     int ret;
@@ -3186,6 +3301,7 @@ static int add_gateway_ack_action(struct mesh_relay *relay,
                             payload,
                             payload_len,
                             previous_hop_id,
+                            now_ms,
                             &result->gateway_ack);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ACK;
@@ -3293,6 +3409,7 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
                             payload,
                             payload_len,
                             previous_hop_id,
+                            now_ms,
                             &result->gateway_ack);
     if (ret != PROTO_OK) {
         result->status = ret;
@@ -3309,20 +3426,19 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
         result->status = ret;
         return ret;
     }
-    if (packet->msg_type == MSG_COMMAND_RESULT &&
-        discovery_assignment_parse_result_tlvs(payload,
-                                               payload_len,
-                                               &assignment) == PROTO_OK &&
-        (assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
-         assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)) {
-        ret = gateway_ack_history_confirm_packet(relay,
-                                                 packet,
-                                                 payload,
-                                                 payload_len);
-        if (ret != PROTO_OK) {
-            result->status = ret;
-            return ret;
-        }
+    /*
+     * The gateway ACK is terminal: there is no end-to-end ACK_CONFIRM, so
+     * every retained identity is immediately a replaceable duplicate-detect
+     * tombstone rather than outstanding confirmation debt.
+     */
+    (void)assignment;
+    ret = gateway_ack_history_confirm_packet(relay,
+                                             packet,
+                                             payload,
+                                             payload_len);
+    if (ret != PROTO_OK) {
+        result->status = ret;
+        return ret;
     }
     duplicate_store_payload_identity(relay,
                                      packet,
@@ -3360,6 +3476,7 @@ static void add_hop_ack_action(struct mesh_relay *relay,
                                const uint8_t *payload,
                                size_t payload_len,
                                uint64_t previous_hop_id,
+                               uint32_t now_ms,
                                struct mesh_relay_result *result)
 {
     int ret;
@@ -3369,6 +3486,7 @@ static void add_hop_ack_action(struct mesh_relay *relay,
                         payload,
                         payload_len,
                         previous_hop_id,
+                        now_ms,
                         &result->hop_ack);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_HOP_ACK;
@@ -3494,6 +3612,10 @@ static int upsert_reactive_route(struct mesh_relay *relay,
         ret = route_upsert_candidate(&relay->upstream, &candidate);
         if (ret != PROTO_OK && rollback != NULL) {
             rollback->kind = REACTIVE_ROUTE_ROLLBACK_NONE;
+        }
+        if (ret == PROTO_OK) {
+            /* A freshly proven upstream lifts the poisoned depth. */
+            relay_clear_upstream_poison(relay);
         }
         return ret;
     }

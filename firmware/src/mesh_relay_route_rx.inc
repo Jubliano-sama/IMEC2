@@ -2080,7 +2080,8 @@ static int handle_route_reply(struct mesh_relay *relay,
     }
     if (relay->role == MESH_RELAY_ROLE_CLICKER &&
         packet->dst_id == relay->local_id &&
-        !relay_semantic_packet_digest(packet,
+        !relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       completed_reply_digest)) {

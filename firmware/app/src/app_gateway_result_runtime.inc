@@ -957,6 +957,25 @@ int gateway_command_result_rebind_command(
     return ret;
 }
 
+int gateway_command_result_terminal_command(
+    uint32_t token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    struct proto_packet *terminal_command)
+{
+    k_spinlock_key_t key =
+        k_spin_lock(&gateway_host_command_result_lock);
+    int ret = app_gateway_command_result_terminal_command(
+        &gateway_host_command_results,
+        token,
+        command,
+        command_id,
+        terminal_command);
+
+    k_spin_unlock(&gateway_host_command_result_lock, key);
+    return ret;
+}
+
 void gateway_command_result_release_ingress(uint32_t token)
 {
     k_spinlock_key_t key =
@@ -1034,6 +1053,19 @@ int gateway_command_result_rebind_command(
     ARG_UNUSED(command);
     ARG_UNUSED(command_id);
     ARG_UNUSED(result_command);
+    return -ENOTSUP;
+}
+
+int gateway_command_result_terminal_command(
+    uint32_t token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    struct proto_packet *terminal_command)
+{
+    ARG_UNUSED(token);
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(terminal_command);
     return -ENOTSUP;
 }
 
@@ -1331,8 +1363,9 @@ static int gateway_ble_accept_host_receipt(
         }
         return ret;
     }
-    mesh_gateway_host_receipt_ready();
-    return 0;
+    /* Mesh custody was already released at RAM admission; the receipt only
+     * retires the retained BLE stream head so the next record can drain. */
+    return gateway_ble_finish_host_delivery(&head_packet);
 }
 
 int gateway_ble_accept_host_receipt_frame(const uint8_t *frame,
@@ -2163,6 +2196,7 @@ int gateway_commit_host_command_result_reserved(
     enum command_status status,
     uint8_t reason)
 {
+    struct proto_packet terminal_command;
     struct proto_packet result = {0};
     uint8_t payload[APP_GATEWAY_COMMAND_RESULT_PAYLOAD_LEN];
     size_t payload_len = 0u;
@@ -2173,7 +2207,16 @@ int gateway_commit_host_command_result_reserved(
         return -EINVAL;
     }
 
-    ret = gateway_command_build_result(command,
+    ret = gateway_command_result_terminal_command(
+        result_reservation_token,
+        command,
+        command_id,
+        &terminal_command);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = gateway_command_build_result(&terminal_command,
                                        DEVICE_ID,
                                        command_id,
                                        status,
@@ -2193,7 +2236,7 @@ int gateway_commit_host_command_result_reserved(
     ret = app_gateway_command_result_commit(
         &gateway_host_command_results,
         result_reservation_token,
-        command,
+        &terminal_command,
         command_id,
         &result,
         payload,
@@ -2664,7 +2707,38 @@ bool gateway_assignment_publication_pending(void)
             gateway_membership_adoption_pending ||
             gateway_membership_publisher_activation_pending ||
             gateway_membership_publication_owner_release_pending ||
-            atomic_get(&gateway_assignment_publication_pending_state) != 0);
+           atomic_get(&gateway_assignment_publication_pending_state) != 0);
+}
+
+int gateway_assignment_publication_detach_rf_owner(
+    const struct gateway_command_event *terminal_event)
+{
+    struct app_gateway_assignment_publisher_diagnostics diagnostics;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || terminal_event == NULL ||
+        atomic_get(&gateway_assignment_publication_pending_state) == 0 ||
+        !gateway_membership_identity_matches_event(
+            &gateway_membership_assignment_identity, terminal_event)) {
+        return -ESTALE;
+    }
+
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    if (!diagnostics.active || !diagnostics.terminal_pending) {
+        return -EAGAIN;
+    }
+
+    /*
+     * capture_terminal() has frozen the complete host record in the existing
+     * publisher.  From this point publication receipt owns only that durable
+     * debt; keeping the physical RF singleton until BLE delivery would make
+     * a disconnected host block every later gateway operation.
+     *
+     * The operation may be a cold replay, in which case no pre-reset live
+     * owner exists and clearing the bits is deliberately idempotent.
+     */
+    gateway_membership_publication_live_owner = false;
+    gateway_membership_publication_owner_release_pending = false;
+    return 0;
 }
 
 int gateway_complete_assignment_publication(
@@ -3248,7 +3322,7 @@ int gateway_note_command_result(const struct proto_packet *packet,
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -ENOTSUP;
     }
-    if (received_radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
+    if (!mesh_channel_carries_reports(received_radio_channel)) {
         return -EBADMSG;
     }
     ARG_UNUSED(current_channel9_plan);
@@ -3515,7 +3589,7 @@ int gateway_note_command_result_bundle(const struct proto_packet *packet,
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -ENOTSUP;
     }
-    if (received_radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
+    if (!mesh_channel_carries_reports(received_radio_channel)) {
         return -EBADMSG;
     }
     ARG_UNUSED(current_channel9_plan);

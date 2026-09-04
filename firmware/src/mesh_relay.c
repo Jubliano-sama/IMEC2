@@ -217,16 +217,77 @@ static bool semantic_packet_digest_under_domain(
            semantic_digest_sha256_final(&context, digest);
 }
 
+static bool relay_digest_cache_matches(
+    const struct mesh_relay_digest_cache *cache,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    return cache->digest.valid &&
+           cache->msg_type == packet->msg_type &&
+           cache->flags == packet->flags &&
+           cache->src_id == packet->src_id &&
+           cache->dst_id == packet->dst_id &&
+           cache->session_id == packet->session_id &&
+           cache->seq == packet->seq &&
+           cache->payload_len == (uint16_t)payload_len &&
+           (payload_len == 0u ||
+            memcmp(cache->payload, payload, payload_len) == 0);
+}
+
+/*
+ * Digest the packet once per relay. Every committed field of the preimage is
+ * part of the memo key, so a hit is byte-identical to a recomputation; a miss
+ * simply hashes. The cache is a pure memo owned by the caller-serialized relay
+ * instance, so a const relay may still fill it.
+ */
 static bool relay_semantic_packet_digest(
+    const struct mesh_relay *relay,
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
     uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
-    return mesh_packet_semantic_digest(packet,
-                                       payload,
-                                       payload_len,
-                                       digest);
+    struct mesh_relay_digest_cache *cache;
+
+    if (relay == NULL || packet == NULL || digest == NULL ||
+        packet->payload_len != payload_len ||
+        payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
+        (payload_len != 0u && payload == NULL)) {
+        return mesh_packet_semantic_digest(packet,
+                                           payload,
+                                           payload_len,
+                                           digest);
+    }
+
+    cache = (struct mesh_relay_digest_cache *)&relay->digest_cache;
+    if (relay_digest_cache_matches(cache, packet, payload, payload_len)) {
+        memcpy(digest, cache->digest.sha, SEMANTIC_DIGEST_SHA256_LEN);
+        return true;
+    }
+    if (!mesh_packet_semantic_digest(packet,
+                                     payload,
+                                     payload_len,
+                                     digest)) {
+        return false;
+    }
+    if (payload_len > MESH_RELAY_DIGEST_CACHE_PAYLOAD_MAX) {
+        return true;
+    }
+    cache->digest.valid = false;
+    cache->msg_type = packet->msg_type;
+    cache->flags = packet->flags;
+    cache->src_id = packet->src_id;
+    cache->dst_id = packet->dst_id;
+    cache->session_id = packet->session_id;
+    cache->seq = packet->seq;
+    cache->payload_len = (uint16_t)payload_len;
+    if (payload_len != 0u) {
+        memcpy(cache->payload, payload, payload_len);
+    }
+    memcpy(cache->digest.sha, digest, SEMANTIC_DIGEST_SHA256_LEN);
+    cache->digest.valid = true;
+    return true;
 }
 
 static bool route_reply_semantic_commitment(
@@ -1181,10 +1242,38 @@ static void relay_diag_inc_u8(uint8_t *counter)
     }
 }
 
+static uint32_t ack_retry_backoff_base_ms(uint8_t failure_count)
+{
+    uint32_t base_ms = MESH_RELAY_ACK_RETRY_BACKOFF_BASE_MS;
+    uint8_t doublings = failure_count > 1u ? (uint8_t)(failure_count - 1u) : 0u;
+
+    while (doublings > 0u && base_ms < MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS) {
+        if (base_ms > MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS / 2u) {
+            base_ms = MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS;
+        } else {
+            base_ms *= 2u;
+        }
+        doublings--;
+    }
+    return base_ms;
+}
+
+/*
+ * Retransmit schedule after a missed gateway or parent-hop ACK.  The caller
+ * owns the randomness source (the native simulator feeds a fixed seed), so the
+ * result stays deterministic for a given (failure_count, random_value) pair.
+ */
 uint32_t mesh_relay_retry_backoff_ms(uint8_t failure_count, uint32_t random_value)
 {
-    return retry_jittered_delay_ms(route_retry_backoff_ms(failure_count),
-                                   random_value);
+    uint32_t base_ms = ack_retry_backoff_base_ms(failure_count);
+    uint32_t jitter_span_ms = base_ms / 2u;
+    uint32_t delay_ms = (base_ms - jitter_span_ms) +
+                        (random_value % ((jitter_span_ms * 2u) + 1u));
+
+    if (delay_ms > MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS) {
+        delay_ms = MESH_RELAY_ACK_RETRY_BACKOFF_CAP_MS;
+    }
+    return delay_ms;
 }
 
 uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
@@ -2184,6 +2273,7 @@ enum broadcast_command_replay_classification {
 
 static enum broadcast_command_replay_classification
 broadcast_command_replay_classify(
+    const struct mesh_relay *relay,
     const struct mesh_command_replay_window *window,
     uint32_t command_seq,
     const struct proto_packet *packet,
@@ -2206,7 +2296,8 @@ broadcast_command_replay_classify(
         if ((window->forwarded & UINT64_C(1)) == 0u) {
             return BROADCAST_COMMAND_REPLAY_NEW;
         }
-        if (!relay_semantic_packet_digest(packet,
+        if (!relay_semantic_packet_digest(relay,
+                                          packet,
                                           payload,
                                           payload_len,
                                           semantic_digest)) {
@@ -2236,6 +2327,7 @@ broadcast_command_replay_classify(
 }
 
 static int broadcast_command_replay_store(
+    const struct mesh_relay *relay,
     struct mesh_command_replay_window *window,
     uint32_t command_seq,
     const struct proto_packet *packet,
@@ -2247,7 +2339,8 @@ static int broadcast_command_replay_store(
     uint32_t age;
 
     if (window == NULL || command_seq == 0u ||
-        !relay_semantic_packet_digest(packet,
+        !relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       semantic_digest)) {
@@ -2329,17 +2422,21 @@ static bool broadcast_command_replay_rollback(
     return true;
 }
 
-static bool duplicate_matches_packet(const struct mesh_duplicate_entry *entry,
-                                     const struct proto_packet *packet,
-                                     const uint8_t *payload,
-                                     size_t payload_len)
+/*
+ * The session identity is a property of the packet, not of the cache entry, so
+ * callers resolve it once and reuse it across the whole duplicate cache. For a
+ * broadcast command or collection EACK it walks the payload TLVs, which used
+ * to happen once per cache slot on every scan.
+ */
+static bool duplicate_matches_identity(const struct mesh_duplicate_entry *entry,
+                                       const struct proto_packet *packet,
+                                       uint32_t session_identity)
 {
     if (!entry->valid ||
         entry->msg_type != packet->msg_type ||
         entry->src_id != packet->src_id ||
         entry->dst_id != packet->dst_id ||
-        entry->session_id !=
-            duplicate_session_identity(packet, payload, payload_len)) {
+        entry->session_id != session_identity) {
         return false;
     }
 
@@ -2601,10 +2698,40 @@ static uint8_t gateway_ack_history_ordinary_owner_count(
     const struct mesh_gateway_ack_store *store,
     uint8_t owner_index);
 
+/*
+ * Any mutation of the ACK history invalidates the "already swept at this
+ * timestamp" shortcut below. Callers that add, retire or reclassify an
+ * identity announce it here.
+ */
+static void gateway_ack_history_sweep_invalidate(struct mesh_relay *relay)
+{
+    if (relay != NULL) {
+        relay->gateway_ack_sweep_valid = false;
+    }
+}
+
+/*
+ * The sweep is a pure, idempotent function of (store contents, now_ms):
+ * running it twice without either input changing clears exactly the same
+ * entries the second time as the first, i.e. nothing. A single received packet
+ * used to run it four to six times (duplicate classify, duplicate store,
+ * ACK-history admission and ACK-history store each invoked it), so skipping
+ * the provably redundant repeats cannot let a lookup observe an entry that a
+ * full pass would have retired. Every mutation path clears the shortcut, and
+ * an unmutated store re-sweeps as soon as now_ms advances - well inside
+ * MESH_RELAY_SWEEP_INTERVAL_MS.
+ *
+ * The pass itself is now linear rather than quadratic: origin occupancy is
+ * accumulated while the identities are visited instead of re-scanning all
+ * MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY identities once per origin, which
+ * turned one sweep into 50 x 108 entry visits.
+ */
 static void gateway_ack_history_expire_stale(struct mesh_relay *relay,
                                              uint32_t now_ms)
 {
     struct mesh_gateway_ack_store *store;
+    uint8_t owner_occupied[(MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX + 7u) / 8u] =
+        {0};
 
     if (relay == NULL || relay->role != MESH_RELAY_ROLE_GATEWAY) {
         return;
@@ -2613,29 +2740,41 @@ static void gateway_ack_history_expire_stale(struct mesh_relay *relay,
     if (store == NULL) {
         return;
     }
+    if (relay->gateway_ack_sweep_valid &&
+        relay->gateway_ack_sweep_at_ms == now_ms) {
+        return;
+    }
     for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY; i++) {
         struct mesh_gateway_ack_identity_entry *identity =
             &store->identities[i];
+        uint8_t owner_index;
         bool semantic_identity;
 
-        if (!gateway_ack_identity_valid(identity) ||
-            (int32_t)(now_ms - identity->expires_at_ms) < 0) {
+        if (!gateway_ack_identity_valid(identity)) {
             continue;
         }
         semantic_identity =
             (identity->owner_state &
              GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) != 0u;
-        if (semantic_identity && i < MESH_RELAY_GATEWAY_ACK_CAPACITY) {
+        if ((int32_t)(now_ms - identity->expires_at_ms) >= 0 &&
+            !(semantic_identity && i < MESH_RELAY_GATEWAY_ACK_CAPACITY)) {
+            gateway_ack_identity_clear(store, i);
             continue;
         }
-        gateway_ack_identity_clear(store, i);
+        owner_index = gateway_ack_identity_owner_index(identity);
+        if (owner_index < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX) {
+            owner_occupied[owner_index / 8u] |=
+                (uint8_t)(1u << (owner_index % 8u));
+        }
     }
     for (uint8_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX; i++) {
         if (gateway_ack_origin_valid(store, i) &&
-            gateway_ack_history_owner_count(store, i) == 0u) {
+            (owner_occupied[i / 8u] & (uint8_t)(1u << (i % 8u))) == 0u) {
             gateway_ack_origin_clear(store, i);
         }
     }
+    relay->gateway_ack_sweep_at_ms = now_ms;
+    relay->gateway_ack_sweep_valid = true;
 }
 
 static uint8_t gateway_ack_history_origin_count(
@@ -2844,6 +2983,7 @@ int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
     }
 
     store = relay->gateway_ack_store;
+    gateway_ack_history_sweep_invalidate(relay);
     gateway_ack_history_expire_stale(relay, now_ms);
     origin_index = gateway_ack_history_find_origin_index(relay, candidate_id);
     if (origin_index >= 0) {
@@ -2913,6 +3053,7 @@ int mesh_relay_note_gateway_origin_reboot(struct mesh_relay *relay,
     }
 
     store = relay->gateway_ack_store;
+    gateway_ack_history_sweep_invalidate(relay);
     origin_index = gateway_ack_history_find_origin_index(relay, source_id);
     if (origin_index < 0) {
         return PROTO_OK;
@@ -2966,6 +3107,7 @@ int mesh_relay_reconcile_gateway_ack_membership(
     }
 
     store = relay->gateway_ack_store;
+    gateway_ack_history_sweep_invalidate(relay);
     for (uint8_t origin_index = 0u;
          origin_index < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX;
          origin_index++) {
@@ -3327,7 +3469,8 @@ static int gateway_ack_history_can_accept(
     if (!gateway_ack_history_applies(relay, packet)) {
         return PROTO_OK;
     }
-    if (!relay_semantic_packet_digest(packet,
+    if (!relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       semantic_digest)) {
@@ -3429,7 +3572,8 @@ static int gateway_ack_history_store(
         return PROTO_OK;
     }
     if (semantic_identity_valid &&
-        !relay_semantic_packet_digest(packet,
+        !relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       semantic_digest)) {
@@ -3445,6 +3589,7 @@ static int gateway_ack_history_store(
         return PROTO_ERR_NO_SPACE;
     }
     store = relay->gateway_ack_store;
+    gateway_ack_history_sweep_invalidate(relay);
     gateway_ack_history_expire_stale(relay, now_ms);
     batch_id_valid = batch_metadata.present;
     batch_id = batch_metadata.batch_id;
@@ -3583,7 +3728,8 @@ static int gateway_ack_history_confirm_packet(
         packet->payload_len != payload_len ||
         relay->role != MESH_RELAY_ROLE_GATEWAY ||
         relay->gateway_ack_store == NULL ||
-        !relay_semantic_packet_digest(packet,
+        !relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       semantic_digest)) {
@@ -3661,6 +3807,7 @@ static enum duplicate_classification duplicate_classify(
 {
     struct mesh_duplicate_entry *entry;
     bool require_gateway_history;
+    uint32_t session_identity;
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
 
     if (!duplicate_tracked(packet)) {
@@ -3668,7 +3815,8 @@ static enum duplicate_classification duplicate_classify(
     }
 
     require_gateway_history = gateway_ack_history_applies(relay, packet);
-    if (!relay_semantic_packet_digest(packet,
+    if (!relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       semantic_digest)) {
@@ -3679,9 +3827,10 @@ static enum duplicate_classification duplicate_classify(
         relay->gateway_ack_store == NULL) {
         return DUPLICATE_CLASS_NEW;
     }
+    session_identity = duplicate_session_identity(packet, payload, payload_len);
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
-        if (duplicate_matches_packet(entry, packet, payload, payload_len)) {
+        if (duplicate_matches_identity(entry, packet, session_identity)) {
             if (!entry->delivery_accepted) {
                 continue;
             }
@@ -3738,12 +3887,14 @@ static void duplicate_store(struct mesh_relay *relay,
                             uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry;
+    uint32_t session_identity;
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
 
     if (!duplicate_tracked(packet)) {
         return;
     }
-    if (!relay_semantic_packet_digest(packet,
+    if (!relay_semantic_packet_digest(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       semantic_digest)) {
@@ -3751,10 +3902,11 @@ static void duplicate_store(struct mesh_relay *relay,
     }
 
     duplicate_expire_stale(relay, now_ms);
+    session_identity = duplicate_session_identity(packet, payload, payload_len);
     entry = NULL;
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
-        if (duplicate_matches_packet(&relay->duplicates[i], packet,
-                                     payload, payload_len)) {
+        if (duplicate_matches_identity(&relay->duplicates[i], packet,
+                                       session_identity)) {
             if (packet->msg_type == MSG_GATEWAY_ACK_CONFIRM &&
                 relay->duplicates[i].semantic_identity_valid &&
                 !semantic_digest_equal(
@@ -3775,8 +3927,7 @@ static void duplicate_store(struct mesh_relay *relay,
     entry->msg_type = packet->msg_type;
     entry->src_id = packet->src_id;
     entry->dst_id = packet->dst_id;
-    entry->session_id = duplicate_session_identity(packet, payload,
-                                                   payload_len);
+    entry->session_id = session_identity;
     entry->last_seen_ms = now_ms;
     entry->busy_response_at_ms = 0u;
     entry->seq = packet->seq;
@@ -3806,6 +3957,7 @@ int mesh_relay_rollback_forward_admission(
     const struct mesh_relay_result *admission)
 {
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint32_t session_identity;
     bool rolled_back = false;
 
     if (relay == NULL || packet == NULL || admission == NULL ||
@@ -3821,12 +3973,15 @@ int mesh_relay_rollback_forward_admission(
             &relay->command_replay,
             duplicate_session_identity(packet, payload, payload_len));
     } else {
-        if (!relay_semantic_packet_digest(packet,
+        if (!relay_semantic_packet_digest(relay,
+                                          packet,
                                           payload,
                                           payload_len,
                                           semantic_digest)) {
             return PROTO_ERR_ARG;
         }
+        session_identity =
+            duplicate_session_identity(packet, payload, payload_len);
         for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
             struct mesh_duplicate_entry *entry = &relay->duplicates[i];
 
@@ -3835,8 +3990,7 @@ int mesh_relay_rollback_forward_admission(
                 entry->msg_type != packet->msg_type ||
                 entry->src_id != packet->src_id ||
                 entry->dst_id != packet->dst_id ||
-                entry->session_id !=
-                    duplicate_session_identity(packet, payload, payload_len) ||
+                entry->session_id != session_identity ||
                 entry->seq != packet->seq ||
                 !semantic_digest_equal(entry->semantic_digest,
                                        semantic_digest,
@@ -3859,14 +4013,16 @@ static bool duplicate_busy_response_due(struct mesh_relay *relay,
                                         uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry = NULL;
+    uint32_t session_identity;
 
     if (!duplicate_tracked(packet)) {
         return true;
     }
     duplicate_expire_stale(relay, now_ms);
+    session_identity = duplicate_session_identity(packet, payload, payload_len);
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
-        if (duplicate_matches_packet(&relay->duplicates[i], packet,
-                                     payload, payload_len)) {
+        if (duplicate_matches_identity(&relay->duplicates[i], packet,
+                                       session_identity)) {
             entry = &relay->duplicates[i];
             break;
         }
@@ -4379,8 +4535,31 @@ static void pending_set_deadlines(struct mesh_pending_tx *pending, uint32_t now_
 }
 
 
+/*
+ * Channel-5 delivery flow control lives after the route helpers it needs, but
+ * the custody receive path reacts to it first.
+ */
+struct mesh_relay_result;
+static int relay_handle_ack_flow_control(struct mesh_relay *relay,
+                                         const struct proto_packet *packet,
+                                         const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint64_t previous_hop_id,
+                                         uint32_t now_ms,
+                                         uint32_t random_value,
+                                         struct mesh_relay_result *result,
+                                         bool *handled);
+static void relay_ack_flow_control(const struct mesh_relay *relay,
+                                   uint32_t now_ms,
+                                   struct mesh_ack_flow_control *flow);
+static void relay_clear_upstream_poison(struct mesh_relay *relay);
+static struct route_candidate *relay_upstream_candidate_mutable(
+    struct mesh_relay *relay,
+    uint64_t next_hop_id);
+
 /* Implementation is split by responsibility but remains one translation unit. */
 #include "mesh_relay_custody.inc"
 #include "mesh_relay_route_rx.inc"
 #include "mesh_relay_routes.inc"
+#include "mesh_relay_flow.inc"
 #include "mesh_relay_delivery.inc"

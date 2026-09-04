@@ -4,7 +4,9 @@ import unittest
 
 from tools.gateway_gui.survey_timing import (
     ROUTE_FULL_WAVE_MS,
+    ROUTE_REFRESH_NOMINAL_MS,
     ROUTE_REFRESH_SCHEDULED_MS,
+    ROUTE_REFRESH_TERMINAL_MARGIN_MS,
     ScheduledPhaseEstimate,
     survey_control_delivery_ms,
     survey_enumeration_phase_ms,
@@ -16,13 +18,15 @@ from tools.gateway_gui.survey_timing import (
 
 
 class SurveyTimingTests(unittest.TestCase):
-    def test_route_refresh_releases_when_wave_reaches_depth_four(self) -> None:
-        self.assertEqual(ROUTE_REFRESH_SCHEDULED_MS, 20_000)
+    def test_route_refresh_countdown_includes_terminal_margin(self) -> None:
+        self.assertEqual(ROUTE_REFRESH_NOMINAL_MS, 20_000)
+        self.assertEqual(ROUTE_REFRESH_TERMINAL_MARGIN_MS, 3_000)
+        self.assertEqual(ROUTE_REFRESH_SCHEDULED_MS, 23_000)
         self.assertEqual(ROUTE_FULL_WAVE_MS, 45_150)
 
     def test_prearmed_enumeration_counts_only_overlap_tail_and_table(self) -> None:
-        self.assertEqual(survey_enumeration_phase_ms(1), 40_290)
-        self.assertEqual(survey_enumeration_phase_ms(8), 44_070)
+        self.assertEqual(survey_enumeration_phase_ms(1), 37_290)
+        self.assertEqual(survey_enumeration_phase_ms(8), 41_070)
 
     def test_neighbor_estimate_uses_depth_and_sparse_slot_span(self) -> None:
         self.assertEqual(survey_control_delivery_ms(3), 3_830)

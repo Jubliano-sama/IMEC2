@@ -258,6 +258,44 @@ static void test_two_unsent_sequential_terminals_do_not_overwrite(void)
     assert(replay.correlation_id == 5005u);
 }
 
+static void test_terminal_overflow_clears_stale_progress_snapshot(void)
+{
+    struct gateway_command_observability_state state;
+    struct gateway_command_event progress = sample_event(
+        GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
+        GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+        6006u);
+    struct gateway_command_event replay;
+
+    gateway_command_observability_init(&state);
+    assert(gateway_command_observability_prepare(
+               &state, &progress, false) == 0);
+    for (size_t i = 0u;
+         i < GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH;
+         i++) {
+        struct gateway_command_event terminal = sample_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+            (uint32_t)(7000u + i));
+
+        assert(gateway_command_observability_prepare(
+                   &state, &terminal, true) == 0);
+    }
+
+    struct gateway_command_event overflow = sample_event(
+        GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
+        GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+        6006u);
+
+    assert(gateway_command_observability_prepare(
+               &state, &overflow, true) == -ENOSPC);
+    assert(!gateway_command_observability_reconnect_snapshot(
+        &state, GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH, &replay));
+    assert(!gateway_command_observability_pending_snapshot(
+        &state, GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH, &replay));
+    assert(state.lost_event_count == 1u);
+}
+
 int main(void)
 {
     test_fixed_record_round_trip();
@@ -267,6 +305,7 @@ int main(void)
     test_sequential_and_concurrent_correlations_stay_distinct();
     test_durable_sequence_survives_runtime_reinitialization();
     test_two_unsent_sequential_terminals_do_not_overwrite();
+    test_terminal_overflow_clears_stale_progress_snapshot();
     puts("gateway command observability tests passed");
     return 0;
 }

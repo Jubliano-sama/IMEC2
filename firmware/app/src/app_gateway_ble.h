@@ -186,6 +186,11 @@ int gateway_commit_host_command_result_reserved(
     enum command_id command_id,
     enum command_status status,
     uint8_t reason);
+/* Transfer an exact completed assignment from the RF singleton to its
+ * already-captured bounded publisher custody.  Host receipt still retires
+ * publication debt, but no longer owns the physical operation lease. */
+int gateway_assignment_publication_detach_rf_owner(
+    const struct gateway_command_event *terminal_event);
 void gateway_command_result_set_dispatch_token(uint32_t token);
 uint32_t gateway_command_result_get_dispatch_token(void);
 int gateway_command_result_reserve_ingress(uint32_t *token);
@@ -196,6 +201,11 @@ int gateway_command_result_rebind_command(
     const struct proto_packet *command,
     enum command_id command_id,
     const struct proto_packet *result_command);
+int gateway_command_result_terminal_command(
+    uint32_t token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    struct proto_packet *terminal_command);
 void gateway_command_result_release_ingress(uint32_t token);
 void gateway_command_result_release_command(
     const struct proto_packet *command,
@@ -314,5 +324,7 @@ void gateway_command_result_tracking_init(void);
  * rejected while the shared mesh transport was paused.
  */
 void gateway_command_result_tracking_resume(void);
+
+uint16_t gateway_ble_stream_free_slots(void);
 
 #endif

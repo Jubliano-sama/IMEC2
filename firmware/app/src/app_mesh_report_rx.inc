@@ -315,6 +315,11 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
 #if DEVICE_ROLE == ROLE_ANCHOR
 static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
 {
+    if (mesh_c5_tx_bank_owned) {
+        report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        return;
+    }
+
     struct mesh_outbound route_failure_packet = {0};
     uint64_t timed_out_next_hop_id = 0u;
     uint8_t requeued = 0u;
@@ -655,7 +660,8 @@ static bool mesh_queue_from_frame_at_internal(
     uint64_t current_channel9_peer_id,
     bool submit_work,
     bool *valid_mesh_frame,
-    uint64_t *previous_hop_id)
+    uint64_t *previous_hop_id,
+    uint8_t *packet_flags_out)
 {
     struct mesh_frame_parse_context context = {0};
     struct mesh_rx_pending pending = {0};
@@ -663,6 +669,9 @@ static bool mesh_queue_from_frame_at_internal(
 
     if (valid_mesh_frame != NULL) {
         *valid_mesh_frame = false;
+    }
+    if (packet_flags_out != NULL) {
+        *packet_flags_out = 0u;
     }
     if (frame == NULL || frame_len == 0u) {
         return false;
@@ -740,6 +749,9 @@ static bool mesh_queue_from_frame_at_internal(
 #endif
     if (previous_hop_id != NULL) {
         *previous_hop_id = context.previous_hop_id;
+    }
+    if (packet_flags_out != NULL) {
+        *packet_flags_out = context.packet.flags;
     }
     if (radio_channel == UWB_CHANNEL_WAKE_CONTACT &&
         DEVICE_ROLE == ROLE_ANCHOR &&
@@ -943,7 +955,8 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                              current_channel9_peer_id,
                                              true,
                                              valid_mesh_frame,
-                                             previous_hop_id);
+                                             previous_hop_id,
+                                             NULL);
 }
 
 bool mesh_queue_from_frame(const uint8_t *frame,
@@ -984,7 +997,8 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                              0u,
                                              false,
                                              valid_mesh_frame,
-                                             previous_hop_id);
+                                             previous_hop_id,
+                                             NULL);
 }
 
 bool mesh_queue_from_frame_deferred_radio(const uint8_t *frame,
@@ -1008,7 +1022,8 @@ bool mesh_queue_from_frame_deferred_radio(const uint8_t *frame,
                                              0u,
                                              false,
                                              valid_mesh_frame,
-                                             previous_hop_id);
+                                             previous_hop_id,
+                                             NULL);
 }
 
 void mesh_submit_queued_rx(void)
@@ -1262,7 +1277,7 @@ static bool mesh_route_activation_allows_route_adv(
                                        received_at_ms);
     observed_sender_depth =
         (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL - ttl);
-    return entry != NULL &&
+    return entry == NULL ||
            entry->activation.sender_depth == observed_sender_depth;
 #endif
 }
@@ -2299,7 +2314,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             quality = 0u;
             rx_failure = DWM3000_RX_FAILURE_NONE;
             uwb_window_start_ms = k_uptime_get();
-            ret = dwm3000_driver_configure_mesh_payload_mode();
+            ret = dwm3000_driver_configure_wake_mesh_control_mode();
             mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
             if (ret == 0) {
                 ret = mesh_gateway_protocol_validation_arm(
@@ -2309,15 +2324,15 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 int rx_ret;
                 uint32_t rx_started_ms = k_uptime_get_32();
 
-                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                    status_debug_printf(
-                        "DBG_GATEWAY_CH9_RX_CONT_ARM now=%u rem=%u frames=%u errors=%u\n",
-                        rx_started_ms,
-                        remaining_ms,
-                        channel9_frames_seen,
-                        gateway_ch9_recoverable_rx_errors);
-                }
-
+                /* One line for the arm instant: this is both the slice
+                 * trace and the receive-to-rearm latency marker, and the
+                 * debug channel drops bursts when they are duplicated. */
+                status_debug_printf(
+                    "DBG_GWLAT_REARM at=%u rem=%u frames=%u errors=%u\n",
+                    rx_started_ms,
+                    remaining_ms,
+                    channel9_frames_seen,
+                    gateway_ch9_recoverable_rx_errors);
                 rx_ret = dwm3000_driver_receive_frame_continuous(
                     remaining_ms,
                     frame,
@@ -2326,19 +2341,41 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     &quality,
                     NULL,
                     &rx_failure);
-                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                {
                     struct dwm3000_rx_debug_snapshot dbg_snap;
 
                     dwm3000_driver_last_rx_debug_get(&dbg_snap);
-                    status_debug_printf(
-                        "DBG_GATEWAY_CH9_RX_CONT_RESULT start=%u end=%u ret=%d fail=%u status=0x%08x len=%u frames=%u\n",
-                        rx_started_ms,
-                        k_uptime_get_32(),
-                        rx_ret,
-                        (unsigned int)rx_failure,
-                        dbg_snap.status,
-                        (unsigned int)frame_len,
-                        channel9_frames_seen);
+                    /*
+                     * The driver absorbs foreign-frame PHY errors by
+                     * re-enabling the receiver inside this same window.  The
+                     * slice never saw those attempts, so account for them
+                     * here; otherwise a genuine storm would look quiet to the
+                     * re-init and recovery-yield safety nets.
+                     */
+                    if (dbg_snap.recoverable_rearms > 0u) {
+                        uint32_t absorbed = dbg_snap.recoverable_rearms;
+
+                        gateway_ch9_recoverable_rx_errors =
+                            (uint16_t)MIN((uint32_t)UINT16_MAX,
+                                          gateway_ch9_recoverable_rx_errors +
+                                              absorbed);
+                        recoverable_errors_in_slice =
+                            (uint16_t)MIN((uint32_t)UINT16_MAX,
+                                          recoverable_errors_in_slice +
+                                              absorbed);
+                    }
+                    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                        status_debug_printf(
+                            "DBG_GATEWAY_CH9_RX_CONT_RESULT start=%u end=%u ret=%d fail=%u status=0x%08x len=%u frames=%u rearm=%u\n",
+                            rx_started_ms,
+                            k_uptime_get_32(),
+                            rx_ret,
+                            (unsigned int)rx_failure,
+                            dbg_snap.status,
+                            (unsigned int)frame_len,
+                            channel9_frames_seen,
+                            (unsigned int)dbg_snap.recoverable_rearms);
+                    }
                 }
                 functional_rx_outcome =
                     app_mesh_rx_policy_dwm_attempt_made_progress(
@@ -2360,10 +2397,20 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                  * overlap.  The existing service guard is the acquisition
                  * bound, while the ordinary TX timeout preserves complete-
                  * frame containment at the edge of the lookahead.
+                 *
+                 * That re-arm is only worth its cost when a follower is
+                 * actually coming, because every lookahead window sits
+                 * directly in front of the ACK for the frame just queued.
+                 * The loop therefore continues only while the sender sets
+                 * FLAG_MORE_FOLLOWS; with the hint clear it queues one frame
+                 * and releases the radio, which is the single-report fast
+                 * path.  No sender sets the hint yet, so today this always
+                 * takes the one-frame exit.
                  */
                 while (true) {
                     bool valid_mesh_frame = false;
                     bool queued;
+                    uint8_t queued_packet_flags = 0u;
                     uint32_t batch_now_ms;
                     uint32_t batch_remaining_ms;
                     uint32_t batch_slice_remaining_ms;
@@ -2371,30 +2418,51 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 
                     channel9_frames_seen++;
                     status_debug_gateway_uwb_rx_channel_pulse(
-                        UWB_CHANNEL_MESH_PAYLOAD);
+                        UWB_CHANNEL_WAKE_CONTACT);
                     queued = mesh_queue_from_frame_at_internal(
                         frame,
                         frame_len,
                         quality,
                         0,
                         false,
-                        UWB_CHANNEL_MESH_PAYLOAD,
+                        UWB_CHANNEL_WAKE_CONTACT,
                         observed_packet_ms,
                         protocol_validation_token,
                         NULL,
                         0u,
                         false,
                         &valid_mesh_frame,
-                        NULL);
+                        NULL,
+                        &queued_packet_flags);
                     if (!queued) {
                         gateway_command_result_validation_release_reserved(
                             protocol_validation_token);
                     }
                     protocol_validation_token = 0u;
                     gateway_frame_batch_consumed = true;
+                    status_debug_printf("DBG_GWLAT_DECODE at=%u rx=%u q=%u fl=0x%02x more=%u\n",
+                                        k_uptime_get_32(),
+                                        observed_packet_ms,
+                                        queued ? 1u : 0u,
+                                        queued_packet_flags,
+                                        proto_packet_flags_more_follows(
+                                            queued_packet_flags) ? 1u : 0u);
 
                     if (dwm3000_driver_receive_abort_pending()) {
                         gateway_frame_batch_command_abort = true;
+                        break;
+                    }
+                    /*
+                     * Only hunt for a back-to-back follower when the sender
+                     * said one is coming.  An unset hint means this frame
+                     * stands alone, so releasing the radio now removes a
+                     * whole lookahead window from the receive-to-ACK path;
+                     * the sender's own retry clock covers the rare case of a
+                     * follower we chose not to wait for.
+                     */
+                    if (!queued ||
+                        !proto_packet_flags_more_follows(
+                            queued_packet_flags)) {
                         break;
                     }
                     if (k_msgq_num_used_get(&mesh_rx_msgq) >=
@@ -2461,6 +2529,10 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                         break;
                     }
                 }
+                status_debug_printf("DBG_GWLAT_HUNT_END at=%u frames=%u ret=%d\n",
+                                    k_uptime_get_32(),
+                                    channel9_frames_seen,
+                                    ret);
                 if (ret == 0 || ret == -ETIMEDOUT ||
                     app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
                         ret, rx_failure)) {
@@ -2471,7 +2543,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                         "gateway-ch9-frame-batch-hard-rx");
                 }
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                    status_debug_note("DBG_GATEWAY_CH9_RX_RELEASE_IDLE\n");
+                    status_debug_printf("DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=%u ret=%d\n",
+                                        k_uptime_get_32(),
+                                        parking_ret);
                 }
             } else if (ret == -ECANCELED) {
                 parking_ret = mesh_radio_idle_with_bounded_recovery(
@@ -2520,7 +2594,12 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             }
 
             if (gateway_frame_batch_consumed) {
+                /* This loop arms the receiver again as soon as the drain
+                 * returns, so the causal ACK inside it must not publish a
+                 * deferred role-scan rearm that can only fire later. */
+                mesh_inline_rx_rearm_owner_begin();
                 (void)mesh_process_queued_rx_at_gateway_rx_boundary();
+                mesh_inline_rx_rearm_owner_end();
             }
 
             if (ret != 0) {
@@ -2569,7 +2648,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                         status_debug_printf("DBG_GATEWAY_CH9_RX_STORM_REINIT errors=%u\n",
                                             gateway_ch9_recoverable_rx_errors);
                         (void)dwm3000_driver_force_recovery();
-                        (void)dwm3000_driver_configure_mesh_payload_mode();
+                        (void)dwm3000_driver_configure_wake_mesh_control_mode();
                     }
                     if (app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
                             recoverable_errors_in_slice)) {
@@ -2613,13 +2692,14 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     quality,
                     0,
                     false,
-                    UWB_CHANNEL_MESH_PAYLOAD,
+                    UWB_CHANNEL_WAKE_CONTACT,
                     observed_packet_ms,
                     protocol_validation_token,
                     NULL,
                     0u,
                     false,
                     &valid_mesh_frame,
+                    NULL,
                     NULL);
                 if (!queued) {
                     gateway_command_result_validation_release_reserved(
@@ -2639,7 +2719,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                  * leaving it queued makes the request repeatedly preempt the
                  * only proof that can stop those retries.
                  */
+                mesh_inline_rx_rearm_owner_begin();
                 (void)mesh_process_queued_rx_at_gateway_rx_boundary();
+                mesh_inline_rx_rearm_owner_end();
                 {
                     int priority_ret =
                         app_node_comm_gateway_delivery_safe_boundary();
@@ -2667,7 +2749,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                  * Drain this exact frame before rearming so its bounded
                  * validation lease cannot expire behind the receiver's own
                  * coordinator state. */
+                mesh_inline_rx_rearm_owner_begin();
                 (void)mesh_process_queued_rx_at_gateway_rx_boundary();
+                mesh_inline_rx_rearm_owner_end();
             }
         }
 
@@ -3662,18 +3746,6 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     app_node_comm_gateway_route_refresh_init(&route_refresh_config,
                                              (uint32_t)DEVICE_ID);
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
-#if DEVICE_ROLE == ROLE_GATEWAY
-    atomic_clear(&mesh_gateway_host_delivery_pending_state);
-    atomic_clear(&mesh_gateway_host_receipt_received_state);
-    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
-    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
-    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
-    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
-    mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
-    mesh_gateway_host_delivery_ack_valid = false;
-    k_work_init_delayable(&mesh_gateway_host_delivery_retry_work,
-                          mesh_gateway_host_delivery_retry_work_handler);
-#endif
     k_work_init_delayable(&mesh_uwb_rx_work, mesh_uwb_rx_work_handler);
     k_work_init(&mesh_uwb_rx_rearm_work, mesh_uwb_rx_rearm_work_handler);
     k_work_init_delayable(&mesh_node_comm_cancel_work,

@@ -860,7 +860,7 @@ static int run_lost_accept_exact_proposal_retry_case(void)
     owner_after_first_accept = responder_owner;
     timing_after_first_accept = accepted_timing;
 
-    CHECK(mesh_sim_run_until(&world, world.now_us + UINT64_C(1000000)) ==
+    CHECK(mesh_sim_run_until(&world, world.now_us + UINT64_C(1280000)) ==
           MESH_SIM_OK);
     CHECK(send_control_over_radio(
               &world, connection, proposer_index, MSG_MESH_EVENT_PROPOSE,
@@ -877,7 +877,8 @@ static int run_lost_accept_exact_proposal_retry_case(void)
         break;
     }
     CHECK(retry_propose_tx_us > first_propose_tx_us);
-    CHECK(retry_propose_tx_us - first_propose_tx_us <= UINT64_C(6000000));
+    CHECK(retry_propose_tx_us - first_propose_tx_us >= UINT64_C(1200000));
+    CHECK(retry_propose_tx_us - first_propose_tx_us <= UINT64_C(1360000));
     CHECK(mesh_relay_handle_rx_with_random(
               &world.roles[responder_index].relay,
               &proposer.proposal,
@@ -1030,7 +1031,7 @@ static int run_lost_accept_fresh_proposal_retry_case(void)
     }
 
     /* Model a lost ACCEPT and the later same-parent contact retry. */
-    CHECK(mesh_sim_run_until(&world, world.now_us + UINT64_C(1000000)) ==
+    CHECK(mesh_sim_run_until(&world, world.now_us + UINT64_C(1280000)) ==
           MESH_SIM_OK);
     retry_encoded_at_ms = (uint32_t)(world.now_us / 1000u);
     retry_session = first_session + 1u;

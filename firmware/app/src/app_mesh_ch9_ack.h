@@ -17,6 +17,9 @@
 #endif
 #define APP_MESH_CH9_ACK_RETRY_BASE_MS 50u
 #define APP_MESH_CH9_ACK_RETRY_BASE_MAX_MS 400u
+#define APP_MESH_CH9_ACK_SEND_FAILURE_MAX 8u
+#define APP_MESH_CH9_ACK_OWNER_LIFETIME_MS \
+    MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS
 
 struct app_mesh_ch9_tx_ack_entry {
     const struct mesh_outbound *outbound;
@@ -98,11 +101,13 @@ struct app_mesh_ch9_ack_batch {
         entries[APP_MESH_CH9_ACK_BATCH_ENTRY_MAX];
     uint64_t peer_id;
     uint32_t retry_not_before_ms;
+    uint32_t first_failure_at_ms;
     uint16_t retry_round;
     uint8_t count;
     bool valid;
     bool preserve_payload;
     bool retry_deferred;
+    bool failure_lifetime_started;
     uint8_t owner;
 };
 

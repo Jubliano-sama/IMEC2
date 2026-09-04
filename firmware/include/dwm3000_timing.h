@@ -23,6 +23,16 @@ extern "C" {
 #define DWM3000_TIMING_CH9_PAC_SYMBOLS 8u
 #define DWM3000_TIMING_CH5_SFD_TIMEOUT_SYMBOLS 4073u
 #define DWM3000_TIMING_CH9_SFD_TIMEOUT_SYMBOLS 1025u
+/*
+ * The channel-5 mesh-control PHY keeps the wake channel, codes and 16-symbol
+ * DW SFD but shortens the acquisition train: control frames only ever reach a
+ * receiver that is already listening, so the 4096-symbol preamble the
+ * duty-cycled sniffers need is pure airtime there.  Timeout derivation matches
+ * the driver: preamble + 1 SFD search symbol + SFD - PAC.
+ */
+#define DWM3000_TIMING_CH5_CONTROL_PREAMBLE_SYMBOLS 1024u
+#define DWM3000_TIMING_CH5_CONTROL_PAC_SYMBOLS 8u
+#define DWM3000_TIMING_CH5_CONTROL_SFD_TIMEOUT_SYMBOLS 1033u
 #define DWM3000_TIMING_IMMEDIATE_PREAMBLE_TIMEOUT_PAC 5u
 #define DWM3000_TIMING_DELAYED_PREAMBLE_TIMEOUT_PAC 0u
 #define DWM3000_TIMING_PHR_BITS 21u

@@ -101,6 +101,8 @@ static const char *mesh_c5_contact_purpose_name(uint8_t purpose)
         return "result_offer_grant";
     case C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION:
         return "channel9_timing_negotiation";
+    case C5_CONTACT_PURPOSE_UPLINK:
+        return "uplink";
     default:
         return "unknown";
     }
@@ -278,7 +280,7 @@ static uint32_t mesh_c5_exchange_duration_ms(uint8_t purpose)
     case C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD:
         return FLOOD_WAVE_MS + FLOOD_RELAY_BURST_MS + FLOOD_POST_ROOT_GUARD_MS;
     case C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION:
-        return MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS;
+        return MESH_EVENT_ACCEPT_REPLY_WAIT_MS;
     case C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT:
     case C5_CONTACT_PURPOSE_ROUTE_SOLICIT:
     case C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH:
@@ -468,10 +470,7 @@ static bool mesh_gateway_collection_recovery_receipt_c5_allowed(
 {
 #if DEVICE_ROLE == ROLE_GATEWAY
     return candidate != NULL &&
-           atomic_get(&mesh_gateway_host_delivery_pending_state) != 0 &&
-           atomic_get(&mesh_gateway_host_receipt_received_state) != 0 &&
-           mesh_gateway_host_delivery_semantic_acceptance ==
-               APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY &&
+           gateway_collection_recovery_active() &&
            gateway_collection_recovery_flood_matches(candidate);
 #else
     ARG_UNUSED(candidate);
@@ -487,11 +486,7 @@ static bool mesh_gateway_collection_recovery_receipt_c5_allowed(
 static bool mesh_gateway_collection_recovery_receipt_active(void)
 {
 #if DEVICE_ROLE == ROLE_GATEWAY
-    return atomic_get(&mesh_gateway_host_delivery_pending_state) != 0 &&
-           atomic_get(&mesh_gateway_host_receipt_received_state) != 0 &&
-           mesh_gateway_host_delivery_semantic_acceptance ==
-               APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY &&
-           gateway_collection_recovery_active();
+    return gateway_collection_recovery_active();
 #else
     return false;
 #endif
@@ -508,6 +503,7 @@ static bool mesh_c5_causal_response_candidate_valid(
 
     switch (candidate->packet.msg_type) {
     case MSG_MESH_HOP_ACK:
+    case MSG_GATEWAY_ACK:
     case MSG_ROUTE_REPLY:
     case MSG_ROUTE_REPLY_ACK:
     case MSG_RELAY_BUSY:
@@ -719,6 +715,37 @@ static void mesh_attach_paused_delivery_loss(struct mesh_outbound *out,
             reason == NULL ? "mesh" : reason);
 }
 
+/*
+ * Gateway depth this node would inherit by using next_hop_id, for the uplink
+ * trace only.  MESH_ROUTE_DEPTH_UNREACHABLE means the id is not a current
+ * upstream candidate (it is then either the gateway itself or stale).
+ */
+static uint8_t mesh_uplink_next_hop_depth(uint64_t next_hop_id)
+{
+    if (next_hop_id == GATEWAY_ID) {
+        return 0u;
+    }
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &mesh_runtime.upstream.candidates[i];
+
+        if (candidate->valid && candidate->next_hop_id == next_hop_id) {
+            return candidate->hop_count;
+        }
+    }
+    return MESH_ROUTE_DEPTH_UNREACHABLE;
+}
+
+/*
+ * Wake-train length for an uplink to a parent that is not known to be
+ * listening.  Sized from the live scan cadence rather than the compile-time
+ * default because the anchor scan interval is runtime-commandable.
+ */
+static uint32_t mesh_uplink_wake_train_ms(void)
+{
+    return MESH_UPLINK_WAKE_TRAIN_MS_FOR_INTERVAL(anchor_uwb_scan_interval_ms);
+}
+
 static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)
 {
     if (packet == NULL) {
@@ -726,6 +753,13 @@ static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)
     }
 
     switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_MESH_DATA:
+    case MSG_ROUTE_SOLICIT:
+        return C5_CONTACT_PURPOSE_UPLINK;
     case MSG_ROUTE_REQ:
         return C5_CONTACT_PURPOSE_ROUTE_SOLICIT;
     case MSG_ROUTE_REPLY:
@@ -2519,6 +2553,39 @@ static int mesh_schedule_tx_timeout(void)
                                       "tx-timeout");
 }
 
+static int mesh_ch9_ack_note_send_failure(uint64_t peer_id,
+                                          uint32_t now_ms,
+                                          uint32_t attempt_entropy,
+                                          uint32_t *delay_ms_out,
+                                          const char *reason)
+{
+    int ret = app_mesh_ch9_ack_table_note_send_failure(
+        &mesh_ch9_ack_table,
+        peer_id,
+        now_ms,
+        attempt_entropy,
+        delay_ms_out);
+
+    if (ret != PROTO_ERR_STALE) {
+        return ret;
+    }
+
+    if (mesh_forwarded_ack_event_repair_authorization.valid &&
+        mesh_forwarded_ack_event_repair_authorization.peer_id == peer_id) {
+        memset(&mesh_forwarded_ack_event_repair_authorization, 0,
+               sizeof(mesh_forwarded_ack_event_repair_authorization));
+    }
+    status_debug_printf(
+        "DBG_CH9_ACK_OWNER_EXPIRED peer=0x%llx reason=%s\n",
+        (unsigned long long)peer_id,
+        reason == NULL ? "send-failure-budget" : reason);
+    /* The upstream sender still owns the original reliable packet. A transit
+     * gateway ACK also remains represented by relay-core custody, whose exact
+     * timeout can now repair or retry without an immortal table slot. */
+    (void)mesh_schedule_tx_timeout();
+    return ret;
+}
+
 static bool mesh_defer_active_collection_result(const char *reason)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -3353,12 +3420,47 @@ static bool mesh_transport_paused(void)
     return atomic_get(&mesh_transport_paused_state) != 0;
 }
 
+/*
+ * A route solicit means some anchor holds gateway-bound data without a
+ * usable route.  One Here-I-Am wave repairs every anchor along the path, so
+ * the answer is rate-limited per wave rather than per solicit.
+ */
+#define MESH_ROUTE_SOLICIT_WAVE_MIN_INTERVAL_MS 60000u
+#define MESH_ROUTE_SOLICIT_WAVE_DELAY_MS 250u
+
+static void mesh_gateway_note_route_solicit(uint64_t src_id)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    static uint32_t last_solicit_wave_ms;
+    static bool last_solicit_wave_valid;
+    uint32_t now_ms = k_uptime_get_32();
+    int ret;
+
+    if (last_solicit_wave_valid &&
+        (uint32_t)(now_ms - last_solicit_wave_ms) <
+            MESH_ROUTE_SOLICIT_WAVE_MIN_INTERVAL_MS) {
+        status_debug_printf("DBG_GW_ROUTE_SOLICIT_RATE_LIMITED src=0x%llx\n",
+                            (unsigned long long)src_id);
+        return;
+    }
+    ret = app_node_comm_request_route_refresh(
+        MESH_ROUTE_SOLICIT_WAVE_DELAY_MS, "route-solicit", false);
+    status_debug_printf("DBG_GW_ROUTE_SOLICIT src=0x%llx ret=%d\n",
+                        (unsigned long long)src_id,
+                        ret);
+    if (ret >= 0 || ret == -EALREADY || ret == -EBUSY) {
+        last_solicit_wave_ms = now_ms;
+        last_solicit_wave_valid = true;
+    }
+#else
+    ARG_UNUSED(src_id);
+#endif
+}
+
 static bool mesh_gateway_host_receipt_priority_pending(void)
 {
 #if DEVICE_ROLE == ROLE_GATEWAY
-    return gateway_ble_host_receipt_ingress_pending() ||
-           (atomic_get(&mesh_gateway_host_delivery_pending_state) != 0 &&
-            atomic_get(&mesh_gateway_host_receipt_received_state) != 0);
+    return gateway_ble_host_receipt_ingress_pending();
 #else
     return false;
 #endif

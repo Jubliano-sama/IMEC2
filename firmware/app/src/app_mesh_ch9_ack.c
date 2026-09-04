@@ -4,6 +4,11 @@
 
 _Static_assert(APP_MESH_CH9_ACK_PEER_MAX == 2u,
                "ACK table must cover one upstream and one downstream peer");
+_Static_assert(APP_MESH_CH9_ACK_SEND_FAILURE_MAX > 0u,
+               "ACK send-failure ownership must be bounded");
+_Static_assert(APP_MESH_CH9_ACK_OWNER_LIFETIME_MS >=
+                   ROUTE_GATEWAY_ACK_TIMEOUT_MS,
+               "ACK owner must outlive one sender ACK wait");
 _Static_assert(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX * sizeof(uint32_t) <= UINT8_MAX,
                "ACK batch TLV lengths must fit in one byte");
 _Static_assert(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX <=
@@ -50,7 +55,7 @@ static int ack_single_semantic_identity(
 
     if (!ack_template_supported(ack) || identity == NULL ||
         ack->packet.payload_len != ack->payload_len ||
-        ack->payload_len != MESH_ACK_SINGLE_PAYLOAD_LEN) {
+        ack->payload_len < MESH_ACK_SINGLE_PAYLOAD_LEN) {
         return PROTO_ERR_ARG;
     }
     ret = tlv_find_unique(ack->payload,
@@ -171,7 +176,7 @@ static int ack_batch_reset_generated(
     }
     memset(batch, 0, sizeof(*batch));
     batch->template_ack = *ack;
-    batch->template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    batch->template_ack.radio_channel = ack->radio_channel;
     ret = mesh_append_requested_seq(batch->template_ack.payload,
                                     sizeof(batch->template_ack.payload),
                                     &payload_len,
@@ -179,6 +184,19 @@ static int ack_batch_reset_generated(
     if (ret != PROTO_OK) {
         memset(batch, 0, sizeof(*batch));
         return ret;
+    }
+    {
+        struct mesh_ack_flow_control flow;
+        ret = mesh_ack_flow_control_parse(&ack->packet, ack->payload,
+                                          ack->payload_len, &flow);
+        if (ret == PROTO_OK) {
+            ret = mesh_append_ack_flow_control(batch->template_ack.payload,
+                sizeof(batch->template_ack.payload), &payload_len, &flow);
+        }
+        if (ret != PROTO_OK) {
+            memset(batch, 0, sizeof(*batch));
+            return ret;
+        }
     }
     ret = ack_semantic_identity_append(batch->template_ack.payload,
                                        sizeof(batch->template_ack.payload),
@@ -466,7 +484,7 @@ static int ack_table_queue_forwarded_owned(
 
     memset(batch, 0, sizeof(*batch));
     batch->template_ack = *ack;
-    batch->template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    batch->template_ack.radio_channel = ack->radio_channel;
     batch->peer_id = ack->next_hop_id;
     batch->count = 1u;
     batch->valid = true;
@@ -518,7 +536,6 @@ int app_mesh_ch9_ack_table_build_peer(
     }
 
     *outbound = batch->template_ack;
-    outbound->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
     if (batch->preserve_payload) {
         return PROTO_OK;
     }
@@ -550,6 +567,19 @@ int app_mesh_ch9_ack_table_build_peer(
                                     batch->entries[0].seq);
     if (ret != PROTO_OK) {
         return ret;
+    }
+    {
+        struct mesh_ack_flow_control flow;
+        ret = mesh_ack_flow_control_parse(&batch->template_ack.packet,
+            batch->template_ack.payload, batch->template_ack.payload_len, &flow);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = mesh_append_ack_flow_control(outbound->payload,
+            sizeof(outbound->payload), &payload_len, &flow);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     ret = tlv_append_bytes(outbound->payload,
                            sizeof(outbound->payload),
@@ -668,8 +698,29 @@ int app_mesh_ch9_ack_table_note_send_failure(
         return PROTO_ERR_NOT_FOUND;
     }
 
+    if (!batch->failure_lifetime_started) {
+        batch->first_failure_at_ms = now_ms;
+        batch->failure_lifetime_started = true;
+    } else if (ack_retry_deadline_reached(
+                   now_ms,
+                   batch->first_failure_at_ms +
+                       APP_MESH_CH9_ACK_OWNER_LIFETIME_MS)) {
+        memset(batch, 0, sizeof(*batch));
+        if (delay_ms_out != NULL) {
+            *delay_ms_out = 0u;
+        }
+        return PROTO_ERR_STALE;
+    }
+
     if (batch->retry_round < UINT16_MAX) {
         batch->retry_round++;
+    }
+    if (batch->retry_round >= APP_MESH_CH9_ACK_SEND_FAILURE_MAX) {
+        memset(batch, 0, sizeof(*batch));
+        if (delay_ms_out != NULL) {
+            *delay_ms_out = 0u;
+        }
+        return PROTO_ERR_STALE;
     }
     shift = batch->retry_round == 0u ? 0u :
             (uint16_t)(batch->retry_round - 1u);

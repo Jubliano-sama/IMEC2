@@ -107,6 +107,54 @@ static void test_gateway_route_adv_does_not_require_wake_source_as_origin(void)
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
+static void test_parent_captures_child_uplink_after_wake(void)
+{
+    /*
+     * Channel 5 Delivery Protocol section 3/4: the frame a wake train was
+     * sent to collect is addressed onward to the gateway, so the parent's
+     * post-wake listener can only check the physical edge. Before this rule
+     * the listener dropped it as unrelated and no hop ACK was ever produced.
+     */
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_CLICK_REPORT,
+        .src_id = 0x9699122bd60a64e3ull,
+        .dst_id = 0x9999888877776666ull,
+        .previous_hop_id = 0x9699122bd60a64e3ull,
+        .target_id = 0x9699122bd60a64e3ull,
+        .local_id = 0x0f6d3a3bdac0f858ull,
+        .control_origin_id = 0x9999888877776666ull,
+        .uplink_capture_allowed = true,
+    };
+
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    assert(app_mesh_c5_route_capture_completes_uplink(state.msg_type));
+
+    /* Relayed transit custody and heartbeats travel the same edge. */
+    state.msg_type = MSG_MESH_DATA;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.msg_type = MSG_ANCHOR_HEARTBEAT;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.msg_type = MSG_CLICK_REPORT;
+
+    /* Only the peer this contact was opened for may hand over custody. */
+    state.previous_hop_id = 0x1111111111111111ull;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = state.target_id;
+
+    /* Never our own frame, never an unaddressed broadcast, never a
+     * gateway-command follow-up listener. */
+    state.previous_hop_id = state.local_id;
+    state.target_id = state.local_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = 0x9699122bd60a64e3ull;
+    state.target_id = 0x9699122bd60a64e3ull;
+    state.dst_id = MESH_BROADCAST_ID;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.dst_id = 0x9999888877776666ull;
+    state.uplink_capture_allowed = false;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+}
+
 static void test_route_reply_capture_does_not_duplicate_source_validation(void)
 {
     const struct app_mesh_c5_route_capture_state route_reply = {
@@ -393,7 +441,7 @@ static void test_channel5_control_phr_policy(void)
     assert(app_mesh_c5_control_uses_extended_phr(MSG_MESH_EVENT_ACCEPT,
                                                  103u,
                                                  125u));
-    assert(!app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY_ACK,
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY_ACK,
                                                   95u,
                                                   125u));
 }
@@ -964,6 +1012,7 @@ int main(void)
     test_route_capture_releases_receive_abort();
     test_gateway_route_adv_counts_as_route_capture();
     test_gateway_route_adv_does_not_require_wake_source_as_origin();
+    test_parent_captures_child_uplink_after_wake();
     test_route_reply_capture_does_not_duplicate_source_validation();
     test_route_reply_and_event_control_capture_rules();
     test_competing_route_request_yields_without_false_route_success();

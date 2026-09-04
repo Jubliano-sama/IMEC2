@@ -540,7 +540,41 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
     assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() == 0);
     assert(command_work.reschedule_calls == 1u);
     assert(command_work.last_queue == &priority_work_queue);
-    assert(receive_abort_clears == 0u);
+    assert(receive_abort_clears == 1u);
+}
+
+static void test_delayed_generation_cannot_clear_successor_abort(void)
+{
+    struct k_work_delayable first_work = {0};
+    struct k_work_delayable second_work = {0};
+    struct k_work_q priority_work_queue = {0};
+    const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
+        .gateway_role = true,
+        .priority_work_queue = &priority_work_queue,
+    };
+
+    receive_abort_requests = 0u;
+    receive_abort_clears = 0u;
+
+    assert(app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+               &first_work, 301u) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &first_work) == 0);
+    assert(receive_abort_requests == 1u);
+    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() == 0);
+    assert(first_work.reschedule_calls == 1u);
+    assert(receive_abort_clears == 1u);
+
+    /* A is now merely queued work.  B may claim the level bit only after A's
+     * clear completed under the arbiter lock, so no delayed A clear remains. */
+    assert(app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+               &second_work, 302u) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &second_work) == 0);
+    assert(receive_abort_requests == 2u);
+    assert(receive_abort_clears == 1u);
+    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() == 0);
+    assert(receive_abort_clears == 2u);
 }
 
 static void test_gateway_safe_boundary_pulls_delayed_owner_to_now(void)
@@ -1333,6 +1367,7 @@ static void test_broadcast_transport_retry_requires_explicit_semantic_commit(voi
 int main(void)
 {
     test_gateway_command_aborts_receive_before_priority_scheduling();
+    test_delayed_generation_cannot_clear_successor_abort();
     test_gateway_safe_boundary_pulls_delayed_owner_to_now();
     test_gateway_priority_contention_retires_only_frozen_generation();
     test_gateway_priority_retry_owner_rejection_cannot_orphan_generation();

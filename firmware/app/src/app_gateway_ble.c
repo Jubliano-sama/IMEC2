@@ -100,6 +100,17 @@ static struct k_spinlock gateway_command_seq_lock;
 static struct gateway_ble_stream_state gateway_ble_stream_state;
 static struct gateway_command_observability_state gateway_command_observability_state;
 static struct k_spinlock gateway_ble_stream_lock;
+
+uint16_t gateway_ble_stream_free_slots(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&gateway_ble_stream_lock);
+    uint16_t depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
+    uint16_t free_slots = depth < GATEWAY_BLE_STREAM_QUEUE_DEPTH ?
+                         GATEWAY_BLE_STREAM_QUEUE_DEPTH - depth : 0u;
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    return free_slots;
+}
+
 static struct k_spinlock gateway_command_observability_lock;
 #if DEVICE_ROLE == ROLE_GATEWAY
 /* RAM-only duplicate-receipt aid; no stream receipt history is persisted. */
@@ -336,6 +347,12 @@ int gateway_observe_command_event(struct gateway_command_event *event,
     }
     ret = gateway_observability_prepare_state(event, terminal);
     if (ret < 0) {
+        if (terminal) {
+            LOG_ERR("gateway terminal observability custody unavailable: kind=%u ret=%d",
+                    (unsigned int)event->kind,
+                    ret);
+            app_watchdog_stop_feeding();
+        }
         return ret;
     }
     return gateway_observability_enqueue_prepared(event);
@@ -2182,6 +2199,12 @@ int gateway_observe_command_event_if_available(
 
     ret = gateway_observability_prepare_state(event, terminal);
     if (ret < 0) {
+        if (terminal) {
+            LOG_ERR("gateway terminal observability custody unavailable: kind=%u ret=%d",
+                    (unsigned int)event->kind,
+                    ret);
+            app_watchdog_stop_feeding();
+        }
         return ret;
     }
     /* RAM custody is the acceptance boundary.  BLE disconnection or queue
