@@ -1,0 +1,50 @@
+{
+  "source_sha256": {
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/correlated_nlos_probe.py": "a96fb13012f23480d09cd824577663736f5a30eb4cb242016c181e9016e8b28e",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_nlos.py": "0ec53ba4e361aa2383cf01e5deed38097e056f8a568442847fdf58fb3fddde06",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/verify_nlos_recovery.py": "80f5a6024c3643a468b3a3ded2c1404b044feb2f7177f696308fd2549726f777"
+  },
+  "cases": [
+    "drawing_replay/1000/1.6",
+    "drawing_replay/1001/1.6",
+    "drawing_replay/1002/1.6",
+    "drawing_replay/1003/1.6",
+    "drawing_unseen/7000/1.6",
+    "relabelled/drawing_unseen/7000/1.6",
+    "drawing_unseen/7001/1.6",
+    "relabelled/drawing_unseen/7001/1.6",
+    "drawing_unseen/7002/1.6",
+    "relabelled/drawing_unseen/7002/1.6",
+    "drawing_unseen/7003/1.6",
+    "relabelled/drawing_unseen/7003/1.6",
+    "wall_unseen/0",
+    "wall_cap4/0",
+    "wall_unseen/1",
+    "wall_cap4/1",
+    "wall_unseen/2",
+    "wall_cap4/2",
+    "wall_unseen/3",
+    "wall_cap4/3",
+    "clean/0",
+    "clean_cap4/0",
+    "short_nlos/0",
+    "clean/1",
+    "clean_cap4/1",
+    "short_nlos/1",
+    "clean/2",
+    "clean_cap4/2",
+    "short_nlos/2",
+    "clean/3",
+    "clean_cap4/3",
+    "short_nlos/3",
+    "indistinguishable"
+  ],
+  "methods": "baseline,grouped,targeted,grouped_targeted",
+  "proximity_m": 3,
+  "angle_degrees": 20,
+  "rmse_gate_m": [
+    0.15,
+    0.5
+  ],
+  "discount_floor": 0.25
+}

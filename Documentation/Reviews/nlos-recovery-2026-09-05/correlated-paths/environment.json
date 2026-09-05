@@ -1,0 +1,15 @@
+{
+  "python": "3.13.11 (main, Jan 28 2026, 00:01:45) [Clang 21.1.4 ]",
+  "numpy": "2.4.4",
+  "scipy": "1.18.0",
+  "source_sha256": {
+    "tools/gateway_gui/anchor_geometry.py": "e4fce1fa308141f6706513639398579a6c9f01896bb9ebc56f30b335ad9bdff1",
+    "tools/gateway_gui/anchor_geometry_nlos.py": "0ec53ba4e361aa2383cf01e5deed38097e056f8a568442847fdf58fb3fddde06",
+    "tools/gateway_gui/anchor_geometry_connectivity.py": "ca7daa8ed91a65a553e3a60076c1ac7faf6e586413b2a15ec349424340b2310e",
+    "tools/gateway_gui/anchor_geometry_seeds.py": "3ed8d989f9063c6ae27d162b8459ff248bffa184487d0047a00e414005ff5cf1",
+    "tools/gateway_gui/anchor_geometry_visibility.py": "2885cf2668457110e4c40354dd59d28bd99ebeaf84239b83578a6d42fb825588",
+    "tools/gateway_gui/experiments/correlated_nlos_probe.py": "fc0e4c50f3983af3b0e3a55233136f16c097d6efb47256c7a7c80bcf6580aea3",
+    "tools/gateway_gui/experiments/verify_nlos_recovery.py": "80f5a6024c3643a468b3a3ded2c1404b044feb2f7177f696308fd2549726f777",
+    "tools/gateway_gui/experiments/recovered_nlos_probe.py": "9ad4632c18b53985ba07addb39abe151c89442cd0a2cdbff252873a43152e01d"
+  }
+}

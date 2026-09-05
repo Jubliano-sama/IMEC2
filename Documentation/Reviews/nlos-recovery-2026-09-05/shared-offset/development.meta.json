@@ -1,0 +1,40 @@
+{
+  "split": "development",
+  "methods": [
+    "baseline",
+    "shared_01",
+    "shared_03",
+    "shared_06",
+    "shared_03_full"
+  ],
+  "configs": {
+    "shared_01": [
+      0.1,
+      0.5
+    ],
+    "shared_03": [
+      0.3,
+      0.5
+    ],
+    "shared_06": [
+      0.6,
+      0.5
+    ],
+    "shared_03_full": [
+      0.3,
+      1.0
+    ]
+  },
+  "source_sha256": {
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/shared_bias_probe.py": "4bd24149dd99decc21df0e664fd9273e8297fa36bff6bb7328eeeb55450488e1",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/recovered_nlos_probe.py": "9ad4632c18b53985ba07addb39abe151c89442cd0a2cdbff252873a43152e01d",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/verify_nlos_recovery.py": "80f5a6024c3643a468b3a3ded2c1404b044feb2f7177f696308fd2549726f777",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry.py": "e4fce1fa308141f6706513639398579a6c9f01896bb9ebc56f30b335ad9bdff1",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_connectivity.py": "ca7daa8ed91a65a553e3a60076c1ac7faf6e586413b2a15ec349424340b2310e",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_seeds.py": "3ed8d989f9063c6ae27d162b8459ff248bffa184487d0047a00e414005ff5cf1",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_visibility.py": "2885cf2668457110e4c40354dd59d28bd99ebeaf84239b83578a6d42fb825588",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_weights.py": "976d01cdf00c947386bcf3f90fad773b5aee969f97136313098826e929823cb5",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_nlos.py": "0ec53ba4e361aa2383cf01e5deed38097e056f8a568442847fdf58fb3fddde06",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/protocol.py": "b64e938831dad94798c5cef5e7a174405eda38bf005b040791e22d9cabb5faf2"
+  }
+}

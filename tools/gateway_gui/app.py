@@ -144,6 +144,7 @@ from .protocol import (
     is_gateway_assignment_publisher_event,
 )
 from .survey_timing import (
+    PhaseTimingCalibration,
     ROUTE_REFRESH_SCHEDULED_MS,
     SURVEY_MAX_HOPS,
     ScheduledPhaseEstimate,
@@ -257,6 +258,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.gateway_id: int | None = None
         self._command_progress_text = ""
         self._scheduled_phase_estimate: ScheduledPhaseEstimate | None = None
+        self._phase_timing_calibration = PhaseTimingCalibration.for_user()
         self._topology_gateway_id: int | None = None
         self._topology_slot_span: int | None = None
         self._topology_deepest_hop = 0
@@ -988,9 +990,32 @@ class GatewayGui(GatewayDiagnosticsMixin):
             key,
             label,
             started_at,
-            duration_ms,
+            self._phase_calibration().duration_ms(key, duration_ms),
+            nominal_duration_ms=duration_ms,
         )
         self._update_scheduled_phase_progress(now=now)
+
+    def _phase_calibration(self) -> PhaseTimingCalibration:
+        calibration = getattr(self, "_phase_timing_calibration", None)
+        if calibration is None:
+            # Headless callers don't load or modify the user's preferences.
+            calibration = self._phase_timing_calibration = PhaseTimingCalibration()
+        return calibration
+
+    def _finish_scheduled_phase_estimate(
+        self, key: str, *, successful: bool, now: float | None = None
+    ) -> None:
+        estimate = getattr(self, "_scheduled_phase_estimate", None)
+        if estimate is None or estimate.key != key:
+            return
+        if successful:
+            finished_at = time.monotonic() if now is None else now
+            self._phase_calibration().observe(
+                key,
+                estimate.nominal_duration_ms or estimate.duration_ms,
+                round((finished_at - estimate.started_at) * 1000),
+            )
+        self._clear_scheduled_phase_estimate()
 
     def _clear_scheduled_phase_estimate(self) -> None:
         self._scheduled_phase_estimate = None
@@ -1019,7 +1044,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _scheduled_phase_text(self, snapshot: ScheduledPhaseSnapshot) -> str:
         if snapshot.elapsed:
             return (
-                f"{snapshot.label}: scheduled window elapsed; waiting for "
+                f"{snapshot.label}: estimated window elapsed; waiting for "
                 "terminal telemetry."
             )
         return (
@@ -1211,6 +1236,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 self.survey_model.observe_command_event(event)
             except SurveyStateError as exc:
                 self.survey_model.fail("enumeration", str(exc))
+                self._clear_scheduled_phase_estimate()
                 self._survey_chain_pending = False
                 self._survey_auto_all = False
                 self._survey_phase = "idle"
@@ -1307,6 +1333,18 @@ class GatewayGui(GatewayDiagnosticsMixin):
                             "did not complete with one exact slot/hop record "
                             "for every anchor.",
                         )
+        if event.terminal:
+            phase_key = {1: "enumeration", 3: "routes"}.get(event.command_kind)
+            if phase_key is not None:
+                self._finish_scheduled_phase_estimate(
+                    phase_key,
+                    successful=(
+                        event.command_status == 0
+                        and event.reason == 0
+                        and event.failure_count == 0
+                        and not (event.flags & 0x04)
+                    ),
+                )
         self._update_command_state()
 
     def _start_survey_after_enumeration(self) -> None:
@@ -1536,6 +1574,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     f"{controlling_command} acceptance"
                 )
             elif len(self._survey_event_buffer) >= 16:
+                self._clear_scheduled_phase_estimate()
                 self.survey_model.fail(
                     controlling_step,
                     "Survey event buffer exceeded 16 reliable records before "
@@ -1564,6 +1603,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 SURVEY_EVENT_PLAN_ACCEPTED: "plan",
             }.get(event.kind, "ranging")
             self.survey_model.fail(step, str(exc))
+            self._clear_scheduled_phase_estimate()
             self._survey_auto_all = False
             self._survey_phase = "idle"
             self._show_error(f"Survey state conflict: {exc}")
@@ -1574,7 +1614,15 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_assignment = self.survey_model.assignment
         self._survey_results = dict(self.survey_model.results)
         if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
-            self._clear_scheduled_phase_estimate()
+            self._finish_scheduled_phase_estimate(
+                "neighbors",
+                successful=(
+                    event.status == SURVEY_TERMINAL_COMPLETE
+                    and event.partial_reasons == 0
+                    and len(event.neighbor_reports) == len(event.occupied_slots)
+                ),
+                now=observed_at,
+            )
             self._survey_phase = "planning"
             degree_cap = self.survey_max_degree_text.get().strip()
             plan_label = {
@@ -1622,11 +1670,17 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         elif event.kind == SURVEY_EVENT_RANGE_PROGRESS:
             self._survey_phase = "ranging"
+            self._finish_received_range_countdown(
+                now=observed_at, successful=event.status == SURVEY_TERMINAL_COMPLETE,
+            )
             self.status_text.set(
                 f"Survey ranging: {len(self._survey_results)}/"
                 f"{len(self._survey_pairs)} pair results received."
             )
         elif event.kind == SURVEY_EVENT_BATCH_COMPLETE:
+            self._finish_received_range_countdown(
+                now=observed_at, successful=event.status == SURVEY_TERMINAL_COMPLETE,
+            )
             self._clear_scheduled_phase_estimate()
             self._survey_batch_cursor += 1
             self._survey_phase = "planning"
@@ -1643,6 +1697,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 )
             )
         elif event.kind == SURVEY_EVENT_TERMINAL:
+            if event.status == SURVEY_TERMINAL_COMPLETE:
+                self._finish_received_range_countdown(now=observed_at)
             self._clear_scheduled_phase_estimate()
             usable = sum(
                 result.usable for result in self._survey_results.values()
@@ -1691,6 +1747,29 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._refresh_survey_view()
         self._update_command_state()
         return True
+
+    def _finish_received_range_countdown(
+        self, *, now: float, successful: bool = True
+    ) -> None:
+        """Pair collection ends when all current-batch results are in the model.
+
+        Keep waiting for the terminal event in the operation owner; its cleanup
+        and safety deadlines are separate from this visible result countdown.
+        """
+        model = self.survey_model
+        total = len(model.batch_plan_pairs)
+        results = [model.results.get(index) for index in range(
+            model.batch_plan_offset, model.batch_plan_offset + total,
+        )]
+        if total and all(result is not None for result in results):
+            self._finish_scheduled_phase_estimate(
+                "ranging",
+                successful=(
+                    successful and not model.partial_reasons
+                    and all(result is not None and result.usable for result in results)
+                ),
+                now=now,
+            )
 
     def _commit_buffered_survey_packet(self, packet: Packet) -> None:
         """Commit and receipt an early event only after its semantic apply."""
@@ -2316,6 +2395,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             and state not in ("connecting", "reconnecting")
             and hasattr(self, "command_orchestrator")
         ):
+            self._clear_scheduled_phase_estimate()
             self._survey_auto_all = False
             self._apply_gateway_command_transition(
                 self.command_orchestrator.disconnect()

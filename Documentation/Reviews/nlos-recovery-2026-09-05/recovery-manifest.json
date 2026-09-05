@@ -1,0 +1,110 @@
+[
+  {
+    "source": "/tmp/nlos_probe/drawing.csv",
+    "archive_path": "prototype/drawing.csv",
+    "sha256": "d70c8e4bf0e1af72198f41e3a60678c8c28934f8f5e5537ceae005846e4e006f",
+    "bytes": 261435
+  },
+  {
+    "source": "/tmp/nlos_probe/drawing_asym2.csv",
+    "archive_path": "prototype/drawing_asym2.csv",
+    "sha256": "1895f2e42a868989caa23b69bff9cde0ff5aa4c373adbb6bf51a42c1a3122836",
+    "bytes": 663684
+  },
+  {
+    "source": "/tmp/nlos_probe/drawing_gnc.csv",
+    "archive_path": "prototype/drawing_gnc.csv",
+    "sha256": "348a9fbe00556e4a1898955501e5a315858b17b1564878889e83b2b0a5784749",
+    "bytes": 128553
+  },
+  {
+    "source": "/tmp/nlos_probe/drawing_hetero.csv",
+    "archive_path": "prototype/drawing_hetero.csv",
+    "sha256": "956814487554ad379d42b982ade59d22f3cfac778f6acb159dfa95e4153dee34",
+    "bytes": 397282
+  },
+  {
+    "source": "/tmp/nlos_probe/drawing_hetero2.csv",
+    "archive_path": "prototype/drawing_hetero2.csv",
+    "sha256": "1a311a82f5c363cee586f33f0d5a21aaf456ce0916e2926957d7f1cf0bef978a",
+    "bytes": 330960
+  },
+  {
+    "source": "/tmp/nlos_probe/drawing_scan.csv",
+    "archive_path": "prototype/drawing_scan.csv",
+    "sha256": "e8e88206446c1f12d1473b527a811e82ab4d1b3a6aa62bf6d48c394a94aa5dd9",
+    "bytes": 846883
+  },
+  {
+    "source": "/tmp/nlos_probe/drawing_scene.png",
+    "archive_path": "prototype/drawing_scene.png",
+    "sha256": "7f20770d42e76c495c040220d9b860e0ff569fd7e081ed68a68e23c81d682ded",
+    "bytes": 118060
+  },
+  {
+    "source": "/tmp/nlos_probe/family.csv",
+    "archive_path": "prototype/family.csv",
+    "sha256": "edd8151bc167fad7dbf2d029cd03f51e72a535d06e91a7d9cfb37f7b453b3370",
+    "bytes": 2416180
+  },
+  {
+    "source": "/tmp/nlos_probe/family.log",
+    "archive_path": "prototype/family.log",
+    "sha256": "c2c7f980017a93488b9c8da1ad36bcd7b63dd869028b6d098a767cfe846918f8",
+    "bytes": 26813
+  },
+  {
+    "source": "/tmp/nlos_probe/family2.csv",
+    "archive_path": "prototype/family2.csv",
+    "sha256": "0a32ec82e04dfc2badd5fda4e09778379b86fdda715d6662ac6baa74af6a44b7",
+    "bytes": 845569
+  },
+  {
+    "source": "/tmp/nlos_probe/family2.log",
+    "archive_path": "prototype/family2.log",
+    "sha256": "ba5b31fbee3e259c78c35c1f6bf04a25e03afa3d554b0b5bba32efa434b5c194",
+    "bytes": 8976
+  },
+  {
+    "source": "/tmp/nlos_probe/figure.py",
+    "archive_path": "prototype/figure.py",
+    "sha256": "9e899b14853da5366519bdce38e2e18cd9f13149ee916cec88082c7e5c2f0348",
+    "bytes": 5351
+  },
+  {
+    "source": "/tmp/nlos_probe/probe.py",
+    "archive_path": "prototype/probe.py",
+    "sha256": "36c4545ab15a172e5d9d69492f3ecb8271911123bcc9d8dd50215d064479da58",
+    "bytes": 29911
+  },
+  {
+    "source": "/tmp/nlos_probe/rescore.py",
+    "archive_path": "prototype/rescore.py",
+    "sha256": "bd5260c122e928d869f20e294bc91703f5695d6c235ea958514b062b409e37a3",
+    "bytes": 2201
+  },
+  {
+    "source": "/tmp/nlos_probe/search_exp.py",
+    "archive_path": "prototype/search_exp.py",
+    "sha256": "f2b04427e54bb657f75a39333ca7047706811dfeb202f93e2acbc5da68da228c",
+    "bytes": 5105
+  },
+  {
+    "source": "/tmp/nlos_probe/smoke.csv",
+    "archive_path": "prototype/smoke.csv",
+    "sha256": "5018dbe79dc0f4e07d8ed5e38dad1624feb4819226b7156fbb00303dfcfe3963",
+    "bytes": 5989
+  },
+  {
+    "source": "/home/tommie/.t3/worktrees/IMEC2/t3code-14f7b03f/docs/superpowers/specs/2026-09-05-nlos-one-sided-solver-design.md",
+    "archive_path": "design/2026-09-05-nlos-one-sided-solver-design.md",
+    "sha256": "5fd0aaadc0291c41e8739d8795a6cb6f56a1607ab94a7f4a0e029c1be2d032d1",
+    "bytes": 10708
+  },
+  {
+    "source": "/home/tommie/.t3/worktrees/IMEC2/t3code-14f7b03f/docs/superpowers/plans/2026-09-05-nlos-one-sided-solver.md",
+    "archive_path": "design/2026-09-05-nlos-one-sided-solver.md",
+    "sha256": "9c58715663eb0b36eac0df15df86e79b508e0aa4b1a83afc785c5e702f7e1226",
+    "bytes": 48339
+  }
+]

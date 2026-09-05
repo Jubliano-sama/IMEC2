@@ -1,4 +1,4 @@
-"""Host-side estimates for the firmware's fixed survey radio schedules.
+"""Adaptive host-side estimates based on the firmware's survey radio schedules.
 
 These estimates drive display only.  Reaching zero never expires an operation;
 the command and survey owners keep using their independent safety deadlines.
@@ -9,6 +9,11 @@ Keep the constants here aligned with ``mesh_relay.h``, ``survey.h``, and
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import math
+import os
+from pathlib import Path
+import tempfile
 
 
 SURVEY_MAX_HOPS = 8
@@ -162,6 +167,7 @@ class ScheduledPhaseEstimate:
     label: str
     started_at: float
     duration_ms: int
+    nominal_duration_ms: int | None = None
 
     def __post_init__(self) -> None:
         if not self.key or not self.label:
@@ -177,3 +183,93 @@ class ScheduledPhaseEstimate:
             self.duration_ms,
             elapsed_ms,
         )
+
+
+class PhaseTimingCalibration:
+    """Small, persisted corrections to display estimates, never radio deadlines.
+
+    Keep the topology-derived schedule as the baseline. Successful observations
+    learn its additive error (first sample directly, then a 35% moving average).
+    Bound corrections to five minutes and each displayed duration to 10%..200%
+    of its baseline, so a previous topology or delayed BLE delivery cannot make
+    the next estimate nonsensical. Aborts and incomplete results aren't samples.
+    """
+
+    PHASES = frozenset({"routes", "enumeration", "neighbors", "ranging"})
+    MAX_OFFSET_MS = 300_000
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
+        self.offsets_ms: dict[str, float] = {}
+        if path is not None:
+            try:
+                if path.stat().st_size > 4096:
+                    return
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or data.get("version") != 1:
+                    return
+                offsets = data.get("offsets_ms")
+                if not isinstance(offsets, dict):
+                    return
+                for key, value in offsets.items():
+                    if (
+                        key in self.PHASES
+                        and type(value) in (int, float)
+                        and math.isfinite(value)
+                        and abs(value) <= self.MAX_OFFSET_MS
+                    ):
+                        self.offsets_ms[key] = float(value)
+            except (OSError, ValueError, OverflowError):
+                pass
+
+    @classmethod
+    def for_user(cls) -> PhaseTimingCalibration:
+        return cls(
+            Path.home() / ".config" / "imec2-gateway-gui" / "survey-timing.json"
+        )
+
+    def duration_ms(self, key: str, nominal_ms: int) -> int:
+        return round(max(
+            1, nominal_ms * 0.1,
+            min(nominal_ms * 2, nominal_ms + self.offsets_ms.get(key, 0.0)),
+        ))
+
+    def observe(self, key: str, nominal_ms: int, actual_ms: int) -> bool:
+        if (
+            key not in self.PHASES or nominal_ms <= 0 or actual_ms <= 0
+            or not math.isfinite(actual_ms)
+        ):
+            return False
+        error = max(-self.MAX_OFFSET_MS, min(
+            self.MAX_OFFSET_MS, actual_ms - nominal_ms,
+        ))
+        previous = self.offsets_ms.get(key)
+        self.offsets_ms[key] = (
+            float(error) if previous is None else previous + 0.35 * (error - previous)
+        )
+        self._save()
+        return True
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        temporary: str | None = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.path.parent,
+                prefix=".survey-timing-", delete=False,
+            ) as handle:
+                temporary = handle.name
+                json.dump({"version": 1, "offsets_ms": self.offsets_ms}, handle)
+            os.replace(temporary, self.path)
+        except OSError:
+            # An unwritable preferences directory must not interrupt a survey;
+            # the calibration remains usable for this GUI session.
+            pass
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass

@@ -75,12 +75,14 @@ def solve_anchor_layout(
     random_seed: int = 1337,
     min_sigma_m: float = 0.02,
     min_distance_m: float = 0.05,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
 ) -> AnchorLayoutResult:
     """Solve anchor coordinates from pair distances.
 
     Distances only constrain shape, so the result is arbitrary up to
     translation, rotation, and mirror reflection. The returned layout is
-    canonicalized with the first two sorted anchor IDs on the same Y coordinate.
+    canonicalized with the first two sorted anchor IDs on the same Y coordinate,
+    unless fixed positions supply the coordinate frame.
     """
 
     processed = _preprocess_pairs(
@@ -92,7 +94,7 @@ def solve_anchor_layout(
     _validate_connected(anchor_ids, processed)
 
     scale = _layout_scale(processed)
-    parameterization = _Parameterization(anchor_ids)
+    parameterization = _Parameterization(anchor_ids, fixed_positions_m)
     rng = random.Random(random_seed)
     initial_seeds = _initial_parameters(
         parameterization,
@@ -148,7 +150,8 @@ def solve_anchor_layout(
         raise ValueError("Could not solve anchor layout.")
 
     positions = parameterization.to_positions(best_params)
-    positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
+    if not parameterization.fixed_positions_m:
+        positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
     residuals = pair_residuals(positions, processed)
     rmse = _rmse(residuals.values())
     max_residual = max((abs(value) for value in residuals.values()), default=0.0)
@@ -172,6 +175,7 @@ def refine_anchor_layout_from_seed(
     seed_positions_m: dict[str, tuple[float, float]],
     *,
     max_iterations: int = 200,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
 ) -> AnchorLayoutResult:
     """Refine one solved layout against measured pair distances only.
 
@@ -188,24 +192,21 @@ def refine_anchor_layout_from_seed(
     _validate_connected(anchor_ids, processed)
     if set(seed_positions_m) != set(anchor_ids):
         raise ValueError("Seed layout does not match the measured anchor set.")
-    seed = rotate_layout_to_level(
-        seed_positions_m,
-        anchor_ids[0],
-        anchor_ids[1],
+    parameterization = _Parameterization(anchor_ids, fixed_positions_m)
+    seed = seed_positions_m if parameterization.fixed_positions_m else rotate_layout_to_level(
+        seed_positions_m, anchor_ids[0], anchor_ids[1],
     )
-    parameterization = _Parameterization(anchor_ids)
     params, energy = _local_minimize(
         _positions_to_params(parameterization, seed),
         parameterization,
         processed,
         max_iterations=max_iterations,
     )
-    positions = rotate_layout_to_level(
-        parameterization.to_positions(params),
-        anchor_ids[0],
-        anchor_ids[1],
-    )
+    positions = parameterization.to_positions(params)
+    if not parameterization.fixed_positions_m:
+        positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
     positions = _clean_positions(positions)
+    positions.update(parameterization.fixed_positions_m)
     residuals = pair_residuals(positions, processed)
     rmse = _rmse(residuals.values())
     max_residual = max((abs(value) for value in residuals.values()), default=0.0)
@@ -227,7 +228,7 @@ def pair_residuals(
     positions_m: dict[str, tuple[float, float]],
     pairs: Iterable[ProcessedAnchorPair | AnchorPairDistance],
 ) -> dict[str, float]:
-    """Return signed measured-minus-model residuals for each pair."""
+    """Return signed model-minus-measured residuals for each pair."""
 
     residuals: dict[str, float] = {}
     for pair in pairs:
@@ -472,16 +473,29 @@ def _layout_scale(pairs: list[ProcessedAnchorPair]) -> float:
 
 
 class _Parameterization:
-    def __init__(self, anchor_ids: list[str]) -> None:
+    def __init__(
+        self,
+        anchor_ids: list[str],
+        fixed_positions_m: dict[str, tuple[float, float]] | None = None,
+    ) -> None:
         self.anchor_ids = anchor_ids
+        self.fixed_positions_m = dict(fixed_positions_m or {})
+        unknown = self.fixed_positions_m.keys() - set(anchor_ids)
+        if unknown:
+            raise ValueError(f"Locked anchors have no selected ranges: {', '.join(sorted(unknown))}.")
+        for position in self.fixed_positions_m.values():
+            if len(position) != 2 or not all(math.isfinite(value) for value in position):
+                raise ValueError("Locked anchor coordinates must be finite 2D positions.")
         self.variable_index: dict[tuple[str, str], int] = {}
         index = 0
         for anchor_position, anchor_id in enumerate(anchor_ids):
-            if anchor_position == 0:
+            if anchor_id in self.fixed_positions_m:
+                continue
+            if not self.fixed_positions_m and anchor_position == 0:
                 continue
             self.variable_index[(anchor_id, "x")] = index
             index += 1
-            if anchor_position > 1:
+            if self.fixed_positions_m or anchor_position > 1:
                 self.variable_index[(anchor_id, "y")] = index
                 index += 1
         self.dimension = index
@@ -489,7 +503,10 @@ class _Parameterization:
     def to_positions(self, params: list[float]) -> dict[str, tuple[float, float]]:
         positions: dict[str, tuple[float, float]] = {}
         for anchor_position, anchor_id in enumerate(self.anchor_ids):
-            if anchor_position == 0:
+            if anchor_id in self.fixed_positions_m:
+                positions[anchor_id] = self.fixed_positions_m[anchor_id]
+                continue
+            if not self.fixed_positions_m and anchor_position == 0:
                 positions[anchor_id] = (0.0, 0.0)
                 continue
             x_index = self.variable_index[(anchor_id, "x")]
@@ -594,6 +611,7 @@ def _positions_to_params(
     parameterization: _Parameterization,
     positions: dict[str, tuple[float, float]],
 ) -> list[float]:
+    positions = _align_seed_to_fixed_positions(positions, parameterization.fixed_positions_m)
     params = [0.0] * parameterization.dimension
     for anchor_id, (x_m, y_m) in positions.items():
         x_index = parameterization.derivative_index(anchor_id, "x")
@@ -603,6 +621,45 @@ def _positions_to_params(
         if y_index is not None:
             params[y_index] = y_m
     return params
+
+
+def _align_seed_to_fixed_positions(
+    positions: dict[str, tuple[float, float]],
+    fixed: dict[str, tuple[float, float]],
+) -> dict[str, tuple[float, float]]:
+    """Rigidly register a relative seed to the locks, allowing reflection.
+
+    This only prepares an initial guess; locked coordinates themselves never
+    enter the optimizer's variables. A current layout already matching the
+    locks is left untouched, including its orientation with just one lock.
+    """
+    if not fixed or all(positions[key] == point for key, point in fixed.items()):
+        return positions
+    count = len(fixed)
+    sx = sum(positions[key][0] for key in fixed) / count
+    sy = sum(positions[key][1] for key in fixed) / count
+    tx = sum(point[0] for point in fixed.values()) / count
+    ty = sum(point[1] for point in fixed.values()) / count
+    best = positions
+    best_error = math.inf
+    for reflection in (1.0, -1.0):
+        dot = cross = 0.0
+        for key, (fx, fy) in fixed.items():
+            x, y = positions[key]
+            x, y = x - sx, (y - sy) * reflection
+            dot += x * (fx - tx) + y * (fy - ty)
+            cross += x * (fy - ty) - y * (fx - tx)
+        angle = math.atan2(cross, dot)
+        c, s = math.cos(angle), math.sin(angle)
+        candidate = {
+            key: (tx + c * (x - sx) - s * (y - sy) * reflection,
+                  ty + s * (x - sx) + c * (y - sy) * reflection)
+            for key, (x, y) in positions.items()
+        }
+        error = sum(math.dist(candidate[key], point) ** 2 for key, point in fixed.items())
+        if error < best_error:
+            best, best_error = candidate, error
+    return best
 
 
 def _pair_distance(

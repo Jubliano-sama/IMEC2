@@ -1,0 +1,15 @@
+{
+  "python": "3.13.11 (main, Jan 28 2026, 00:01:45) [Clang 21.1.4 ]",
+  "numpy": "2.4.4",
+  "scene_count": 85,
+  "groups": "wall_unseen,wall_cap4,clean,clean_cap4,short_nlos,indistinguishable",
+  "source_sha256": {
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/verify_nlos_recovery.py": "80f5a6024c3643a468b3a3ded2c1404b044feb2f7177f696308fd2549726f777",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/experiments/recovered_nlos_probe.py": "9ad4632c18b53985ba07addb39abe151c89442cd0a2cdbff252873a43152e01d",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry.py": "e4fce1fa308141f6706513639398579a6c9f01896bb9ebc56f30b335ad9bdff1",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_connectivity.py": "ca7daa8ed91a65a553e3a60076c1ac7faf6e586413b2a15ec349424340b2310e",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_nlos.py": "b296608e9f334387852128dbd10c98a0018180116e41acff4e8cc5c898a9a797",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_seeds.py": "3ed8d989f9063c6ae27d162b8459ff248bffa184487d0047a00e414005ff5cf1",
+    "/home/tommie/.t3/worktrees/IMEC2/t3code-b79b8776/tools/gateway_gui/anchor_geometry_visibility.py": "2885cf2668457110e4c40354dd59d28bd99ebeaf84239b83578a6d42fb825588"
+  }
+}

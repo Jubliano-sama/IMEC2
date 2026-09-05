@@ -23,6 +23,8 @@ from .anchor_geometry_connectivity import (
     DEFAULT_NONNEIGHBOR_MIN_M,
     solve_connectivity_interval_layout,
 )
+from .anchor_geometry_weights import distance_weighted_pairs
+from .anchor_geometry_nlos import NLOS_ONE_SIDED_ALGORITHM, solve_nlos_one_sided_layout
 from .anchor_geometry_visibility import (
     VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
     VISIBILITY_BRANCHING_TUNED_ALGORITHM,
@@ -759,11 +761,24 @@ def solve_geometry(
     current_positions_m: dict[str, tuple[float, float]] | None = None,
     nonneighbor_min_m: float = DEFAULT_NONNEIGHBOR_MIN_M,
     neighbor_max_m: float = DEFAULT_NEIGHBOR_MAX_M,
+    distance_weight_power: float | None = None,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
 ) -> AnchorLayoutResult:
     """Run the retained standalone geometry solver selected by the caller."""
+    if solver == NLOS_ONE_SIDED_ALGORITHM:
+        # Weight the objective without widening the one-sided loss's noise
+        # tolerance. Scaling sigma here would change which links get relaxed.
+        return solve_nlos_one_sided_layout(
+            pairs, neighbor_pairs=neighbor_pairs, nonneighbor_pairs=nonneighbor_pairs,
+            seed=seed, current_positions_m=current_positions_m, fixed_positions_m=fixed_positions_m,
+            nonneighbor_min_m=nonneighbor_min_m, neighbor_max_m=neighbor_max_m,
+            distance_weight_power=1.0 if distance_weight_power is None else distance_weight_power,
+        )
+    pairs = distance_weighted_pairs(pairs, 0.0 if distance_weight_power is None else distance_weight_power)
     if solver == CONNECTIVITY_INTERVAL_ALGORITHM:
         return solve_connectivity_interval_layout(
             pairs,
+            fixed_positions_m=fixed_positions_m,
             neighbor_pairs=neighbor_pairs,
             nonneighbor_pairs=nonneighbor_pairs,
             seed=seed,
@@ -774,6 +789,7 @@ def solve_geometry(
     if solver == VISIBILITY_BRANCHING_TUNED_ALGORITHM:
         return solve_visibility_branching_tuned(
             pairs,
+            fixed_positions_m=fixed_positions_m,
             missing_pairs=nonneighbor_pairs,
             neighbor_pairs=neighbor_pairs,
             seed=seed,
@@ -784,6 +800,7 @@ def solve_geometry(
     if solver == VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM:
         return solve_visibility_branching_neighbor_aware_tuned(
             pairs,
+            fixed_positions_m=fixed_positions_m,
             missing_pairs=nonneighbor_pairs,
             neighbor_pairs=neighbor_pairs,
             seed=seed,
@@ -793,7 +810,7 @@ def solve_geometry(
         )
     if solver == "Spring energy":
         if seed in (SEED_AUTO, SEED_SPRING):
-            return solve_anchor_layout(pairs)
+            return solve_anchor_layout(pairs, fixed_positions_m=fixed_positions_m)
         anchor_ids = sorted({
             anchor_id
             for pair in pairs
@@ -810,6 +827,7 @@ def solve_geometry(
         elif seed == SEED_VISIBILITY:
             seed_positions = solve_visibility_branching_tuned(
                 pairs,
+                fixed_positions_m=fixed_positions_m,
                 missing_pairs=nonneighbor_pairs,
                 neighbor_pairs=neighbor_pairs,
                 seed=SEED_VISIBILITY,
@@ -819,7 +837,9 @@ def solve_geometry(
             ).positions_m
         else:
             raise ValueError(f"Unknown geometry seed: {seed}")
-        result = refine_anchor_layout_from_seed(pairs, seed_positions)
+        result = refine_anchor_layout_from_seed(
+            pairs, seed_positions, fixed_positions_m=fixed_positions_m,
+        )
         return replace(result, algorithm=f"Spring energy; seed {seed}")
     raise ValueError(f"Unknown geometry solver: {solver}")
 
@@ -827,7 +847,13 @@ def solve_geometry(
 def refine_geometry(
     pairs: tuple[AnchorPairDistance, ...],
     positions_m: dict[str, tuple[float, float]],
+    *,
+    distance_weight_power: float = 0.0,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
 ) -> AnchorLayoutResult:
     """Run one measured-distance-only pass from the selected solved layout."""
 
-    return refine_anchor_layout_from_seed(pairs, positions_m)
+    return refine_anchor_layout_from_seed(
+        distance_weighted_pairs(pairs, distance_weight_power), positions_m,
+        fixed_positions_m=fixed_positions_m,
+    )

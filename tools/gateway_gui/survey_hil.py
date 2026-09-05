@@ -117,17 +117,17 @@ class SurveyHilGui(GatewayGui):
                     flush=True,
                 )
             elif packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
-                event = validate_gateway_command_event_packet(packet)
+                gateway_event = validate_gateway_command_event_packet(packet)
                 print(
-                    f"HOST_PACKET gateway_event stage={event.stage} "
-                    f"status={event.command_status} reason={event.reason} "
-                    f"anchor=0x{event.anchor_id:016x} "
-                    f"previous=0x{event.previous_hop_id:016x} "
-                    f"hop={event.hop_count} slot={event.discovery_slot} "
-                    f"progress={event.progress_count}/{event.total_count} "
-                    f"success={event.success_count} "
-                    f"failure={event.failure_count} "
-                    f"duplicates={event.duplicate_count}",
+                    f"HOST_PACKET gateway_event stage={gateway_event.stage} "
+                    f"status={gateway_event.command_status} reason={gateway_event.reason} "
+                    f"anchor=0x{gateway_event.anchor_id:016x} "
+                    f"previous=0x{gateway_event.previous_hop_id:016x} "
+                    f"hop={gateway_event.hop_count} slot={gateway_event.discovery_slot} "
+                    f"progress={gateway_event.progress_count}/{gateway_event.total_count} "
+                    f"success={gateway_event.success_count} "
+                    f"failure={gateway_event.failure_count} "
+                    f"duplicates={gateway_event.duplicate_count}",
                     flush=True,
                 )
             elif packet.msg_type == MSG_SURVEY_EVENT:

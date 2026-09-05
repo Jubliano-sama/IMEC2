@@ -27,6 +27,9 @@ from tools.gateway_gui.diagnostic_models import (
     select_nearest_anchor_ranges,
     solve_geometry,
 )
+from tools.gateway_gui.anchor_geometry_weights import (
+    distance_weighted_pairs, parse_distance_weight_power,
+)
 
 
 def pair(a, b, distance, sigma=0.03):
@@ -34,6 +37,35 @@ def pair(a, b, distance, sigma=0.03):
 
 
 class VisibilityGeometryTests(unittest.TestCase):
+    def test_distance_weighting_preserves_ranges_and_scales_inverse_variance(self):
+        pairs = (pair("A", "B", 2, 0.05), pair("A", "C", 4, 0.10))
+        self.assertIs(distance_weighted_pairs(pairs, 0), pairs)
+        for power, relative_weight in ((1, 0.5), (2, 0.25), (4, 0.0625)):
+            weighted = distance_weighted_pairs(pairs, power)
+            self.assertEqual(weighted[0], pairs[0])
+            self.assertAlmostEqual((pairs[1].sigma_m / weighted[1].sigma_m) ** 2, relative_weight)
+            self.assertEqual(weighted[1].distance_m, pairs[1].distance_m)
+            self.assertEqual(weighted[1].source, pairs[1].source)
+        self.assertEqual(pairs[1].sigma_m, 0.10)
+        disabled = AnchorPairDistance("X", "Y", 0.1, enabled=False)
+        self.assertEqual(distance_weighted_pairs((disabled, *pairs), 2)[1:], distance_weighted_pairs(pairs, 2))
+        for invalid in ("", "bad", "nan", "inf", "-1", "4.1"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                parse_distance_weight_power(invalid)
+
+    def test_distance_weights_reach_solver_without_changing_neighbor_evidence(self):
+        pairs = (pair("A", "B", 2), pair("A", "C", 4))
+        neighbors = frozenset({("A", "B"), ("B", "C")})
+        for solver, function in (
+            (CONNECTIVITY_INTERVAL_ALGORITHM, "solve_connectivity_interval_layout"),
+            (VISIBILITY_BRANCHING_TUNED_ALGORITHM, "solve_visibility_branching_tuned"),
+            (VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM, "solve_visibility_branching_neighbor_aware_tuned"),
+        ):
+            with self.subTest(solver=solver), patch(f"tools.gateway_gui.diagnostic_models.{function}") as implementation:
+                solve_geometry(pairs, solver=solver, neighbor_pairs=neighbors, distance_weight_power=2)
+                self.assertEqual(implementation.call_args.args[0], distance_weighted_pairs(pairs, 2))
+                self.assertEqual(implementation.call_args.kwargs["neighbor_pairs"], neighbors)
+
     def test_manual_layout_evaluation_keeps_coordinates_and_recomputes_fit(self):
         pairs = (
             pair("A", "B", 3.0),

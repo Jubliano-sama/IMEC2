@@ -1,0 +1,26 @@
+[
+  {
+    "method": "grouped_guarded",
+    "paired_successful_cases": 140,
+    "rms_improved_over_10cm": 1,
+    "rms_worsened_over_10cm": 14,
+    "calls_baseline": 12212,
+    "calls_candidate": 12560
+  },
+  {
+    "method": "prioritized",
+    "paired_successful_cases": 140,
+    "rms_improved_over_10cm": 9,
+    "rms_worsened_over_10cm": 3,
+    "calls_baseline": 12212,
+    "calls_candidate": 12537
+  },
+  {
+    "method": "grouped_guarded_prioritized",
+    "paired_successful_cases": 140,
+    "rms_improved_over_10cm": 10,
+    "rms_worsened_over_10cm": 15,
+    "calls_baseline": 12212,
+    "calls_candidate": 12744
+  }
+]

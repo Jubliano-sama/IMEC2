@@ -245,6 +245,63 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         future.add_done_callback.assert_called_once()
         self.assertIn("Solving with", gui.status_text.get())
 
+    def test_geometry_worker_captures_distance_weight_power(self) -> None:
+        gui = gui_model()
+        gui._geometry_executor = Mock()
+        gui.survey_geometry_view = Mock(distance_weight_power=2.0, locked_positions_m={})
+        gui._effective_geometry_inputs = Mock(return_value=((), frozenset(), (0, 0)))
+
+        gui._submit_geometry_solve(
+            CONNECTIVITY_INTERVAL_ALGORITHM, "Auto (best of all)", 7, 15,
+            gui.survey_model.geometry_revision, gui.survey_model.run_serial,
+        )
+        self.assertEqual(
+            gui._geometry_executor.submit.call_args.kwargs["distance_weight_power"], 2.0,
+        )
+
+    def test_automatic_solve_reads_radio_interval_after_new_measurement_refresh(self) -> None:
+        gui = gui_model()
+        gui.survey_model = Mock(geometry_solve_pending=True, geometry_revision=1, run_serial=1)
+        gui._geometry_future = None
+        gui.survey_geometry_view = Mock(
+            neighbor_interval_m=(7.0, 15.0), nearest_anchor_count=0,
+        )
+        gui.survey_geometry_view.solver_var.get.return_value = CONNECTIVITY_INTERVAL_ALGORITHM
+        gui.survey_geometry_view.seed_var.get.return_value = "Auto (best of all)"
+        def refresh():
+            gui.survey_geometry_view.neighbor_interval_m = (7.0, 21.0)
+        gui._refresh_survey_view = Mock(side_effect=refresh)
+        gui._submit_geometry_solve = Mock()
+
+        gui._schedule_survey_geometry_solve()
+
+        self.assertEqual(gui._submit_geometry_solve.call_args.args[2:4], (7.0, 21.0))
+
+    def test_solve_and_refinement_receive_locks_and_the_current_oriented_frame(self) -> None:
+        gui = gui_model()
+        gui._geometry_executor = Mock()
+        gui._geometry_future = None
+        current = {"A": (10.0, -4.0), "B": (10.0, 1.0)}
+        fixed = {"B": current["B"]}
+        gui.survey_model = Mock(
+            layout=Mock(positions_m={"A": (0.0, 0.0), "B": (5.0, 0.0)}),
+            geometry_pairs=(), geometry_solve_ready=True, geometry_revision=1, run_serial=1,
+        )
+        gui.survey_geometry_view = Mock(
+            distance_weight_power=1.0, nearest_anchor_count=0,
+            locked_positions_m=fixed, registration=Mock(reference_positions_m=current),
+        )
+        gui._effective_geometry_inputs = Mock(return_value=((), frozenset(), (0, 0)))
+        gui._submit_geometry_solve(CONNECTIVITY_INTERVAL_ALGORITHM, "Current layout", 7, 15, 1, 1)
+        solve_call = gui._geometry_executor.submit.call_args
+        self.assertEqual(solve_call.kwargs["fixed_positions_m"], fixed)
+        self.assertEqual(solve_call.kwargs["current_positions_m"], current)
+        gui._geometry_future = None
+        gui._request_distance_only_refinement()
+        refine_call = gui._geometry_executor.submit.call_args
+        self.assertEqual(refine_call.kwargs["fixed_positions_m"], fixed)
+        self.assertEqual(refine_call.args[2], current)
+
     def test_survey_result_requires_exact_command_identity(self) -> None:
         gui = gui_model()
         start = dispatch(CMD_SURVEY_START, 100, 7)

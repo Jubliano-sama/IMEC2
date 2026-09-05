@@ -29,10 +29,6 @@ from .anchor_geometry_connectivity import (
     DEFAULT_NEIGHBOR_MAX_M,
     DEFAULT_NONNEIGHBOR_MIN_M,
 )
-from .anchor_geometry_visibility import (
-    VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
-    VISIBILITY_BRANCHING_TUNED_ALGORITHM,
-)
 from .command_orchestration import (
     GatewayAssignmentReplayBarrier,
     GatewayCommandOrchestrator,
@@ -43,7 +39,7 @@ from .protocol import (
     TLV_COMMAND_ID, TLV_COMMAND_STATUS, TLV_EVENT_SEQ,
 )
 from .survey_runtime import SurveyCommandOwner, SurveyOperationModel
-from .survey_view import LayoutRegistration, SurveyGeometryView
+from .survey_view import LayoutRegistration, RADIO_INTERVAL_SOLVERS, SurveyGeometryView
 from .theme import AMBER_BG, ERROR_BG, INK, PANEL_ALT_BG, SUCCESS_BG
 
 
@@ -422,10 +418,12 @@ class GatewayDiagnosticsMixin:
 
     def _schedule_survey_geometry_solve(self) -> None:
         model = self.survey_model
+        # New range evidence can raise the radio maximum; capture that value
+        # before handing this revision to the geometry worker.
+        self._refresh_survey_view()
         if (
             not model.geometry_solve_pending
         ):
-            self._refresh_survey_view()
             return
         future = self._geometry_future
         if future is not None and not future.done():
@@ -450,11 +448,7 @@ class GatewayDiagnosticsMixin:
                 view.geometry_var.set(str(exc))
                 self.status_text.set(str(exc))
                 return
-        if view is not None and solver in (
-            CONNECTIVITY_INTERVAL_ALGORITHM,
-            VISIBILITY_BRANCHING_TUNED_ALGORITHM,
-            VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
-        ):
+        if view is not None and solver in RADIO_INTERVAL_SOLVERS:
             try:
                 neighbor_min_m, neighbor_max_m = view.neighbor_interval_m
             except ValueError as exc:
@@ -528,6 +522,14 @@ class GatewayDiagnosticsMixin:
         current_positions_override: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         model = self.survey_model
+        view = getattr(self, "survey_geometry_view", None)
+        try:
+            distance_weight_power = view.distance_weight_power if view is not None else 0.0
+        except ValueError as exc:
+            if view is not None:
+                view.geometry_var.set(str(exc))
+            self.status_text.set(str(exc))
+            return
         current = (
             dict(current_positions_override)
             if current_positions_override is not None
@@ -535,6 +537,9 @@ class GatewayDiagnosticsMixin:
             if model.layout is not None
             else None
         )
+        fixed_positions = view.locked_positions_m if view is not None else {}
+        if fixed_positions and view is not None and current_positions_override is None:
+            current = view.registration.reference_positions_m or None
         effective_pairs, neighbor_pairs, edge_edit_counts = (
             self._effective_geometry_inputs()
         )
@@ -553,6 +558,8 @@ class GatewayDiagnosticsMixin:
             current_positions_m=current,
             nonneighbor_min_m=neighbor_min_m,
             neighbor_max_m=neighbor_max_m,
+            distance_weight_power=distance_weight_power,
+            fixed_positions_m=fixed_positions,
         )
         self._geometry_job_serial = getattr(self, "_geometry_job_serial", 0) + 1
         job_serial = self._geometry_job_serial
@@ -560,16 +567,13 @@ class GatewayDiagnosticsMixin:
         view = getattr(self, "survey_geometry_view", None)
         interval = (
             f" (radio interval {neighbor_min_m:g}-{neighbor_max_m:g} m)"
-            if solver in (
-                CONNECTIVITY_INTERVAL_ALGORITHM,
-                VISIBILITY_BRANCHING_TUNED_ALGORITHM,
-                VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
-            )
+            if solver in RADIO_INTERVAL_SOLVERS
             else ""
         )
         job_label = (
             f"Solving with {solver}{interval} from "
-            f"{len(solve_pairs)}/{all_pair_count} ranges..."
+            f"{len(solve_pairs)}/{all_pair_count} ranges"
+            f" (distance weight power {distance_weight_power:g})..."
         )
         if view is not None:
             view.set_geometry_job_pending(
@@ -596,6 +600,10 @@ class GatewayDiagnosticsMixin:
                 )
             else:
                 annotations: list[str] = []
+                if fixed_positions:
+                    annotations.append(f"{len(fixed_positions)} locked anchor(s)")
+                if distance_weight_power > 0.0:
+                    annotations.append(f"distance weight power {distance_weight_power:g}")
                 if nearest_per_anchor > 0:
                     annotations.append(
                         f"closest {nearest_per_anchor}/anchor, "
@@ -639,6 +647,7 @@ class GatewayDiagnosticsMixin:
             nearest_per_anchor = (
                 view.nearest_anchor_count if view is not None else 0
             )
+            distance_weight_power = view.distance_weight_power if view is not None else 0.0
         except ValueError as exc:
             if view is not None:
                 view.geometry_var.set(str(exc))
@@ -652,10 +661,17 @@ class GatewayDiagnosticsMixin:
             nearest_per_anchor,
         )
         all_pair_count = len(model.geometry_pairs)
+        fixed_positions = view.locked_positions_m if view is not None else {}
+        positions = (
+            view.registration.reference_positions_m
+            if fixed_positions and view is not None else model.layout.positions_m
+        )
         future = self._geometry_executor.submit(
             refine_geometry,
             refine_pairs,
-            model.layout.positions_m,
+            positions,
+            distance_weight_power=distance_weight_power,
+            fixed_positions_m=fixed_positions,
         )
         self._geometry_job_serial = getattr(self, "_geometry_job_serial", 0) + 1
         job_serial = self._geometry_job_serial
@@ -680,6 +696,10 @@ class GatewayDiagnosticsMixin:
                 }
             else:
                 annotations: list[str] = []
+                if fixed_positions:
+                    annotations.append(f"{len(fixed_positions)} locked anchor(s)")
+                if distance_weight_power > 0.0:
+                    annotations.append(f"distance weight power {distance_weight_power:g}")
                 if nearest_per_anchor > 0:
                     annotations.append(
                         f"closest {nearest_per_anchor}/anchor, "

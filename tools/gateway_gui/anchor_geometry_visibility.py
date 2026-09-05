@@ -171,11 +171,13 @@ def _solve_from_seed(
     pairs: list[AnchorPairDistance],
     *,
     max_iterations: int,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
 ) -> dict[str, tuple[float, float]]:
     processed = _preprocess_pairs(pairs, min_sigma_m=0.02, min_distance_m=0.05)
     anchor_ids = _anchor_ids(processed)
-    parameterization = _Parameterization(anchor_ids)
-    seed_positions = rotate_layout_to_level(seed_positions, anchor_ids[0], anchor_ids[1])
+    parameterization = _Parameterization(anchor_ids, fixed_positions_m)
+    if not fixed_positions_m:
+        seed_positions = rotate_layout_to_level(seed_positions, anchor_ids[0], anchor_ids[1])
     parameters = _positions_to_params(parameterization, seed_positions)
     parameters, _energy = _local_minimize(
         parameters,
@@ -183,10 +185,9 @@ def _solve_from_seed(
         processed,
         max_iterations=max_iterations,
     )
-    return rotate_layout_to_level(
-        parameterization.to_positions(parameters),
-        anchor_ids[0],
-        anchor_ids[1],
+    positions = parameterization.to_positions(parameters)
+    return positions if fixed_positions_m else rotate_layout_to_level(
+        positions, anchor_ids[0], anchor_ids[1],
     )
 
 
@@ -719,6 +720,7 @@ def visibility_constrained_solve_from_seed(
     graph_upper_sigma_m: float = 1.0,
     graph_upper_weight: float = 0.35,
     known_weight: float = 1.0,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
 ) -> dict[str, tuple[float, float]]:
     try:
         from scipy.optimize import least_squares  # type: ignore[import-untyped]
@@ -739,11 +741,12 @@ def visibility_constrained_solve_from_seed(
         raise ValueError("A pair cannot be both a neighbor and a non-neighbor.")
     processed = _preprocess_pairs(known_pairs, min_sigma_m=0.02, min_distance_m=0.05)
     anchor_ids = graph.anchor_ids
-    parameterization = _Parameterization(list(anchor_ids))
-    seed_positions = _canonical_seed_positions(seed_positions, anchor_ids, known_pairs)
+    parameterization = _Parameterization(list(anchor_ids), fixed_positions_m)
+    if not fixed_positions_m:
+        seed_positions = _canonical_seed_positions(seed_positions, anchor_ids, known_pairs)
     x0 = np.asarray(_positions_to_params(parameterization, seed_positions), dtype=float)
     if x0.size == 0:
-        return seed_positions
+        return parameterization.to_positions([])
     sqrt_known = math.sqrt(max(known_weight, 0.0))
     sqrt_missing = math.sqrt(max(missing_weight, 0.0))
     sqrt_graph = math.sqrt(max(graph_upper_weight, 0.0))
@@ -801,6 +804,8 @@ def visibility_constrained_solve_from_seed(
     )
     params = result.x if result.x is not None else x0
     positions = parameterization.to_positions(params.tolist())
+    if fixed_positions_m:
+        return positions
     try:
         return rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
     except Exception:
@@ -814,6 +819,7 @@ def solve_visibility_branching_tuned(
     neighbor_pairs: Iterable[tuple[str, str]] = (),
     seed: str = SEED_AUTO,
     current_positions_m: dict[str, tuple[float, float]] | None = None,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
     nonneighbor_min_m: float = 7.0,
     neighbor_max_m: float = 15.0,
     random_seed: int = 1337,
@@ -834,6 +840,7 @@ def solve_visibility_branching_tuned(
     processed = _preprocess_pairs(known_pairs, min_sigma_m=0.02, min_distance_m=0.05)
     anchor_ids = _anchor_ids(processed)
     _validate_connected(anchor_ids, processed)
+    parameterization = _Parameterization(anchor_ids, fixed_positions_m)
     graph = range_graph(known_pairs)
     normalized_missing = _normalized_missing_pairs(
         missing_pairs,
@@ -931,12 +938,14 @@ def solve_visibility_branching_tuned(
                     graph_upper_sigma_m=float(parameters["graph_upper_sigma_m"]),
                     graph_upper_weight=float(parameters["graph_upper_weight"]),
                     known_weight=float(parameters["constrained_known_weight"]),
+                    fixed_positions_m=fixed_positions_m,
                 )
             else:
                 candidate = _solve_from_seed(
                     base_positions,
                     known_pairs,
                     max_iterations=int(parameters["iterations"]),
+                    fixed_positions_m=fixed_positions_m,
                 )
             known_rmse, _known_max = _pair_metrics(candidate, known_pairs)
             visibility = visibility_score_all(
@@ -970,12 +979,13 @@ def solve_visibility_branching_tuned(
         raise RuntimeError(f"Visibility branching tuned failed: {detail}")
 
     _score, selected_seed, positions = min(candidates, key=lambda item: item[0])
-    positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
+    if not fixed_positions_m:
+        positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
     positions = _clean_positions(positions)
+    positions.update(parameterization.fixed_positions_m)
     residuals = pair_residuals(positions, processed)
     rmse = _rmse(residuals.values())
     max_residual = max((abs(value) for value in residuals.values()), default=0.0)
-    parameterization = _Parameterization(anchor_ids)
     energy = _spring_energy(
         _positions_to_params(parameterization, positions),
         parameterization,
@@ -1024,6 +1034,7 @@ def solve_visibility_branching_neighbor_aware_tuned(
     neighbor_pairs: Iterable[tuple[str, str]] = (),
     seed: str = SEED_AUTO,
     current_positions_m: dict[str, tuple[float, float]] | None = None,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
     nonneighbor_min_m: float = 7.0,
     neighbor_max_m: float = 15.0,
     random_seed: int = 1337,
@@ -1041,6 +1052,7 @@ def solve_visibility_branching_neighbor_aware_tuned(
         neighbor_pairs=neighbor_pairs,
         seed=seed,
         current_positions_m=current_positions_m,
+        fixed_positions_m=fixed_positions_m,
         nonneighbor_min_m=nonneighbor_min_m,
         neighbor_max_m=neighbor_max_m,
         random_seed=random_seed,

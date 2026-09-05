@@ -107,6 +107,7 @@ def solve_connectivity_interval_layout(
     nonneighbor_pairs: Iterable[tuple[str, str]],
     seed: str = SEED_AUTO,
     current_positions_m: dict[str, tuple[float, float]] | None = None,
+    fixed_positions_m: dict[str, tuple[float, float]] | None = None,
     neighbor_max_m: float = DEFAULT_NEIGHBOR_MAX_M,
     nonneighbor_min_m: float = DEFAULT_NONNEIGHBOR_MIN_M,
     interval_sigma_m: float = 0.75,
@@ -137,7 +138,7 @@ def solve_connectivity_interval_layout(
     except Exception as exc:  # pragma: no cover - scipy is a GUI requirement.
         raise RuntimeError("neighbor-interval solver requires scipy") from exc
 
-    parameterization = _Parameterization(anchor_ids)
+    parameterization = _Parameterization(anchor_ids, fixed_positions_m)
     base_seeds = _seed_families(
         known_pairs,
         anchor_ids,
@@ -148,7 +149,9 @@ def solve_connectivity_interval_layout(
     candidates: list[tuple[float, str, dict[str, tuple[float, float]]]] = []
     rng = random.Random(1337)
     for seed_name, base_positions in base_seeds:
-        oriented = rotate_layout_to_level(base_positions, anchor_ids[0], anchor_ids[1])
+        oriented = base_positions if fixed_positions_m else rotate_layout_to_level(
+            base_positions, anchor_ids[0], anchor_ids[1],
+        )
         starts = [_positions_to_params(parameterization, oriented)]
         if seed == SEED_AUTO:
             scale = max(
@@ -179,21 +182,25 @@ def solve_connectivity_interval_layout(
             return np.asarray(values, dtype=float)
 
         for start in starts:
-            result = least_squares(
-                residuals,
-                np.asarray(start, dtype=float),
-                max_nfev=max(1, max_nfev),
-                method="trf",
-                x_scale="jac",
-            )
-            params = result.x.tolist()
-            positions = parameterization.to_positions(params)
-            objective = float(np.dot(residuals(result.x), residuals(result.x)))
+            params = np.asarray(start, dtype=float)
+            if params.size:
+                params = least_squares(
+                    residuals,
+                    params,
+                    max_nfev=max(1, max_nfev),
+                    method="trf",
+                    x_scale="jac",
+                ).x
+            positions = parameterization.to_positions(params.tolist())
+            errors = residuals(params)
+            objective = float(np.dot(errors, errors))
             candidates.append((objective, seed_name, positions))
 
     objective, selected_seed, positions = min(candidates, key=lambda item: item[0])
-    positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
+    if not fixed_positions_m:
+        positions = rotate_layout_to_level(positions, anchor_ids[0], anchor_ids[1])
     positions = _clean_positions(positions)
+    positions.update(parameterization.fixed_positions_m)
     residual_map = pair_residuals(positions, processed)
     rmse = _rmse(residual_map.values())
     max_residual = max((abs(value) for value in residual_map.values()), default=0.0)

@@ -44,6 +44,15 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    consecutive merge passes until every mutually reported neighbor pair has
    been attempted.
 
+In the geometry view, drag an anchor into place, select it, and use **Lock
+selected** to hold that position through solving and distance refinement.
+Locked anchors have a ring and a `[locked]` label in both the embedded and
+fullscreen views. Whole-layout rotation, mirroring, translation, scaling, and
+reset still apply to them. Locks survive survey passes in the current GUI
+session; use **Unlock selected** or **Unlock all** to release them. Their
+measurements still contribute to the reported fit errors. Frame and lock
+controls pause while a geometry job is running.
+
 For every ordinary command, the GUI freezes the command and its runtime policy,
 sends a separately correlated Here-I-Am, waits for its typed successful
 terminal, and only then sends the frozen target. Failure, timeout, or disconnect
@@ -265,6 +274,27 @@ profile from AnchorGeometrySolver commit
 `01c3edb470bcd868403e04a6cded754360decdf0`; the original named solver and the
 spring solver remain selectable for comparison.
 
+`NLOS one-sided intervals` is a recovered, verified experimental alternative
+for biased ranges. It relaxes positive measured excess, weights nearby links
+more, and explicitly searches reflected anchor positions. Start with Auto seeds
+and distance weight power 1, preferably on merged `Survey All Neighbors` data.
+The GUI remembers weight power separately for each algorithm during the session.
+The solver needs no wall map, CIR, or additional measurements and honors anchor
+locks. Its Auto search uses spring and graph-MDS seeds plus perturbations.
+Richer merged surveys use exact derivatives to accelerate the same scoring and
+reflection search; degree-four-sized inputs retain the numerical calculation.
+The [longer-reach experiments](../../Documentation/Reviews/nlos-recovery-2026-09-05/shared-offset/README.md)
+confirmed about 2.4× faster solving on fresh merged-survey cases, with unchanged
+flip outcomes. Shared-offset and triangle-bound accuracy changes remain
+experimental because they introduced new errors.
+It substantially reduced sketch flips in synthetic tests, but regressed on
+sparse degree-four cases, so it does not replace the default. See the
+[recovery and verification results](../../Documentation/Reviews/nlos-recovery-2026-09-05/README.md).
+`Fit details` in either view shows the raw range errors, possible NLOS links,
+and a warning when near-fit ranges lose local geometric support. These warnings
+do not prove NLOS or detect every mirror ambiguity; a wrong layout can still
+have zero residual and no warning.
+
 `Visibility branching neighbor-aware tuned` is the capped-ranging-specific
 visibility variant. If an unranged pair appears in the measured neighbor graph,
 that positive evidence takes precedence and the solver never pushes the pair
@@ -284,6 +314,8 @@ and confirmed-non-neighbor interval evidence remains uncapped.
 one additional least-residual pass without radio-radius, missing-edge, or graph
 constraints. Every solve stays RAM-only and remains relative 2D because the
 survey has no anchor heights or workplace-frame registration.
+That refinement uses a symmetric loss and can undo an NLOS correction; use
+`Solve / re-solve` with the NLOS solver selected to retain its one-sided loss.
 
 Measured survey edges are colored by their absolute residual relative to the
 worst measured edge in that layout: zero is green, the current worst is red,

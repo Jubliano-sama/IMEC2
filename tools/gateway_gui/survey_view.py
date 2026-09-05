@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+import textwrap
 import tkinter as tk
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Iterable
 
 from .anchor_geometry import (
@@ -27,6 +28,8 @@ from .anchor_geometry_visibility import (
     VISIBILITY_BRANCHING_TUNED_ALGORITHM,
 )
 from .anchor_geometry_seeds import SEED_CURRENT
+from .anchor_geometry_weights import parse_distance_weight_power
+from .anchor_geometry_nlos import NLOS_ONE_SIDED_ALGORITHM
 from .diagnostic_models import anchor_label
 from .survey_runtime import SurveyOperationModel
 from .survey_timing import ScheduledPhaseSnapshot
@@ -52,12 +55,14 @@ HELD_TRANSLATION_STEP_M = 0.10
 HELD_TRANSLATION_INTERVAL_MS = 50
 SOLVER_CHOICES = (
     CONNECTIVITY_INTERVAL_ALGORITHM,
+    NLOS_ONE_SIDED_ALGORITHM,
     VISIBILITY_BRANCHING_TUNED_ALGORITHM,
     VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
     "Spring energy",
 )
 RADIO_INTERVAL_SOLVERS = frozenset((
     CONNECTIVITY_INTERVAL_ALGORITHM,
+    NLOS_ONE_SIDED_ALGORITHM,
     VISIBILITY_BRANCHING_TUNED_ALGORITHM,
     VISIBILITY_BRANCHING_NEIGHBOR_AWARE_ALGORITHM,
 ))
@@ -407,7 +412,10 @@ class SurveyGeometryView(ttk.Frame):
             value=f"{DEFAULT_NONNEIGHBOR_MIN_M:g}"
         )
         self.neighbor_max_var = tk.StringVar(value=f"{DEFAULT_NEIGHBOR_MAX_M:g}")
+        self._radio_observation_run_serial = -1
+        self._radio_observed_distances: dict[EdgeKey, float] = {}
         self.nearest_anchor_count_var = tk.StringVar(value="0")
+        self.distance_weight_power_var = tk.StringVar(value="0")
         self._fullscreen_window: tk.Toplevel | None = None
         self._fullscreen_canvas: tk.Canvas | None = None
         self._fullscreen_registration_controls: LayoutRegistrationControls | None = None
@@ -424,6 +432,11 @@ class SurveyGeometryView(ttk.Frame):
         self._drag_moved = False
         self._manual_layout_dirty = False
         self._selected_anchor_id: str | None = None
+        self._locked_positions_m: dict[str, tuple[float, float]] = {}
+        self.anchor_lock_var = tk.StringVar(value="Select an anchor to lock its position.")
+        self._anchor_lock_buttons: list[ttk.Button] = []
+        self._anchor_unlock_all_buttons: list[ttk.Button] = []
+        self._fit_details_buttons: list[ttk.Button] = []
         self._selected_edge_key: EdgeKey | None = None
         self._edge_overrides: dict[EdgeKey, EdgeOverride] = {}
         self._edge_override_run_serial = -1
@@ -551,6 +564,9 @@ class SurveyGeometryView(ttk.Frame):
             row=0, column=0, padx=(0, 3)
         )
         self.solver_var = tk.StringVar(value=CONNECTIVITY_INTERVAL_ALGORITHM)
+        self._previous_solver = CONNECTIVITY_INTERVAL_ALGORITHM
+        self._solver_weight_powers = {NLOS_ONE_SIDED_ALGORITHM: "1"}
+        self.solver_var.trace_add("write", self._solver_selection_changed)
         self.solver_combo = ttk.Combobox(
             solver_row,
             textvariable=self.solver_var,
@@ -604,6 +620,12 @@ class SurveyGeometryView(ttk.Frame):
         )
         self.neighbor_max_spinbox.grid(
             row=0, column=3, padx=(0, 8)
+        )
+        self._build_distance_weight_control(solver_bar).grid(
+            row=3, column=0, sticky="w", pady=(4, 0)
+        )
+        self._build_anchor_lock_controls(solver_bar).grid(
+            row=4, column=0, sticky="w", pady=(4, 0)
         )
         action_row = ttk.Frame(solver_bar, style="Panel.TFrame")
         action_row.grid(row=2, column=0, sticky="w", pady=(4, 0))
@@ -724,7 +746,7 @@ class SurveyGeometryView(ttk.Frame):
             return
         if snapshot.elapsed:
             detail = (
-                f"{snapshot.label}: scheduled window elapsed; waiting for "
+                f"{snapshot.label}: estimated window elapsed; waiting for "
                 "terminal telemetry."
             )
         else:
@@ -784,6 +806,7 @@ class SurveyGeometryView(ttk.Frame):
 
     def show_model(self, model: SurveyOperationModel) -> None:
         self.model = model
+        self._update_radio_radius(model)
         if model.run_serial != self._edge_override_run_serial:
             self._edge_override_run_serial = model.run_serial
             self._edge_overrides.clear()
@@ -842,7 +865,18 @@ class SurveyGeometryView(ttk.Frame):
                     f"{MANUALLY_EDITED_LAYOUT_ALGORITHM};"
                 )
             )
-            self.reset_transform(notify=False)
+            if self._locked_positions_m:
+                # The solver used our oriented frame. Retain its registration
+                # so fixed anchors also stay fixed in displayed coordinates.
+                self._display_positions = transform_layout(
+                    self._oriented_positions,
+                    scale=self._uniform_scale,
+                    translate_x_m=self._translate_x_m,
+                    translate_y_m=self._translate_y_m,
+                )
+                self._show_registration()
+            else:
+                self.reset_transform(notify=False)
         elif model.layout is None:
             self._layout_revision = -1
             self._layout_object = None
@@ -913,6 +947,33 @@ class SurveyGeometryView(ttk.Frame):
                 tags=(tag,) if tag else (),
             )
 
+    def _update_radio_radius(self, model: SurveyOperationModel) -> None:
+        """Raise the upper radio bound once per new measured distance.
+
+        Retained ranges, redraws, and manual edge edits must not undo a user's
+        later reduction. A new survey can raise the bound from fresh evidence.
+        """
+        if model.run_serial != self._radio_observation_run_serial:
+            self._radio_observation_run_serial = model.run_serial
+            self._radio_observed_distances.clear()
+        try:
+            _minimum, maximum = self.neighbor_interval_m
+        except ValueError:
+            # Leave an entry being edited alone; retry when it is valid.
+            return
+        new_distances: list[float] = []
+        for pair in model.current_geometry_pairs:
+            distance = pair.distance_m
+            if not pair.enabled or not math.isfinite(distance) or distance <= 0.0:
+                continue
+            key = edge_key(pair.anchor_a_id, pair.anchor_b_id)
+            if self._radio_observed_distances.get(key) != distance:
+                new_distances.append(distance)
+                self._radio_observed_distances[key] = distance
+        furthest = max(new_distances, default=0.0)
+        if furthest > maximum:
+            self.neighbor_max_var.set(str(furthest + 1.0))
+
     @property
     def effective_geometry_pairs(self) -> tuple[AnchorPairDistance, ...]:
         model = self.model
@@ -962,7 +1023,86 @@ class SurveyGeometryView(ttk.Frame):
         self._sync_edge_editor()
         self._redraw()
 
+    @property
+    def locked_positions_m(self) -> dict[str, tuple[float, float]]:
+        """Snapshot of hard constraints in the solver's oriented metre frame."""
+        return dict(self._locked_positions_m)
+
+    def _build_anchor_lock_controls(self, parent: ttk.Frame) -> ttk.Frame:
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        toggle = ttk.Button(row, text="Lock selected", command=self._toggle_anchor_lock)
+        toggle.grid(row=0, column=0)
+        self._anchor_lock_buttons.append(toggle)
+        clear = ttk.Button(row, text="Unlock all", command=self._unlock_all_anchors)
+        clear.grid(row=0, column=1, padx=(4, 8))
+        self._anchor_unlock_all_buttons.append(clear)
+        ttk.Label(row, textvariable=self.anchor_lock_var, style="PanelMuted.TLabel").grid(
+            row=0, column=2, sticky="w",
+        )
+        details = ttk.Button(row, text="Fit details", command=self._show_fit_details)
+        details.grid(row=0, column=3, padx=(8, 0))
+        self._fit_details_buttons.append(details)
+        return row
+
+    def _show_fit_details(self) -> None:
+        if self.model is None or self.model.layout is None:
+            return
+        layout = self.model.layout
+        warnings = "\n\n".join(textwrap.fill(item, width=100) for item in layout.warnings)
+        messagebox.showinfo(
+            "Geometry fit details",
+            f"{layout.algorithm}\n\nMeasured-range RMSE: {layout.rmse_m:.3f} m\n"
+            f"Largest absolute residual: {layout.max_residual_m:.3f} m\n\n"
+            + (warnings or "No fit warnings. A small residual does not prove a unique position."),
+            parent=self._fullscreen_window or self.winfo_toplevel(),
+        )
+
+    def _toggle_anchor_lock(self) -> None:
+        anchor_id = self._selected_anchor_id
+        if self._geometry_job_pending or anchor_id is None:
+            return
+        if anchor_id in self._locked_positions_m:
+            del self._locked_positions_m[anchor_id]
+        elif anchor_id in self._oriented_positions:
+            self._locked_positions_m[anchor_id] = self._oriented_positions[anchor_id]
+        self._sync_anchor_locks()
+        self._redraw()
+
+    def _unlock_all_anchors(self) -> None:
+        if self._geometry_job_pending:
+            return
+        self._locked_positions_m.clear()
+        self._sync_anchor_locks()
+        self._redraw()
+
+    def _sync_anchor_locks(self) -> None:
+        anchor_id = self._selected_anchor_id
+        locked = anchor_id in self._locked_positions_m
+        selectable = anchor_id in self._oriented_positions or locked
+        for button in self._anchor_lock_buttons:
+            if button.winfo_exists():
+                button.configure(
+                    text="Unlock selected" if locked else "Lock selected",
+                    state="normal" if selectable and not self._geometry_job_pending else "disabled",
+                )
+        for button in self._anchor_unlock_all_buttons:
+            if button.winfo_exists():
+                button.configure(
+                    state="normal" if self._locked_positions_m and not self._geometry_job_pending else "disabled",
+                )
+        selected = (
+            f"…{anchor_id[-4:]} {'locked' if locked else 'unlocked'}"
+            if anchor_id is not None else "Select an anchor"
+        )
+        self.anchor_lock_var.set(f"{selected} · {len(self._locked_positions_m)} locked")
+
+    def _move_locks_with_layout(self) -> None:
+        for anchor_id in self._locked_positions_m:
+            if anchor_id in self._oriented_positions:
+                self._locked_positions_m[anchor_id] = self._oriented_positions[anchor_id]
+
     def _sync_edge_editor(self) -> None:
+        self._sync_anchor_locks()
         key = self._selected_edge_key
         pair = self._pair_for_key(key) if key is not None else None
         override = self._edge_overrides.get(key) if key is not None else None
@@ -1072,15 +1212,17 @@ class SurveyGeometryView(ttk.Frame):
         self._redraw()
 
     def _rotate(self, degrees: float) -> None:
-        if not self._oriented_positions:
+        if not self._oriented_positions or self._geometry_job_pending:
             return
         self._oriented_positions = rotate_layout(self._oriented_positions, degrees)
+        self._move_locks_with_layout()
         self._apply_transform()
 
     def _mirror(self) -> None:
-        if not self._oriented_positions:
+        if not self._oriented_positions or self._geometry_job_pending:
             return
         self._oriented_positions = mirror_layout(self._oriented_positions, "x")
+        self._move_locks_with_layout()
         self._apply_transform()
 
     def mirror_layout_frame(self) -> None:
@@ -1191,6 +1333,7 @@ class SurveyGeometryView(ttk.Frame):
             model.layout is None
             or not self._display_positions
             or self._geometry_job_pending
+            or closest[1] in self._locked_positions_m
         ):
             self._redraw()
             return "break"
@@ -1214,6 +1357,8 @@ class SurveyGeometryView(ttk.Frame):
             anchor_id is None
             or projection is None
             or canvas is not self._drag_canvas
+            or self._geometry_job_pending
+            or anchor_id in self._locked_positions_m
         ):
             return None
         if not self._drag_moved and self._drag_start_px is not None:
@@ -1286,22 +1431,25 @@ class SurveyGeometryView(ttk.Frame):
         )
 
     def nudge_translation(self, delta_x_m: float, delta_y_m: float) -> None:
+        if self._geometry_job_pending:
+            return
         self._translate_x_m += delta_x_m
         self._translate_y_m += delta_y_m
         self._apply_transform()
 
     def nudge_scale(self, factor: float) -> None:
-        if not math.isfinite(factor) or factor <= 0.0:
+        if self._geometry_job_pending or not math.isfinite(factor) or factor <= 0.0:
             return
         self._uniform_scale *= factor
         self._apply_transform()
 
     def reset_transform(self, *, notify: bool = True) -> None:
-        if not self._oriented_positions:
+        if not self._oriented_positions or (notify and self._geometry_job_pending):
             return
         model = self.model
         if model is not None and model.layout is not None:
             self._oriented_positions = dict(model.layout.positions_m)
+        self._move_locks_with_layout()
         self._translate_x_m = 0.0
         self._translate_y_m = 0.0
         self._uniform_scale = 1.0
@@ -1320,6 +1468,32 @@ class SurveyGeometryView(ttk.Frame):
     def _request_refinement(self) -> None:
         if self._on_refine_requested is not None:
             self._on_refine_requested()
+
+    def _build_distance_weight_control(self, parent: ttk.Frame) -> ttk.Frame:
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        ttk.Label(row, text="Distance weight power", style="Panel.TLabel").grid(
+            row=0, column=0, padx=(0, 4)
+        )
+        ttk.Spinbox(
+            row, textvariable=self.distance_weight_power_var,
+            from_=0.0, to=4.0, increment=0.5, width=5,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ttk.Label(
+            row, text="0 = off; 1 / 2 = half / quarter weight at twice the distance",
+            style="PanelMuted.TLabel",
+        ).grid(row=0, column=2)
+        return row
+
+    def _solver_selection_changed(self, *_args: str) -> None:
+        """Remember the operator's weight separately for each solver."""
+        self._solver_weight_powers[self._previous_solver] = self.distance_weight_power_var.get()
+        selected = self.solver_var.get()
+        self.distance_weight_power_var.set(self._solver_weight_powers.get(selected, "0"))
+        self._previous_solver = selected
+
+    @property
+    def distance_weight_power(self) -> float:
+        return parse_distance_weight_power(self.distance_weight_power_var.get())
 
     def _request_solve(
         self,
@@ -1399,7 +1573,8 @@ class SurveyGeometryView(ttk.Frame):
             and model.geometry_solve_ready
             and not self._geometry_job_pending
         )
-        state = "normal" if has_layout else "disabled"
+        can_transform = has_layout and not self._geometry_job_pending
+        state = "normal" if can_transform else "disabled"
         for button in (
             self.mirror_button,
             self.left_button,
@@ -1407,10 +1582,14 @@ class SurveyGeometryView(ttk.Frame):
             *self._fullscreen_layout_buttons,
         ):
             button.configure(state=state)
-        self.registration_controls.set_enabled(has_layout)
+        self.registration_controls.set_enabled(can_transform)
         controls = self._fullscreen_registration_controls
         if controls is not None and controls.winfo_exists():
-            controls.set_enabled(has_layout)
+            controls.set_enabled(can_transform)
+        self._sync_anchor_locks()
+        for button in self._fit_details_buttons:
+            if button.winfo_exists():
+                button.configure(state="normal" if has_layout else "disabled")
         self.solve_button.configure(state="normal" if can_solve else "disabled")
         self.resolve_dragged_button.configure(
             state=(
@@ -1536,6 +1715,12 @@ class SurveyGeometryView(ttk.Frame):
             increment=1,
             width=6,
         ).grid(row=1, column=2, sticky="w", pady=(4, 0))
+        self._build_distance_weight_control(solver_bar).grid(
+            row=2, column=0, columnspan=10, sticky="w", pady=(4, 0)
+        )
+        self._build_anchor_lock_controls(solver_bar).grid(
+            row=3, column=0, columnspan=10, sticky="w", pady=(4, 0)
+        )
         self._fullscreen_solve_button = ttk.Button(
             solver_bar,
             text="Solve / re-solve",
@@ -1671,6 +1856,15 @@ class SurveyGeometryView(ttk.Frame):
             self._drag_moved = False
         if window is not None and window.winfo_exists():
             window.destroy()
+        self._anchor_lock_buttons = [
+            widget for widget in self._anchor_lock_buttons if widget.winfo_exists()
+        ]
+        self._anchor_unlock_all_buttons = [
+            widget for widget in self._anchor_unlock_all_buttons if widget.winfo_exists()
+        ]
+        self._fit_details_buttons = [
+            widget for widget in self._fit_details_buttons if widget.winfo_exists()
+        ]
         self._edge_distance_entries = [
             widget for widget in self._edge_distance_entries
             if widget.winfo_exists()
@@ -1857,6 +2051,7 @@ class SurveyGeometryView(ttk.Frame):
             slot = slot_by_anchor.get(label)
             dragging = label == self._drag_anchor_id
             selected = label == self._selected_anchor_id
+            locked = label in self._locked_positions_m
             node_error = node_errors.get(label)
             node_color = (
                 node_error_color(node_error) if node_error is not None else ACCENT
@@ -1870,11 +2065,14 @@ class SurveyGeometryView(ttk.Frame):
                 outline=MAGENTA if selected else AMBER if dragging else CANVAS_BG,
                 width=3 if selected else 2 if dragging else 1,
             )
+            if locked:
+                canvas.create_oval(x - 11, y - 11, x + 11, y + 11, outline=INK, width=2)
             short = label[-4:]
             canvas.create_text(
                 x,
                 y - 13,
-                text=f"S{slot} · …{short}" if slot is not None else f"…{short}",
+                text=(f"S{slot} · …{short}" if slot is not None else f"…{short}")
+                + (" [locked]" if locked else ""),
                 fill=INK,
                 anchor="s",
                 font=("TkDefaultFont", 9, "bold"),

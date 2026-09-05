@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import tkinter as tk
 import unittest
 from unittest.mock import Mock
 
@@ -36,6 +37,61 @@ class FakeVariable:
 
 
 class SurveyLayoutTransformTests(unittest.TestCase):
+    def test_radio_radius_tracks_new_measurements_without_undoing_manual_reduction(self) -> None:
+        view = SurveyGeometryView.__new__(SurveyGeometryView)
+        interpreter = tk.Tcl()
+        view.neighbor_min_var = tk.StringVar(interpreter, value="7")
+        view.neighbor_max_var = tk.StringVar(interpreter, value="15")
+        view._radio_observation_run_serial = -1
+        view._radio_observed_distances = {}
+        first = AnchorPairDistance("A", "B", 18.25)
+        model = Mock(run_serial=1, current_geometry_pairs=(first,))
+
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_interval_m, (7.0, 19.25))
+
+        view.neighbor_max_var.set("12")
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 12.0)
+        # A changed pair is fresh evidence even when shorter than an old range.
+        model.current_geometry_pairs = (first, AnchorPairDistance("B", "C", 14.0))
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 15.0)
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 15.0)
+
+        # Earlier retained ranges alone must not change a new pass's setting.
+        model.run_serial = 2
+        model.geometry_pairs = (first,)
+        model.current_geometry_pairs = ()
+        view.neighbor_max_var.set("12")
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 12.0)
+        model.current_geometry_pairs = (first,)
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 19.25)
+
+    def test_radio_radius_waits_for_valid_input_and_ignores_unusable_ranges(self) -> None:
+        view = SurveyGeometryView.__new__(SurveyGeometryView)
+        interpreter = tk.Tcl()
+        view.neighbor_min_var = tk.StringVar(interpreter, value="7")
+        view.neighbor_max_var = tk.StringVar(interpreter, value="")
+        view._radio_observation_run_serial = -1
+        view._radio_observed_distances = {}
+        model = Mock(run_serial=1, current_geometry_pairs=(AnchorPairDistance("A", "B", 20.0),))
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_var.get(), "")
+        view.neighbor_max_var.set("15")
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 21.0)
+
+        model.current_geometry_pairs = tuple(
+            AnchorPairDistance("A", str(index), distance)
+            for index, distance in enumerate((float("nan"), float("inf"), -1.0, 0.0, 21.0))
+        ) + (AnchorPairDistance("C", "D", 100.0, enabled=False),)
+        view._update_radio_radius(model)
+        self.assertEqual(view.neighbor_max_m, 21.0)
+
     def test_phase_progress_distinguishes_estimate_from_terminal_wait(self) -> None:
         view = SurveyGeometryView.__new__(SurveyGeometryView)
         view.phase_timing_var = FakeVariable()  # type: ignore[assignment]
