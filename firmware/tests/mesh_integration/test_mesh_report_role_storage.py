@@ -15,7 +15,7 @@ REPORT_SOURCE = FIRMWARE_ROOT / "app" / "src" / "app_mesh_report.c"
 ANCHOR_SOURCE = FIRMWARE_ROOT / "app" / "src" / "app_anchor.c"
 CAPACITY_HEADER = FIRMWARE_ROOT / "include" / "mesh_capacity.h"
 RELAY_HEADER = FIRMWARE_ROOT / "include" / "mesh_relay.h"
-PENDING_SYMBOL = re.compile(r"\bmesh_ch9_tx_pending\b")
+DELIVERY_SYMBOL = re.compile(r"\bmesh_report_delivery\b")
 ANCHOR_ROLE_GUARD = re.compile(r"DEVICE_ROLE\s*==\s*ROLE_ANCHOR")
 
 
@@ -36,7 +36,7 @@ def _logical_lines(source: str) -> list[tuple[int, str]]:
     return result
 
 
-def _unguarded_pending_symbol_lines(source: str) -> list[int]:
+def _unguarded_delivery_symbol_lines(source: str) -> list[int]:
     conditions: list[str] = []
     failures: list[int] = []
     for number, line in _logical_lines(source):
@@ -65,7 +65,7 @@ def _unguarded_pending_symbol_lines(source: str) -> list[int]:
                 conditions.pop()
             continue
 
-        if PENDING_SYMBOL.search(line) and not any(
+        if DELIVERY_SYMBOL.search(line) and not any(
             ANCHOR_ROLE_GUARD.search(condition) for condition in conditions
         ):
             failures.append(number)
@@ -106,25 +106,23 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         cls.capacity_header = CAPACITY_HEADER.read_text(encoding="utf-8")
         cls.relay_header = RELAY_HEADER.read_text(encoding="utf-8")
 
-    def test_pending_batch_is_anchor_compile_role_only(self) -> None:
-        failures = _unguarded_pending_symbol_lines(self.report_source)
+    def test_report_delivery_bank_is_anchor_compile_role_only(self) -> None:
+        failures = _unguarded_delivery_symbol_lines(self.report_source)
         self.assertEqual(
             [],
             failures,
-            "pending batch references compile outside ROLE_ANCHOR at lines "
+            "report delivery references compile outside ROLE_ANCHOR at lines "
             + ",".join(str(line) for line in failures),
         )
-        self.assertIn("sizeof(mesh_ch9_tx_pending) == 4152u", self.report_source)
-        self.assertIn("mesh_ch9_tx_batch_storage.pending", self.report_source)
-        self.assertIn("mesh_ch9_tx_batch_storage.candidates", self.report_source)
         self.assertIn(
-            "sizeof(mesh_ch9_tx_batch_storage) == 4152u",
+            "sizeof(mesh_report_delivery) <= 4152u",
             self.report_source,
         )
         self.assertIn(
-            "MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0",
+            "static struct mesh_report_delivery_state mesh_report_delivery;",
             self.report_source,
         )
+        self.assertNotIn("mesh_ch9_tx_batch_storage", self.report_source)
         self.assertNotIn(
             "mesh_ch9_batch_payload_scratch", self.report_source
         )

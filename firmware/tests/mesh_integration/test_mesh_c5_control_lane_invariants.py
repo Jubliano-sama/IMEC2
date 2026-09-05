@@ -128,7 +128,7 @@ def main() -> None:
     repair_admission = body(
         source,
         "static bool mesh_coordinator_c5_tx_allowed_authorized_intent(",
-        "static bool mesh_coordinator_c5_tx_allowed_authorized(",
+        "static bool mesh_outbound_reports_local_delivery_loss(",
     )
     causal_outbound = body(
         source,

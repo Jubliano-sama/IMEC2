@@ -501,7 +501,7 @@ class ControlFailureClickServiceabilitySourceTests(unittest.TestCase):
         self.assertIn("break;", click_path)
         self.assertNotIn("continue;", click_path)
 
-    def test_deferred_c5_custody_blocks_scan_only_at_its_physical_rf_edge(self):
+    def test_deferred_c5_custody_has_bounded_retry_and_schedule_failure_cleanup(self):
         due = function_body(REPORT, "mesh_c5_flood_deferred_entry_due")
         stamp = function_body(
             REPORT, "mesh_c5_flood_deferred_schedule_after_locked"
@@ -580,38 +580,9 @@ class ControlFailureClickServiceabilitySourceTests(unittest.TestCase):
             "mesh_c5_flood_schedule_loss_fail_stop(", resume
         )
 
-        # Enumeration burst custody exists only around the actual wake/data
-        # RF calls; it may not cover a multi-second logical flood schedule.
-        wake_call = send.index("mesh_send_route_wake_train_with_duration(")
-        wake_begin = send.rfind(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", 0, wake_call
-        )
-        wake_end = send.index(
-            "mesh_c5_enumeration_relay_burst_end()", wake_call
-        )
-        data_calls = [
-            send.index(call, wake_end)
-            for call in (
-                "app_mesh_flood_send_opportunity_resume(",
-                "app_mesh_flood_send_opportunity(",
-                "app_mesh_flood_send_bounded_resume(",
-                "app_mesh_command_orchestrator_serialize_flood(",
-                "app_mesh_command_orchestrator_send_flood(",
-            )
-        ]
-        data_call = min(data_calls)
-        data_begin = send.rfind(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", wake_end, data_call
-        )
-        data_end = send.index(
-            "mesh_c5_enumeration_relay_burst_end()", data_call
-        )
-        self.assertGreaterEqual(wake_begin, 0)
-        self.assertGreaterEqual(data_begin, wake_end)
-        self.assertLess(wake_begin, wake_call)
-        self.assertLess(wake_call, wake_end)
-        self.assertLess(data_begin, data_call)
-        self.assertTrue(all(data_begin < call < data_end for call in data_calls))
+        # Actual wake/copy reservation lifetime and failed-send cleanup are
+        # exercised by test_app_mesh_enumeration_scan_handoff. The scheduler
+        # and retained-custody failure checks above remain independent.
 
     def test_gateway_command_retry_has_attempt_and_schedule_failure_terminals(self):
         schedule = function_body(

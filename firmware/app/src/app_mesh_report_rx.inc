@@ -214,226 +214,6 @@ static bool mesh_process_queued_rx_at_gateway_rx_boundary(void)
         "gateway-ch9-continuous-rx", true);
 }
 
-#if DEVICE_ROLE == ROLE_ANCHOR
-static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
-    const struct mesh_outbound *failed,
-    uint64_t timed_out_next_hop_id,
-    uint8_t gateway_unacked,
-    uint8_t requeued,
-    uint32_t now_ms)
-{
-    const struct route_candidate *selected;
-    enum route_delivery_action action;
-    enum app_mesh_ch9_timeout_pressure_action pressure_action;
-    uint64_t next_hop_id = 0u;
-    uint32_t random_value = sys_rand32_get();
-    uint32_t delay_ms = 0u;
-    uint8_t failure_count = 0u;
-    int select_ret = PROTO_ERR_NOT_FOUND;
-    int route_ret = 0;
-
-    if (failed == NULL || gateway_unacked == 0u) {
-        return;
-    }
-
-    if (failed->packet.msg_type == MSG_COMMAND_RESULT) {
-        selected = route_selected(&mesh_runtime.upstream);
-        failure_count = selected == NULL ? 1u : selected->failure_count;
-        delay_ms = mesh_identity_backoff_ms(DEVICE_ID, timed_out_next_hop_id, failure_count);
-        report_tx_schedule_backoff(delay_ms, "ch9-operation-route-timeout");
-        return;
-    }
-
-    action = route_record_candidate_failure_at(
-        &mesh_runtime.upstream,
-        timed_out_next_hop_id,
-        GATEWAY_ID,
-        ROUTE_FAILURE_GATEWAY_ACK,
-        now_ms);
-    pressure_action = app_mesh_ch9_timeout_pressure_decide(
-        failed,
-        DEVICE_ROLE == ROLE_ANCHOR,
-        mesh_runtime_has_transit_reservation(),
-        false,
-        DEVICE_ID);
-    if (action != ROUTE_DELIVERY_DISCOVER) {
-        select_ret = mesh_relay_select_next_hop(&mesh_runtime,
-                                                failed->packet.dst_id,
-                                                &next_hop_id);
-    }
-    if (pressure_action == APP_MESH_CH9_TIMEOUT_DROP_TRANSIT) {
-        if (action != ROUTE_DELIVERY_RETRY_CURRENT) {
-            mesh_relay_clear_channel9_timing(&mesh_runtime,
-                                             timed_out_next_hop_id);
-            mesh_event_owner_abandon_peer(timed_out_next_hop_id);
-        }
-        if (action == ROUTE_DELIVERY_DISCOVER || select_ret != PROTO_OK) {
-            mesh_relay_invalidate_upstream_route(&mesh_runtime);
-        }
-    } else if (action == ROUTE_DELIVERY_RETRY_CURRENT &&
-               select_ret == PROTO_OK) {
-        selected = route_selected(&mesh_runtime.upstream);
-        failure_count = selected == NULL ? 1u : selected->failure_count;
-        delay_ms = mesh_relay_retry_backoff_ms(failure_count, random_value);
-        report_tx_schedule_backoff(delay_ms, "ch9-gateway-ack-timeout");
-    } else if (action == ROUTE_DELIVERY_TRY_ALTERNATE && select_ret == PROTO_OK) {
-        report_tx_schedule(0u);
-    } else if (pressure_action == APP_MESH_CH9_TIMEOUT_DEFER_LOCAL) {
-        delay_ms = ROUTE_PARENT_HOLDDOWN_MS;
-        route_ret = -EAGAIN;
-        report_tx_schedule_backoff(delay_ms,
-                                   "ch9-gateway-ack-downstream-reserved");
-    } else {
-        mesh_relay_invalidate_upstream_route(&mesh_runtime);
-        if (timed_out_next_hop_id == GATEWAY_ID) {
-            mesh_direct_gateway_bulk_probe_suppress(now_ms,
-                                                    "ch9-gateway-ack-timeout");
-        }
-        route_ret = mesh_schedule_route_request(
-            failed->packet.dst_id,
-            "ch9-gateway-ack-timeout");
-    }
-
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_CH9_TX_ACK_ROUTE_FAIL action=%s pressure=%u src=0x%llx type=0x%02x gw_unacked=%u requeued=%u fail=%u delay=%u route_ret=%d select=%d next=0x%llx timed=0x%llx\n",
-                            route_delivery_action_name(action),
-                            pressure_action,
-                            (unsigned long long)failed->packet.src_id,
-                            failed->packet.msg_type,
-                            gateway_unacked,
-                            requeued,
-                            failure_count,
-                            delay_ms,
-                            route_ret,
-                            select_ret,
-                            (unsigned long long)next_hop_id,
-                            (unsigned long long)timed_out_next_hop_id);
-    }
-}
-#endif
-
-#if DEVICE_ROLE == ROLE_ANCHOR
-static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
-{
-    if (mesh_c5_tx_bank_owned) {
-        report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
-        return;
-    }
-
-    struct mesh_outbound route_failure_packet = {0};
-    uint64_t timed_out_next_hop_id = 0u;
-    uint8_t requeued = 0u;
-    uint8_t acked = 0u;
-    uint8_t gateway_unacked = 0u;
-    uint8_t transit_dropped = 0u;
-    bool route_failure_packet_valid = false;
-
-    if (!mesh_ch9_tx_pending.active ||
-        !uptime_deadline_reached(now_ms, mesh_ch9_tx_pending.deadline_ms)) {
-        return;
-    }
-
-    timed_out_next_hop_id = mesh_ch9_tx_pending.next_hop_id;
-    for (uint8_t i = 0u; i < mesh_ch9_tx_pending.count; i++) {
-        struct mesh_ch9_tx_pending_entry *entry = &mesh_ch9_tx_pending.entries[i];
-
-        if (entry->acked) {
-            acked++;
-            continue;
-        }
-        struct mesh_outbound clean = entry->outbound;
-        int strip_ret = mesh_outbound_clear_ch9_batch_metadata(&clean);
-        const struct mesh_outbound *retry =
-            strip_ret == PROTO_OK ? &clean : &entry->outbound;
-
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && strip_ret != PROTO_OK) {
-            status_debug_printf("DBG_CH9_TX_ACK_TIMEOUT_STRIP_FAIL ret=%d seq=%u\n",
-                                strip_ret,
-                                entry->outbound.packet.seq);
-        }
-        if (app_mesh_ch9_tx_timeout_counts_route_failure(retry,
-                                                         timed_out_next_hop_id,
-                                                         GATEWAY_ID)) {
-            gateway_unacked++;
-            if (!route_failure_packet_valid) {
-                route_failure_packet = *retry;
-                route_failure_packet_valid = true;
-            }
-        }
-        if (app_mesh_ch9_timeout_pressure_decide(
-                retry,
-                DEVICE_ROLE == ROLE_ANCHOR,
-                mesh_runtime_has_transit_reservation(),
-                false,
-                DEVICE_ID) == APP_MESH_CH9_TIMEOUT_DROP_TRANSIT) {
-            entry->acked = true;
-            transit_dropped++;
-            status_debug_printf("DBG_TRANSIT_CUSTODY_DROP src=0x%llx seq=%u type=0x%02x reason=gateway-ack-timeout\n",
-                                (unsigned long long)retry->packet.src_id,
-                                retry->packet.seq,
-                                retry->packet.msg_type);
-            continue;
-        }
-    }
-
-    requeued = mesh_ch9_tx_pending_requeue_unacked(now_ms);
-
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_note("DBG_CH9_TX_ACK_TIMEOUT\n");
-        status_debug_printf("DBG_CH9_TX_ACK_TIMEOUT n=%u acked=%u dropped=%u requeued=%u retained=%u now=%u deadline=%u\n",
-                            (uint8_t)(acked + transit_dropped + requeued +
-                                      mesh_ch9_tx_pending.count),
-                            acked,
-                            transit_dropped,
-                            requeued,
-                            mesh_ch9_tx_pending.count,
-                            now_ms,
-                            mesh_ch9_tx_pending.deadline_ms);
-    }
-    LOG_WRN("mesh channel-9 TX batch ACK timeout: acked=%u dropped=%u requeued=%u retained=%u",
-            acked,
-            transit_dropped,
-            requeued,
-            mesh_ch9_tx_pending.count);
-    if (route_failure_packet_valid) {
-        mesh_handle_ch9_gateway_ack_timeout_route_failure(&route_failure_packet,
-                                                          timed_out_next_hop_id,
-                                                          gateway_unacked,
-                                                          requeued,
-                                                          now_ms);
-    }
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        uint8_t skipped;
-
-        status_debug_note("DBG_CH9_TX_ACK_TIMEOUT_REQUEUE\n");
-        skipped = mesh_advance_channel9_timing_past(timed_out_next_hop_id,
-                                                    now_ms,
-                                                    "ack-timeout");
-        (void)mesh_expire_channel9_timings(now_ms, "ch9-ack-timeout");
-        status_debug_printf("DBG_CH9_TX_ACK_REQUEUE next=0x%llx skip=%u\n",
-                            (unsigned long long)timed_out_next_hop_id,
-                            skipped);
-    }
-    if (!mesh_ch9_tx_pending.active) {
-        mesh_ch9_tx_pending_clear();
-    } else {
-        mesh_schedule_tx_timeout();
-    }
-    if (requeued > 0u || report_tx_queue_used() > 0u) {
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_CH9_TX_ACK_REQUEUE_SCHED requeued=%u q=%u\n",
-                                requeued,
-                                report_tx_queue_used());
-        }
-        report_tx_schedule(0u);
-    }
-}
-#else
-static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
-{
-    ARG_UNUSED(now_ms);
-}
-#endif
 
 static bool mesh_defer_due_retry_to_channel9_tx_slot(uint32_t now_ms)
 {
@@ -509,12 +289,12 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         status_debug_printf("DBG_TX_TIMEOUT_ENTER relay=%u route=%u ch9pend=%u bundle=%u now=%u\n",
                             mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
                             mesh_route_waiting_tx_valid ? 1u : 0u,
-                            mesh_ch9_tx_pending_is_active() ? 1u : 0u,
+                            0u,
                             mesh_relay_result_bundle_pending(&mesh_runtime) ? 1u : 0u,
                             now_ms);
     }
 
-    mesh_ch9_tx_pending_handle_timeout(now_ms);
+
     if (mesh_defer_due_retry_to_channel9_tx_slot(now_ms)) {
         return;
     }
@@ -1596,6 +1376,13 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
                                                 route_window_end_ms) ? 1u :
                         route_window_end_ms - now_ms;
         }
+        status_debug_printf(
+            "DBG_ROUTE_ACTIVATION_LISTEN valid=%u now=%u start=%u relay=%u listen=%u\n",
+            activation_entry != NULL ? 1u : 0u,
+            k_uptime_get_32(),
+            activation_entry != NULL ? activation_entry->route_adv_start_ms : 0u,
+            activation_entry != NULL ? activation_entry->relay_window_start_ms : 0u,
+            listen_ms);
     }
     if (control_followup) {
         /*
@@ -2345,36 +2132,16 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     struct dwm3000_rx_debug_snapshot dbg_snap;
 
                     dwm3000_driver_last_rx_debug_get(&dbg_snap);
-                    /*
-                     * The driver absorbs foreign-frame PHY errors by
-                     * re-enabling the receiver inside this same window.  The
-                     * slice never saw those attempts, so account for them
-                     * here; otherwise a genuine storm would look quiet to the
-                     * re-init and recovery-yield safety nets.
-                     */
-                    if (dbg_snap.recoverable_rearms > 0u) {
-                        uint32_t absorbed = dbg_snap.recoverable_rearms;
-
-                        gateway_ch9_recoverable_rx_errors =
-                            (uint16_t)MIN((uint32_t)UINT16_MAX,
-                                          gateway_ch9_recoverable_rx_errors +
-                                              absorbed);
-                        recoverable_errors_in_slice =
-                            (uint16_t)MIN((uint32_t)UINT16_MAX,
-                                          recoverable_errors_in_slice +
-                                              absorbed);
-                    }
                     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                         status_debug_printf(
-                            "DBG_GATEWAY_CH9_RX_CONT_RESULT start=%u end=%u ret=%d fail=%u status=0x%08x len=%u frames=%u rearm=%u\n",
+                            "DBG_GATEWAY_CH9_RX_CONT_RESULT start=%u end=%u ret=%d fail=%u status=0x%08x len=%u frames=%u\n",
                             rx_started_ms,
                             k_uptime_get_32(),
                             rx_ret,
                             (unsigned int)rx_failure,
                             dbg_snap.status,
                             (unsigned int)frame_len,
-                            channel9_frames_seen,
-                            (unsigned int)dbg_snap.recoverable_rearms);
+                            channel9_frames_seen);
                     }
                 }
                 functional_rx_outcome =
@@ -2841,7 +2608,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         status_debug_printf("DBG_TX_CH9_RX_WAIT next_delay=%u conn=%u ack=%u\n",
                             next_delay_ms,
                             mesh_channel9_connection_count(),
-                            mesh_ch9_tx_pending_is_active() ? 1u : 0u);
+                            0u);
         mesh_schedule_uwb_rx(next_delay_ms);
         return;
     }

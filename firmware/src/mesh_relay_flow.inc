@@ -32,15 +32,6 @@ static struct route_candidate *relay_upstream_candidate_mutable(
     return NULL;
 }
 
-static bool relay_candidate_usable_now(const struct route_candidate *candidate,
-                                       uint32_t now_ms)
-{
-    return candidate != NULL && candidate->valid &&
-           candidate->hop_count != MESH_ROUTE_DEPTH_UNREACHABLE &&
-           (!candidate->hold_down_valid ||
-            deadline_reached(now_ms, candidate->hold_down_until_ms));
-}
-
 uint8_t mesh_relay_local_depth(const struct mesh_relay *relay, uint32_t now_ms)
 {
     const struct route_candidate *selected;
@@ -56,7 +47,7 @@ uint8_t mesh_relay_local_depth(const struct mesh_relay *relay, uint32_t now_ms)
         return MESH_ROUTE_DEPTH_UNREACHABLE;
     }
     selected = route_selected(&relay->upstream);
-    if (!relay_candidate_usable_now(selected, now_ms) ||
+    if (!route_candidate_eligible_at(&relay->upstream, selected, now_ms) ||
         selected->gateway_id != relay->gateway_id ||
         selected->hop_count >= MESH_ROUTE_DEPTH_UNREACHABLE - 1u) {
         return MESH_ROUTE_DEPTH_UNREACHABLE;
@@ -308,14 +299,19 @@ static bool relay_flow_ack_answers_pending(const struct mesh_relay *relay,
  * Fold an ACK's advertised depth and credit into the candidate that sent it.
  * A missing TLV means "unknown": old firmware behaviour is unchanged.
  */
-static void relay_note_ack_depth_credit(struct mesh_relay *relay,
-                                        uint64_t previous_hop_id,
-                                        const struct mesh_ack_flow_control *flow)
+void mesh_relay_note_ack_route_feedback(struct mesh_relay *relay,
+                                         uint64_t previous_hop_id,
+                                         const struct mesh_ack_flow_control *flow,
+                                         uint32_t now_ms)
 {
-    struct route_candidate *candidate =
-        relay_upstream_candidate_mutable(relay, previous_hop_id);
+    struct route_candidate *candidate;
 
-    if (candidate == NULL) {
+    if (relay == NULL || flow == NULL) {
+        return;
+    }
+    candidate = relay_upstream_candidate_mutable(relay, previous_hop_id);
+    if (candidate == NULL ||
+        candidate->route_epoch != relay->upstream.current_epoch) {
         return;
     }
     if (flow->depth_valid) {
@@ -324,6 +320,11 @@ static void relay_note_ack_depth_credit(struct mesh_relay *relay,
     if (flow->credit_valid) {
         candidate->queue_free_hint = flow->credit;
     }
+    if (mesh_ack_flow_control_is_dead_end(flow)) {
+        candidate->hold_down_until_ms = now_ms + MESH_PARENT_DEAD_END_HOLD_MS;
+        candidate->hold_down_valid = true;
+    }
+    (void)route_select_best_at(&relay->upstream, now_ms);
 }
 
 /*
@@ -336,15 +337,7 @@ static void relay_handle_dead_end_ack(struct mesh_relay *relay,
                                       uint32_t now_ms,
                                       struct mesh_relay_result *result)
 {
-    struct route_candidate *candidate =
-        relay_upstream_candidate_mutable(relay, previous_hop_id);
     uint64_t next_hop_id = 0u;
-
-    if (candidate != NULL) {
-        candidate->hold_down_until_ms = now_ms + MESH_PARENT_DEAD_END_HOLD_MS;
-        candidate->hold_down_valid = true;
-    }
-    (void)route_select_best_at(&relay->upstream, now_ms);
     relay->pending.gateway_ack_deadline_ms = 0u;
     relay->pending.hop_ack_observed_since_send = false;
     mesh_relay_reset_batch(relay);
@@ -431,7 +424,7 @@ static int relay_handle_ack_flow_control(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
-    relay_note_ack_depth_credit(relay, previous_hop_id, &flow);
+    mesh_relay_note_ack_route_feedback(relay, previous_hop_id, &flow, now_ms);
 
     if (mesh_ack_flow_control_is_dead_end(&flow)) {
         relay_handle_dead_end_ack(relay, previous_hop_id, now_ms, result);

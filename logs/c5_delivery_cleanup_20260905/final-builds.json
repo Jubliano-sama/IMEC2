@@ -1,0 +1,27 @@
+{
+  "mesh-anchor-3a": {
+    "ram_free_bytes": 6336,
+    "bin_sha256": "9576307cafad6c665fe8312fa6773d8b39983fb011941d7ba9f708601d5f725b",
+    "flashed": true
+  },
+  "mesh-anchor-f1-3a": {
+    "ram_free_bytes": 6400,
+    "bin_sha256": "0fef205772d53403a68fb349ffc050d65375db4498fb6ed8d3ca87e793fd7d80",
+    "flashed": true
+  },
+  "mesh-anchor-f2-3a": {
+    "ram_free_bytes": 6400,
+    "bin_sha256": "3867ee45e8897675a27ac00aa41a0bc3ad7786e3237d873f3343179adc398afe",
+    "flashed": true
+  },
+  "mesh-clicker-rtt-3a": {
+    "ram_free_bytes": 33328,
+    "bin_sha256": "1da385b519a1a933ac6c64fff079fc1614675b5c4920158ae1caae8e11d0e0d6",
+    "flashed": true
+  },
+  "mesh-gateway-2a": {
+    "ram_free_bytes": 5408,
+    "bin_sha256": "0e678822c7bc1be57b78072d83bad77fcbf1166f8513859b2f3628bc9fc0b193",
+    "flashed": false
+  }
+}

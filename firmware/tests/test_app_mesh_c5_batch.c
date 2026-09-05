@@ -2,6 +2,7 @@
  * boundaries are faked; packet encoding, identity, ACK admission and routes
  * use the real native core. RX requires complete frame airtime in its window. */
 #include "mesh_relay.h"
+#include "app_mesh_report_delivery_state.h"
 #include "uwb.h"
 #include "app_mesh_ch9_ack.h"
 #include "app_gateway_ble_stream.h"
@@ -18,7 +19,7 @@
 #define DEVICE_ID UINT64_C(0xa100)
 #define GATEWAY_ID UINT64_C(0x9000)
 #define NETWORK_ID 1u
-#define MESH_CH9_TX_BATCH_MAX 4u
+#define MESH_CLICK_SLOT_WAKE_LEAD_MS 30u
 #define MESH_RX_QUEUE_DEPTH 4u
 #define REPORT_TX_QUEUE_DEPTH 4u
 #define REPORT_TX_RETRY_DELAY_MS 10u
@@ -37,16 +38,21 @@
 #define MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS 1u
 
 struct radio_guard_uwb_lease { bool active; };
-enum dwm3000_rx_failure { DWM3000_RX_FAILURE_NONE };
+enum dwm3000_rx_failure {
+    DWM3000_RX_FAILURE_NONE = 0,
+    DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT = 1,
+    DWM3000_RX_FAILURE_SFD_TIMEOUT = 2,
+    DWM3000_RX_FAILURE_FRAME_TIMEOUT = 3,
+    DWM3000_RX_FAILURE_CRC_OR_PHY = 4,
+    DWM3000_RX_FAILURE_BAD_FRAME = 5,
+};
+bool app_wake_train_politeness_rx_activity(int ret, enum dwm3000_rx_failure failure);
+enum mesh_standard_wake_probe_result {
+    MESH_STANDARD_WAKE_PROBE_NONE,
+    MESH_STANDARD_WAKE_PROBE_CLICK,
+};
 struct app_mesh_queue_head_token { bool active; };
 struct app_mesh_rf_retry_key { uint16_t seq; };
-struct mesh_ch9_tx_pending_entry { struct mesh_outbound outbound; bool acked; };
-struct mesh_ch9_tx_pending_batch {
-    struct mesh_ch9_tx_pending_entry entries[MESH_CH9_TX_BATCH_MAX];
-    uint8_t count;
-    uint64_t next_hop_id;
-    bool active;
-};
 struct mesh_rx_pending {
     struct proto_packet packet;
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
@@ -59,13 +65,15 @@ struct fake_callbacks {
 };
 static struct fake_callbacks *mesh_report_callbacks;
 static struct mesh_relay mesh_runtime;
-static struct mesh_ch9_tx_pending_batch mesh_ch9_tx_pending;
+static struct mesh_report_delivery_state mesh_report_delivery;
 static struct mesh_outbound report_tx_worker_scratch;
 static struct app_mesh_ch9_ack_table mesh_ch9_ack_table;
 static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
-static bool mesh_c5_tx_bank_owned, mesh_route_waiting_tx_valid;
+static bool mesh_route_waiting_tx_valid;
+static unsigned route_requests;
+static int completion_error;
 static uint64_t mesh_c5_rx_burst_peer;
-static int mesh_rx_msgq, mesh_send_scratch_lock;
+static int mesh_rx_msgq, mesh_send_scratch_lock, report_tx_queue_overflow_lock;
 static struct mesh_outbound queue[REPORT_TX_QUEUE_DEPTH], sent[4];
 static unsigned queue_count, sent_count, retired_count, rx_count;
 static unsigned claims, releases, parks, stops, starts, watchdog_stops, locks;
@@ -76,6 +84,19 @@ static bool refuse, corrupt_digest, wrong_peer, stale_ack;
 static bool duplicate_first_ack, follower_refusal;
 static uint8_t response_depth;
 static unsigned ack_reads;
+static unsigned receive_calls, typed_phy_remaining, standard_probes, click_handoffs;
+static unsigned click_contact_clears;
+static unsigned rx_work_submissions;
+static bool repeat_typed_phy, capture_click, radio_owned, fixed_ack_deadline;
+static bool standard_probe_clipped;
+static uint32_t first_ack_deadline_ms, click_observed_ms;
+static uint32_t typed_phy_duration_ms, standard_probe_duration_ms;
+static uint8_t click_quality;
+static struct uwb_wake_claim_frame observed_click;
+static struct mesh_outbound unrelated_rx, queued_rx;
+static bool inject_unrelated_rx;
+static uint16_t last_retry_seq;
+static unsigned retry_round_calls;
 static unsigned causal_send_calls, causal_send_allowed;
 static int causal_send_error;
 static struct mesh_outbound causal_sent_ack;
@@ -113,54 +134,79 @@ static int mesh_route_refresh_begin_radio_control(void *ctx)
 static void mesh_route_refresh_end_radio_control(void *ctx)
 { (void)ctx; assert(handoff_held); handoff_held=false; handoff_ends++; }
 static int mesh_transport_radio_claim(int client, const char *why, struct radio_guard_uwb_lease *lease)
-{ (void)why; if (client==RADIO_GUARD_UWB_CLIENT_MESH_RX) assert(handoff_held); claims++; lease->active = claim_error == 0; return claim_error; }
+{ (void)why; if (client==RADIO_GUARD_UWB_CLIENT_MESH_RX) assert(handoff_held); claims++; lease->active = claim_error == 0; radio_owned=lease->active; return claim_error; }
 static int mesh_transport_radio_finish(struct radio_guard_uwb_lease *lease, int ret)
-{ assert(lease->active); lease->active = false; releases++; return ret; }
+{ assert(lease->active && radio_owned); lease->active = false; radio_owned=false; releases++; return ret; }
 static int mesh_radio_idle_with_bounded_recovery(const char *why) { (void)why; parks++; return park_error; }
 static int dwm3000_driver_configure_wake_mesh_control_mode(void) { return configure_error; }
 static void app_watchdog_stop_feeding(void) { watchdog_stops++; }
 static void app_watchdog_note_radio_progress(void) { }
 static void report_tx_schedule(uint32_t ms) { scheduled_ms = ms; }
+static void report_tx_schedule_backoff(uint32_t ms) { report_tx_schedule(ms); }
 static int report_tx_queue_begin_head(struct mesh_outbound *out, struct app_mesh_queue_head_token *token)
 { if (!queue_count) return -ENOENT; *out = queue[0]; token->active = true; return 0; }
 static int report_tx_queue_abort_head(struct app_mesh_queue_head_token *token) { token->active = false; return 0; }
 static int report_tx_queue_commit_head(struct app_mesh_queue_head_token *token, struct mesh_outbound *out)
-{ (void)out; assert(token->active && queue_count); token->active = false; queue_count--; memmove(queue, queue+1, queue_count*sizeof(queue[0])); return 0; }
+{
+    assert(token->active && queue_count);
+    assert(mesh_report_delivery.count < MESH_REPORT_DELIVERY_CAPACITY);
+    k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    struct mesh_report_delivery_entry *entry =
+        &mesh_report_delivery.entries[mesh_report_delivery.count++];
+    entry->outbound = *out;
+    entry->acked = false;
+    token->active = false;
+    queue_count--;
+    memmove(queue, queue+1, queue_count*sizeof(queue[0]));
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return 0;
+}
 static bool mesh_outbound_ready_for_tx(const struct mesh_outbound *out, uint32_t now)
 { return !out->earliest_tx_valid || uptime_deadline_reached(now, out->earliest_tx_ms); }
 static void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now) { (void)out; (void)now; }
-static void mesh_ch9_tx_pending_clear(void) { memset(&mesh_ch9_tx_pending, 0, sizeof(mesh_ch9_tx_pending)); }
-static bool mesh_ch9_tx_pending_can_start(void) { return !mesh_ch9_tx_pending.active; }
-static int retry_put(const struct mesh_outbound *out, void *ctx)
-{ (void)ctx; if (queue_count == REPORT_TX_QUEUE_DEPTH) return -ENOMEM; queue[queue_count++] = *out; return 0; }
-static uint8_t retry_used(void *ctx) { (void)ctx; return (uint8_t)queue_count; }
-static void retry_drop(void *ctx) { (void)ctx; assert(false); }
-static uint8_t mesh_ch9_tx_pending_requeue_unacked(uint32_t now)
-{
-    struct app_mesh_ch9_tx_retry_entry entries[4];
-    struct app_mesh_ch9_tx_retry_ops ops = {.put=retry_put,.queue_used=retry_used,.note_drop=retry_drop};
-    struct app_mesh_ch9_tx_retry_result result;
-    for (uint8_t i=0; i<mesh_ch9_tx_pending.count; i++) {
-        entries[i].outbound=&mesh_ch9_tx_pending.entries[i].outbound;
-        entries[i].acked=&mesh_ch9_tx_pending.entries[i].acked;
-    }
-    assert(app_mesh_ch9_tx_requeue_unacked(entries, mesh_ch9_tx_pending.count, now, &ops, &result) == PROTO_OK);
-    uint8_t retained=0;
-    for (uint8_t i=0; i<mesh_ch9_tx_pending.count; i++)
-        if (!mesh_ch9_tx_pending.entries[i].acked) mesh_ch9_tx_pending.entries[retained++]=mesh_ch9_tx_pending.entries[i];
-    mesh_ch9_tx_pending.count=retained; mesh_ch9_tx_pending.active=retained != 0;
-    return result.requeued;
-}
+static int mesh_schedule_route_request(uint64_t peer, const char *reason)
+{ (void)reason; assert(peer==GATEWAY_ID); route_requests++; return 0; }
 static int mesh_send_outbound_preconfigured_ch9_locked(const struct mesh_outbound *out, const char *why, void *ctx)
 { (void)why; (void)ctx; if (send_error) return send_error; assert(sent_count<4); sent[sent_count++]=*out; now_ms++; return 0; }
 static int mesh_anchor_range_report_note_gateway_confirmed(const struct proto_packet *packet, const uint8_t *digest)
 { (void)packet; (void)digest; return -ENOENT; }
 static int app_node_comm_note_gateway_confirmed_digest_at(const struct proto_packet *packet, const uint8_t *digest, uint64_t now)
-{ (void)packet; (void)digest; (void)now; retired_count++; return 0; }
+{ (void)packet; (void)digest; (void)now; assert(locks==0u); if (completion_error) return completion_error; retired_count++; return 0; }
 static struct app_mesh_rf_retry_key mesh_rf_retry_packet_key(const struct proto_packet *packet, int operation)
 { (void)operation; return (struct app_mesh_rf_retry_key){packet->seq}; }
 static uint32_t mesh_rf_retry_bank_next_delay_ms(int *bank, const struct app_mesh_rf_retry_key *key, int policy, const char *why)
-{ (void)bank; (void)key; (void)policy; (void)why; return 40u; }
+{ (void)bank; (void)policy; (void)why; last_retry_seq=key->seq; retry_round_calls++; return 40u; }
+static int mesh_probe_standard_wake_claim(uint8_t *frame, size_t cap,
+    struct uwb_wake_claim_frame *claim, uint8_t *quality, uint32_t *observed,
+    bool allow_relayed_gateway_control, int64_t deadline_ms)
+{
+    (void)frame; (void)allow_relayed_gateway_control;
+    assert(cap != 0u && radio_owned && locks == 1u);
+    assert(deadline_ms >= (int64_t)now_ms);
+    if (fixed_ack_deadline) assert(deadline_ms == first_ack_deadline_ms);
+    standard_probes++;
+    uint32_t remaining = (uint32_t)(deadline_ms - now_ms);
+    standard_probe_clipped |= remaining < standard_probe_duration_ms;
+    now_ms += MIN(standard_probe_duration_ms, remaining);
+    if (!capture_click) return MESH_STANDARD_WAKE_PROBE_NONE;
+    *claim = observed_click;
+    *quality = click_quality;
+    *observed = click_observed_ms = now_ms;
+    return MESH_STANDARD_WAKE_PROBE_CLICK;
+}
+static void mesh_c5_contact_clear(const char *reason)
+{ (void)reason; assert(!radio_owned && locks == 0u); click_contact_clears++; }
+static bool mesh_handoff_anchor_click_claim(const struct uwb_wake_claim_frame *claim,
+    uint8_t quality, uint32_t observed)
+{
+    assert(!radio_owned && locks == 0u && releases == claims && parks == releases);
+    assert(claim->clicker_id == observed_click.clicker_id);
+    assert(claim->click_event_id == observed_click.click_event_id);
+    assert(claim->nonce == observed_click.nonce);
+    assert(quality == click_quality && observed == click_observed_ms);
+    click_handoffs++;
+    return true;
+}
 static void status_debug_printf(const char *format, ...) { (void)format; }
 #define status_debug_note(...) ((void)0)
 #define fw_delivery_loss_note_sent(...) ((void)0)
@@ -173,21 +219,21 @@ static void status_debug_printf(const char *format, ...) { (void)format; }
 static void make_ack(struct mesh_outbound *ack, uint8_t mask)
 {
     memset(ack,0,sizeof(*ack));
-    uint64_t peer=mesh_ch9_tx_pending.next_hop_id;
+    uint64_t peer=mesh_report_delivery.next_hop_id;
     ack->packet=(struct proto_packet){.msg_type=peer==GATEWAY_ID ? MSG_GATEWAY_ACK : MSG_MESH_HOP_ACK,
         .flags=peer==GATEWAY_ID ? FLAG_GATEWAY_ACK : 0u,.src_id=peer,
-        .dst_id=DEVICE_ID,.session_id=mesh_ch9_tx_pending.entries[0].outbound.packet.session_id,
+        .dst_id=DEVICE_ID,.session_id=mesh_report_delivery.entries[0].outbound.packet.session_id,
         .seq=200u,.ttl=1u};
     size_t len=0;
     unsigned first=0;
     while (mask != 0u && (mask & BIT(first)) == 0u) first++;
     assert(mesh_append_requested_seq(ack->payload,sizeof(ack->payload),&len,
-        mesh_ch9_tx_pending.entries[first].outbound.packet.seq)==PROTO_OK);
+        mesh_report_delivery.entries[first].outbound.packet.seq)==PROTO_OK);
     struct mesh_ack_flow_control flow={.depth=response_depth,.credit=credit,
         .depth_valid=true,.credit_valid=true,.retry_after_valid=refuse,.retry_after_ms=50u};
     assert(mesh_append_ack_flow_control(ack->payload,sizeof(ack->payload),&len,&flow)==PROTO_OK);
-    for (uint8_t i=0;i<mesh_ch9_tx_pending.count;i++) if (mask & BIT(i)) {
-        struct mesh_outbound out=mesh_ch9_tx_pending.entries[i].outbound;
+    for (uint8_t i=0;i<mesh_report_delivery.count;i++) if (mask & BIT(i)) {
+        struct mesh_outbound out=mesh_report_delivery.entries[i].outbound;
         if (corrupt_digest) out.packet.flags ^= FLAG_DIAGNOSTIC;
         if (stale_ack) out.packet.session_id++;
         assert(mesh_append_ack_semantic_identity(ack->payload,sizeof(ack->payload),&len,
@@ -196,9 +242,9 @@ static void make_ack(struct mesh_outbound *ack, uint8_t mask)
     if ((mask & (mask-1u)) != 0u) {
         uint8_t sessions[16], seqs[8];
         size_t count=0;
-        for (uint8_t i=0;i<mesh_ch9_tx_pending.count;i++) if (mask & BIT(i)) {
-            proto_put_u32_le(sessions+count*4u,mesh_ch9_tx_pending.entries[i].outbound.packet.session_id);
-            proto_put_u16_le(seqs+count*2u,mesh_ch9_tx_pending.entries[i].outbound.packet.seq);
+        for (uint8_t i=0;i<mesh_report_delivery.count;i++) if (mask & BIT(i)) {
+            proto_put_u32_le(sessions+count*4u,mesh_report_delivery.entries[i].outbound.packet.session_id);
+            proto_put_u16_le(seqs+count*2u,mesh_report_delivery.entries[i].outbound.packet.seq);
             count++;
         }
         assert(tlv_append_bytes(ack->payload,sizeof(ack->payload),&len,TLV_MESH_ACK_SESSION_LIST,sessions,(uint8_t)(count*4u))==PROTO_OK);
@@ -210,7 +256,32 @@ static void make_ack(struct mesh_outbound *ack, uint8_t mask)
 static int dwm3000_driver_receive_frame_continuous(uint32_t timeout, uint8_t *frame, size_t cap,
     size_t *len, uint8_t *quality, void *rsl, enum dwm3000_rx_failure *failure)
 {
-    (void)quality; (void)rsl; (void)failure;
+    (void)rsl;
+    receive_calls++;
+    assert(receive_calls < 100u);
+    *failure = DWM3000_RX_FAILURE_NONE;
+    *quality = 90u;
+    if (fixed_ack_deadline) {
+        if (receive_calls == 1u) first_ack_deadline_ms = now_ms + timeout;
+        assert(now_ms + timeout == first_ack_deadline_ms);
+    }
+    if (typed_phy_remaining != 0u || repeat_typed_phy) {
+        if (typed_phy_remaining != 0u) typed_phy_remaining--;
+        *failure = DWM3000_RX_FAILURE_CRC_OR_PHY;
+        now_ms += MIN(timeout, typed_phy_duration_ms);
+        return -EIO;
+    }
+    if (inject_unrelated_rx) {
+        inject_unrelated_rx = false;
+        assert(uwb_mesh_frame_encode(NETWORK_ID, unrelated_rx.next_hop_id,
+            DEVICE_ID, &unrelated_rx.packet, unrelated_rx.payload,
+            frame, cap, len) == PROTO_OK);
+        uint32_t duration = (uint32_t)((dwm3000_timing_airtime_us_ceil(
+            DWM3000_TIMING_PHY_CH5_MESH_CONTROL, *len) + 999u) / 1000u);
+        if (duration > timeout) { now_ms += timeout; return -ETIMEDOUT; }
+        now_ms += duration;
+        return 0;
+    }
     if (receive_error || ack_reads >= (duplicate_first_ack ? 3u : 2u)) { now_ms+=timeout; return receive_error ? receive_error : -ETIMEDOUT; }
     struct mesh_outbound ack;
     if (follower_refusal && ack_reads==1u) {
@@ -219,10 +290,10 @@ static int dwm3000_driver_receive_frame_continuous(uint32_t timeout, uint8_t *fr
     make_ack(&ack, refuse ? 0u : ack_reads == 0u ||
         (duplicate_first_ack && ack_reads==1u) ? 1u : final_mask);
     if (follower_refusal && ack_reads==1u) {
-        proto_put_u16_le(ack.payload+2u,mesh_ch9_tx_pending.entries[1].outbound.packet.seq);
+        proto_put_u16_le(ack.payload+2u,mesh_report_delivery.entries[1].outbound.packet.seq);
     }
     ack_reads++;
-    uint64_t peer=mesh_ch9_tx_pending.next_hop_id + (wrong_peer ? 1u : 0u);
+    uint64_t peer=mesh_report_delivery.next_hop_id + (wrong_peer ? 1u : 0u);
     assert(uwb_mesh_frame_encode(NETWORK_ID,peer,DEVICE_ID,&ack.packet,ack.payload,frame,cap,len)==PROTO_OK);
     uint64_t airtime_us=dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_MESH_CONTROL,*len);
     if (airtime_us > (uint64_t)timeout*1000u) { now_ms+=timeout; return -ETIMEDOUT; }
@@ -245,17 +316,18 @@ static int dwm3000_driver_receive_frame_continuous_extend_on_activity(uint32_t t
     now_ms=start+duration;
     return 0;
 }
-static bool queue_captured_frame(const uint8_t *frame, size_t len, bool *valid, uint64_t *previous)
+static bool queue_captured_frame(const uint8_t *frame, size_t len, bool submit_work,
+    bool *valid, uint64_t *previous)
 {
-    struct proto_packet packet;
-    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
     size_t payload_len;
     if (rx_count==MESH_RX_QUEUE_DEPTH || uwb_mesh_frame_decode(frame,len,NETWORK_ID,DEVICE_ID,
-        previous,&packet,payload,sizeof(payload),&payload_len)!=PROTO_OK) return false;
-    *valid=true; rx_count++; return true;
+        previous,&queued_rx.packet,queued_rx.payload,sizeof(queued_rx.payload),&payload_len)!=PROTO_OK) return false;
+    queued_rx.payload_len=(uint16_t)payload_len;
+    queued_rx.ingress_previous_hop_id=*previous;
+    *valid=true; rx_count++; rx_work_submissions+=submit_work; return true;
 }
 #define mesh_queue_from_frame_at_internal(frame,len,quality,rsl,rslvalid,channel,now,age,identity,idlen,late,valid,previous,ctx) \
-    queue_captured_frame(frame,len,valid,previous)
+    queue_captured_frame(frame,len,late,valid,previous)
 static int mesh_ch9_ack_batch_queue(const struct mesh_outbound *ack, const struct mesh_rx_pending *rx)
 {
     (void)rx;
@@ -274,7 +346,7 @@ static int mesh_send_causal_channel9_response(const struct mesh_outbound *ack,co
     (void)why; (void)ctx;
     struct fw_radio_activity_capture capture={.rx_queue_used=rx_count,
         .report_queue_used=queue_count,.relay_tx_active=mesh_relay_tx_active(&mesh_runtime),
-        .ch9_ack_wait_active=mesh_ch9_tx_pending_is_active(),
+        .ch9_ack_wait_active=false,
         .ch9_ack_send_pending=app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table),
         .c5_tx_intent=FW_C5_TX_INTENT_CAUSAL_RESPONSE};
     struct fw_radio_activity_decision decision;
@@ -296,32 +368,43 @@ static int mesh_send_causal_channel9_response(const struct mesh_outbound *ack,co
 #define mesh_c5_capture_followers gateway_c5_capture_followers
 #define mesh_c5_collect_ack gateway_c5_collect_ack
 #define mesh_c5_flush_batch_ack gateway_c5_flush_batch_ack
-#define mesh_c5_try_batch gateway_c5_try_batch
+#define mesh_report_delivery_step gateway_c5_try_batch
+#define mesh_report_delivery_active gateway_delivery_active
 #include "../app/src/app_mesh_report_c5_batch.inc"
 #undef mesh_c5_update_credit
 #undef mesh_c5_capture_followers
 #undef mesh_c5_collect_ack
 #undef mesh_c5_flush_batch_ack
-#undef mesh_c5_try_batch
+#undef mesh_report_delivery_step
+#undef mesh_report_delivery_active
 #undef DEVICE_ROLE
 #define DEVICE_ROLE ROLE_ANCHOR
 
 static void reset_fixture(unsigned count)
 {
-    memset(queue,0,sizeof(queue)); memset(sent,0,sizeof(sent)); mesh_ch9_tx_pending_clear();
+    memset(queue,0,sizeof(queue)); memset(sent,0,sizeof(sent)); memset(&mesh_report_delivery,0,sizeof(mesh_report_delivery));
     queue_count=count; sent_count=retired_count=rx_count=0;
     claims=releases=parks=stops=starts=watchdog_stops=locks=0;
     causal_send_calls=causal_send_allowed=0; causal_send_error=0;
     handoff_held=false; handoff_begins=handoff_ends=0; handoff_error=0;
     app_mesh_ch9_ack_table_init(&mesh_ch9_ack_table);
     now_ms=1000; scheduled_ms=0; ack_reads=0;
+    receive_calls=typed_phy_remaining=standard_probes=click_handoffs=rx_work_submissions=0;
+    click_contact_clears=0;
+    repeat_typed_phy=capture_click=radio_owned=fixed_ack_deadline=inject_unrelated_rx=false;
+    standard_probe_clipped=false; typed_phy_duration_ms=standard_probe_duration_ms=5u;
+    first_ack_deadline_ms=click_observed_ms=0; click_quality=83u;
+    last_retry_seq=0; retry_round_calls=0;
+    memset(&unrelated_rx,0,sizeof(unrelated_rx)); memset(&queued_rx,0,sizeof(queued_rx));
+    observed_click=(struct uwb_wake_claim_frame){.network_id=NETWORK_ID,
+        .clicker_id=UINT64_C(0xc100),.click_event_id=51u,.nonce=UINT64_C(0x12340056)};
     claim_error=configure_error=send_error=receive_error=park_error=0;
     credit=3; final_mask=0x0e; response_depth=0;
     refuse=corrupt_digest=wrong_peer=stale_ack=false;
     duplicate_first_ack=follower_refusal=false;
     capture_mode=false; follower_index=follower_count=follower_duration_ms=0;
     gateway_ble_stream_init(&gateway_ble_stream_state);
-    mesh_c5_tx_bank_owned=mesh_route_waiting_tx_valid=false; mesh_c5_rx_burst_peer=0;
+    mesh_route_waiting_tx_valid=false; route_requests=0; completion_error=0; mesh_c5_rx_burst_peer=0;
     mesh_relay_init(&mesh_runtime,MESH_RELAY_ROLE_ANCHOR,DEVICE_ID,GATEWAY_ID,1u);
     struct route_candidate route={.next_hop_id=GATEWAY_ID,.gateway_id=GATEWAY_ID,
         .route_epoch=1u,.last_seen_ms=now_ms,.hop_count=0u,.link_quality=90u,.valid=true};
@@ -336,52 +419,137 @@ static void test_credit_and_partial_ack(void)
 {
     for (uint8_t grant=0;grant<=3;grant++) {
         reset_fixture(4); credit=grant; final_mask=(uint8_t)((1u<<(grant+1u))-2u);
-        assert(mesh_c5_try_batch()==0);
+        assert(mesh_report_delivery_step()==0);
         assert(sent_count==grant+1u); assert(retired_count==grant+1u);
-        assert(queue_count==3u-grant); assert(!mesh_c5_tx_bank_owned);
+        assert(queue_count==0 && mesh_report_delivery.count==3u-grant);
         assert(claims==1 && releases==1 && parks==1 && locks==0);
     }
     reset_fixture(4); credit=1; final_mask=0x0e; /* ACK also names unsent frames. */
-    assert(mesh_c5_try_batch()==0); assert(retired_count==2); assert(queue_count==2);
-    assert(queue[0].packet.seq==3 && queue[1].packet.seq==4);
+    assert(mesh_report_delivery_step()==0); assert(retired_count==2); assert(mesh_report_delivery.count==2 && queue_count==0);
+    assert(mesh_report_delivery.entries[0].outbound.packet.seq==3 && mesh_report_delivery.entries[1].outbound.packet.seq==4);
     reset_fixture(4); final_mask=BIT(2);
-    assert(mesh_c5_try_batch()==0); assert(retired_count==2 && queue_count==2);
-    assert(queue[0].packet.seq==2 && queue[1].packet.seq==4);
+    assert(mesh_report_delivery_step()==0); assert(retired_count==2 && mesh_report_delivery.count==2 && queue_count==0);
+    assert(mesh_report_delivery.entries[0].outbound.packet.seq==2 && mesh_report_delivery.entries[1].outbound.packet.seq==4);
     reset_fixture(4); duplicate_first_ack=true;
-    assert(mesh_c5_try_batch()==0); assert(ack_reads==3 && retired_count==4 && queue_count==0);
+    assert(mesh_report_delivery_step()==0); assert(ack_reads==3 && retired_count==4 && queue_count==0);
+}
+
+static void test_forwarded_report_queue_is_independent_of_route_and_activity(void)
+{
+    const uint64_t parents[] = {GATEWAY_ID, UINT64_C(0xa101), 0u};
+    const uint8_t reports[] = {MSG_CLICK_REPORT, MSG_SELF_TEST_REPORT, MSG_MESH_DATA};
+    for (unsigned active = 0u; active < 2u; active++) {
+        for (unsigned parent = 0u; parent < sizeof(parents)/sizeof(parents[0]); parent++) {
+            reset_fixture(1);
+            if (active) {
+                struct mesh_outbound tx;
+                assert(mesh_relay_start_tx(&mesh_runtime, &queue[0].packet,
+                    queue[0].payload, queue[0].payload_len, now_ms, &tx) == PROTO_OK);
+            }
+            assert(mesh_relay_tx_active(&mesh_runtime) == (active != 0u));
+            route_table_init(&mesh_runtime.upstream, 1u);
+            if (parents[parent] != 0u) {
+                struct route_candidate route = {
+                    .next_hop_id = parents[parent], .gateway_id = GATEWAY_ID,
+                    .route_epoch = 1u, .last_seen_ms = now_ms,
+                    .hop_count = parents[parent] == GATEWAY_ID ? 0u : 1u,
+                    .link_quality = 90u,
+                };
+                assert(route_upsert_candidate(&mesh_runtime.upstream, &route) == PROTO_OK);
+            }
+            struct mesh_outbound forwarded = queue[0];
+            forwarded.packet.src_id = UINT64_C(0xb100);
+            forwarded.next_hop_id = parents[parent];
+            for (unsigned report = 0u; report < sizeof(reports)/sizeof(reports[0]); report++) {
+                forwarded.packet.msg_type = reports[report];
+                assert(mesh_forward_uses_gateway_batch_queue(&forwarded));
+            }
+        }
+    }
+
+    reset_fixture(1);
+    assert(!mesh_forward_uses_gateway_batch_queue(NULL));
+    const uint8_t controls[] = {MSG_ROUTE_REQ, MSG_COMMAND, MSG_GATEWAY_ACK};
+    for (unsigned i = 0u; i < sizeof(controls)/sizeof(controls[0]); i++) {
+        struct mesh_outbound control = queue[0];
+        control.packet.msg_type = controls[i];
+        assert(!mesh_forward_uses_gateway_batch_queue(&control));
+    }
+    struct mesh_outbound invalid = queue[0];
+    invalid.packet.flags = 0u;
+    assert(!mesh_forward_uses_gateway_batch_queue(&invalid));
+    invalid = queue[0];
+    invalid.packet.dst_id = UINT64_C(0xb100);
+    assert(!mesh_forward_uses_gateway_batch_queue(&invalid));
+    mesh_relay_init(&mesh_runtime, MESH_RELAY_ROLE_GATEWAY, GATEWAY_ID, GATEWAY_ID, 1u);
+    assert(!mesh_forward_uses_gateway_batch_queue(&queue[0]));
 }
 static void test_single_candidate_and_retained_full_queue(void)
 {
     reset_fixture(2); queue[1].packet.src_id++;
-    assert(mesh_c5_try_batch()==0); assert(sent_count==1 && retired_count==1 && queue_count==1);
+    assert(mesh_report_delivery_step()==0); assert(sent_count==1 && retired_count==1 && queue_count==1);
+    reset_fixture(1);
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1 && retired_count==1 && queue_count==0);
+    assert(!mesh_report_delivery_active());
     reset_fixture(4);
-    mesh_ch9_tx_pending.entries[0].outbound=queue[0];
-    mesh_ch9_tx_pending.count=1; mesh_ch9_tx_pending.active=true; mesh_c5_tx_bank_owned=true;
-    struct fw_radio_activity_capture capture={.report_queue_used=queue_count,
-        .ch9_ack_wait_active=mesh_ch9_tx_pending_is_active()};
+    mesh_report_delivery.entries[0].outbound=queue[0];
+    mesh_report_delivery.entries[0].outbound.packet.seq=99u;
+    mesh_report_delivery.count=1;
+    struct fw_radio_activity_capture capture={.report_queue_used=queue_count};
     struct fw_radio_activity_decision decision;
     assert(fw_radio_activity_decide(&capture,NULL,&decision,NULL)==0);
-    assert(decision.report_tx_allowed); /* The real worker must reach try_batch. */
-    assert(mesh_c5_try_batch()==-ENOTSUP); assert(queue_count==4 && mesh_ch9_tx_pending.count==1);
-    assert(mesh_c5_tx_bank_owned && sent_count==0); /* Caller can now drain one queue head. */
-    queue_count--;
-    assert(mesh_c5_try_batch()==-ENOTSUP); assert(queue_count==4 && !mesh_c5_tx_bank_owned);
+    assert(decision.report_tx_allowed);
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1 && sent[0].packet.seq==99u && retired_count==1);
+    assert(queue_count==4 && !mesh_report_delivery_active());
+    /* No transfer to the full queue or another transport is needed to drain. */
+    sent_count=ack_reads=0;
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==4 && retired_count==5 && queue_count==0);
+    assert(!mesh_report_delivery_active());
+
 }
+static void test_route_wait_and_terminal_completion(void)
+{
+    reset_fixture(1);
+    route_table_init(&mesh_runtime.upstream,1u);
+    assert(mesh_report_delivery_step()==0);
+    assert(route_requests==1 && sent_count==0 && queue_count==0);
+    assert(mesh_report_delivery.count==1);
+    assert(route_selected(&mesh_runtime.upstream)==NULL);
+    struct route_candidate parent={.next_hop_id=0xa101u,.gateway_id=GATEWAY_ID,
+        .route_epoch=1u,.last_seen_ms=now_ms,.hop_count=1u,.link_quality=90u};
+    assert(route_upsert_candidate(&mesh_runtime.upstream,&parent)==PROTO_OK);
+    response_depth=1u;
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1 && retired_count==1 && !mesh_report_delivery_active());
+
+    reset_fixture(1); completion_error=-EBUSY;
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1 && retired_count==0 && mesh_report_delivery.entries[0].acked);
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1 && retired_count==0); /* ACKed bytes never retransmit. */
+    completion_error=0;
+    assert(mesh_report_delivery_step()==-ENOENT);
+    assert(sent_count==1 && retired_count==1 && !mesh_report_delivery_active());
+}
+
 static void test_ack_rejection_and_refusal(void)
 {
     for (unsigned mode=0;mode<3;mode++) {
         reset_fixture(2); wrong_peer=mode==0; stale_ack=mode==1; corrupt_digest=mode==2;
-        assert(mesh_c5_try_batch()==0); assert(sent_count==1 && retired_count==0 && queue_count==2);
+        assert(mesh_report_delivery_step()==0); assert(sent_count==1 && retired_count==0 && mesh_report_delivery.count==2 && queue_count==0);
     }
     reset_fixture(2); refuse=true; credit=0;
-    assert(mesh_c5_try_batch()==0); assert(retired_count==0 && queue_count==2 && scheduled_ms==50u);
+    assert(mesh_report_delivery_step()==0); assert(retired_count==0 && mesh_report_delivery.count==2 && queue_count==0 && scheduled_ms==50u);
     assert(mesh_runtime.upstream.candidates[0].failure_count==0);
     reset_fixture(2); follower_refusal=true;
     mesh_runtime.upstream.candidates[0].next_hop_id=UINT64_C(0xa101);
     mesh_runtime.upstream.candidates[0].hop_count=1u;
     response_depth=1u;
-    assert(mesh_c5_try_batch()==0);
-    assert(retired_count==1 && queue_count==1 && queue[0].packet.seq==2u);
+    assert(mesh_report_delivery_step()==0);
+    assert(retired_count==1 && queue_count==0 && mesh_report_delivery.count==1 && mesh_report_delivery.entries[0].outbound.packet.seq==2u);
     assert(mesh_runtime.upstream.candidates[0].hold_down_valid);
     assert(mesh_runtime.upstream.candidates[0].failure_count==0 && scheduled_ms==50u);
 }
@@ -394,17 +562,151 @@ static void test_radio_failure_cleanup(void)
         if (mode==2) send_error=-EIO;
         if (mode==3) receive_error=-EIO;
         if (mode==4) park_error=-EIO;
-        assert(mesh_c5_try_batch()==0); assert(locks==0 && starts==1);
+        assert(mesh_report_delivery_step()==0); assert(locks==0 && starts==1);
         assert(releases==(mode==0 ? 0u : 1u)); assert(parks==releases);
-        if (mode<4) assert(retired_count==0 && queue_count==2);
+        if (mode<4) assert(retired_count==0 && queue_count==0 && mesh_report_delivery.count==2);
         if (mode==4) assert(watchdog_stops==1);
     }
+}
+
+static void test_ack_wait_queues_unrelated_data_and_foreign_ack(void)
+{
+    for (unsigned foreign_ack = 0u; foreign_ack < 2u; foreign_ack++) {
+        reset_fixture(1);
+        unrelated_rx = queue[0];
+        unrelated_rx.next_hop_id = UINT64_C(0xb100);
+        unrelated_rx.packet.src_id = unrelated_rx.next_hop_id;
+        unrelated_rx.packet.session_id += 100u;
+        unrelated_rx.packet.seq += 100u;
+        if (foreign_ack) {
+            struct mesh_outbound other = unrelated_rx;
+            size_t len = 0u;
+            unrelated_rx.packet = (struct proto_packet){
+                .msg_type = MSG_GATEWAY_ACK, .flags = FLAG_GATEWAY_ACK,
+                .src_id = GATEWAY_ID, .dst_id = DEVICE_ID,
+                .session_id = other.packet.session_id, .seq = 200u, .ttl = 1u,
+            };
+            unrelated_rx.next_hop_id = GATEWAY_ID;
+            assert(mesh_append_requested_seq(unrelated_rx.payload,
+                sizeof(unrelated_rx.payload), &len, other.packet.seq) == PROTO_OK);
+            assert(mesh_append_ack_semantic_identity(unrelated_rx.payload,
+                sizeof(unrelated_rx.payload), &len, &other.packet,
+                other.payload, other.payload_len) == PROTO_OK);
+            unrelated_rx.packet.payload_len = unrelated_rx.payload_len = (uint16_t)len;
+        }
+        inject_unrelated_rx = true;
+        assert(mesh_report_delivery_step() == 0);
+        assert(sent_count == 1u && retired_count == 0u && ack_reads == 0u);
+        assert(mesh_report_delivery.count == 1u && !mesh_report_delivery.entries[0].acked);
+        assert(rx_count == 1u && rx_work_submissions == 1u);
+        assert(queued_rx.packet.msg_type == unrelated_rx.packet.msg_type);
+        assert(queued_rx.packet.src_id == unrelated_rx.packet.src_id);
+        assert(queued_rx.packet.session_id == unrelated_rx.packet.session_id);
+        assert(queued_rx.ingress_previous_hop_id == unrelated_rx.next_hop_id);
+        assert(queued_rx.payload_len == unrelated_rx.payload_len);
+        assert(memcmp(queued_rx.payload, unrelated_rx.payload, queued_rx.payload_len) == 0);
+        assert(!radio_owned && releases == 1u && locks == 0u);
+        assert(mesh_runtime.upstream.candidates[0].failure_count == 0u);
+    }
+}
+
+static void test_typed_phy_activity_keeps_original_ack_deadline(void)
+{
+    reset_fixture(1);
+    fixed_ack_deadline = true;
+    typed_phy_remaining = 1u;
+    assert(mesh_report_delivery_step() == 0);
+    assert(receive_calls == 2u && standard_probes == 1u && retired_count == 1u);
+    assert(now_ms < first_ack_deadline_ms && !mesh_report_delivery_active());
+    assert(releases == 1u && !radio_owned && click_handoffs == 0u);
+
+    reset_fixture(1);
+    fixed_ack_deadline = repeat_typed_phy = true;
+    typed_phy_duration_ms = 7u;
+    standard_probe_duration_ms = 11u;
+    assert(mesh_report_delivery_step() == 0);
+    assert(receive_calls == 14u && standard_probe_clipped);
+    assert(standard_probes == receive_calls && now_ms == first_ack_deadline_ms);
+    assert(sent_count == 1u && retired_count == 0u && mesh_report_delivery.count == 1u);
+    assert(mesh_runtime.upstream.candidates[0].failure_count == 1u);
+    assert(releases == 1u && !radio_owned && locks == 0u);
+
+    reset_fixture(1);
+    receive_error = -EIO;
+    assert(mesh_report_delivery_step() == 0);
+    assert(receive_calls == 1u && standard_probes == 0u);
+    assert(retired_count == 0u && mesh_report_delivery.count == 1u);
+    assert(mesh_runtime.upstream.candidates[0].failure_count == 0u);
+}
+
+static void test_click_during_ack_wait_handoffs_only_after_radio_release(void)
+{
+    for (unsigned release_failure = 0u; release_failure < 2u; release_failure++) {
+        reset_fixture(2);
+        typed_phy_remaining = 1u;
+        capture_click = true;
+        if (release_failure) park_error = -EIO;
+        assert(mesh_report_delivery_step() == 0);
+        assert(standard_probes == 1u && receive_calls == 1u);
+        assert(click_handoffs == (release_failure ? 0u : 1u));
+        assert(click_contact_clears == click_handoffs);
+        assert(watchdog_stops == release_failure);
+        assert(sent_count == 1u && retired_count == 0u && mesh_report_delivery.count == 2u);
+        assert(releases == 1u && parks == 1u && !radio_owned && locks == 0u);
+        assert(mesh_runtime.upstream.candidates[0].failure_count == 0u);
+    }
+}
+
+static void test_partial_ack_retry_key_belongs_to_unacknowledged_member(void)
+{
+    reset_fixture(4);
+    final_mask = BIT(2);
+    assert(mesh_report_delivery_step() == 0);
+    assert(retired_count == 2u && mesh_report_delivery.count == 2u);
+    assert(mesh_report_delivery.entries[0].outbound.packet.seq == 2u);
+    assert(last_retry_seq == 2u && retry_round_calls == 1u);
+}
+
+static void test_retained_bank_dedup_uses_semantics_until_completion(void)
+{
+    reset_fixture(1);
+    struct mesh_outbound retry = queue[0];
+    receive_error = -EIO;
+    assert(mesh_report_delivery_step() == 0);
+    assert(queue_count == 0u && mesh_report_delivery.count == 1u);
+    k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    assert(mesh_report_delivery_contains(&retry));
+    retry.packet.message_age_ms += 9000u;
+    retry.packet.ttl--;
+    retry.queued_at_ms++;
+    size_t len = retry.payload_len;
+    assert(mesh_append_batch_pending(retry.payload, sizeof(retry.payload), &len, 3u) == PROTO_OK);
+    retry.packet.payload_len = retry.payload_len = (uint16_t)len;
+    assert(mesh_report_delivery_contains(&retry));
+    retry.payload[2] ^= 1u;
+    assert(!mesh_report_delivery_contains(&retry));
+    retry.payload[2] ^= 1u;
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+
+    receive_error = 0;
+    completion_error = -EBUSY;
+    sent_count = ack_reads = 0u;
+    assert(mesh_report_delivery_step() == 0);
+    assert(mesh_report_delivery.entries[0].acked);
+    k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    assert(mesh_report_delivery_contains(&retry));
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    completion_error = 0;
+    assert(mesh_report_delivery_step() == -ENOENT);
+    k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    assert(!mesh_report_delivery_contains(&retry));
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
 }
 static void test_receiver_grant_and_cleanup(void)
 {
     for (unsigned gateway=0;gateway<2;gateway++) {
-    reset_fixture(1); mesh_ch9_tx_pending.entries[0].outbound=queue[0];
-    mesh_ch9_tx_pending.count=1; mesh_ch9_tx_pending.next_hop_id=GATEWAY_ID;
+    reset_fixture(1); mesh_report_delivery.entries[0].outbound=queue[0];
+    mesh_report_delivery.count=1; mesh_report_delivery.next_hop_id=GATEWAY_ID;
     struct mesh_outbound ack; make_ack(&ack,1u);
     ack.next_hop_id=GATEWAY_ID;
     struct mesh_rx_pending rx={.previous_hop_id=GATEWAY_ID,.radio_channel=UWB_CHANNEL_WAKE_CONTACT};
@@ -431,8 +733,8 @@ static void test_receiver_handoff_failure_balance(void)
 {
     for (unsigned mode=0;mode<4;mode++) {
         reset_fixture(1);
-        mesh_ch9_tx_pending.entries[0].outbound=queue[0];
-        mesh_ch9_tx_pending.count=1; mesh_ch9_tx_pending.next_hop_id=GATEWAY_ID;
+        mesh_report_delivery.entries[0].outbound=queue[0];
+        mesh_report_delivery.count=1; mesh_report_delivery.next_hop_id=GATEWAY_ID;
         struct mesh_outbound ack; make_ack(&ack,1u);
         struct mesh_rx_pending rx={.previous_hop_id=GATEWAY_ID,.radio_channel=UWB_CHANNEL_WAKE_CONTACT};
         size_t len=0;
@@ -453,11 +755,11 @@ static void test_receiver_handoff_failure_balance(void)
 }
 static void queue_generated_pair(uint64_t child)
 {
-    mesh_ch9_tx_pending.next_hop_id=DEVICE_ID;
-    mesh_ch9_tx_pending.count=2;
+    mesh_report_delivery.next_hop_id=DEVICE_ID;
+    mesh_report_delivery.count=2;
     for (unsigned i=0;i<2;i++) {
         queue[i].packet.src_id=child;
-        mesh_ch9_tx_pending.entries[i].outbound=queue[i];
+        mesh_report_delivery.entries[i].outbound=queue[i];
     }
     for (unsigned i=0;i<2;i++) {
         struct mesh_outbound ack;
@@ -489,8 +791,8 @@ static void test_generated_ack_transfers_owner_before_causal_send(void)
         assert(causal_send_allowed==2 && !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table));
     }
     reset_fixture(1);
-    mesh_ch9_tx_pending.entries[0].outbound=queue[0];
-    mesh_ch9_tx_pending.count=1; mesh_ch9_tx_pending.next_hop_id=GATEWAY_ID;
+    mesh_report_delivery.entries[0].outbound=queue[0];
+    mesh_report_delivery.count=1; mesh_report_delivery.next_hop_id=GATEWAY_ID;
     struct mesh_outbound forwarded; make_ack(&forwarded,1u);
     forwarded.next_hop_id=child;
     assert(app_mesh_ch9_ack_table_queue_forwarded(&mesh_ch9_ack_table,&forwarded,NULL)==PROTO_OK);
@@ -519,7 +821,14 @@ static void test_gateway_credit_uses_real_stream_occupancy(void)
 }
 int main(void)
 {
+    test_forwarded_report_queue_is_independent_of_route_and_activity();
+    test_ack_wait_queues_unrelated_data_and_foreign_ack();
+    test_typed_phy_activity_keeps_original_ack_deadline();
+    test_click_during_ack_wait_handoffs_only_after_radio_release();
+    test_partial_ack_retry_key_belongs_to_unacknowledged_member();
+    test_retained_bank_dedup_uses_semantics_until_completion();
     test_credit_and_partial_ack(); test_single_candidate_and_retained_full_queue();
+    test_route_wait_and_terminal_completion();
     test_ack_rejection_and_refusal(); test_radio_failure_cleanup(); test_receiver_grant_and_cleanup();
     test_gateway_credit_uses_real_stream_occupancy();
     test_receiver_handoff_failure_balance();

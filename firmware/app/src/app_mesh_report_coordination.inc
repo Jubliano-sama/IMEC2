@@ -385,8 +385,7 @@ static void mesh_coordinator_decide_for_c5_intent(
         .report_queue_used = report_queue_used,
         .relay_tx_active = relay_tx_active,
         .route_waiting_tx_active = mesh_route_waiting_tx_valid,
-        .ch9_ack_wait_active = mesh_ch9_tx_pending_is_active() ||
-            app_mesh_ch9_core_ack_wait_active(&mesh_runtime.pending,
+        .ch9_ack_wait_active = app_mesh_ch9_core_ack_wait_active(&mesh_runtime.pending,
                                               relay_tx_active),
         .ch9_ack_send_pending =
             app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table),
@@ -647,20 +646,6 @@ static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
                             decision.reason);
     }
     return false;
-}
-
-static bool mesh_coordinator_c5_tx_allowed_authorized(
-    const char *owner,
-    const struct mesh_outbound *candidate,
-    const struct app_mesh_c5_tx_authorization_token *authorization)
-{
-    return mesh_coordinator_c5_tx_allowed_authorized_intent(
-        owner, candidate, authorization, FW_C5_TX_INTENT_BACKGROUND);
-}
-
-static bool mesh_coordinator_c5_tx_allowed(const char *owner)
-{
-    return mesh_coordinator_c5_tx_allowed_authorized(owner, NULL, NULL);
 }
 
 static bool mesh_outbound_reports_local_delivery_loss(const struct mesh_outbound *out)
@@ -2322,28 +2307,6 @@ static int report_tx_queue_promote_local_locked(void)
     return -ENOENT;
 }
 
-static int report_tx_queue_peek(struct mesh_outbound *outbound)
-{
-    int ret;
-
-    if (outbound == NULL) {
-        return -EINVAL;
-    }
-    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
-    if (ret != 0) {
-        return ret;
-    }
-    if (anchor_range_report_batch_reservation.active) {
-        ret = -EBUSY;
-    } else {
-        (void)report_tx_queue_restore_recovery_locked();
-        (void)report_tx_queue_promote_local_locked();
-        ret = k_msgq_peek(&report_tx_msgq, outbound);
-    }
-    k_mutex_unlock(&report_tx_queue_overflow_lock);
-    return ret;
-}
-
 static int report_tx_queue_append(const struct mesh_outbound *outbound)
 {
     int ret;
@@ -2430,12 +2393,20 @@ static int report_tx_queue_commit_head_locked(
     if (ret != 0) {
         return ret;
     }
+    if (mesh_report_delivery.count >= MESH_REPORT_DELIVERY_CAPACITY) {
+        k_mutex_unlock(&report_tx_queue_overflow_lock);
+        return -ENOSPC;
+    }
     ret = app_mesh_queue_head_commit(&report_tx_queue_head_owner,
                                      &report_tx_queue_head_ops,
                                      token,
                                      expected,
                                      &mesh_send_scratch_tx);
     if (ret == 0) {
+        struct mesh_report_delivery_entry *entry =
+            &mesh_report_delivery.entries[mesh_report_delivery.count++];
+        entry->outbound = *expected;
+        entry->acked = false;
         (void)report_tx_queue_restore_recovery_locked();
         (void)report_tx_queue_promote_local_locked();
     }
@@ -2511,7 +2482,7 @@ static int mesh_schedule_tx_timeout(void)
     uint32_t delay_ms;
     if (!app_mesh_tx_timeout_work_needed(
             mesh_relay_tx_active(&mesh_runtime),
-            mesh_ch9_tx_pending_is_active(),
+            false,
             mesh_relay_result_bundle_pending(&mesh_runtime))) {
         return mesh_cancel_delayable(&mesh_tx_timeout_work);
     }
@@ -2532,12 +2503,6 @@ static int mesh_schedule_tx_timeout(void)
                     mesh_runtime.pending.retry_after_ms :
                     mesh_runtime.pending.gateway_ack_deadline_ms;
         }
-    }
-    if (mesh_ch9_tx_pending_is_active() &&
-        (deadline == UINT32_MAX ||
-         uptime_deadline_reached(deadline,
-                                 mesh_ch9_tx_pending_ack_deadline_ms()))) {
-        deadline = mesh_ch9_tx_pending_ack_deadline_ms();
     }
     if (mesh_relay_result_bundle_pending(&mesh_runtime) &&
         (deadline == UINT32_MAX ||
@@ -2807,10 +2772,10 @@ static void mesh_route_reply_handoff_after_capture(uint64_t target_id,
                             k_msgq_num_used_get(&mesh_rx_msgq),
                             mesh_route_waiting_tx_valid ? 1u : 0u,
                             mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
-                            mesh_ch9_tx_pending_is_active() ? 1u : 0u);
+                            0u);
     }
     mesh_route_reply_handoff_begin();
-    if (!mesh_ch9_tx_pending_is_active() &&
+    if (
         !mesh_relay_tx_active(&mesh_runtime)) {
         (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
         (void)mesh_cancel_delayable(&mesh_route_waiting_work);
@@ -3382,7 +3347,6 @@ static bool mesh_clicker_on_demand_rx_required(void)
     }
 
     exact_ack_wait =
-        mesh_ch9_tx_pending_is_active() ||
         app_mesh_ch9_core_ack_wait_active(
             &mesh_runtime.pending,
             mesh_relay_tx_active(&mesh_runtime));

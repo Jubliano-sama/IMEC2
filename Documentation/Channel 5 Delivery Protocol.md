@@ -4,6 +4,27 @@ Status: design spec for the work in progress on master. Supersedes the
 channel-9 event negotiation, ACK_CONFIRM, direct gateway probe, and the route
 request flood described in "Mesh Connected Routing Contract.md" (historical).
 
+Implementation status (2026-09-05): queued anchor reports use one four-packet
+Channel-5 delivery bank. A singleton uses the same exchange. Queue removal
+publishes bank custody under the admission lock; exact ACK identities mark only
+sent members complete, and failed local completion retains that terminal proof
+without retransmitting. Partial ACKs and absent routes retain bytes in place.
+Retries reselect each packet's next hop, and admission checks the retained bank's
+semantic identities as well as the queue. Unrelated RX during ACK waiting is
+queued for its normal owner before the sender releases the radio.
+
+Route candidates derive cost from advertised depth and link quality. Ordinary
+selection, advertised local depth and packet selection share eligibility;
+unreachable depth remains unusable after a temporary hold expires. Correlated
+ACK feedback updates depth and credit together and immediately reselects.
+
+The local solicit design below is still incomplete at the sleeping-anchor
+application boundary. The prototype continues to use the existing correlated
+route-request/reply path when the bank has no route; it never installs a direct
+gateway route without an observed exchange. See the
+[real-hop audit](Reviews/real-hop-audit-2026-09-05.md) for the remaining solicit,
+mixed scan-cadence and large-system qualification gaps.
+
 ## 1. Principles
 
 - Every mesh packet travels on UWB channel 5 with the extended-PHR

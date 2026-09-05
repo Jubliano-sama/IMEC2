@@ -1458,6 +1458,11 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
  * ACK this node emits must carry.
  */
 uint8_t mesh_relay_local_depth(const struct mesh_relay *relay, uint32_t now_ms);
+/* Call only after correlating an ACK with this peer and an owned transmission. */
+void mesh_relay_note_ack_route_feedback(struct mesh_relay *relay,
+                                         uint64_t previous_hop_id,
+                                         const struct mesh_ack_flow_control *flow,
+                                         uint32_t now_ms);
 /*
  * Declare the local upstream lost (parent dead end, retries exhausted on every
  * candidate, or advert expiry).  Depth immediately reads UNREACHABLE.

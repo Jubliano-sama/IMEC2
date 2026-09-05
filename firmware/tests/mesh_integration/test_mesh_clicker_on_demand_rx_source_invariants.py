@@ -56,7 +56,6 @@ assert "channel9_timing_valid" in clicker_rx_required
 assert "mesh_event_owner_registry_find(" in clicker_rx_required
 assert "owner->active" in clicker_rx_required
 assert "mesh_find_active_channel9_timing(" in clicker_rx_required
-assert "mesh_ch9_tx_pending_is_active()" in clicker_rx_required
 assert "app_mesh_ch9_core_ack_wait_active(" in clicker_rx_required
 assert "mesh_relay_tx_active(&mesh_runtime)" in clicker_rx_required
 assert "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER" not in clicker_rx_required
@@ -92,7 +91,7 @@ ack_wait_start = tracked_tx.index(
 ack_arm = tracked_tx.index("mesh_schedule_uwb_rx(0u)", ack_wait_start)
 ack_block_end = tracked_tx.index("return 0", ack_arm)
 ack_block = tracked_tx[ack_wait_start:ack_block_end]
-assert "if (batch_ack_wait || core_ack_wait)" in ack_block
+assert "if (core_ack_wait)" in ack_block
 assert "mesh_ch9_event_note_persistent_ack_wait(" in ack_block
 
 rx_worker = function_body(REPORT, "mesh_uwb_rx_work_handler")

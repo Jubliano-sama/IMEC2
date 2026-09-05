@@ -62,7 +62,7 @@ static struct route_candidate route_candidate(uint64_t next_hop_id,
         .route_epoch = ROUTE_EPOCH,
         .last_seen_ms = now_ms,
         .last_success_ms = now_ms,
-        .route_cost = route_candidate_cost(hop_count, quality),
+
         .hop_count = hop_count,
         .link_quality = quality,
         .failure_count = 0u,

@@ -934,16 +934,21 @@ set_tests_properties(c5_deferred_ack_source_invariants PROPERTIES
 # predicates against bounded queue, radio and scheduler test boundaries.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     app/src/app_mesh_report.c app/src/app_gateway_ble.c
-    app/src/app_mesh_report_route_control.inc)
+    app/src/app_mesh_report_route_control.inc
+    app/src/app_mesh_report_delivery.inc)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report.c" c5_report_source)
-string(REGEX MATCH "static bool mesh_ch9_tx_pending_is_active\\(void\\)\n\\{[^}]*\\}" c5_pending_helper "${c5_report_source}")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_gateway_ble.c" c5_gateway_source)
 string(REGEX MATCH "uint16_t gateway_ble_stream_free_slots\\(void\\)\n\\{[^}]*\\}" c5_credit_helper "${c5_gateway_source}")
-if(NOT c5_pending_helper OR NOT c5_credit_helper)
+if(NOT c5_credit_helper)
     message(FATAL_ERROR "C5 production harness helper extraction failed")
 endif()
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_delivery.inc" c5_delivery_source)
+string(REGEX MATCH "static bool mesh_forward_uses_gateway_batch_queue\\([^}]*\\}" c5_forward_helper "${c5_delivery_source}")
+if(NOT c5_forward_helper)
+    message(FATAL_ERROR "C5 production forward admission extraction failed")
+endif()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/c5_batch_production_helpers.inc"
-    "${c5_pending_helper}\n${c5_credit_helper}\n")
+    "${c5_credit_helper}\n${c5_forward_helper}\n")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_route_control.inc" c5_route_control_source)
 string(FIND "${c5_route_control_source}" "static int mesh_send_current_ch9_ack_batch(" c5_ack_start)
 string(FIND "${c5_route_control_source}" "static bool mesh_gateway_batch_ack_retry_wait_ms(" c5_ack_end)
@@ -955,6 +960,7 @@ string(SUBSTRING "${c5_route_control_source}" ${c5_ack_start} ${c5_ack_length} c
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/c5_batch_production_ack_sender.inc" "${c5_ack_sender}")
 add_executable(test_app_mesh_c5_batch
     tests/test_app_mesh_c5_batch.c
+    app/src/app_wake_train_politeness.c
     app/src/app_mesh_ch9_ack.c
     app/src/app_gateway_command_observability.c
     app/src/app_gateway_ble_stream.c)
@@ -1613,6 +1619,35 @@ add_test(NAME gateway_ch9_back_to_back_scenarios
     COMMAND test_gateway_ch9_back_to_back_scenarios)
 set_tests_properties(gateway_ch9_back_to_back_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;click;radio;timing;communication;delivery")
+
+# Compile the production one-window receive wrapper and status classifier,
+# mocking physical completion so RX errors cannot disappear into another arm.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    app/src/dwm3000_driver_io.inc app/src/dwm3000_driver_radio.inc)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/dwm3000_driver_io.inc" rx_error_io)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/dwm3000_driver_radio.inc" rx_error_radio)
+string(FIND "${rx_error_io}" "static int receive_frame_with_preamble_timeout(" rx_error_start)
+string(FIND "${rx_error_io}" "static int finish_abortible_continuous_receive(" rx_error_end)
+string(FIND "${rx_error_radio}" "static enum dwm3000_rx_failure status_to_rx_failure(" rx_status_start)
+string(FIND "${rx_error_radio}" "static bool rx_status_has_activity(" rx_status_end)
+if(rx_error_start LESS 0 OR rx_error_end LESS rx_error_start OR
+   rx_status_start LESS 0 OR rx_status_end LESS rx_status_start)
+    message(FATAL_ERROR "DWM3000 receive error harness production boundary missing")
+endif()
+math(EXPR rx_error_length "${rx_error_end} - ${rx_error_start}")
+math(EXPR rx_status_length "${rx_status_end} - ${rx_status_start}")
+string(SUBSTRING "${rx_error_io}" ${rx_error_start} ${rx_error_length} rx_error_function)
+string(SUBSTRING "${rx_error_radio}" ${rx_status_start} ${rx_status_length} rx_status_function)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/dwm3000_receive_error_production.inc"
+    "${rx_status_function}\n${rx_error_function}")
+add_executable(test_dwm3000_receive_error_boundary tests/test_dwm3000_receive_error_boundary.c)
+target_include_directories(test_dwm3000_receive_error_boundary PRIVATE
+    app/src include ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(test_dwm3000_receive_error_boundary SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../dwm3000 examples and sdk/decadriver")
+add_test(NAME dwm3000_receive_error_boundary COMMAND test_dwm3000_receive_error_boundary)
+set_tests_properties(dwm3000_receive_error_boundary PROPERTIES
+    LABELS "mesh_integration;hardware_models;radio;production_seam")
 
 add_executable(test_dwm3000_driver_handler_boundary
     tests/mesh_integration/test_dwm3000_driver_handler_boundary.c

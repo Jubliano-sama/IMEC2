@@ -661,7 +661,6 @@ static bool mesh_packet_prefers_channel9(const struct proto_packet *packet);
 static size_t mesh_outbound_encoded_frame_len(const struct mesh_outbound *out);
 static uint32_t mesh_ch9_estimated_airtime_ms(size_t frame_len);
 #if DEVICE_ROLE == ROLE_ANCHOR
-static void report_tx_schedule_backoff(uint32_t delay_ms, const char *reason);
 #endif
 
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
@@ -852,53 +851,24 @@ static const struct k_work_queue_config mesh_route_work_q_config = {
 static const struct app_mesh_report_callbacks *mesh_report_callbacks;
 
 static struct app_mesh_ch9_ack_table mesh_ch9_ack_table;
-static uint64_t mesh_c5_rx_burst_peer;
+#include "app_mesh_report_delivery_state.h"
 #if DEVICE_ROLE == ROLE_ANCHOR
-static bool mesh_c5_tx_bank_owned;
+static struct mesh_report_delivery_state mesh_report_delivery;
+BUILD_ASSERT(sizeof(mesh_report_delivery) <= 4152u,
+             "report custody must fit the existing four-packet bank");
 #endif
-static int mesh_c5_try_batch(void);
+static uint64_t mesh_c5_rx_burst_peer;
+static int mesh_report_delivery_step(void);
+static bool mesh_report_delivery_active(void);
+#if DEVICE_ROLE == ROLE_ANCHOR
+static bool mesh_report_delivery_contains(const struct mesh_outbound *out);
+#endif
 static void mesh_c5_update_credit(void);
 static bool mesh_c5_collect_ack(const struct mesh_outbound *ack, const struct mesh_rx_pending *rx);
 static void mesh_c5_capture_followers(const struct mesh_outbound *ack, const struct mesh_rx_pending *rx);
 static void mesh_c5_flush_batch_ack(void);
 
-struct mesh_ch9_tx_pending_entry {
-    struct mesh_outbound outbound;
-    uint32_t packet_id;
-    bool has_packet_id;
-    bool acked;
-};
-
-struct mesh_ch9_tx_pending_batch {
-    struct mesh_ch9_tx_pending_entry entries[MESH_CH9_TX_BATCH_MAX];
-    uint8_t count;
-    uint64_t next_hop_id;
-    uint32_t deadline_ms;
-    bool active;
-};
-
 #if DEVICE_ROLE == ROLE_ANCHOR
-/*
- * The candidate batch and the gateway-ACK pending batch cannot be live at
- * the same time:
- *
- * - batch collection starts only after mesh_ch9_tx_pending_can_start();
- * - gateway-ACK-required packets are forced through the tracked-single path
- *   before candidate collection; and
- * - packets without FLAG_GATEWAY_ACK_REQUIRED never enter pending ACK
- *   custody.
- *
- * Keep both protocol capacities while overlaying their mutually exclusive
- * storage.  If direct gateway batching is enabled in the future, its owner
- * transition must be redesigned before this invariant can change.
- */
-static union {
-    struct mesh_ch9_tx_pending_batch pending;
-    struct mesh_outbound candidates[MESH_CH9_TX_BATCH_MAX];
-} mesh_ch9_tx_batch_storage;
-#define mesh_ch9_tx_pending mesh_ch9_tx_batch_storage.pending
-#define report_tx_batch_candidates mesh_ch9_tx_batch_storage.candidates
-#define MESH_DIRECT_GATEWAY_BATCHING_ENABLED 0
 static struct mesh_anchor_downlink_store mesh_anchor_downlink_store;
 BUILD_ASSERT(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
              "report queue ownership has exactly one recovery reserve");
@@ -907,12 +877,6 @@ BUILD_ASSERT(sizeof(mesh_anchor_downlink_store) == 1672u,
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(sizeof(struct mesh_outbound) == 1024u,
              "connected anchor outbound record RAM contract changed");
-BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4152u,
-             "connected anchor pending batch RAM contract changed");
-BUILD_ASSERT(sizeof(mesh_ch9_tx_batch_storage) == 4152u,
-             "candidate/pending batch overlay RAM contract changed");
-BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
-             "direct batching needs independent retained pending ownership");
 #endif
 #elif DEVICE_ROLE == ROLE_GATEWAY
 static struct mesh_gateway_ack_store mesh_gateway_ack_store;
@@ -921,26 +885,6 @@ static bool mesh_gateway_ack_store_attached;
 BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 5384u,
              "gateway ACK store RAM contract changed");
 #endif
-
-static bool mesh_ch9_tx_pending_is_active(void)
-{
-#if DEVICE_ROLE == ROLE_ANCHOR
-    /* C5 owns its synchronous RF wait through the radio lease. Retained
-     * C5 bytes are backlog, not an old-channel ACK wait that blocks draining. */
-    return mesh_ch9_tx_pending.active && !mesh_c5_tx_bank_owned;
-#else
-    return false;
-#endif
-}
-
-static uint32_t mesh_ch9_tx_pending_ack_deadline_ms(void)
-{
-#if DEVICE_ROLE == ROLE_ANCHOR
-    return mesh_ch9_tx_pending.deadline_ms;
-#else
-    return 0u;
-#endif
-}
 
 int app_mesh_report_attach_gateway_ack_store(void)
 {
@@ -1031,14 +975,7 @@ static struct mesh_outbound mesh_send_scratch_tx;
 #endif
 static uint8_t mesh_send_scratch_frame[UWB_MESH_MAX_FRAME_LEN];
 #if DEVICE_ROLE == ROLE_ANCHOR
-static uint32_t mesh_ch9_batch_next_id;
 
-struct mesh_ch9_slot_tx_context {
-    int64_t uwb_window_start_ms;
-    struct radio_guard_uwb_lease radio_lease;
-    bool active;
-    bool functional_tx_completed;
-};
 #endif
 
 enum mesh_radio_release_policy {
@@ -1315,7 +1252,8 @@ static int mesh_probe_standard_wake_claim(
     struct uwb_wake_claim_frame *click_claim,
     uint8_t *click_quality,
     uint32_t *click_observed_ms,
-    bool allow_relayed_gateway_control);
+    bool allow_relayed_gateway_control,
+    int64_t deadline_ms);
 static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   uint8_t purpose,
                                   const char *reason,
@@ -1418,20 +1356,12 @@ static int mesh_send_pending_channel9_close(
     uint64_t peer_id);
 static void mesh_event_owner_abandon_peer(uint64_t peer_id);
 static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id);
-static uint32_t mesh_identity_backoff_ms(uint64_t node_id,
-                                         uint64_t parent_id,
-                                         uint8_t deferral_count);
 static uint32_t mesh_parent_contact_retry_delay_ms(uint64_t parent_id,
                                                    uint8_t failure_count);
 static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
                                            uint64_t peer_id,
                                            const char *reason);
 #if DEVICE_ROLE == ROLE_ANCHOR
-static bool mesh_ch9_tx_fits_configured_slot(const struct mesh_outbound *out,
-                                             const struct mesh_event_plan *plan,
-                                             uint32_t now_ms,
-                                             uint32_t send_start_ms,
-                                             uint32_t *required_ms);
 #endif
 static size_t mesh_outbound_encoded_frame_len(const struct mesh_outbound *out);
 static uint32_t mesh_ch9_slot_send_start_ms(const struct mesh_outbound *out,
@@ -1442,8 +1372,6 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
                                   uint32_t now_ms,
                                   uint32_t *required_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
-static int mesh_ch9_slot_tx_begin(struct mesh_ch9_slot_tx_context *ctx);
-static int mesh_ch9_slot_tx_end(struct mesh_ch9_slot_tx_context *ctx);
 #endif
 static int mesh_send_outbound_preconfigured_ch9_locked(const struct mesh_outbound *out,
                                                        const char *reason,

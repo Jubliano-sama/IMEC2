@@ -68,7 +68,7 @@ Use the connected-routing mesh presets. These are the current production-candida
 **Deployment flashing** uses `west flash` for every mesh role:
 
 ```sh
-.venv/bin/west flash --runner pyocd --build-dir build/mesh-clicker -- --dev-id <probe-id> --frequency 4000000
+PATH="$PWD/.venv/bin:$PATH" .venv/bin/west flash --runner pyocd --build-dir build/mesh-clicker -- --dev-id <probe-id> --frequency 4000000
 ```
 
 Select the connected board and intended role before programming. Normal sector erase preserves durable configuration. Check static RAM headroom in the build output (the prototype requires more than 4 KiB), then record RTT while exercising the changed behavior. Flashing needs no manifest, capture ledger, or promotion step.

@@ -99,9 +99,14 @@ class MeshRamRebootContractSourceInvariantTests(unittest.TestCase):
         self.assertIsNotNone(predicate)
         args = predicate.group("args")
         self.assertIn("mesh_relay_tx_active", args)
-        self.assertIn("mesh_ch9_tx_pending_is_active", args)
+        self.assertRegex(args, r"mesh_relay_tx_active\(&mesh_runtime\),\s*false,")
         self.assertIn("mesh_relay_result_bundle_pending", args)
         self.assertNotIn("deferred", args)
+        self.assertNotIn("mesh_ch9_tx_pending", schedule)
+
+        report_worker = function_body(REPORT, "report_tx_work_handler")
+        self.assertIn("mesh_report_delivery_active()", report_worker)
+        self.assertIn("mesh_report_delivery_step()", report_worker)
 
     def test_route_adv_requires_current_local_activation_before_queue_admission(self) -> None:
         declaration = REPORT.index(

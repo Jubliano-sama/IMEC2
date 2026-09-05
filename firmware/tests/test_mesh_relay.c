@@ -347,7 +347,6 @@ static void assert_route_candidate_equal(
     assert(actual->last_seen_ms == expected->last_seen_ms);
     assert(actual->last_success_ms == expected->last_success_ms);
     assert(actual->hold_down_until_ms == expected->hold_down_until_ms);
-    assert(actual->route_cost == expected->route_cost);
     assert(actual->queue_free_hint == expected->queue_free_hint);
     assert(actual->hop_count == expected->hop_count);
     assert(actual->link_quality == expected->link_quality);
@@ -20920,8 +20919,183 @@ static void test_weak_direct_route_is_retained_until_fallback_round(void)
     assert(route_selected(&anchor.upstream) == NULL);
 }
 
+struct ack_route_feedback_fixture {
+    struct mesh_relay relay;
+    struct proto_packet packet;
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t payload_len;
+};
+
+static void init_ack_route_feedback_fixture(
+    struct ack_route_feedback_fixture *fixture,
+    bool with_alternate)
+{
+    struct route_candidate parent = direct_gateway_route(ANCHOR_B, 93u, 90u);
+    struct route_candidate alternate = direct_gateway_route(ANCHOR_C, 93u, 90u);
+    struct mesh_outbound tx;
+
+    parent.hop_count = 1u;
+    alternate.hop_count = 2u;
+    mesh_relay_init(&fixture->relay,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_A,
+                    GATEWAY,
+                    93u);
+    assert(route_upsert_candidate(&fixture->relay.upstream, &parent) == PROTO_OK);
+    if (with_alternate) {
+        assert(route_upsert_candidate(&fixture->relay.upstream, &alternate) ==
+               PROTO_OK);
+    }
+    fixture->payload_len = build_ordinary_gateway_report(
+        MSG_MESH_DATA, ANCHOR_A, 93001u, 193u,
+        &fixture->packet, fixture->payload, sizeof(fixture->payload));
+    assert(mesh_relay_start_tx(&fixture->relay,
+                               &fixture->packet,
+                               fixture->payload,
+                               fixture->payload_len,
+                               1000u,
+                               &tx) == PROTO_OK);
+    assert(tx.next_hop_id == ANCHOR_B);
+    mesh_relay_note_tx_sent(&fixture->relay, &tx, 1001u);
+}
+
+static void receive_ack_route_feedback(
+    struct ack_route_feedback_fixture *fixture,
+    const struct mesh_ack_flow_control *flow,
+    bool accepted,
+    uint32_t now_ms,
+    struct mesh_relay_result *result)
+{
+    struct proto_packet ack;
+    uint8_t payload[MESH_ACK_SINGLE_PAYLOAD_LEN + MESH_ACK_BACKPRESSURE_TLV_BYTES];
+    size_t payload_len;
+
+    build_hop_ack_for_packet(&ack, ANCHOR_B, ANCHOR_A, 293u,
+                             payload, sizeof(payload), &payload_len,
+                             &fixture->packet, fixture->payload,
+                             fixture->payload_len);
+    if (!accepted) {
+        /* A refusal names the exact pending sequence but accepts no semantic
+         * identity, as required by the dead-end ACK wire contract. */
+        payload_len = 0u;
+        assert(mesh_append_requested_seq(payload, sizeof(payload), &payload_len,
+                                         fixture->packet.seq) == PROTO_OK);
+    }
+    assert(mesh_append_ack_flow_control(payload, sizeof(payload), &payload_len,
+                                        flow) == PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    assert(mesh_relay_handle_rx(&fixture->relay, &ack, payload, payload_len,
+                                ANCHOR_B, 90u, now_ms, result) == PROTO_OK);
+}
+
+static void assert_ack_feedback_parent(
+    const struct ack_route_feedback_fixture *fixture,
+    uint64_t expected_parent,
+    uint32_t now_ms)
+{
+    uint64_t ordinary_parent = 0u;
+    uint64_t packet_parent = 0u;
+    const int expected = expected_parent == 0u ? PROTO_ERR_NOT_FOUND : PROTO_OK;
+    const struct route_candidate *selected = route_selected(&fixture->relay.upstream);
+
+    assert(mesh_relay_select_next_hop(&fixture->relay, GATEWAY,
+                                      &ordinary_parent) == expected);
+    assert(mesh_relay_select_next_hop_for_packet(&fixture->relay,
+                                                &fixture->packet,
+                                                fixture->payload,
+                                                fixture->payload_len,
+                                                now_ms,
+                                                &packet_parent) == expected);
+    if (expected_parent == 0u) {
+        assert(selected == NULL);
+    } else {
+        assert(selected != NULL);
+        assert(selected->next_hop_id == expected_parent);
+        assert(ordinary_parent == expected_parent);
+        assert(packet_parent == expected_parent);
+    }
+}
+
+static void test_exact_ack_depth_feedback_immediately_reranks_parents(void)
+{
+    static const struct mesh_ack_flow_control feedback[] = {
+        {.depth = 5u, .credit = 4u, .depth_valid = true, .credit_valid = true},
+        {.credit = 4u, .credit_valid = true},
+    };
+
+    for (size_t i = 0u; i < sizeof(feedback) / sizeof(feedback[0]); i++) {
+        struct ack_route_feedback_fixture fixture;
+        struct mesh_relay_result result;
+        const struct route_candidate *parent;
+
+        init_ack_route_feedback_fixture(&fixture, true);
+        assert_ack_feedback_parent(&fixture, ANCHOR_B, 1001u);
+        receive_ack_route_feedback(&fixture, &feedback[i], true, 1010u, &result);
+        assert(result.actions == MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED);
+        parent = find_route_candidate(&fixture.relay, ANCHOR_B);
+        assert(parent != NULL);
+        assert(parent->hop_count == (feedback[i].depth_valid ? 5u : 1u));
+        assert(parent->queue_free_hint == 4u);
+        /* No refresh, tick, or re-selection may be needed before the next
+         * packet observes the newly advertised cost. Credit alone keeps the
+         * last known depth, including the legacy ACK form without depth. */
+        assert_ack_feedback_parent(&fixture,
+                                    feedback[i].depth_valid ? ANCHOR_C : ANCHOR_B,
+                                    1010u);
+    }
+}
+
+static void test_dead_end_ack_never_reselects_unreachable_parent(void)
+{
+    const struct mesh_ack_flow_control dead_end = {
+        .depth = MESH_ROUTE_DEPTH_UNREACHABLE,
+        .credit = 0u,
+        .depth_valid = true,
+        .credit_valid = true,
+    };
+    const uint32_t ack_ms = 1010u;
+
+    for (unsigned int with_alternate = 0u; with_alternate < 2u;
+         with_alternate++) {
+        struct ack_route_feedback_fixture fixture;
+        struct mesh_relay_result result;
+        const struct route_candidate *parent;
+        const uint64_t expected_parent = with_alternate ? ANCHOR_C : 0u;
+        uint32_t hold_until_ms;
+
+        init_ack_route_feedback_fixture(&fixture, with_alternate != 0u);
+        receive_ack_route_feedback(&fixture, &dead_end, false, ack_ms, &result);
+        assert(has_action(&result, MESH_RELAY_ACTION_TX_HOP_DEFERRED));
+        assert(has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) ==
+               !with_alternate);
+        assert(mesh_relay_tx_active(&fixture.relay));
+        parent = find_route_candidate(&fixture.relay, ANCHOR_B);
+        assert(parent != NULL);
+        assert(parent->hop_count == MESH_ROUTE_DEPTH_UNREACHABLE);
+        assert(parent->failure_count == 0u);
+        assert(parent->hold_down_valid);
+        hold_until_ms = parent->hold_down_until_ms;
+        assert(hold_until_ms == ack_ms + MESH_PARENT_DEAD_END_HOLD_MS);
+        assert_ack_feedback_parent(&fixture, expected_parent, ack_ms);
+
+        for (uint32_t now_ms = hold_until_ms - 1u;
+             now_ms <= hold_until_ms + 1u; now_ms++) {
+            assert(route_select_best_at(&fixture.relay.upstream, now_ms) ==
+                   (with_alternate ? PROTO_OK : PROTO_ERR_NOT_FOUND));
+            assert_ack_feedback_parent(&fixture, expected_parent, now_ms);
+        }
+        assert(route_record_candidate_success_at(&fixture.relay.upstream,
+                                                  ANCHOR_B, GATEWAY,
+                                                  hold_until_ms + 2u) ==
+               (with_alternate ? PROTO_OK : PROTO_ERR_NOT_FOUND));
+        assert_ack_feedback_parent(&fixture, expected_parent, hold_until_ms + 2u);
+    }
+}
+
 int main(void)
 {
+    test_exact_ack_depth_feedback_immediately_reranks_parents();
+    test_dead_end_ack_never_reselects_unreachable_parent();
     test_mesh_relay_result_preserves_required_simultaneous_outputs();
     test_route_reply_nonce_value_and_identity();
     test_clicker_leaf_rejects_command_result_origin();

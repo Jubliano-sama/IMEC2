@@ -66,7 +66,6 @@ struct route_candidate {
     uint32_t last_success_ms;
     uint32_t hold_down_until_ms;
     uint32_t provisional_until_ms;
-    uint16_t route_cost;
     uint16_t queue_free_hint;
     uint8_t hop_count;
     uint8_t link_quality;
@@ -101,6 +100,10 @@ bool route_link_rsl_immediately_usable(int8_t rsl_dbm);
 uint8_t route_link_quality_from_rsl(int8_t rsl_dbm);
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate);
+/* Shared by ordinary selection, packet-aware selection and depth reporting. */
+bool route_candidate_eligible_at(const struct route_table *table,
+                                  const struct route_candidate *candidate,
+                                  uint32_t now_ms);
 int route_select_best(struct route_table *table);
 int route_select_best_at(struct route_table *table, uint32_t now_ms);
 uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t max_age_ms);

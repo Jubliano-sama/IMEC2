@@ -1,0 +1,14 @@
+{
+  "sessions": 10,
+  "reports": 25,
+  "receipts": 25,
+  "each_session_three_anchors": false,
+  "all_four_samples": true,
+  "sample_counts": {
+    "4": 25
+  },
+  "all_receipted": true,
+  "click_completions": {
+    "0": 10
+  }
+}

@@ -60,7 +60,7 @@ The remaining build lines are not alternative production architectures:
 Flash mesh roles with `west flash`. Select the build and the currently connected probe for the intended role:
 
 ```sh
-.venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor -- --dev-id <probe-id> --frequency 4000000
+PATH="$PWD/.venv/bin:$PATH" .venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor -- --dev-id <probe-id> --frequency 4000000
 ```
 
 Use the normal sector erase so durable configuration survives. Check the build's RAM margin, then capture RTT and exercise the behavior changed by the firmware. A successful flash proves programming completed; enumeration, survey, and click delivery need their own observed results.

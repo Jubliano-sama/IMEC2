@@ -46,6 +46,7 @@ BOUNDARY_IMPLEMENTATION = {
 TRANSPORT_STATE_IMPLEMENTATION = {
     "app_gateway_collection_recovery.h",
     "app_mesh_local_delivery.c",
+    "app_mesh_report_delivery_state.h",
 }
 LEGACY_TRANSPORT_CLIENTS = {
     "app_anchor.c",

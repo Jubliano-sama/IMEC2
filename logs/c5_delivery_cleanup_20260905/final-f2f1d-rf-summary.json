@@ -1,0 +1,25 @@
+{
+  "final-f2f1d-combined": {
+    "anchor_a": {
+      "largest_bank": 4,
+      "successful_peers": [
+        "0x9999888877776666"
+      ],
+      "legacy_report_owners": 0
+    },
+    "anchor_b": {
+      "largest_bank": 4,
+      "successful_peers": [
+        "0xf6d3a3bdac0f858"
+      ],
+      "legacy_report_owners": 0
+    },
+    "anchor_c": {
+      "largest_bank": 4,
+      "successful_peers": [
+        "0x9699122bd60a64e3"
+      ],
+      "legacy_report_owners": 0
+    }
+  }
+}

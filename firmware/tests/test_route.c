@@ -807,8 +807,63 @@ static void test_retry_backoff_values(void)
     assert(route_retry_backoff_ms(4u) == 6000u);
 }
 
+static void test_unreachable_candidate_stays_ineligible_until_finite_refresh(void)
+{
+    for (unsigned int with_alternate = 0u; with_alternate < 2u;
+         with_alternate++) {
+        struct route_table table;
+        struct route_candidate parent = candidate(0x02u, 91u, 1u, 90u, 1000u);
+        struct route_candidate alternate = candidate(0x03u, 91u, 2u, 90u, 1000u);
+        struct route_candidate *stored;
+        const uint32_t hold_until_ms = 6000u;
+        const int expected = with_alternate ? PROTO_OK : PROTO_ERR_NOT_FOUND;
+
+        route_table_init(&table, 91u);
+        assert(route_upsert_candidate(&table, &parent) == PROTO_OK);
+        if (with_alternate) {
+            assert(route_upsert_candidate(&table, &alternate) == PROTO_OK);
+        }
+        stored = &table.candidates[table.selected_index];
+        assert(stored->next_hop_id == parent.next_hop_id);
+        /* An admitted dead-end ACK leaves the retained candidate present so
+         * a later finite route observation can repair it. Hold expiry and
+         * successful contact alone cannot supply that missing route proof. */
+        stored->hop_count = UINT8_MAX;
+        stored->hold_down_until_ms = hold_until_ms;
+        stored->hold_down_valid = true;
+        for (uint32_t now_ms = hold_until_ms - 1u;
+             now_ms <= hold_until_ms + 1u; now_ms++) {
+            assert(route_select_best_at(&table, now_ms) == expected);
+            if (with_alternate) {
+                assert(route_selected(&table)->next_hop_id ==
+                       alternate.next_hop_id);
+            } else {
+                assert(route_selected(&table) == NULL);
+            }
+        }
+        assert(route_record_candidate_success_at(&table,
+                                                  parent.next_hop_id,
+                                                  parent.gateway_id,
+                                                  hold_until_ms + 2u) ==
+               expected);
+        assert(stored->hop_count == UINT8_MAX);
+        assert(!stored->hold_down_valid);
+        if (with_alternate) {
+            assert(route_selected(&table)->next_hop_id == alternate.next_hop_id);
+        } else {
+            assert(route_selected(&table) == NULL);
+        }
+
+        parent.last_seen_ms = hold_until_ms + 3u;
+        assert(route_upsert_candidate(&table, &parent) == PROTO_OK);
+        assert(route_selected(&table)->next_hop_id == parent.next_hop_id);
+        assert(route_selected(&table)->hop_count == parent.hop_count);
+    }
+}
+
 int main(void)
 {
+    test_unreachable_candidate_stays_ineligible_until_finite_refresh();
     test_weighted_cost_prefers_useful_direct_route();
     test_weighted_cost_avoids_unusable_direct_route();
     test_same_hop_uses_link_quality();

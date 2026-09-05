@@ -36,7 +36,7 @@ static struct protocol_rx_downstream_activation mesh_enumeration_downstream_acti
 static bool mesh_enumeration_downstream_survey_follows;
 static int mesh_c5_enumeration_relay_burst_count;
 static uint32_t now_ms, release_at_ms, release_delay_ms;
-static unsigned aborts, wakes, sends, idle_scan_ms, reservations, releases;
+static unsigned aborts, wakes, sends, idle_scan_ms, reserved_copy_gap_ms, reservations, releases;
 static int radio_owner, wake_error, data_error;
 static bool abort_requested, never_release, paused, defer_work;
 
@@ -59,6 +59,9 @@ static void k_msleep(uint32_t ms)
         if (mesh_c5_enumeration_relay_burst_count==0) {
             radio_owner=RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN;
             idle_scan_ms++;
+        } else if (sends > 0u && sends < 3u) {
+            assert(radio_owner!=RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN);
+            reserved_copy_gap_ms++;
         }
         if (abort_requested && !never_release && uptime_deadline_reached(now_ms,release_at_ms)) {
             radio_owner=0; abort_requested=false;
@@ -101,7 +104,7 @@ static int mesh_send_route_wake_train_with_duration(uint64_t peer,void *a,void *
     k_msleep(duration); return 0;
 }
 static void mesh_wait_for_c5_control_followup_turnaround(uint8_t msg,const char *why)
-{ (void)msg; (void)why; assert(mesh_c5_enumeration_relay_burst_count==0); k_msleep(1u); }
+{ (void)msg; (void)why; assert(mesh_c5_enumeration_relay_burst_count==1); k_msleep(1u); }
 static bool mesh_c5_flood_destination_valid(const struct mesh_outbound *out)
 { return out->next_hop_id==MESH_BROADCAST_ID && out->packet.dst_id==MESH_BROADCAST_ID; }
 static bool mesh_c5_gateway_enumeration_quick_copy_burst(const struct mesh_outbound *out)
@@ -126,7 +129,7 @@ static int app_mesh_command_orchestrator_send_flood(const struct app_mesh_comman
 static struct mesh_outbound reset_fixture(uint8_t msg)
 {
     now_ms=1000u; release_delay_ms=5u; release_at_ms=0u;
-    aborts=wakes=sends=idle_scan_ms=reservations=releases=0u;
+    aborts=wakes=sends=idle_scan_ms=reserved_copy_gap_ms=reservations=releases=0u;
     radio_owner=RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN;
     wake_error=data_error=mesh_c5_enumeration_relay_burst_count=0;
     abort_requested=never_release=paused=defer_work=false;
@@ -142,16 +145,18 @@ static int run_flood(struct mesh_outbound *out,struct app_mesh_flood_result *res
 static void assert_balanced(void)
 { assert(mesh_c5_enumeration_relay_burst_count==0); assert(reservations==releases); }
 
-static void test_asynchronous_scan_release_and_idle_copy_gaps(void)
+static void test_asynchronous_scan_release_and_reserved_copy_gaps(void)
 {
     struct mesh_outbound out=reset_fixture(MSG_COMMAND);
     struct app_mesh_flood_result result;
     assert(run_flood(&out,&result)==0);
     assert(wakes==1u && sends==3u && result.sent_count==3u);
-    assert(aborts==4u && reservations==4u); /* Wake and each data copy wait. */
-    assert(idle_scan_ms>=2u*MESH_ENUMERATION_RELAY_COPY_GUARD_MS);
+    assert(aborts==1u && reservations==1u); /* One handoff through all copies. */
+    assert(idle_scan_ms==0u);
+    assert(reserved_copy_gap_ms>=2u*MESH_ENUMERATION_RELAY_COPY_GUARD_MS);
     assert(mesh_enumeration_downstream_activation.activated);
     assert_balanced();
+    k_msleep(10u); assert(idle_scan_ms==10u); /* Scan resumes after the burst. */
 }
 static void test_timeout_and_shutdown_never_send_or_leak_reservation(void)
 {
@@ -178,6 +183,16 @@ static void test_physical_failure_balances_reservation(void)
         assert_balanced();
     }
 }
+static void test_deferred_burst_releases_reservation_for_scan(void)
+{
+    struct mesh_outbound out=reset_fixture(MSG_COMMAND);
+    struct app_mesh_flood_result result;
+    defer_work=true;
+    assert(run_flood(&out,&result)==-EAGAIN);
+    assert(wakes==0u && sends==0u && reservations==1u);
+    assert_balanced();
+    k_msleep(10u); assert(idle_scan_ms==10u);
+}
 static void test_expired_first_wake_slot_cannot_send_later_activation_copies(void)
 {
     struct mesh_outbound out=reset_fixture(MSG_GATEWAY_ROUTE_ADV);
@@ -191,9 +206,10 @@ static void test_expired_first_wake_slot_cannot_send_later_activation_copies(voi
 }
 int main(void)
 {
-    test_asynchronous_scan_release_and_idle_copy_gaps();
+    test_asynchronous_scan_release_and_reserved_copy_gaps();
     test_timeout_and_shutdown_never_send_or_leak_reservation();
     test_physical_failure_balances_reservation();
+    test_deferred_burst_releases_reservation_for_scan();
     test_expired_first_wake_slot_cannot_send_later_activation_copies();
     puts("production enumeration scan handoff harness passed");
     return 0;

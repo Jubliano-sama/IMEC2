@@ -215,42 +215,6 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         self.assertNotIn("mesh_relay_clear_channel9_timing", arm_close)
         self.assertNotIn("mesh_event_owner_abandon", arm_close)
 
-        ack_complete = function_body(REPORT, "mesh_ch9_tx_pending_handle_ack")
-        live_source = ack_complete.index(
-            "app_node_comm_pending_delivery_count() != 0u"
-        )
-        live_queue = ack_complete.index(
-            ".report_tx_queue_used = report_tx_queue_used()"
-        )
-        live_route = ack_complete.index(
-            ".route_waiting_tx_valid = mesh_route_waiting_tx_valid", live_queue
-        )
-        live_acks = ack_complete.index(
-            "app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)", live_route
-        )
-        close_policy = ack_complete.index(
-            "app_mesh_ch9_ack_complete_should_close_timing", live_acks
-        )
-        close_after_ack = ack_complete.index(
-            "mesh_close_channel9_connection(", close_policy
-        )
-        self.assertLess(live_source, live_queue)
-        self.assertLess(live_queue, live_route)
-        self.assertLess(live_route, live_acks)
-        self.assertLess(live_acks, close_policy)
-        self.assertLess(close_policy, close_after_ack)
-
-        policy = function_body(
-            CH9_ACK, "app_mesh_ch9_ack_complete_should_close_timing"
-        )
-        self.assertRegex(
-            policy,
-            r"return !state->source_delivery_pending\s*&&\s*"
-            r"state->report_tx_queue_used == 0u\s*&&\s*"
-            r"!state->route_waiting_tx_valid\s*&&\s*"
-            r"!state->ack_batch_valid;",
-        )
-
     def test_deferred_close_uses_existing_channel9_turn_without_one_sided_teardown(self):
         ready = function_body(
             REPORT, "mesh_channel9_close_intent_ready_for_peer"
@@ -283,7 +247,6 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
             "report_tx_queue_used() == 0u",
             "!mesh_route_waiting_tx_valid",
             "!mesh_relay_tx_active(&mesh_runtime)",
-            "!mesh_ch9_tx_pending_is_active()",
             "!mesh_relay_result_bundle_pending(&mesh_runtime)",
             "!app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)",
             "k_msgq_num_used_get(&mesh_rx_msgq) == 0u",
@@ -301,6 +264,8 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         self.assertLess(live_timing, supervision_retire)
         self.assertEqual(gate_positions, sorted(gate_positions))
         self.assertLess(supervision_retire, gate_positions[0])
+        backlog = function_body(REPORT, "mesh_report_tx_backlog_active")
+        self.assertIn("mesh_report_delivery_active()", backlog)
 
         self.assertIn("mesh_relay_require_channel9_tx_event", select)
         self.assertIn("mesh_channel9_close_intent_ready_for_peer", select)

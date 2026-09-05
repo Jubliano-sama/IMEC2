@@ -365,7 +365,7 @@ Native sanitizer results cover host execution. Check embedded stack use with the
 Flash the intended role at 4 MHz, then capture RTT while running real workloads:
 
 ```sh
-.venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor-stack-stress -- --dev-id <ANCHOR_PROBE_ID> --frequency 4000000
+PATH="$PWD/.venv/bin:$PATH" .venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor-stack-stress -- --dev-id <ANCHOR_PROBE_ID> --frequency 4000000
 
 .venv/bin/python firmware/scripts/bench_rtt.py --probe anchor=<ANCHOR_PROBE_ID> --no-ble --duration 180 --output-dir logs/anchor-rtt
 ```

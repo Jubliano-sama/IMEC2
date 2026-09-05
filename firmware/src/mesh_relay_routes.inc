@@ -570,10 +570,8 @@ static int enforce_loop_free_upstream(const struct mesh_relay *relay,
         const struct route_candidate *candidate =
             &relay->upstream.candidates[i];
 
-        if (!candidate->valid ||
+        if (!route_candidate_eligible_at(&relay->upstream, candidate, now_ms) ||
             candidate->gateway_id != relay->gateway_id ||
-            (candidate->hold_down_valid &&
-             !deadline_reached(now_ms, candidate->hold_down_until_ms)) ||
             !mesh_relay_depth_is_forwardable(relay,
                                              candidate->hop_count,
                                              now_ms)) {
@@ -583,7 +581,8 @@ static int enforce_loop_free_upstream(const struct mesh_relay *relay,
             /* The ordinary choice is already loop free: keep it. */
             return PROTO_OK;
         }
-        if (best == NULL || candidate->route_cost < best->route_cost) {
+        if (best == NULL || route_candidate_cost(candidate->hop_count, candidate->link_quality) <
+                            route_candidate_cost(best->hop_count, best->link_quality)) {
             best = candidate;
         }
     }
@@ -615,9 +614,11 @@ int mesh_relay_select_next_hop_for_packet(
     ordinary_ret = mesh_relay_select_next_hop(relay,
                                                packet->dst_id,
                                                next_hop_id);
-    if (ordinary_ret == PROTO_OK &&
-        relay->role != MESH_RELAY_ROLE_GATEWAY &&
+    if (relay->role != MESH_RELAY_ROLE_GATEWAY &&
         packet->dst_id == relay->gateway_id) {
+        if (ordinary_ret != PROTO_OK) {
+            *next_hop_id = 0u;
+        }
         ordinary_ret = enforce_loop_free_upstream(relay, now_ms, next_hop_id);
         if (ordinary_ret != PROTO_OK) {
             return ordinary_ret;
@@ -640,9 +641,9 @@ int mesh_relay_select_next_hop_for_packet(
         const struct mesh_route_path *path = NULL;
         bool clean = false;
 
-        if (!candidate->valid ||
+        if (!route_candidate_eligible_at(&relay->upstream, candidate, now_ms) ||
             candidate->gateway_id != relay->gateway_id ||
-            candidate->route_epoch != relay->upstream.current_epoch) {
+            !mesh_relay_depth_is_forwardable(relay, candidate->hop_count, now_ms)) {
             clean_routes.candidates[i].valid = false;
             continue;
         }

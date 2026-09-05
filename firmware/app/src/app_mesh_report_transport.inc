@@ -767,7 +767,6 @@ static int mesh_schedule_uwb_rx(uint32_t delay_ms)
 static bool mesh_route_test_keeps_radio_idle_between_channel9_turns(void)
 {
     bool exact_ack_exchange =
-        mesh_ch9_tx_pending_is_active() ||
         app_mesh_ch9_core_ack_wait_active(
             &mesh_runtime.pending,
             mesh_relay_tx_active(&mesh_runtime)) ||
@@ -811,7 +810,7 @@ static int mesh_release_radio_after_mesh_turn(bool channel9_turn,
             status_debug_printf("DBG_DWM_KEEP_IDLE reason=%s ch9=%u ack=%u qack=%u ret=%d\n",
                                 reason == NULL ? "mesh" : reason,
                                 mesh_channel9_connection_count(),
-                                mesh_ch9_tx_pending_is_active() ? 1u : 0u,
+                                0u,
                                 app_mesh_ch9_ack_table_any_pending(
                                     &mesh_ch9_ack_table) ? 1u : 0u,
                                 ret);
@@ -1079,8 +1078,8 @@ void mesh_restart_role_scan(void)
     if (mesh_gateway_collection_recovery_receipt_active()) {
         return;
     }
-    /* One physically due enumeration copy owns the radio through its bounded
-     * send. Admission waits and inter-copy backoff deliberately do not. */
+    /* Keep enumeration ownership through the wake and every short copy.
+     * Reopening the scanner between copies can consume their RF deadlines. */
     if (mesh_c5_enumeration_relay_burst_active()) {
         return;
     }
@@ -1162,7 +1161,6 @@ void mesh_transport_resume(void)
                                      "transport-resume-rx");
     }
     if (mesh_relay_tx_active(&mesh_runtime) ||
-        mesh_ch9_tx_pending_is_active() ||
         mesh_relay_result_bundle_pending(&mesh_runtime)) {
         (void)mesh_schedule_tx_timeout();
     }
@@ -1225,94 +1223,6 @@ void mesh_transport_resume(void)
     mesh_restart_role_scan();
 }
 
-#if DEVICE_ROLE == ROLE_ANCHOR
-static int mesh_ch9_slot_tx_begin(struct mesh_ch9_slot_tx_context *ctx)
-{
-    int parking_ret;
-    int release_ret;
-    int ret;
-
-    if (ctx == NULL) {
-        return -EINVAL;
-    }
-    if (ctx->active) {
-        return 0;
-    }
-
-    mesh_stop_role_scan();
-    ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_TX,
-                                     "mesh channel9 batch TX",
-                                     &ctx->radio_lease);
-    if (ret < 0) {
-        mesh_restart_role_scan();
-        return ret;
-    }
-
-    ctx->uwb_window_start_ms = k_uptime_get();
-    ret = dwm3000_driver_configure_mesh_payload_mode();
-    mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_CH9_TX_SLOT_CONFIG ret=%d now=%u\n",
-                            ret,
-                            k_uptime_get_32());
-    }
-    if (ret < 0) {
-        release_ret = radio_guard_uwb_release_begin(&ctx->radio_lease);
-        if (release_ret == 0) {
-            parking_ret = mesh_radio_standby_with_bounded_recovery(
-                "ch9-slot-config-fail");
-            release_ret = radio_guard_uwb_release_finish(
-                &ctx->radio_lease, parking_ret);
-        }
-        mesh_report_note_anchor_uwb_awake_since(ctx->uwb_window_start_ms, 0u);
-        if (release_ret < 0) {
-            LOG_ERR("mesh channel-9 configuration cleanup failed: %d",
-                    release_ret);
-            ctx->uwb_window_start_ms = -1;
-            return release_ret;
-        }
-        mesh_restart_role_scan();
-        ctx->uwb_window_start_ms = -1;
-        return ret;
-    }
-
-    ctx->active = true;
-    return 0;
-}
-
-static int mesh_ch9_slot_tx_end(struct mesh_ch9_slot_tx_context *ctx)
-{
-    bool functional_tx_completed;
-    int parking_ret;
-    int release_ret;
-
-    if (ctx == NULL || !ctx->active) {
-        return 0;
-    }
-
-    functional_tx_completed = ctx->functional_tx_completed;
-    release_ret = radio_guard_uwb_release_begin(&ctx->radio_lease);
-    if (release_ret == 0) {
-        parking_ret = mesh_release_radio_after_mesh_turn(true, "ch9-slot-tx");
-        release_ret = radio_guard_uwb_release_finish(&ctx->radio_lease,
-                                                      parking_ret);
-    }
-    mesh_report_note_anchor_uwb_awake_since(ctx->uwb_window_start_ms, 0u);
-    if (release_ret < 0) {
-        LOG_ERR("mesh channel-9 slot radio release failed: %d",
-                release_ret);
-        return release_ret;
-    }
-    mesh_restart_role_scan();
-    ctx->active = false;
-    ctx->functional_tx_completed = false;
-    ctx->uwb_window_start_ms = -1;
-    if (functional_tx_completed) {
-        app_watchdog_note_radio_progress();
-    }
-    return 0;
-}
-#endif
 
 /*
  * Encode from the synchronous caller's immutable payload while refreshing
@@ -3082,6 +2992,11 @@ static int mesh_send_c5_flood_now_until(
         mesh_c5_gateway_enumeration_claim(&tx);
     long_gateway_activation = gateway_enumeration_claim;
 
+    if (compact_primary_control || gateway_enumeration_quick_copies) {
+        mesh_c5_enumeration_relay_burst_begin(&tx);
+        enumeration_burst_owned = true;
+    }
+
     if (mesh_c5_flood_defer_active_cb(&flood_ctx)) {
         ret = -EAGAIN;
         goto out;
@@ -3169,8 +3084,6 @@ static int mesh_send_c5_flood_now_until(
         if (wake_train_ms != 0u) {
             if (compact_primary_control ||
                 gateway_enumeration_quick_copies) {
-                mesh_c5_enumeration_relay_burst_begin(&tx);
-                enumeration_burst_owned = true;
                 ret = mesh_c5_enumeration_relay_wait_for_scan();
                 if (ret < 0) {
                     goto out;
@@ -3181,10 +3094,6 @@ static int mesh_send_c5_flood_now_until(
                 purpose, reason, &tx, NULL,
                 c5_tx_intent, wake_train_ms,
                 NULL, NULL);
-            if (enumeration_burst_owned) {
-                mesh_c5_enumeration_relay_burst_end();
-                enumeration_burst_owned = false;
-            }
             if (ret < 0) {
                 mesh_restart_role_scan();
                 LOG_WRN("mesh C5 flood wake train failed: msg=0x%02x ret=%d reason=%s",
@@ -3198,8 +3107,6 @@ static int mesh_send_c5_flood_now_until(
         }
 
         if (compact_primary_control || gateway_enumeration_quick_copies) {
-            mesh_c5_enumeration_relay_burst_begin(&tx);
-            enumeration_burst_owned = true;
             ret = mesh_c5_enumeration_relay_wait_for_scan();
             if (ret < 0) {
                 goto out;
@@ -3226,10 +3133,6 @@ static int mesh_send_c5_flood_now_until(
                     &tx, &ops, &attempt_result) :
                 app_mesh_command_orchestrator_send_flood(
                     command_orchestrator, &ops, &attempt_result);
-        }
-        if (enumeration_burst_owned) {
-            mesh_c5_enumeration_relay_burst_end();
-            enumeration_burst_owned = false;
         }
         aggregate_result.sent_count =
             UINT8_MAX - aggregate_result.sent_count < attempt_result.sent_count ?

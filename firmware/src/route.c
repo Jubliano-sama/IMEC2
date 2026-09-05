@@ -53,9 +53,7 @@ uint8_t route_link_quality_from_rsl(int8_t rsl_dbm)
 
 static uint16_t candidate_effective_cost(const struct route_candidate *candidate)
 {
-    return candidate->route_cost != 0u ?
-           candidate->route_cost :
-           route_candidate_cost(candidate->hop_count, candidate->link_quality);
+    return route_candidate_cost(candidate->hop_count, candidate->link_quality);
 }
 
 static bool candidate_in_hold_down(const struct route_candidate *candidate, uint32_t now_ms)
@@ -69,6 +67,17 @@ static bool candidate_is_provisional(const struct route_candidate *candidate,
 {
     return candidate->provisional_valid &&
            !deadline_reached(now_ms, candidate->provisional_until_ms);
+}
+
+bool route_candidate_eligible_at(const struct route_table *table,
+                                  const struct route_candidate *candidate,
+                                  uint32_t now_ms)
+{
+    return table != NULL && candidate != NULL &&
+           candidate_valid_for_epoch(candidate, table->current_epoch) &&
+           candidate->hop_count != UINT8_MAX &&
+           !candidate_in_hold_down(candidate, now_ms) &&
+           !candidate_is_provisional(candidate, now_ms);
 }
 
 static bool candidate_link_immediately_usable(
@@ -313,13 +322,7 @@ int route_select_best_at(struct route_table *table, uint32_t now_ms)
 
         normalize_candidate_hold_down(candidate, now_ms);
         normalize_candidate_provisional(candidate, now_ms);
-        if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
-            continue;
-        }
-        if (candidate_in_hold_down(candidate, now_ms)) {
-            continue;
-        }
-        if (candidate_is_provisional(candidate, now_ms)) {
+        if (!route_candidate_eligible_at(table, candidate, now_ms)) {
             continue;
         }
         if (candidate_is_better(candidate, selected, now_ms)) {
@@ -370,7 +373,6 @@ int route_upsert_candidate(struct route_table *table,
 
     stored = *candidate;
     stored.valid = true;
-    stored.route_cost = route_candidate_cost(stored.hop_count, stored.link_quality);
     now_ms = stored.last_seen_ms;
     normalize_candidate_capacity_hint(&stored, now_ms);
     normalize_candidate_provisional(&stored, now_ms);
@@ -438,7 +440,8 @@ const struct route_candidate *route_selected(const struct route_table *table)
         table->selected_index >= ROUTE_MAX_CANDIDATES) {
         return NULL;
     }
-    if (!candidate_valid_for_epoch(&table->candidates[table->selected_index], table->current_epoch)) {
+    if (!candidate_valid_for_epoch(&table->candidates[table->selected_index], table->current_epoch) ||
+        table->candidates[table->selected_index].hop_count == UINT8_MAX) {
         return NULL;
     }
     return &table->candidates[table->selected_index];

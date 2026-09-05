@@ -93,7 +93,6 @@ static uint32_t mesh_direct_gateway_ack_rx_window_ms(
 
 static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outbound *probe,
                                                        const char *reason,
-                                                       bool apply_tracked_ack,
                                                        struct mesh_direct_gateway_ack_debug *debug)
 {
     struct proto_packet ack_packet;
@@ -203,15 +202,7 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                 debug->matched_at_ms = frame_received_at_ms;
                 debug->previous_hop_id = previous_hop_id;
             }
-            if (apply_tracked_ack) {
-                (void)mesh_ch9_tx_pending_handle_ack(packet,
-                                                     payload,
-                                                     payload_len,
-                                                     previous_hop_id,
-                                                     UWB_CHANNEL_MESH_PAYLOAD);
-            }
-            if (!apply_tracked_ack &&
-                probe->packet.msg_type == MSG_GATEWAY_ROUTE_REQ) {
+            if (probe->packet.msg_type == MSG_GATEWAY_ROUTE_REQ) {
                 /*
                  * A direct route probe consumes this exact ACK as its
                  * synchronous contact proof.  The probe is intentionally not
@@ -312,11 +303,9 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
     struct radio_guard_uwb_lease radio_lease = {0};
-    uint32_t ack_deadline_ms;
     uint32_t click_tx_done_ms = 0u;
     bool click_report = out != NULL && out->packet.msg_type == MSG_CLICK_REPORT;
     bool gateway_ack_required = false;
-    bool ack_wait_started = false;
     bool keep_channel9_awake = false;
     bool functional_tx_completed = false;
     int ack_ret = -ENOTCONN;
@@ -411,21 +400,8 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         gateway_ack_required =
             (out->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
         if (gateway_ack_required) {
-            ack_deadline_ms = k_uptime_get_32() + ROUTE_GATEWAY_ACK_TIMEOUT_MS;
-            ack_wait_started = mesh_ch9_tx_pending_track_sent(out, ack_deadline_ms);
-            if (ack_wait_started) {
-                mesh_ch9_event_note_persistent_ack_wait(out->next_hop_id,
-                                                        mesh_ch9_tx_pending_ack_deadline_ms(),
-                                                        reason);
-            } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x%llx src=0x%llx seq=%u\n",
-                                    (unsigned long long)out->packet.dst_id,
-                                    (unsigned long long)out->packet.src_id,
-                                    out->packet.seq);
-            }
             ack_ret = mesh_wait_for_direct_gateway_ack_configured(out,
                                                                   reason,
-                                                                  ack_wait_started,
                                                                   &ack_debug);
             status_debug_printf("DBG_DIRECT_GW_TX_ACK_WAIT ret=%d seq=%u\n",
                                 ack_ret,
@@ -446,9 +422,6 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
                 (ack_ret == 0 || ack_ret == -ETIMEDOUT) &&
                 report_tx_queue_used() > 0u;
             if (ack_ret != 0) {
-                if (ack_wait_started) {
-                    mesh_ch9_tx_pending_clear();
-                }
                 ret = ack_ret == -ETIMEDOUT ? -EAGAIN : ack_ret;
             } else {
                 (void)route_record_candidate_success_at(
@@ -492,7 +465,7 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         app_watchdog_note_radio_progress();
     }
 
-    if (ack_wait_started) {
+    if (gateway_ack_required) {
         mesh_debug_log_direct_gateway_ack_result(reason, ack_ret, &ack_debug, 0u);
     }
     if (observation != NULL) {
@@ -505,516 +478,9 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     return 0;
 }
 
-#if DEVICE_ROLE == ROLE_ANCHOR
-static void mesh_init_direct_gateway_batch_plan(struct mesh_event_plan *plan,
-                                                uint32_t now_ms)
-{
-    if (plan == NULL) {
-        return;
-    }
-
-    /* Delivery order is carried by each queued report's earliest_tx_ms
-     * (schedule position after ranging), not by re-deriving an offset from
-     * "now" on every worker pass, which could defer forever. */
-    plan->action = MESH_EVENT_PLAN_START;
-    plan->start_ms = now_ms;
-    plan->window_ms = MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
-    plan->end_ms = plan->start_ms + MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
-}
-
-static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
-    const struct mesh_event_plan *plan,
-    uint64_t next_hop_id,
-    uint8_t max_sent,
-    uint32_t selected_at_ms)
-{
-    struct mesh_event_plan tx_plan;
-    struct mesh_ch9_slot_tx_context slot_tx = {
-        .uwb_window_start_ms = -1,
-    };
-    struct mesh_direct_gateway_ack_debug ack_debug = {0};
-    struct mesh_outbound *queued = &report_tx_worker_scratch;
-    struct fw_radio_activity_decision coordinator_decision;
-    uint32_t batch_id;
-    uint32_t reserve_ms = MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS;
-    uint32_t slot_ms;
-    uint32_t now_ms;
-    uint32_t deadline_ms;
-    uint32_t projected_done_ms = 0u;
-    uint64_t batch_src_id = 0u;
-    uint8_t candidate_count = 0u;
-    uint8_t sent_count = 0u;
-    bool ack_wait_started = false;
-    int ack_ret = 0;
-    int release_ret;
-    int ret;
-
-    /*
-     * Direct batching has no independent per-fragment ACK owner yet. It also
-     * shares candidate storage with the mutually exclusive pending-ACK bank,
-     * so entering this path would overwrite unsent candidates as soon as the
-     * first ACK wait starts. Keep the implementation compile-visible for its
-     * timing model, but fail closed until both ownership problems are solved.
-     */
-    if (!MESH_DIRECT_GATEWAY_BATCHING_ENABLED) {
-        return -ENOTSUP;
-    }
-    if (plan == NULL || next_hop_id != GATEWAY_ID || max_sent == 0u) {
-        return -EINVAL;
-    }
-
-    tx_plan = *plan;
-    slot_ms = uptime_ms_until_deadline(plan->start_ms, plan->end_ms);
-    if (slot_ms <= reserve_ms) {
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_note("DBG_CH9_TX_BATCH_DIRECT_NO_RESERVE\n");
-            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_RESERVE_FAIL now=%u start=%u end=%u slot=%u reserve=%u\n",
-                                k_uptime_get_32(),
-                                plan->start_ms,
-                                plan->end_ms,
-                                slot_ms,
-                                reserve_ms);
-        }
-        report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
-        return -EBUSY;
-    }
-    tx_plan.end_ms = plan->end_ms - reserve_ms;
-    batch_id = mesh_ch9_next_batch_id();
-    now_ms = k_uptime_get_32();
-    deadline_ms = now_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS;
-
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_RESERVE batch=%u now=%u start=%u end=%u tx_end=%u reserve=%u cfg=%u guard=%u rx=%u q=%u max=%u\n",
-                            batch_id,
-                            now_ms,
-                            plan->start_ms,
-                            plan->end_ms,
-                            tx_plan.end_ms,
-                            reserve_ms,
-                            MESH_CH9_TX_CONFIG_GUARD_MS,
-                            MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
-                            MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS,
-                            k_msgq_num_used_get(&report_tx_msgq),
-                            max_sent);
-    }
-
-    while (candidate_count < max_sent) {
-        struct app_mesh_queue_head_token head_token;
-        uint64_t queued_next_hop_id = 0u;
-        uint32_t required_ms = 0u;
-        uint32_t send_start_ms;
-        bool fits;
-
-        if (report_tx_queue_begin_head(queued, &head_token) != 0) {
-            break;
-        }
-        mesh_coordinator_decide_now("ch9-direct-batch-collect",
-                                    &coordinator_decision);
-        if (!coordinator_decision.mesh_work_allowed) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=coord n=%u state=%s q=%u\n",
-                                    candidate_count,
-                                    fw_radio_activity_state_name(
-                                        coordinator_decision.state),
-                                    k_msgq_num_used_get(&report_tx_msgq));
-            }
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-
-        now_ms = k_uptime_get_32();
-        if (!mesh_outbound_ready_for_tx(queued, now_ms) ||
-            !mesh_packet_prefers_channel9(&queued->packet)) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=blocked n=%u ready=%u ch9=%u seq=%u earliest=%u q=%u\n",
-                                    candidate_count,
-                                    mesh_outbound_ready_for_tx(queued, now_ms) ? 1u : 0u,
-                                    mesh_packet_prefers_channel9(&queued->packet) ? 1u : 0u,
-                                    queued->packet.seq,
-                                    queued->earliest_tx_ms,
-                                    k_msgq_num_used_get(&report_tx_msgq));
-            }
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-        ret = mesh_relay_select_next_hop_for_packet(&mesh_runtime,
-                                                    &queued->packet,
-                                                    queued->payload,
-                                                    queued->payload_len,
-                                                    now_ms,
-                                                    &queued_next_hop_id);
-        if (ret != PROTO_OK || queued_next_hop_id != next_hop_id) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=next-hop n=%u ret=%d next=0x%llx want=0x%llx seq=%u q=%u\n",
-                                    candidate_count,
-                                    ret,
-                                    (unsigned long long)queued_next_hop_id,
-                                    (unsigned long long)next_hop_id,
-                                    queued->packet.seq,
-                                    k_msgq_num_used_get(&report_tx_msgq));
-            }
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-        if (queued->packet.dst_id != GATEWAY_ID ||
-            (queued->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
-            (candidate_count > 0u && queued->packet.src_id != batch_src_id)) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=batch-key n=%u src=0x%llx first=0x%llx dst=0x%llx flags=0x%02x seq=%u q=%u\n",
-                                    candidate_count,
-                                    (unsigned long long)queued->packet.src_id,
-                                    (unsigned long long)batch_src_id,
-                                    (unsigned long long)queued->packet.dst_id,
-                                    queued->packet.flags,
-                                    queued->packet.seq,
-                                    k_msgq_num_used_get(&report_tx_msgq));
-            }
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-        if (candidate_count == 0u) {
-            batch_src_id = queued->packet.src_id;
-        }
-
-        report_tx_batch_candidates[candidate_count] = *queued;
-        mesh_outbound_refresh_age(&report_tx_batch_candidates[candidate_count],
-                                  now_ms);
-        report_tx_batch_candidates[candidate_count].radio_channel =
-            UWB_CHANNEL_MESH_PAYLOAD;
-        report_tx_batch_candidates[candidate_count].next_hop_id = next_hop_id;
-        ret = mesh_outbound_set_ch9_batch_metadata(
-            &report_tx_batch_candidates[candidate_count],
-            batch_id,
-            false);
-        if (ret != PROTO_OK) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_META_FAIL ret=%d n=%u seq=%u\n",
-                                    ret,
-                                    candidate_count,
-                                    queued->packet.seq);
-            }
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-
-        if (candidate_count == 0u) {
-            send_start_ms = mesh_ch9_slot_send_start_ms(
-                &report_tx_batch_candidates[candidate_count],
-                &tx_plan,
-                now_ms);
-        } else {
-            send_start_ms = projected_done_ms +
-                MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS;
-        }
-        report_tx_batch_candidates[candidate_count].earliest_tx_ms =
-            send_start_ms;
-        report_tx_batch_candidates[candidate_count].earliest_tx_valid = true;
-        fits = mesh_ch9_tx_fits_configured_slot(&report_tx_batch_candidates[candidate_count],
-                                                &tx_plan,
-                                                now_ms,
-                                                send_start_ms,
-                                                &required_ms);
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FIT batch=%u n=%u now=%u start=%u tx_end=%u txstart=%u req=%u fit=%u seq=%u len=%u\n",
-                                batch_id,
-                                candidate_count,
-                                now_ms,
-                                tx_plan.start_ms,
-                                tx_plan.end_ms,
-                                send_start_ms,
-                                required_ms,
-                                fits ? 1u : 0u,
-                                report_tx_batch_candidates[candidate_count].packet.seq,
-                                (unsigned int)mesh_outbound_encoded_frame_len(
-                                    &report_tx_batch_candidates[candidate_count]));
-        }
-        if (!fits) {
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-
-        ret = report_tx_queue_commit_head(&head_token, queued);
-        if (ret != 0) {
-            LOG_ERR("direct report queue collection commit failed: %d", ret);
-            (void)report_tx_queue_abort_head(&head_token);
-            break;
-        }
-        projected_done_ms = send_start_ms +
-            mesh_ch9_estimated_airtime_ms(mesh_outbound_encoded_frame_len(
-                &report_tx_batch_candidates[candidate_count]));
-        candidate_count++;
-    }
-
-    if (candidate_count == 0u) {
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_EMPTY batch=%u q=%u\n",
-                                batch_id,
-                                k_msgq_num_used_get(&report_tx_msgq));
-        }
-        return -EBUSY;
-    }
-
-    ret = mesh_outbound_set_ch9_batch_metadata(
-        &report_tx_batch_candidates[candidate_count - 1u],
-        batch_id,
-        true);
-    if (ret != PROTO_OK) {
-        (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
-                                                0u,
-                                                candidate_count,
-                                                "direct-final-meta-fail");
-        return mesh_errno_from_proto(ret);
-    }
-
-    k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
-    ret = mesh_ch9_slot_tx_begin(&slot_tx);
-    if (ret < 0) {
-        k_mutex_unlock(&mesh_send_scratch_lock);
-        (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
-                                                0u,
-                                                candidate_count,
-                                                "direct-config-fail");
-        return ret;
-    }
-
-    projected_done_ms = 0u;
-    for (uint8_t i = 0u; i < candidate_count; i++) {
-        uint32_t required_ms = 0u;
-        uint32_t send_start_ms;
-
-        now_ms = k_uptime_get_32();
-        send_start_ms = (i == 0u) ?
-            mesh_ch9_slot_send_start_ms(&report_tx_batch_candidates[i],
-                                        &tx_plan,
-                                        now_ms) :
-            projected_done_ms + MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS;
-        report_tx_batch_candidates[i].earliest_tx_ms = send_start_ms;
-        report_tx_batch_candidates[i].earliest_tx_valid = true;
-        if (!mesh_ch9_tx_fits_configured_slot(&report_tx_batch_candidates[i],
-                                              &tx_plan,
-                                              now_ms,
-                                              send_start_ms,
-                                              &required_ms)) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_note("DBG_CH9_TX_BATCH_DIRECT_CONFIGURED_TRIM\n");
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_TRIM batch=%u keep=%u old=%u now=%u tx_end=%u req=%u seq=%u\n",
-                                    batch_id,
-                                    i,
-                                    candidate_count,
-                                    now_ms,
-                                    tx_plan.end_ms,
-                                    required_ms,
-                                    report_tx_batch_candidates[i].packet.seq);
-            }
-            (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
-                                                    i,
-                                                    candidate_count,
-                                                    "direct-configured-trim");
-            candidate_count = i;
-            if (candidate_count > 0u) {
-                (void)mesh_outbound_set_ch9_batch_metadata(
-                    &report_tx_batch_candidates[candidate_count - 1u],
-                    batch_id,
-                    true);
-            }
-            break;
-        }
-        projected_done_ms = send_start_ms +
-            mesh_ch9_estimated_airtime_ms(mesh_outbound_encoded_frame_len(
-                &report_tx_batch_candidates[i]));
-    }
-
-    if (candidate_count == 0u) {
-        mesh_ch9_event_set(CH9_EVENT_WINDOW_EXPIRED,
-                           next_hop_id,
-                           plan,
-                           "queued-direct-gateway-batch-fit");
-        mesh_relay_note_channel9_missed(&mesh_runtime,
-                                        next_hop_id,
-                                        &mesh_event_stats);
-        app_mesh_test_note_ch9_missed();
-        report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
-        release_ret = mesh_ch9_slot_tx_end(&slot_tx);
-        k_mutex_unlock(&mesh_send_scratch_lock);
-        return release_ret < 0 ? release_ret : -EALREADY;
-    }
-
-    mesh_ch9_event_set(CH9_EVENT_TX_PAYLOAD,
-                       next_hop_id,
-                       plan,
-                       "queued-direct-gateway-batch");
-
-    uint32_t previous_frame_done_ms = 0u;
-    for (uint8_t i = 0u; i < candidate_count; i++) {
-        size_t sent_frame_len = 0u;
-        uint32_t done_ms;
-
-        ret = mesh_send_outbound_preconfigured_ch9_locked(
-            &report_tx_batch_candidates[i],
-            "queued-direct-gateway-batch",
-            &sent_frame_len);
-        if (ret < 0) {
-            const struct app_mesh_rf_retry_key retry_key =
-                mesh_rf_retry_packet_key(
-                    &report_tx_batch_candidates[i].packet,
-                    APP_MESH_RF_RETRY_OPERATION_REPORT_DELIVERY);
-            uint32_t retry_delay_ms = mesh_rf_retry_bank_next_delay_ms(
-                &mesh_report_rf_retry_bank,
-                &retry_key,
-                APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
-                "direct-gateway-batch-send");
-
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_note("DBG_CH9_TX_BATCH_DIRECT_SEND_FAIL\n");
-                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FAIL batch=%u ret=%d sent=%u n=%u seq=%u final=%u delay=%u\n",
-                                    batch_id,
-                                    ret,
-                                    sent_count,
-                                    candidate_count,
-                                    report_tx_batch_candidates[i].packet.seq,
-                                    i == candidate_count - 1u ? 1u : 0u,
-                                    retry_delay_ms);
-            }
-            (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
-                                                    i,
-                                                    candidate_count,
-                                                    "direct-send-fail");
-            if (mesh_ch9_tx_pending.active) {
-                (void)mesh_ch9_tx_pending_requeue_unacked(k_uptime_get_32());
-                if (!mesh_ch9_tx_pending.active) {
-                    mesh_ch9_tx_pending_clear();
-                }
-            }
-            mesh_ch9_event_set(CH9_EVENT_BUSY_RETRY_LATER,
-                               next_hop_id,
-                               plan,
-                               "queued-direct-gateway-batch-send");
-            release_ret = mesh_ch9_slot_tx_end(&slot_tx);
-            k_mutex_unlock(&mesh_send_scratch_lock);
-            report_tx_schedule_backoff(retry_delay_ms,
-                                       "direct-gateway-batch-send");
-            return release_ret < 0 ? release_ret : -EALREADY;
-        }
-        slot_tx.functional_tx_completed = true;
-
-        {
-            const struct app_mesh_rf_retry_key retry_key =
-                mesh_rf_retry_packet_key(
-                    &report_tx_batch_candidates[i].packet,
-                    APP_MESH_RF_RETRY_OPERATION_REPORT_DELIVERY);
-
-            app_mesh_rf_retry_bank_note_success(&mesh_report_rf_retry_bank,
-                                                &retry_key);
-        }
-
-        mesh_relay_note_tx_sent(&mesh_runtime,
-                                &report_tx_batch_candidates[i],
-                                k_uptime_get_32());
-        fw_delivery_loss_note_sent(&mesh_delivery_loss,
-                                           &report_tx_batch_candidates[i]);
-        if (mesh_ch9_tx_pending_track_sent(&report_tx_batch_candidates[i],
-                                           deadline_ms)) {
-            ack_wait_started = true;
-        }
-        sent_count++;
-        done_ms = k_uptime_get_32();
-
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            uint32_t actual_gap_ms =
-                previous_frame_done_ms == 0u ? 0u :
-                uptime_ms_until_deadline(previous_frame_done_ms, done_ms);
-
-            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FRAME batch=%u sent=%u n=%u done=%u tx_end=%u rem=%u len=%u seq=%u final=%u gap=%u\n",
-                                batch_id,
-                                sent_count,
-                                candidate_count,
-                                done_ms,
-                                tx_plan.end_ms,
-                                uptime_ms_until_deadline(done_ms, tx_plan.end_ms),
-                                (unsigned int)sent_frame_len,
-                                report_tx_batch_candidates[i].packet.seq,
-                                i == candidate_count - 1u ? 1u : 0u,
-                                actual_gap_ms);
-        }
-        previous_frame_done_ms = done_ms;
-    }
-
-
-    if (ack_wait_started) {
-        mesh_ch9_event_note_persistent_ack_wait(next_hop_id,
-                                                deadline_ms,
-                                                "queued-direct-gateway-batch");
-        ack_ret = mesh_wait_for_direct_gateway_ack_configured(
-            &report_tx_batch_candidates[candidate_count - 1u],
-            "queued-direct-gateway-batch",
-            true,
-            &ack_debug);
-        mesh_debug_log_direct_gateway_ack_result("queued-direct-gateway-batch",
-                                                 ack_ret,
-                                                 &ack_debug,
-                                                 0u);
-        app_mesh_test_note_direct_gateway_ack(
-            report_tx_batch_candidates[candidate_count - 1u].packet.seq,
-            ack_ret,
-            report_tx_queue_used());
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_ACK batch=%u ret=%d sent=%u deadline=%u active=%u\n",
-                                batch_id,
-                                ack_ret,
-                                sent_count,
-                                deadline_ms,
-                                mesh_ch9_tx_pending.active ? 1u : 0u);
-        }
-        if (ack_ret == 0) {
-            (void)route_record_candidate_success_at(
-                &mesh_runtime.upstream,
-                next_hop_id,
-                GATEWAY_ID,
-                k_uptime_get_32());
-            mesh_direct_gateway_bulk_probe_clear("direct-gateway-batch-ack");
-        } else {
-            mesh_schedule_tx_timeout();
-        }
-        if (!ack_debug.functional_rx_outcome) {
-            slot_tx.functional_tx_completed = false;
-        }
-    } else {
-        report_tx_schedule(0u);
-    }
-
-    release_ret = mesh_ch9_slot_tx_end(&slot_tx);
-    k_mutex_unlock(&mesh_send_scratch_lock);
-    if (release_ret < 0) {
-        return release_ret;
-    }
-    if (ack_ret < 0 && ack_ret != -ETIMEDOUT) {
-        return ack_ret;
-    }
-
-    mesh_note_channel9_local_tx(next_hop_id, plan->start_ms);
-    mesh_ch9_event_set(CH9_EVENT_COMPLETE,
-                       next_hop_id,
-                       plan,
-                       "queued-direct-gateway-batch");
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_SENT batch=%u selected_at=%u sent=%u ack=%u deadline=%u q=%u\n",
-                            batch_id,
-                            selected_at_ms,
-                            sent_count,
-                            ack_wait_started ? 1u : 0u,
-                            deadline_ms,
-                            report_tx_queue_used());
-    }
-    if (ack_wait_started) {
-        mesh_schedule_tx_timeout();
-    }
-    return 0;
-}
-#endif
 
 static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *probe,
                                                    const char *reason,
-                                                   bool apply_tracked_ack,
                                                    uint8_t attempt)
 {
     int64_t uwb_window_start_ms = -1;
@@ -1116,7 +582,6 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
         ack_wait_ran = true;
         ret = mesh_wait_for_direct_gateway_ack_configured(probe,
                                                           reason,
-                                                          apply_tracked_ack,
                                                           &ack_debug);
     } else {
         status_debug_printf("DBG_DIRECT_GW_PROBE_TX_FAIL ret=%d attempt=%u\n",
@@ -1235,7 +700,6 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                             reason == NULL ? "route" : reason);
         ret = mesh_send_direct_gateway_probe_and_wait(probe,
                                                       reason,
-                                                      false,
                                                       attempt);
         if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
             status_debug_printf(

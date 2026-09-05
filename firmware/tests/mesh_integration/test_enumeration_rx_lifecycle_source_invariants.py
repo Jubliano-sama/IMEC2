@@ -1530,76 +1530,11 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(logical_send, handoff_end)
         self.assertLess(handoff_end, final_rearm)
 
-        # TABLE and relayed controls acquire the burst latch only around a
-        # physically due wake/data operation. Admission waits and inter-copy
-        # gaps remain scan-serviceable.
-        quick = burst_send.index(
-            "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
-        )
-        copy_loop = burst_send.index("attempt < attempt_count", quick)
-        inter_copy_wait = burst_send.index("mesh_wait_until_ms(", copy_loop)
-        wake_owner_begin = burst_send.index(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", inter_copy_wait
-        )
-        wake_owner_if = burst_send.rfind(
-            "if (", inter_copy_wait, wake_owner_begin
-        )
-        wake_owner_condition = burst_send[
-            wake_owner_if:burst_send.index(
-                "{", wake_owner_if, wake_owner_begin
-            )
-        ]
-        wake = burst_send.index(
-            "mesh_send_route_wake_train_with_duration(", wake_owner_begin
-        )
-        wake_owner_end = burst_send.index(
-            "mesh_c5_enumeration_relay_burst_end()", wake
-        )
-        data_owner_if = burst_send.index(
-            "if (compact_primary_control || gateway_enumeration_quick_copies)",
-            wake_owner_end,
-        )
-        data_owner_begin = burst_send.index(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", data_owner_if
-        )
-        physical_copy = burst_send.index(
-            "app_mesh_flood_send_opportunity", data_owner_begin
-        )
-        data_owner_end = burst_send.index(
-            "mesh_c5_enumeration_relay_burst_end()", physical_copy
-        )
+        # Reservation timing and cleanup are exercised by the production
+        # scan-handoff harness; retain the distinct all-copies accounting below.
+        copy_loop = burst_send.index("attempt < attempt_count")
         completeness = burst_send.index(
-            "aggregate_result.sent_count != attempt_count", data_owner_end
-        )
-        out_label = burst_send.index("out:", completeness)
-        cleanup_owner_end = burst_send.index(
-            "mesh_c5_enumeration_relay_burst_end()", out_label
-        )
-        self.assertIn(
-            "compact_primary_control = enumeration_control ||",
-            burst_send[:copy_loop],
-        )
-        self.assertIn("compact_primary_control", wake_owner_condition)
-        self.assertIn(
-            "gateway_enumeration_quick_copies", wake_owner_condition
-        )
-        self.assertLess(copy_loop, inter_copy_wait)
-        self.assertLess(inter_copy_wait, wake_owner_begin)
-        self.assertLess(wake_owner_begin, wake)
-        self.assertLess(wake, wake_owner_end)
-        self.assertLess(wake_owner_end, data_owner_begin)
-        self.assertLess(data_owner_begin, physical_copy)
-        self.assertLess(physical_copy, data_owner_end)
-        self.assertLess(data_owner_end, completeness)
-        self.assertLess(completeness, out_label)
-        self.assertLess(out_label, cleanup_owner_end)
-        self.assertEqual(
-            burst_send.count("mesh_c5_enumeration_relay_burst_begin(&tx)"),
-            2,
-        )
-        self.assertEqual(
-            burst_send.count("mesh_c5_enumeration_relay_burst_end()"),
-            3,
+            "aggregate_result.sent_count != attempt_count", copy_loop
         )
 
         # A physical-copy send still reaches its generic restart call, so the
@@ -2061,14 +1996,11 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             lane[accept:radio_finish],
         )
 
-    def test_anchor_enumeration_relay_yields_scan_between_due_copies(
+    def test_anchor_enumeration_relay_retains_admission_and_gates_scanner(
         self,
     ) -> None:
         submit = function_body(
             REPORT_ROUTE_CONTROL, "mesh_send_c5_flood_response"
-        )
-        burst = function_body(
-            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
         )
         begin = function_body(
             REPORT_TRANSPORT,
@@ -2095,47 +2027,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         self.assertLess(immediate_send, immediate_result)
         self.assertLess(immediate_result, deferred_store)
-        self.assertNotIn("mesh_c5_enumeration_relay_burst_begin", submit)
-        self.assertNotIn("mesh_c5_enumeration_relay_burst_end", submit)
-
-        classify = burst.index("mesh_c5_flood_enumeration_identity(")
-        first_defer_check = burst.index(
-            "mesh_c5_flood_defer_active_cb(&flood_ctx)", classify
-        )
-        loop = burst.index("attempt < attempt_count", first_defer_check)
-        inter_copy_wait = burst.index("mesh_wait_until_ms(", loop)
-        due_defer_check = burst.index(
-            "mesh_c5_flood_defer_active_cb(&flood_ctx)", inter_copy_wait
-        )
-        burst_begin = burst.index(
-            "mesh_c5_enumeration_relay_burst_begin(&tx)", due_defer_check
-        )
-        physical_copy = burst.index(
-            "app_mesh_flood_send_opportunity", burst_begin
-        )
-        burst_end = burst.index(
-            "mesh_c5_enumeration_relay_burst_end()", physical_copy
-        )
-        next_copy = burst.index("attempt + 1u < attempt_count", burst_end)
-        next_copy_guard = burst.index(
-            "MESH_ENUMERATION_RELAY_COPY_GUARD_MS", next_copy
-        )
-        cleanup = burst.index("\nout:", next_copy_guard)
-        self.assertLess(first_defer_check, loop)
-        self.assertLess(loop, inter_copy_wait)
-        self.assertLess(inter_copy_wait, due_defer_check)
-        self.assertLess(due_defer_check, burst_begin)
-        self.assertLess(burst_begin, physical_copy)
-        self.assertLess(inter_copy_wait, physical_copy)
-        self.assertLess(physical_copy, burst_end)
-        self.assertLess(physical_copy, next_copy)
-        self.assertLess(next_copy, next_copy_guard)
-        self.assertLess(next_copy_guard, cleanup)
-        self.assertNotIn(
-            "mesh_c5_enumeration_relay_burst_begin",
-            burst[inter_copy_wait:due_defer_check],
-        )
-
         self.assertIn(
             "atomic_inc(&mesh_c5_enumeration_relay_burst_count)", begin
         )

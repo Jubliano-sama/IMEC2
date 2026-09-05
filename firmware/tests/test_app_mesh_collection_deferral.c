@@ -44,7 +44,7 @@ static struct route_candidate direct_gateway_route(uint32_t route_epoch)
         .route_epoch = route_epoch,
         .hop_count = 1u,
         .link_quality = 90u,
-        .route_cost = 110u,
+
         .last_seen_ms = 1000u,
         .last_success_ms = 1000u,
         .valid = true,

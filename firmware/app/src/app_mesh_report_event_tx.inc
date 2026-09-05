@@ -1239,19 +1239,6 @@ static uint32_t mesh_event_topology_contact_deadline_ms(uint32_t now_ms)
     return now_ms + MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS;
 }
 
-static uint32_t mesh_identity_backoff_ms(uint64_t node_id,
-                                         uint64_t parent_id,
-                                         uint8_t deferral_count)
-{
-    uint32_t seed = (uint32_t)(node_id ^ (parent_id >> 16) ^
-                               (parent_id << 16));
-    uint32_t jitter = seed % 101u;
-    uint32_t base_ms = 100u + (uint32_t)deferral_count * 150u;
-    uint32_t total_ms = base_ms + jitter;
-
-    return total_ms > 1000u ? 1000u : total_ms;
-}
-
 static uint32_t mesh_parent_contact_retry_delay_ms(uint64_t parent_id,
                                                    uint8_t failure_count)
 {
@@ -3031,7 +3018,7 @@ static bool mesh_channel9_close_intent_ready_for_peer(uint64_t peer_id)
                report_tx_queue_used() == 0u &&
                !mesh_route_waiting_tx_valid &&
                !mesh_relay_tx_active(&mesh_runtime) &&
-               !mesh_ch9_tx_pending_is_active() &&
+
                !mesh_relay_result_bundle_pending(&mesh_runtime) &&
                !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table) &&
                k_msgq_num_used_get(&mesh_rx_msgq) == 0u &&
@@ -3348,25 +3335,6 @@ static bool mesh_outbound_is_local_origin_priority(const struct mesh_outbound *o
 #endif
 
 #if DEVICE_ROLE == ROLE_ANCHOR
-static bool mesh_runtime_has_transit_reservation(void)
-{
-    for (size_t i = 0u; i < mesh_relay_downlink_capacity(&mesh_runtime); i++) {
-        const struct mesh_downlink_entry *downlink =
-            mesh_relay_downlink_at(&mesh_runtime, i);
-
-        if (!downlink->valid) {
-            continue;
-        }
-        for (uint8_t j = 0u; j < MESH_RELAY_EVENT_TIMINGS; j++) {
-            if (mesh_runtime.event_timings[j].valid &&
-                mesh_runtime.event_timings[j].next_hop_id ==
-                    downlink->next_hop_id) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
 #endif
 
 static bool mesh_tx_can_wait_for_route(const struct mesh_outbound *out)
@@ -3509,40 +3477,6 @@ int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
     return 0;
 }
 
-#if DEVICE_ROLE == ROLE_ANCHOR
-static bool mesh_ch9_tx_fits_configured_slot(const struct mesh_outbound *out,
-                                             const struct mesh_event_plan *plan,
-                                             uint32_t now_ms,
-                                             uint32_t send_start_ms,
-                                             uint32_t *required_ms)
-{
-    uint32_t needed_ms;
-    uint32_t available_ms;
-    uint32_t wait_ms;
-
-    if (out == NULL || plan == NULL || out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
-        return true;
-    }
-
-    wait_ms = uptime_deadline_reached(now_ms, send_start_ms) ?
-              0u : send_start_ms - now_ms;
-    needed_ms = wait_ms +
-                mesh_ch9_estimated_airtime_ms(mesh_outbound_encoded_frame_len(out)) +
-                MESH_CH9_TX_SLOT_TRAILER_MS;
-    if (uptime_deadline_reached(now_ms, plan->end_ms) ||
-        uptime_deadline_reached(send_start_ms, plan->end_ms)) {
-        if (required_ms != NULL) {
-            *required_ms = needed_ms;
-        }
-        return false;
-    }
-    available_ms = uptime_ms_until_deadline(now_ms, plan->end_ms);
-    if (required_ms != NULL) {
-        *required_ms = needed_ms;
-    }
-    return available_ms >= needed_ms;
-}
-#endif
 
 static void mesh_wait_until_ms(uint32_t target_ms)
 {
@@ -3580,16 +3514,6 @@ static bool mesh_route_waiting_tx_exact_owner_equal(
     }
     return memcmp(existing_digest, candidate_digest,
                   sizeof(existing_digest)) == 0;
-}
-
-static bool mesh_route_waiting_tx_owns_exact(
-    const struct mesh_outbound *candidate,
-    enum app_mesh_route_wait_tx_owner owner)
-{
-    return candidate != NULL && mesh_route_waiting_tx_valid &&
-           mesh_route_waiting_tx_owner == owner &&
-           mesh_route_waiting_tx_exact_owner_equal(
-               &mesh_route_waiting_tx, candidate);
 }
 
 static bool mesh_store_route_waiting_tx_owned(
@@ -3673,190 +3597,6 @@ static bool mesh_parent_contact_failure_is_hard(int ret)
 {
     return ret == -ETIMEDOUT || ret == -EHOSTUNREACH ||
            ret == -ENOTCONN || ret == -ECONNRESET;
-}
-
-static bool mesh_try_repair_selected_parent_event(
-    const struct mesh_outbound *out,
-    const char *reason,
-    int select_ret,
-    uint64_t selected_next_hop,
-    bool store_route_wait,
-    const struct app_mesh_async_route_transfer_identity *route_transfer,
-    uint32_t *wait_retry_delay_ms,
-    bool *known_route_retry_out)
-{
-    uint32_t retry_delay_ms = RELAY_BUSY_RETRY_MIN_MS;
-    bool topology_operation;
-    bool repair_active;
-    bool hard_failure;
-    bool selected_route_changed = false;
-    struct app_mesh_rf_retry_key contact_key;
-    int repair_ret;
-
-    if (known_route_retry_out != NULL) {
-        *known_route_retry_out = false;
-    }
-
-    if (out == NULL || !mesh_tx_can_wait_for_route(out) ||
-        select_ret != PROTO_OK ||
-        !mesh_id_is_unicast(selected_next_hop) ||
-        selected_next_hop == DEVICE_ID || selected_next_hop == GATEWAY_ID) {
-        return false;
-    }
-
-    if (store_route_wait) {
-        (void)mesh_store_route_waiting_tx_owned(
-            out, APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC);
-    }
-    topology_operation = mesh_outbound_is_topology_operation_uplink(out);
-    contact_key = mesh_rf_retry_packet_key(
-        &out->packet, APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
-    repair_ret = mesh_propose_event_for_outbound(
-        selected_next_hop, "initial-tx-event-repair", out);
-    repair_active = mesh_event_propose_retry.active;
-    hard_failure = !repair_active && repair_ret < 0 &&
-        mesh_parent_contact_failure_is_hard(repair_ret);
-
-    if (hard_failure) {
-        uint64_t selected_after_repair = 0u;
-        int select_after_repair = mesh_relay_select_next_hop_for_packet(
-            &mesh_runtime,
-            &out->packet,
-            out->payload,
-            out->payload_len,
-            k_uptime_get_32(),
-            &selected_after_repair);
-
-        selected_route_changed = select_after_repair != PROTO_OK ||
-            selected_after_repair != selected_next_hop;
-        if (selected_route_changed) {
-            retry_delay_ms = 1u;
-            if (wait_retry_delay_ms != NULL) {
-                *wait_retry_delay_ms = retry_delay_ms;
-            }
-            if (known_route_retry_out != NULL) {
-                *known_route_retry_out = true;
-            }
-            if (select_after_repair != PROTO_OK) {
-                mesh_defer_route_for_outbound(
-                    out,
-                    "event-parent-route-changed",
-                    store_route_wait,
-                    route_transfer);
-            }
-        }
-    }
-
-    if (repair_active) {
-        retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS;
-    } else if (repair_ret == 0) {
-        retry_delay_ms = 1u;
-        app_mesh_known_parent_contact_note_success(
-            &mesh_known_parent_contact_retry,
-            selected_next_hop,
-            &contact_key);
-    }
-    if (known_route_retry_out != NULL &&
-        (repair_active || repair_ret == 0)) {
-        *known_route_retry_out = true;
-    }
-    if (wait_retry_delay_ms != NULL) {
-        *wait_retry_delay_ms = retry_delay_ms;
-    }
-
-    if (hard_failure && selected_route_changed) {
-        status_debug_printf(
-            "DBG_EVENT_PARENT_ALREADY_REPAIRED peer=0x%llx seq=%u\n",
-            (unsigned long long)selected_next_hop,
-            out->packet.seq);
-    } else if (hard_failure && topology_operation) {
-        uint64_t alternate_parent = 0u;
-
-        if (mesh_relay_select_next_hop(&mesh_runtime,
-                                       out->packet.dst_id,
-                                       &alternate_parent) == PROTO_OK &&
-            alternate_parent != selected_next_hop) {
-            retry_delay_ms = 25u + (sys_rand32_get() % 51u);
-            if (wait_retry_delay_ms != NULL) {
-                *wait_retry_delay_ms = retry_delay_ms;
-            }
-            if (known_route_retry_out != NULL) {
-                *known_route_retry_out = true;
-            }
-        }
-    } else if (hard_failure) {
-        uint8_t hard_failure_count = 0u;
-        enum app_mesh_known_parent_contact_action contact_action =
-            app_mesh_known_parent_contact_note_hard_failure(
-                &mesh_known_parent_contact_retry,
-                selected_next_hop,
-                &contact_key,
-                MESH_KNOWN_PARENT_CONTACT_RETRIES,
-                &hard_failure_count);
-
-        if (contact_action == APP_MESH_KNOWN_PARENT_CONTACT_RETRY) {
-            retry_delay_ms = mesh_parent_contact_retry_delay_ms(
-                selected_next_hop, hard_failure_count);
-            if (wait_retry_delay_ms != NULL) {
-                *wait_retry_delay_ms = retry_delay_ms;
-            }
-            if (known_route_retry_out != NULL) {
-                *known_route_retry_out = true;
-            }
-            status_debug_printf(
-                "DBG_KNOWN_PARENT_CONTACT_RETRY peer=0x%llx failure=%u/%u delay=%u seq=%u\n",
-                (unsigned long long)selected_next_hop,
-                hard_failure_count,
-                MESH_KNOWN_PARENT_CONTACT_RETRIES,
-                retry_delay_ms,
-                out->packet.seq);
-        } else {
-            enum route_delivery_action route_action =
-                ROUTE_DELIVERY_DISCOVER;
-            int abandon_ret = mesh_relay_abandon_upstream_parent_at(
-                &mesh_runtime,
-                selected_next_hop,
-                k_uptime_get_32(),
-                &route_action);
-
-            if (abandon_ret == PROTO_OK &&
-                route_action == ROUTE_DELIVERY_TRY_ALTERNATE) {
-                retry_delay_ms = 1u;
-                if (wait_retry_delay_ms != NULL) {
-                    *wait_retry_delay_ms = retry_delay_ms;
-                }
-                if (known_route_retry_out != NULL) {
-                    *known_route_retry_out = true;
-                }
-                if (store_route_wait) {
-                    mesh_schedule_route_waiting_retry_after(
-                        "initial-tx-event-cached-alternate", 1u);
-                }
-            } else if (abandon_ret == PROTO_OK &&
-                       route_action == ROUTE_DELIVERY_DISCOVER) {
-                mesh_defer_route_for_outbound(
-                    out,
-                    "initial-tx-event-repair-failed",
-                    store_route_wait,
-                    route_transfer);
-            } else if (abandon_ret != PROTO_OK) {
-                LOG_ERR("initial event parent abandon failed: peer=0x%016llx ret=%d",
-                        (unsigned long long)selected_next_hop,
-                        abandon_ret);
-                app_watchdog_stop_feeding();
-            }
-        }
-    }
-    status_debug_printf(
-        "DBG_INITIAL_TX_EVENT_REPAIR peer=0x%llx repair=%d active=%u hard=%u delay=%u seq=%u reason=%s\n",
-        (unsigned long long)selected_next_hop,
-        repair_ret,
-        repair_active ? 1u : 0u,
-        hard_failure ? 1u : 0u,
-        retry_delay_ms,
-        out->packet.seq,
-        reason == NULL ? "mesh-tx" : reason);
-    return true;
 }
 
 static void mesh_drop_route_waiting_tx(const char *reason)
@@ -4504,7 +4244,6 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
 {
     struct mesh_outbound aged_out;
     struct mesh_outbound tx;
-    struct mesh_channel5_requirements requirements;
     struct mesh_event_plan plan = {0};
     uint32_t now_ms;
     uint32_t channel9_event_start_ms = 0u;
@@ -4515,7 +4254,6 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
     bool uplink_wake_needed = false;
     bool uplink_parent_hop = false;
     bool uplink_next_hop_participant = false;
-    bool initial_channel9_wait_retained = false;
     bool send_prepared_c5_control = false;
     uint8_t send_prepared_c5_purpose = 0u;
     enum mesh_c5_control_send_mode send_prepared_c5_mode =
@@ -4525,9 +4263,7 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
     if (out == NULL) {
         return -EINVAL;
     }
-#if DEVICE_ROLE != ROLE_ANCHOR
     ARG_UNUSED(retain_initial_channel9_wait);
-#endif
     if (rf_sent != NULL) {
         *rf_sent = false;
     }
@@ -4577,9 +4313,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
          * Channel-5 uplink.  The gateway listens continuously, so a direct
          * next hop is one frame plus an immediate ACK.  A parent anchor is
          * low-duty scanning, so it first gets a 500 ms wake train and then
-         * the same frame plus an immediate hop ACK.  An anchor with no usable
-         * route assumes the gateway is in range; ordinary ACK-failure
-         * accounting demotes that assumption and a route solicit follows.
+         * the same frame plus an immediate hop ACK. An anchor with no usable
+         * route retains custody while correlated route discovery runs.
          */
         uint64_t uplink_next_hop = 0u;
         uint32_t click_slot_due_ms = 0u;
@@ -4632,31 +4367,6 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
             aged_out.payload_len,
             now_ms,
             &uplink_next_hop);
-        /*
-         * Relay-required bench builds place this anchor an RF layer away from
-         * the gateway on purpose. Assuming a direct route there would install
-         * a next hop the anchor cannot actually reach and would bypass the
-         * exact policy under test, so a routeless packet keeps waiting for a
-         * parent instead.
-         */
-        if (select_ret != PROTO_OK &&
-            DEVICE_ROLE == ROLE_ANCHOR &&
-            aged_out.packet.dst_id == GATEWAY_ID &&
-            !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ) &&
-            mesh_relay_note_direct_gateway_route(&mesh_runtime, now_ms) ==
-                PROTO_OK) {
-            select_ret = mesh_relay_select_next_hop_for_packet(
-                &mesh_runtime,
-                &aged_out.packet,
-                aged_out.payload,
-                aged_out.payload_len,
-                now_ms,
-                &uplink_next_hop);
-            status_debug_printf("DBG_UPLINK_ASSUME_DIRECT msg=%02x seq=%u ret=%d\n",
-                                aged_out.packet.msg_type,
-                                aged_out.packet.seq,
-                                select_ret);
-        }
         if (select_ret != PROTO_OK) {
             mesh_defer_route_for_outbound(&aged_out, reason,
                                            store_route_wait,
@@ -4944,25 +4654,19 @@ send_prepared:
                                            channel9_event_start_ms - now_ms : 0u);
         }
         {
-            bool batch_ack_wait = mesh_ch9_tx_pending_track_sent(
-                &tx,
-                k_uptime_get_32() + ROUTE_GATEWAY_ACK_TIMEOUT_MS);
             bool core_ack_wait = app_mesh_ch9_core_ack_wait_active(
                 &mesh_runtime.pending,
                 mesh_relay_tx_active(&mesh_runtime));
 
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_CH9_ACK_WAIT_SELECT batch=%u core=%u state=%u ch=%u next=0x%llx\n",
-                                    batch_ack_wait ? 1u : 0u,
+                status_debug_printf("DBG_CH9_ACK_WAIT_SELECT core=%u state=%u ch=%u next=0x%llx\n",
                                     core_ack_wait ? 1u : 0u,
                                     mesh_runtime.pending.state,
                                     mesh_runtime.pending.radio_channel,
                                     (unsigned long long)mesh_runtime.pending.next_hop_id);
             }
-            if (batch_ack_wait || core_ack_wait) {
-                uint32_t ack_deadline_ms = batch_ack_wait ?
-                    mesh_ch9_tx_pending_ack_deadline_ms() :
-                    mesh_runtime.pending.gateway_ack_deadline_ms;
+            if (core_ack_wait) {
+                uint32_t ack_deadline_ms = mesh_runtime.pending.gateway_ack_deadline_ms;
 
                 mesh_ch9_event_note_persistent_ack_wait(
                     channel9_next_hop_id,

@@ -1,0 +1,54 @@
+{
+  "command_status": {
+    "12": 0,
+    "260": 0,
+    "261": 0,
+    "262": 0
+  },
+  "completed_batches": [],
+  "connection": "connected",
+  "elapsed_s": 70.549,
+  "error": "",
+  "exit_reason": "survey-complete",
+  "generation": 6,
+  "neighbor_reports": 3,
+  "pairs": [
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      2,
+      1
+    ]
+  ],
+  "partial_reasons": 0,
+  "plan_command_successes": 1,
+  "planned_pairs_by_batch": {
+    "0": 3
+  },
+  "results": {
+    "0": {
+      "median_mm": 329,
+      "success_count": 5,
+      "usable": true
+    },
+    "1": {
+      "median_mm": 881,
+      "success_count": 5,
+      "usable": true
+    },
+    "2": {
+      "median_mm": 1203,
+      "success_count": 5,
+      "usable": true
+    }
+  },
+  "signal_measurements": 3,
+  "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation",
+  "success": true
+}
