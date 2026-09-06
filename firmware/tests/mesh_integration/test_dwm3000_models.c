@@ -276,7 +276,7 @@ static void test_runtime_legal_sequence_and_delays(void)
                                           &interval),
               DWM3000_RUNTIME_OK);
     CHECK_U64(interval.start_us, 13000u);
-    CHECK_U64(interval.end_us, 15934u);
+    CHECK_U64(interval.end_us, 15694u);
     CHECK_U64(runtime.operation_count - operation_count, 6u);
     CHECK_TRUE(runtime.configured && runtime.pll_locked && runtime.awake);
     CHECK_INT(runtime.configured_phy, DWM3000_TIMING_PHY_CH9_MESH);

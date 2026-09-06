@@ -1,0 +1,12 @@
+[1/7] Building C object CMakeFiles/app.dir/src/dwm3000_driver.c.obj
+[2/7] Linking C static library app/libapp.a
+[3/7] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[4/7] Generating linker.cmd
+[5/7] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[6/7] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[7/7] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      459360 B       488 KB     91.92%
+             RAM:        122 KB       128 KB     95.31%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/build/scan-production-anchor/zephyr/zephyr.elf for board: nrf52833dk

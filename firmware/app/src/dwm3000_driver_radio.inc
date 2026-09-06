@@ -805,6 +805,19 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
         return ret;
     }
 
+    /* IDLE_RC has been confirmed at the safe startup rate. The retained
+     * register restore can now use the normal SPI rate, as in the SDK sleep
+     * example, without repeating slow transfers throughout calibration. */
+    ret = dwm3000_port_set_fast_spi();
+    if (ret < 0) {
+        driver_stats.sleep_wake_failures++;
+        invalidate_radio_state_tagged(__func__);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
+                                requested_phy, ret);
+        }
+        return ret;
+    }
     dwt_restore_common();
     ret = take_port_error("restore-common");
     if (ret < 0) {
@@ -824,16 +837,6 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
             return ret;
         }
         active_phy_mode = requested_phy;
-    }
-    ret = dwm3000_port_set_fast_spi();
-    if (ret < 0) {
-        driver_stats.sleep_wake_failures++;
-        invalidate_radio_state_tagged(__func__);
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
-                                requested_phy, ret);
-        }
-        return ret;
     }
     ret = validate_device_identity("wake-restore");
     if (ret < 0) {
@@ -1031,11 +1034,14 @@ static int wait_status_internal(uint32_t mask,
                                 bool log_events,
                                 uint64_t *observed_at_ms)
 {
-    int64_t deadline = k_uptime_get() + timeout_ms;
+    /* Keep a full acquisition interval even when RX starts just before a
+     * millisecond boundary. The nRF RTC provides 64-bit uptime ticks, but
+     * does not implement the separate 64-bit cycle-counter API. */
+    int64_t deadline_ticks = k_uptime_ticks() + k_ms_to_ticks_ceil64(timeout_ms);
     uint32_t read_status;
     uint32_t start_cycles = k_cycle_get_32();
     uint32_t poll_loops = 0u;
-    int64_t now_ms;
+    uint32_t previous_poll_cycles = 0u;
     uint64_t sampled_at_ms = 0u;
 
     if (observed_at_ms != NULL) {
@@ -1055,6 +1061,14 @@ static int wait_status_internal(uint32_t mask,
     if (log_events) {
     }
     do {
+        uint32_t poll_cycles = k_cycle_get_32();
+        if (poll_loops > 0u) {
+            uint32_t gap_us = (uint32_t)k_cyc_to_us_floor64(
+                (uint32_t)(poll_cycles - previous_poll_cycles));
+            driver_stats.sys_status_poll_max_gap_us = MAX(
+                driver_stats.sys_status_poll_max_gap_us, gap_us);
+        }
+        previous_poll_cycles = poll_cycles;
         read_status = dwt_read32bitreg(SYS_STATUS_ID);
         sampled_at_ms = (uint64_t)k_uptime_get();
         poll_loops++;
@@ -1138,12 +1152,11 @@ static int wait_status_internal(uint32_t mask,
         }
 
 receive_abort_not_requested:
-        now_ms = k_uptime_get();
-        if (now_ms >= deadline) {
+        if (k_uptime_ticks() >= deadline_ticks) {
             break;
         }
         k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US);
-    } while (k_uptime_get() <= deadline);
+    } while (k_uptime_ticks() <= deadline_ticks);
 
     /*
      * The deadline can expire between the loop's status read and its time
@@ -1216,11 +1229,6 @@ receive_abort_not_requested:
         }
     }
     return -ETIMEDOUT;
-}
-
-static int wait_status(uint32_t mask, uint32_t timeout_ms, uint32_t *status)
-{
-    return wait_status_internal(mask, timeout_ms, status, true, NULL);
 }
 
 static int capture_completed_tx_timestamp(uint32_t timeout_ms,

@@ -1,3 +1,5 @@
+> Standalone measurement application, not a production role or the production scan cadence. Its configurable timing examples are experiment inputs. Current production behavior is in the [Mesh contract](<../../Documentation/Mesh Connected Routing Contract.md>); without an external current instrument, this application alone does not measure power.
+
 # IMEC Power Profile Test Firmware
 
 This app is for external battery-emulator measurements. It disables USB,

@@ -11,6 +11,8 @@ REPORT = (APP / "app_mesh_report.c").read_text()
 COORDINATION = (APP / "app_mesh_report_coordination.inc").read_text()
 ROUTE_CONTROL = (APP / "app_mesh_report_route_control.inc").read_text()
 EVENT_TX = (APP / "app_mesh_report_event_tx.inc").read_text()
+DIRECT_GATEWAY = (APP / "app_mesh_report_direct_gateway.inc").read_text()
+DELIVERY = (APP / "app_mesh_report_delivery.inc").read_text()
 ANCHOR_RADIO = (APP / "app_anchor_radio.inc").read_text()
 REPORT_RX = (APP / "app_mesh_report_rx.inc").read_text()
 
@@ -144,6 +146,62 @@ class ClickPreemptPrioritySourceInvariants(unittest.TestCase):
         self.assertLess(send, canceled)
         self.assertLess(canceled, boundary)
         self.assertLess(boundary, service)
+
+    def test_direct_probe_cancels_at_safe_boundaries_and_unwinds_scratch(self) -> None:
+        body = function_body(DIRECT_GATEWAY, "mesh_try_direct_gateway_route_probe")
+        loop = body.index("while (true)")
+        before_send = body.index("mesh_click_preempt_boundary_requested()", loop)
+        send = body.index("mesh_send_direct_gateway_probe_and_wait(", before_send)
+        after_send = body.index("mesh_click_preempt_boundary_requested()", send)
+        retry = body.index("app_mesh_direct_gateway_retry_note(", after_send)
+        backoff = body.index("mesh_click_preempt_wait_route_backoff(", retry)
+        unlock = body.index("k_mutex_unlock(&mesh_direct_gateway_probe_scratch_lock)", backoff)
+
+        self.assertIn("last_ret = -ECANCELED", body[before_send:send])
+        self.assertIn("last_ret = -ECANCELED", body[after_send:retry])
+        self.assertIn("last_ret = -ECANCELED", body[backoff:unlock])
+        self.assertIn("return last_ret", body[unlock:])
+        self.assertNotIn("k_msleep(", body)
+        self.assertNotIn("mesh_click_preempt_service_queued_route_owned", body)
+
+    def test_rebroadcast_keeps_its_original_owner_before_unlock_and_click_service(self) -> None:
+        execute = function_body(DELIVERY, "mesh_execute_route_request_action")
+        probe = execute.index("mesh_try_direct_gateway_route_probe(")
+        cancel = execute.index("if (ret == -ECANCELED)", probe)
+        resume = execute.index("mesh_route_request_action_pending = true", cancel)
+        schedule = execute.index("mesh_reschedule_owned_work(", resume)
+        exit_cancel = execute.index("goto out;", schedule)
+        fallback = execute.index("mesh_send_route_wake_train(", exit_cancel)
+        cancellation = execute[cancel:exit_cancel]
+
+        self.assertLess(schedule, exit_cancel)
+        self.assertLess(exit_cancel, fallback)
+        self.assertIn("&mesh_route_request_action_work", cancellation)
+        self.assertNotIn("mesh_route_request_action_tx =", cancellation)
+        self.assertNotIn("mesh_route_request_action_reply_deadline_ms =", cancellation)
+        self.assertNotIn("mesh_click_preempt_service_queued_route_owned", execute)
+
+        worker = function_body(DELIVERY, "mesh_route_request_action_work_handler")
+        call = worker.index("mesh_execute_route_request_action(")
+        unlock = worker.index("k_mutex_unlock(&mesh_route_request_action_scratch_lock)", call)
+        service = worker.index("mesh_click_preempt_service_queued_route_owned()", unlock)
+        self.assertLess(call, unlock)
+        self.assertLess(unlock, service)
+
+    def test_other_route_owners_propagate_cancel_without_inline_custody_or_rf(self) -> None:
+        body = function_body(DIRECT_GATEWAY, "mesh_request_route_owned")
+        probe = body.index("mesh_try_direct_gateway_route_probe(")
+        cancel = body.index("if (ret == -ECANCELED)", probe)
+        retry = body.index("mesh_schedule_route_waiting_retry_after(", cancel)
+        leave = body.index("return ret;", retry)
+        policy = body.index("route_policy_state.direct_probe_ret = ret", leave)
+        fallback = body.index("mesh_send_route_wake_train(", policy)
+
+        self.assertLess(cancel, retry)
+        self.assertLess(retry, leave)
+        self.assertLess(leave, policy)
+        self.assertLess(policy, fallback)
+        self.assertNotIn("mesh_click_preempt_service_queued_route_owned", body)
 
     def test_in_band_service_is_route_owned_and_deadline_bounded(self) -> None:
         body = function_body(

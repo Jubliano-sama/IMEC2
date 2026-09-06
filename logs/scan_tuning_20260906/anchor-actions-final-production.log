@@ -1,0 +1,1 @@
+ANCHOR_ACTIONS_HIL_OK {"anchor_a": {"observed_active_s": 9.962720333016478, "samples": 248, "sleep_samples": 240, "colors": [0, 1, 2, 4]}, "anchor_b": {"observed_active_s": 9.927115890022833, "samples": 248, "sleep_samples": 241, "colors": [0, 1, 2, 4]}, "anchor_c": {"observed_active_s": 9.9901234729914, "samples": 249, "sleep_samples": 242, "colors": [0, 1, 2, 4]}}

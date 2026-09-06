@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Recovery, physical-hop, 30-node and power audit
 
 Audited source: `474ef8600ef25b50da5c3dbc1dc30241178d166a`, 2026-09-05. The existing suites pass, but new probes reproduce survey hangs, incorrect survey custody, blocked successor operations, and starvation in the current C5 report bank. This checkout should not yet be considered qualified for unattended 30-node deployment.

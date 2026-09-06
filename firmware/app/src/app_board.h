@@ -10,6 +10,7 @@ int status_leds_init(void);
 int status_leds_connect(void);
 void status_leds_set(bool red, bool green, bool blue);
 void status_led0_set(bool red, bool green, bool blue);
+int status_identify_anchor(void);
 void status_led1_set(bool red, bool green, bool blue);
 void status_power_indicator_set(bool enabled);
 void status_debug_tx_boot_test(void);

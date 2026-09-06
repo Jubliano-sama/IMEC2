@@ -3,6 +3,7 @@
  * only Zephyr locks, work scheduling and physical upstream callbacks are fake. */
 #include "app_discovery_assignment_policy.h"
 #include "enumeration_response_lane.h"
+#include "gateway_command.h"
 #include "mesh_relay.h"
 #include "protocol_rx_lifecycle.h"
 #include "survey_protocol.h"
@@ -90,7 +91,9 @@ static int upstream(uint64_t *parent,uint8_t *hops) { *parent=GATEWAY_ID; *hops=
 static int consume(uint32_t epoch)
 { assert(epoch==assignment_policy.committed_epoch); consumed++; return 0; }
 
-void app_survey_anchor_begin_enumeration(uint32_t assignment_epoch);
+bool app_survey_anchor_active(void);
+bool app_survey_anchor_command_allowed(const struct proto_packet *packet,
+                                       const uint8_t *payload, size_t payload_len);
 #include "hia_prearm_production.inc"
 #include "hia_survey_production.inc"
 
@@ -187,36 +190,198 @@ static void test_survey_requires_matching_accepted_roster(void)
     assert(app_survey_anchor_apply_control(&packet,&control)==-ESTALE);
     assert(!anchor_state.active && scheduled==0u && consumed==0u);
 }
-static void test_fresh_enumeration_retires_only_the_old_survey(void)
+struct survey_snapshot {
+    struct app_survey_anchor_state state;
+    struct protocol_rx_lifecycle lifecycle;
+    unsigned scheduled, consumed, receive_aborts, claim_calls;
+};
+
+static struct survey_snapshot snapshot(void)
+{
+    return (struct survey_snapshot) {
+        .state = anchor_state, .lifecycle = anchor_rx_lifecycle,
+        .scheduled = scheduled, .consumed = consumed,
+        .receive_aborts = receive_aborts, .claim_calls = claim_calls,
+    };
+}
+
+static void assert_survey_preserved(const struct survey_snapshot *before)
+{
+    assert(survey_identity_equal(&anchor_state.identity, &before->state.identity));
+    assert(anchor_state.active == before->state.active);
+    assert(anchor_state.aborted == before->state.aborted);
+    assert(anchor_state.action == before->state.action);
+    assert(anchor_state.neighbor_start_ms == before->state.neighbor_start_ms);
+    assert(anchor_state.execution_start_ms == before->state.execution_start_ms);
+    assert(anchor_state.self_stop_ms == before->state.self_stop_ms);
+    assert(anchor_state.roster_valid == before->state.roster_valid);
+    assert(anchor_state.roster_assignment_epoch == before->state.roster_assignment_epoch);
+    assert(anchor_state.roster_table_command_seq == before->state.roster_table_command_seq);
+    assert(discovery_assignment_table_commitment_equal(
+        &anchor_state.roster_table_commitment, &before->state.roster_table_commitment));
+    assert(anchor_state.occupied_slot_mask == before->state.occupied_slot_mask);
+    assert(anchor_state.slot_span == before->state.slot_span);
+    assert(memcmp(anchor_state.node_ids_by_slot, before->state.node_ids_by_slot,
+                  sizeof(anchor_state.node_ids_by_slot)) == 0);
+    assert(anchor_state.plan_valid == before->state.plan_valid);
+    if (anchor_state.plan_valid) {
+        assert(semantic_digest_equal(anchor_state.plan.commitment,
+            before->state.plan.commitment, SEMANTIC_DIGEST_SHA256_LEN));
+    }
+    assert(anchor_rx_lifecycle.operation == before->lifecycle.operation);
+    assert(anchor_rx_lifecycle.mode == before->lifecycle.mode);
+    assert(anchor_rx_lifecycle.generation == before->lifecycle.generation);
+    assert(anchor_rx_lifecycle.deadline_ms == before->lifecycle.deadline_ms);
+    assert(scheduled == before->scheduled && consumed == before->consumed);
+    assert(receive_aborts == before->receive_aborts && claim_calls == before->claim_calls);
+    assert(lock_depth == 0u);
+}
+
+static struct survey_control begin_active_survey(bool owned_rf)
+{
+    reset_fixture();
+    assert(prearm(NEW_EPOCH) == 0);
+    assert(apply_table(NEW_EPOCH) == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    struct survey_control control = start_control();
+    const struct proto_packet packet = {.msg_type=MSG_COMMAND, .src_id=GATEWAY_ID};
+    assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+    if (owned_rf) {
+        assert(protocol_rx_lifecycle_rf_begin(&anchor_rx_lifecycle,
+            PROTOCOL_RX_OPERATION_SURVEY, control.identity.generation));
+    }
+    return control;
+}
+
+static size_t encode_command(uint8_t *payload, enum command_id command_id,
+                              const struct survey_control *control)
+{
+    size_t len = 0u;
+    assert(mesh_append_command_id(payload, PACKET_EXT_MAX_PAYLOAD_LEN,
+        &len, command_id) == PROTO_OK);
+    if (control != NULL) {
+        assert(survey_control_append_tlvs(payload, PACKET_EXT_MAX_PAYLOAD_LEN,
+            &len, control) == PROTO_OK);
+    }
+    return len;
+}
+
+static void test_active_survey_rejects_enumeration_without_rebasing(void)
 {
     for (unsigned owned_rf = 0u; owned_rf < 2u; owned_rf++) {
-        reset_fixture();
-        assert(prearm(NEW_EPOCH) == 0);
-        assert(apply_table(NEW_EPOCH) == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
-        struct survey_control control = start_control();
-        struct proto_packet packet = {.msg_type=MSG_COMMAND, .src_id=GATEWAY_ID};
-        assert(app_survey_anchor_apply_control(&packet, &control) == 0);
-        if (owned_rf) {
-            assert(protocol_rx_lifecycle_rf_begin(&anchor_rx_lifecycle,
-                PROTOCOL_RX_OPERATION_SURVEY, control.identity.generation));
-        }
-        uint64_t old_stop = anchor_state.self_stop_ms;
-        /* Same-epoch HIA and malformed prearm cannot cancel current work. */
-        assert(prearm(NEW_EPOCH) == 0 && anchor_state.active);
-        assert(prearm(0u) == -EINVAL && anchor_state.active);
-        /* Authority comes from valid HIA, even for a lower replacement epoch. */
-        uint32_t next_epoch = NEW_EPOCH - 1u;
+        (void)begin_active_survey(owned_rf != 0u);
+        struct survey_snapshot before = snapshot();
+        const uint32_t epochs[] = {NEW_EPOCH, NEW_EPOCH - 1u, NEW_EPOCH + 1u};
+
         now_ms += 100u;
-        assert(prearm(next_epoch) == 0);
-        assert(now_ms < old_stop && !anchor_state.active);
-        assert(anchor_state.aborted && !anchor_state.roster_valid);
-        assert(receive_aborts == owned_rf);
-        assert(apply_table(next_epoch) == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
-        control.identity.assignment.assignment_epoch = next_epoch;
-        control.identity.generation++;
-        assert(app_survey_anchor_apply_control(&packet, &control) == 0);
-        assert(anchor_state.active && consumed == 2u && lock_depth == 0u);
+        for (size_t index = 0u; index < sizeof(epochs) / sizeof(epochs[0]); index++) {
+            assert(prearm(epochs[index]) == -EBUSY);
+            assert_survey_preserved(&before);
+            assert(app_survey_anchor_note_ram_roster(entries, 2u, 2u,
+                epochs[index], TABLE_SEQ + 1u, &table_commitment) == -EBUSY);
+            assert_survey_preserved(&before);
+        }
+        assert(prearm(0u) == -EINVAL);
+        assert_survey_preserved(&before);
+        assert(assignment_policy.committed_epoch == NEW_EPOCH);
+        assert(assignment_policy.committed_table_seq == TABLE_SEQ);
+        /* Normal self-expiry releases exclusivity; a new operation may then
+         * establish its own roster instead of waiting on a stale busy bit. */
+        now_ms = (uint32_t)before.state.self_stop_ms;
+        assert(prearm(NEW_EPOCH + 1u) == 0);
+        assert(!anchor_state.active && receive_aborts == 0u);
     }
+}
+
+static void test_active_survey_command_admission_is_exact_and_read_only(void)
+{
+    const enum command_id unrelated[] = {
+        CMD_PING, CMD_GET_STATUS, CMD_REBOOT, CMD_SET_ROLE, CMD_SET_ROUTE,
+        CMD_CLEAR_ROUTE, CMD_SET_SCAN_DUTY, CMD_SET_LED_PATTERN,
+        CMD_START_HEARTBEAT, CMD_STOP_HEARTBEAT, CMD_FORCE_REDISCOVERY,
+        CMD_ASSIGN_DISCOVERY_SLOTS, CMD_SURVEY_GET_STATUS,
+        CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY,
+        CMD_ML_START_COLLECTION, CMD_ML_START_FAST_RANGING,
+        CMD_ML_START_LIVE_TRACKING, CMD_ML_LIVE_TRACKING_HEARTBEAT,
+        CMD_ML_STOP_LIVE_TRACKING,
+    };
+    const struct proto_packet packet = {.msg_type=MSG_COMMAND, .src_id=GATEWAY_ID};
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+
+    for (unsigned owned_rf = 0u; owned_rf < 2u; owned_rf++) {
+        struct survey_control control = begin_active_survey(owned_rf != 0u);
+        struct survey_snapshot before = snapshot();
+        for (size_t index = 0u; index < sizeof(unrelated) / sizeof(unrelated[0]); index++) {
+            size_t len = encode_command(payload, unrelated[index], NULL);
+            assert(!app_survey_anchor_command_allowed(&packet, payload, len));
+            assert_survey_preserved(&before);
+        }
+        for (unsigned field = 0u; field < 6u; field++) {
+            struct survey_control stale = control;
+            switch (field) {
+            case 0: stale.identity.generation++; break;
+            case 1: stale.identity.assignment.assignment_epoch++; break;
+            case 2: stale.identity.assignment.table_command_seq++; break;
+            case 3: stale.identity.assignment.table_commitment.bytes[0] ^= 1u; break;
+            case 4: stale.identity.assignment.slot_span++; break;
+            default: stale.identity.assignment.max_hop_count++; break;
+            }
+            size_t len = encode_command(payload, CMD_SURVEY_START, &stale);
+            assert(!app_survey_anchor_command_allowed(&packet, payload, len));
+            assert_survey_preserved(&before);
+        }
+        size_t len = encode_command(payload, CMD_SURVEY_START, &control);
+        assert(app_survey_anchor_command_allowed(&packet, payload, len));
+        assert_survey_preserved(&before);
+        assert(!app_survey_anchor_command_allowed(&packet, payload, len - 1u));
+        assert(!app_survey_anchor_command_allowed(&packet, NULL, 0u));
+        struct proto_packet wrong_sender = packet;
+        wrong_sender.src_id++;
+        assert(!app_survey_anchor_command_allowed(&wrong_sender, payload, len));
+        assert_survey_preserved(&before);
+    }
+}
+
+static void test_matching_start_plan_cancel_remain_eligible(void)
+{
+    struct survey_control control = begin_active_survey(false);
+    const struct proto_packet packet = {.msg_type=MSG_COMMAND, .src_id=GATEWAY_ID};
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    struct survey_snapshot before = snapshot();
+    assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+    assert_survey_preserved(&before);
+
+    control.phase = SURVEY_PHASE_PLAN;
+    control.start_delay_present = control.self_stop_delay_present = false;
+    control.plan_present = true;
+    control.plan = (struct survey_plan) {
+        .identity = control.identity, .execution_start_delay_ms = 2000u,
+        .self_stop_delay_ms = 10000u, .pair_count = 1u, .wave_count = 1u,
+        .batch_index = 0u, .final_batch = true,
+        .pairs = {{.initiator_slot = 0u, .responder_slot = 1u, .wave_index = 0u}},
+    };
+    assert(survey_plan_commitment(&control.plan, control.plan.commitment));
+    size_t len = encode_command(payload, CMD_SURVEY_START, &control);
+    assert(!app_survey_anchor_command_allowed(&packet, payload, len));
+    len = encode_command(payload, CMD_SURVEY_PLAN, &control);
+    assert(app_survey_anchor_command_allowed(&packet, payload, len));
+    assert_survey_preserved(&before);
+    assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+    assert(anchor_state.active && anchor_state.plan_valid);
+    assert(anchor_state.action == APP_SURVEY_ANCHOR_ACTION_EXECUTE);
+
+    before = snapshot();
+    control.phase = SURVEY_PHASE_ABORT;
+    control.plan_present = false;
+    len = encode_command(payload, CMD_SURVEY_PLAN, &control);
+    assert(!app_survey_anchor_command_allowed(&packet, payload, len));
+    len = encode_command(payload, CMD_SURVEY_CANCEL, &control);
+    assert(app_survey_anchor_command_allowed(&packet, payload, len));
+    assert_survey_preserved(&before);
+    assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+    assert(!anchor_state.active && anchor_state.aborted && receive_aborts == 1u);
+    len = encode_command(payload, CMD_PING, NULL);
+    assert(app_survey_anchor_command_allowed(&packet, payload, len));
+    assert(lock_depth == 0u);
 }
 
 int main(void)
@@ -224,7 +389,9 @@ int main(void)
     test_lower_hia_authorizes_table_and_survey_without_separate_claim();
     test_invalid_or_conflicting_hia_does_not_rebase_policy();
     test_survey_requires_matching_accepted_roster();
-    test_fresh_enumeration_retires_only_the_old_survey();
+    test_active_survey_rejects_enumeration_without_rebasing();
+    test_active_survey_command_admission_is_exact_and_read_only();
+    test_matching_start_plan_cancel_remain_eligible();
     puts("production HIA TABLE survey harness passed");
     return 0;
 }

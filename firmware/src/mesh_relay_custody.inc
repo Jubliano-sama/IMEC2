@@ -232,20 +232,35 @@ static bool pending_is_forwarded_command_result(const struct mesh_relay *relay,
            pending_has_valid_command_result_id(relay, pending);
 }
 
-static bool pending_is_assignment_response(
+static bool pending_is_hop_custody_command_response(
     const struct mesh_relay *relay,
     const struct mesh_pending_tx *pending)
 {
     struct discovery_assignment_result assignment;
+    const uint8_t *command_id;
+    uint8_t command_id_len;
 
-    return relay != NULL && pending != NULL &&
-           pending->state != MESH_RELAY_TX_IDLE &&
-           pending->packet.msg_type == MSG_COMMAND_RESULT &&
-           pending->packet.dst_id == relay->gateway_id &&
-           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
-           discovery_assignment_parse_result_tlvs(pending->payload,
-                                                  pending->payload_len,
-                                                  &assignment) == PROTO_OK;
+    if (relay == NULL || pending == NULL ||
+        pending->state == MESH_RELAY_TX_IDLE ||
+        pending->packet.msg_type != MSG_COMMAND_RESULT ||
+        pending->packet.dst_id != relay->gateway_id ||
+        (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+    if (discovery_assignment_parse_result_tlvs(pending->payload,
+            pending->payload_len, &assignment) == PROTO_OK) {
+        return true;
+    }
+    /* Service results have passed their exact RF schema at ingress (or were
+     * built locally). Like enumeration responses, the child's copy retires
+     * on exact parent custody and the parent's copy on the gateway ACK. */
+    if (tlv_find_unique(pending->payload, pending->payload_len, TLV_COMMAND_ID,
+            &command_id, &command_id_len) != PROTO_OK ||
+        command_id_len != sizeof(uint16_t)) {
+        return false;
+    }
+    return proto_get_u16_le(command_id) == CMD_IDENTIFY_ANCHOR ||
+           proto_get_u16_le(command_id) == CMD_READ_ANCHOR_BATTERY;
 }
 
 static bool packet_uses_report_hop_custody(
@@ -274,7 +289,7 @@ static bool pending_uses_next_hop_custody(
 {
     return relay != NULL && pending != NULL &&
            pending->state != MESH_RELAY_TX_IDLE &&
-           (pending_is_assignment_response(relay, pending) ||
+           (pending_is_hop_custody_command_response(relay, pending) ||
             packet_uses_report_hop_custody(relay, &pending->packet));
 }
 
@@ -2175,7 +2190,7 @@ static int handle_local_ack(struct mesh_relay *relay,
             return PROTO_OK;
         }
         if (transit_gateway_ack) {
-            if (pending_is_assignment_response(relay,
+            if (pending_is_hop_custody_command_response(relay,
                                                &relay->pending) ||
                 packet_uses_report_hop_custody(relay,
                                                &relay->pending.packet)) {
@@ -2263,7 +2278,7 @@ static int handle_local_ack(struct mesh_relay *relay,
             return PROTO_OK;
         }
         if (relay->pending.packet.src_id == relay->local_id &&
-            pending_is_assignment_response(relay, &relay->pending)) {
+            pending_is_hop_custody_command_response(relay, &relay->pending)) {
             mesh_relay_note_parent_handoff(relay,
                                            &relay->pending.packet,
                                            previous_hop_id);

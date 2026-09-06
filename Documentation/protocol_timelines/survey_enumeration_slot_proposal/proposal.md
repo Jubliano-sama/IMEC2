@@ -1,3 +1,5 @@
+> Historical proposal and implementation-era notes. The current survey uses compact response lanes and START/PLAN/CANCEL; timings and PREPARE/START descriptions below are not the current contract. See the [Mesh contract](<../../Mesh Connected Routing Contract.md>).
+
 # Enumeration-aware survey and assignment timing
 
 This is the implemented timing contract for enumeration and survey first contact. It keeps the existing routing, custody, acknowledgement, and pair-ranging behavior, and changes when probes and topology-operation connections are allowed to start.

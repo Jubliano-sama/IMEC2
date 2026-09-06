@@ -274,7 +274,7 @@ int dwm3000_runtime_restore_retained(struct dwm3000_runtime *runtime,
         return runtime_fail(runtime, DWM3000_RUNTIME_ERR_NOT_READY);
     }
     ret = run_spi_operation(runtime,
-                            DWM3000_RUNTIME_SPI_SLOW,
+                            DWM3000_RUNTIME_SPI_FAST,
                             DWM3000_RUNTIME_OP_RESTORE,
                             DWM3000_RUNTIME_RESTORE_TRANSFER_BYTES,
                             now_us,
@@ -365,15 +365,13 @@ int dwm3000_runtime_prepare_phy(struct dwm3000_runtime *runtime,
         cursor = step.end_us;
     }
 
-    if (runtime->radio_state == DWM3000_RUNTIME_RADIO_SLEEP &&
+    const bool retained_wake =
+        runtime->radio_state == DWM3000_RUNTIME_RADIO_SLEEP &&
         runtime->retained_common && runtime->retained_txrx &&
-        runtime->configured_phy == phy) {
+        runtime->configured_phy == phy;
+
+    if (retained_wake) {
         ret = dwm3000_runtime_wake(runtime, cursor, &step);
-        if (ret != DWM3000_RUNTIME_OK) {
-            return ret;
-        }
-        cursor = step.end_us;
-        ret = dwm3000_runtime_restore_retained(runtime, cursor, &step);
         if (ret != DWM3000_RUNTIME_OK) {
             return ret;
         }
@@ -399,6 +397,13 @@ int dwm3000_runtime_prepare_phy(struct dwm3000_runtime *runtime,
         return ret;
     }
     cursor = step.end_us;
+    if (retained_wake) {
+        ret = dwm3000_runtime_restore_retained(runtime, cursor, &step);
+        if (ret != DWM3000_RUNTIME_OK) {
+            return ret;
+        }
+        cursor = step.end_us;
+    }
     if (runtime->configured_phy != phy || !runtime->configured) {
         ret = dwm3000_runtime_configure(runtime, phy, cursor, &step);
         if (ret != DWM3000_RUNTIME_OK) {

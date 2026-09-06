@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../../../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Testing correlated-path discounts and RMSE-guided reflection search
 
 The user's hypothesis is that nearby anchors viewing a target in similar

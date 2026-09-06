@@ -36,17 +36,19 @@
     (ROUTE_LISTENER_CLICK_ACQUIRE_US + \
      ROUTE_LISTENER_CLICK_PROBE_COMPLETION_US)
 
-_Static_assert(MESH_RADIO_ANCHOR_SCAN_RX_US == 10000u,
-               "wake scenarios require the production 10 ms anchor scan");
+_Static_assert(MESH_RADIO_ANCHOR_SCAN_RX_US == 5000u,
+               "wake scenarios require the production 5 ms anchor scan");
 _Static_assert(MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS == 380u,
                "wake scenarios require the production 380 ms reschedule");
-_Static_assert(MESH_RADIO_WAKE_TRAIN_MS == 500u,
-               "ordinary production wake trains must remain at least 500 ms");
+_Static_assert(MESH_RADIO_WAKE_TRAIN_MS == 445u,
+               "ordinary production wake trains use the qualified 445 ms budget");
+_Static_assert(MESH_RADIO_WAKE_TRAIN_MS >= 380u,
+               "click train must preserve the qualified coverage floor");
 _Static_assert(PRODUCTION_WAKE_TRAIN_US / 1000u <=
                    UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
                "the production wake train must fit the UWB claim field");
-_Static_assert(MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US == 1000u,
-               "enumeration activation requires the bounded 0..1000 us gap");
+_Static_assert(MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US == 100u,
+               "enumeration activation requires the bounded 0..100 us gap");
 _Static_assert(ENUMERATION_ACTIVATION_WAKE_TRAIN_US / 1000u <=
                    UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
                "the enumeration activation train must fit the claim field");
@@ -359,7 +361,8 @@ static bool schedule_wake_train_with_gap(struct fixture *fixture,
             schedule->max_jitter_us = jitter_us;
         }
         at_us = schedule->last_end_us +
-                MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US + jitter_us;
+                (combined_activation ? MESH_RADIO_ACTIVATION_TX_HOST_GAP_MAX_US :
+                                       MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US) + jitter_us;
     }
     return check_result(schedule->frame_count > 0u &&
                             schedule->last_end_us > schedule->first_start_us,
@@ -438,7 +441,7 @@ static bool measure_low_duty_timing(struct low_duty_timing *timing)
                                 MESH_RADIO_ANCHOR_SCAN_RX_US &&
                             timing->second_start_us > timing->first_end_us,
                         "measure_low_duty", seed, 0,
-                        "low-duty windows do not use the production 10 ms RX duration");
+                        "low-duty windows do not use the production 5 ms RX duration");
 }
 
 static size_t accepted_wake_receptions(const struct mesh_sim_world *world)
@@ -629,6 +632,7 @@ static void test_enumeration_activation_covers_every_scan_phase(
         dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
     uint64_t pac_us = dwm3000_timing_rctu_to_us_ceil(
         dwm3000_timing_pac_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
+
     unsigned int failures_before = failure_count;
     size_t simulated_boundaries = 0u;
 
@@ -697,7 +701,7 @@ static void test_enumeration_activation_covers_every_scan_phase(
             }
         }
         check_result(observed_max_gap_us <=
-                         MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+                         MESH_RADIO_ACTIVATION_TX_HOST_GAP_MAX_US +
                              MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US,
                      "enumeration_activation_phase_coverage", seed, 0,
                      "enumeration train exceeded its production gap bound");
@@ -717,7 +721,7 @@ static void test_enumeration_activation_covers_every_scan_phase(
                " boundary_simulations=%zu gap_max_us=%u\n",
                cycle_us,
                simulated_boundaries,
-               MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+               MESH_RADIO_ACTIVATION_TX_HOST_GAP_MAX_US +
                    MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US);
     }
 }

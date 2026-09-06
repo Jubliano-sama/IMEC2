@@ -1,0 +1,30 @@
+[
+  {
+    "role": "anchor_a",
+    "uid": "E46070D247233537",
+    "ficr": "2fe8761029758f88",
+    "programmed_bytes_verified": 459339,
+    "sha256": "98cb0453bc05a414f49574270f380d923b09463521ba6ac21be17c6afe59d81f"
+  },
+  {
+    "role": "anchor_b",
+    "uid": "E46070D247394D36",
+    "ficr": "5abb8e9b787f2046",
+    "programmed_bytes_verified": 459339,
+    "sha256": "98cb0453bc05a414f49574270f380d923b09463521ba6ac21be17c6afe59d81f"
+  },
+  {
+    "role": "anchor_c",
+    "uid": "E4645C15CB365D30",
+    "ficr": "e12744976857d4df",
+    "programmed_bytes_verified": 459339,
+    "sha256": "98cb0453bc05a414f49574270f380d923b09463521ba6ac21be17c6afe59d81f"
+  },
+  {
+    "role": "gateway",
+    "uid": "E4645C15CB0F3B37",
+    "ficr": "9aa6908d89ec9b84",
+    "programmed_bytes_verified": 475025,
+    "sha256": "324445dd7840481cdc43c2001b7a75917df3d6818b90a74b786e75561fe4e07f"
+  }
+]

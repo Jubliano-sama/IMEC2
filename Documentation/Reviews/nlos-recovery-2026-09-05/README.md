@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Recovered NLOS solver: verification, 2026-09-05
 
 The recovered approach substantially reduces the sketch's local reflection,

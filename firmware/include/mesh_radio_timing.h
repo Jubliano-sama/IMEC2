@@ -2,10 +2,10 @@
 #define MESH_RADIO_TIMING_H
 
 /* Production-candidate connected-routing defaults. */
-#define MESH_RADIO_ANCHOR_SCAN_RX_US 10000u
+#define MESH_RADIO_ANCHOR_SCAN_RX_US 5000u
 #define MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS 380u
 #define MESH_RADIO_ACTIVITY_COMPLETION_US 15000u
-#define MESH_RADIO_WAKE_TRAIN_MS 500u
+#define MESH_RADIO_WAKE_TRAIN_MS 445u
 /* Receiver cadence bound shared by runtime admission and complete-frame tests.
  * 40 ms covers reset/configure/release; reserve the whole 10 ms RX slice. */
 #define MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS 40u
@@ -17,20 +17,22 @@
 #define MESH_RADIO_RECEIVER_SCAN_PERIOD_MAX_MS \
     (MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS + \
      MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS + MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS)
+/* Reliable uplinks retain two complete receiver opportunities. */
 #define MESH_RADIO_UPLINK_WAKE_TRAIN_MS \
     (2u * (MESH_RADIO_RECEIVER_SCAN_PERIOD_MAX_MS + \
            MESH_RADIO_ACTIVITY_COMPLETION_US / 1000u))
-/* Here-I-Am is the ordinary 500 ms wake train with an activation suffix;
- * matching CLAIM stays wake-free. The separate malformed-frame listener may
- * remain armed for 1,000 ms, but it must not lengthen the transmitted train. */
-#define MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS \
-    MESH_RADIO_WAKE_TRAIN_MS
+/* Enumeration also covers the existing 100 ms scheduler/owner allowance.
+ * Keep its 500 ms activation train; matching CLAIM stays wake-free. */
+#define MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS 500u
 /* Keep activation dense while avoiding a fixed transmitter/receiver cadence. */
-#define MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US 1000u
+#define MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US 100u
 /* A real DW3000 send has bounded host/SPI/status work between the modeled
  * frame airtime and the following random gap. The low-duty acquisition slice
  * must span that complete start-to-start gap, not just airtime plus jitter. */
-#define MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US 5000u
+#define MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US 1500u
+/* Hardware captured 8,253 us between activation RF starts. Reserve 4 ms
+ * beyond frame airtime and jitter (9,037 us total), including host stalls. */
+#define MESH_RADIO_ACTIVATION_TX_HOST_GAP_MAX_US 4000u
 #define MESH_RADIO_DISCOVERY_SLOT_US 12000u
 #define MESH_RADIO_EVENT_WINDOW_MS 120u
 #define MESH_RADIO_EVENT_GUARD_MS 60u

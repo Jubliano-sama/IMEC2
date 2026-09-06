@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Anchor geometry NLOS investigation
 
 The drawing describes a local reflection of one node across its nearby anchors.

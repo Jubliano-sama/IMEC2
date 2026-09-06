@@ -102,6 +102,7 @@ class GatewayDiagnosticsMixin:
         self.click_diagnostics_view.pack(fill="both", expand=True)
         self.survey_geometry_view = SurveyGeometryView(
             survey_tab,
+            on_anchor_selected=self._select_anchor_action,
             on_positions_changed=self._apply_survey_geometry_positions,
             on_layout_edited=self._apply_manual_anchor_layout,
             on_refine_requested=self._request_distance_only_refinement,

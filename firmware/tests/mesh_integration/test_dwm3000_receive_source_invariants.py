@@ -7,16 +7,117 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
+TIMING_HEADER = (ROOT / "include/dwm3000_timing.h").read_text(encoding="utf-8")
+TIMING_MODEL = (ROOT / "src/dwm3000_timing.c").read_text(encoding="utf-8")
 
-assert re.search(
-    r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC16\b", DRIVER
-), "the 850 kbps PLEN4096 range PHY must use the proven PAC16 default"
-assert re.search(
-    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+4097u?\b", DRIVER
-), "the PAC16 range PHY must use its matching SFD timeout"
+# Cached CMake overrides once hid a 10 ms project default in freshly created
+# role builds. The tracked defaults must match the native acquisition model.
+radio_timing = (ROOT / "include/mesh_radio_timing.h").read_text(encoding="utf-8")
+project_config = (ROOT / "app/prj.conf").read_text(encoding="utf-8")
+kconfig = (ROOT / "app/Kconfig").read_text(encoding="utf-8")
+scan_rx = re.search(r"^#define\s+MESH_RADIO_ANCHOR_SCAN_RX_US\s+(\d+)u\s*$",
+                    radio_timing, re.MULTILINE)
+assert scan_rx, "missing shared anchor acquisition duration"
+for symbol in ("IMEC_ANCHOR_UWB_SCAN_RX_US", "IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US"):
+    project_values = re.findall(rf"^CONFIG_{symbol}=(\d+)\s*$",
+                                project_config, re.MULTILINE)
+    assert project_values == [scan_rx[1]], (
+        f"prj.conf {symbol} must match MESH_RADIO_ANCHOR_SCAN_RX_US={scan_rx[1]}"
+    )
+    block = re.search(rf"^config {symbol}\n(.*?)(?=^config |\Z)",
+                      kconfig, re.MULTILINE | re.DOTALL)
+    assert block, f"missing Kconfig {symbol}"
+    defaults = re.findall(r"^\s+default\s+(\w+)\s*$", block[1], re.MULTILINE)
+    expected_defaults = [[scan_rx[1]]]
+    if symbol == "IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US":
+        expected_defaults.append(["IMEC_ANCHOR_UWB_SCAN_RX_US"])
+    assert defaults in expected_defaults, (
+        f"Kconfig {symbol} must use the same acquisition duration as prj.conf/model"
+    )
+
+# The nRF52833 application uses NRF_RTC_TIMER, which does not provide
+# CONFIG_TIMER_HAS_64BIT_CYCLE_COUNTER. Zephyr still compiles k_cycle_get_64(),
+# but it asserts at runtime (or returns zero without assertions). Check every
+# application source, including instrumentation and .inc fragments, because a
+# native test platform can support the API and hide this hardware failure.
+# Convert unsigned 32-bit cycle deltas to 64-bit time instead; the conversion
+# helpers themselves do not require a 64-bit hardware counter.
+unsupported_cycle_calls = []
+for path in sorted((ROOT / "app").rglob("*")):
+    if path.suffix not in {".c", ".h", ".inc"}:
+        continue
+    source = re.sub(
+        r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
+        lambda match: "\n" * match.group().count("\n"),
+        path.read_text(encoding="utf-8"),
+        flags=re.DOTALL,
+    )
+    for match in re.finditer(
+        r"\b(?:k_cycle_get_64|arch_k_cycle_get_64|sys_clock_cycle_get_64)\s*\(",
+        source,
+    ):
+        line = source.count("\n", 0, match.start()) + 1
+        unsupported_cycle_calls.append(f"{path.relative_to(ROOT)}:{line}")
+assert not unsupported_cycle_calls, (
+    "nRF52833 has no 64-bit cycle counter; use unsigned k_cycle_get_32() "
+    "deltas before conversion: " + ", ".join(unsupported_cycle_calls)
+)
+
+driver_pac = re.search(r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC(\d+)\b", DRIVER)
+assert driver_pac and int(driver_pac[1]) == 16, (
+    "the 850 kbps PLEN4096 range PHY must use the proven PAC16 default"
+)
+driver_sfd_timeout = re.search(
+    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+(\d+)u?\b", DRIVER
+)
+assert driver_sfd_timeout and int(driver_sfd_timeout[1]) == 4097, (
+    "the PAC16 range PHY must use its matching SFD timeout"
+)
 assert re.search(
     r"#define\s+DWM3000_FIRST_PATH_NTM\s+12u?\b", DRIVER
 ), "the range PHY must retain the NLOS-friendly first-path threshold"
+
+# Native phase sweeps once passed with PAC32/4073 while the board used
+# PAC16/4097. Compare the actual defaults and follow both model consumers, so
+# an internally consistent but stale native timing profile cannot qualify RX.
+for model_name, driver_value in (
+    ("DWM3000_TIMING_CH5_PAC_SYMBOLS", int(driver_pac[1])),
+    ("DWM3000_TIMING_CH5_SFD_TIMEOUT_SYMBOLS", int(driver_sfd_timeout[1])),
+):
+    model_value = re.search(rf"#define\s+{model_name}\s+(\d+)u?\b", TIMING_HEADER)
+    assert model_value and int(model_value[1]) == driver_value, (
+        f"{model_name} must model the shipped driver value {driver_value}"
+    )
+for phy in ("WAKE", "RANGE"):
+    profile = re.search(
+        rf"\[DWM3000_TIMING_PHY_CH5_{phy}\]\s*=\s*\{{([^}}]+)\}}",
+        TIMING_MODEL,
+    )
+    assert profile, f"missing native channel-5 {phy} profile"
+    for field, shared_constant in (
+        ("pac_symbols", "DWM3000_TIMING_CH5_PAC_SYMBOLS"),
+        ("sfd_timeout_symbols", "DWM3000_TIMING_CH5_SFD_TIMEOUT_SYMBOLS"),
+    ):
+        assert re.search(rf"\.{field}\s*=\s*{shared_constant}\s*,", profile[1]), (
+            f"native {phy} {field} must use the driver-linked timing constant"
+        )
+driver_assertions = re.findall(
+    r"\bBUILD_ASSERT\s*\(([^;]+)\);",
+    re.sub(r"/\*.*?\*/|//[^\n]*", "", DRIVER, flags=re.DOTALL),
+    flags=re.DOTALL,
+)
+assert any(
+    re.search(r"DWM3000_PHY_RX_PAC\s*==\s*DWT_PAC16\b", guard)
+    for guard in driver_assertions
+), "the compiled driver must reject overrides of the modeled PAC16 tuple"
+assert any(
+    all(re.search(link, guard) for link in (
+        r"DWM3000_TIMING_CH5_PAC_SYMBOLS\s*==\s*16u?\b",
+        r"DWM3000_TIMING_CH5_SFD_TIMEOUT_SYMBOLS\s*==\s*DWM3000_PHY_SFD_TIMEOUT\b",
+        r"DWM3000_TIMING_CH5_SFD_TIMEOUT_SYMBOLS\s*==\s*DWM3000_WAKE_PHY_SFD_TIMEOUT\b",
+    ))
+    for guard in driver_assertions
+), "a build assertion must link the native PAC/SFD tuple to wake and range RX"
 
 
 def function_body(name: str) -> str:
@@ -50,6 +151,7 @@ mark_radio_awake_unconfigured = function_body(
 )
 check_device_fatal_status = function_body("check_device_fatal_status")
 initialise = function_body("initialise_radio")
+wake_configured = function_body("wake_configured_radio")
 probe = function_body("dwm3000_driver_probe")
 configure_default = function_body("dwm3000_driver_configure_default")
 idle = function_body("dwm3000_driver_idle")
@@ -149,10 +251,10 @@ for frame_consumer in (receive_range_frame, continuous_activity):
         "RF-hidden frames must be discarded before malformed-frame handling"
     )
 
-assert "ret = receive_frame(" in receive_response
+assert "receive_frame(remaining_ms," in receive_response
 assert "ret = read_rx_frame(" not in receive_response
 
-poll_receive = responder.index("ret = receive_frame(")
+poll_receive = responder.index("receive_frame(remaining_ms,")
 poll_failure = responder.index("if (ret < 0)", poll_receive)
 poll_timeout_status = responder.index(
     "result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT", poll_failure
@@ -172,7 +274,7 @@ assert "RANGE_RX_ERROR" in responder[poll_failure:poll_timeout_return], (
 
 response_prestage = responder.index("ret = uwb_encode_response(")
 response_write = responder.index("ret = write_tx_frame(", response_prestage)
-response_receive = responder.index("ret = receive_frame(", response_write)
+response_receive = responder.index("receive_frame(remaining_ms,", response_write)
 response_reencode = responder.index(
     "ret = uwb_encode_response(", response_receive
 )
@@ -276,6 +378,45 @@ assert_order(
     "*dev_id = read_id",
     "mark_radio_awake_unconfigured_tagged(__func__)",
 )
+
+# Fast transfers are safe only after the sleeping chip reaches IDLE_RC. Once
+# readiness is proven, restore at the normal rate rather than spending every
+# low-duty wake on slow register transfers. Each fallible transition must stop
+# before the next operation and invalidate the claimed radio state.
+assert_order(
+    wake_configured,
+    "ret = dwm3000_port_set_slow_spi()",
+    "ret = dwm3000_port_wakeup()",
+    "dwm3000_port_clear_error()",
+    "waited_us <= DWM3000_WAKE_IDLE_RC_TIMEOUT_US",
+    "if (dwt_checkidlerc())",
+    "ret = 0",
+    "break;",
+    'take_port_error("wake-idle-check")',
+    "k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US)",
+    "ret = -ETIMEDOUT",
+    "ret = dwm3000_port_set_fast_spi()",
+    "dwt_restore_common()",
+    'take_port_error("restore-common")',
+    "restore_txrx_after_sleep(requested_phy)",
+    'validate_device_identity("wake-restore")',
+    "radio_awake = true",
+)
+for begin, end in (
+    ("ret = dwm3000_port_set_slow_spi()", "ret = dwm3000_port_wakeup()"),
+    ("ret = dwm3000_port_wakeup()", "dwm3000_port_clear_error()"),
+    ("ret = -ETIMEDOUT", "ret = dwm3000_port_set_fast_spi()"),
+    ("ret = dwm3000_port_set_fast_spi()", "dwt_restore_common()"),
+):
+    phase_start = wake_configured.index(begin)
+    phase_end = wake_configured.index(end, phase_start)
+    assert_order(
+        wake_configured[phase_start:phase_end],
+        "if (ret < 0)",
+        "driver_stats.sleep_wake_failures++",
+        "invalidate_radio_state_tagged(__func__)",
+        "return ret",
+    )
 
 assert "configure_radio_from_reset(DWM3000_PHY_RANGE)" in configure_default, (
     "default configuration must invalidate stale software state at its reset "
@@ -387,6 +528,28 @@ assert "if (ret < 0 && ret != -ETIMEDOUT)" in sniff[
 assert "return ret" in sniff[
     sniff_activity:sniff_timeout
 ], "activity sniffing must preserve port/status failures"
+
+# k_uptime_get() floors to milliseconds, shortening a relative acquisition by
+# nearly 1 ms depending on its start phase. Keep the deadline and both expiry
+# checks in uptime ticks, with the requested duration rounded upward. The
+# millisecond samples remain valid only as reported observation timestamps.
+assert re.search(
+    r"int64_t\s+deadline_ticks\s*=\s*k_uptime_ticks\(\)\s*\+\s*"
+    r"k_ms_to_ticks_ceil64\(timeout_ms\)\s*;",
+    wait_status,
+), "status acquisition must retain the full requested tick-based timeout"
+assert_order(
+    wait_status,
+    "deadline_ticks =",
+    "atomic_get(&receive_abort_enabled)",
+    "return -ECANCELED",
+    "if (k_uptime_ticks() >= deadline_ticks)",
+    "break;",
+    "k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US)",
+    "while (k_uptime_ticks() <= deadline_ticks)",
+    "read_status = dwt_read32bitreg(SYS_STATUS_ID)",
+    'take_port_error("status-timeout-read")',
+)
 
 timeout_read = wait_status.index(
     'take_port_error("status-timeout-read")'

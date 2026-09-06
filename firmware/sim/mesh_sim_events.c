@@ -733,6 +733,10 @@ static int process_rx_start(struct mesh_sim_world *world, size_t window_index)
         return mesh_sim_fail(world, MESH_SIM_ERR_RADIO_CONFLICT);
     }
     node->radio_state = MESH_SIM_RADIO_RX;
+    int ret = mesh_sim_radio_note_preamble_at_rx_start(world, window_index);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
     return mesh_sim_trace_add(world,
                               world->now_us,
                               node->id,

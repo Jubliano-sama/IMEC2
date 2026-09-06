@@ -459,6 +459,24 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     }
 }
 
+/* Ignore a foreign frame without giving it a fresh receive budget. The
+ * caller owns the original deadline and the staged delayed-TX bytes. */
+static int range_rearm_ignored_frame(int64_t deadline_ms)
+{
+    int ret;
+
+    if (remaining_timeout_ms(deadline_ms) == 0u) {
+        return -ETIMEDOUT;
+    }
+    dwt_forcetrxoff();
+    clear_all_events();
+    ret = take_port_error("range-ignore-frame");
+    if (ret < 0) {
+        return ret;
+    }
+    return start_immediate_rx();
+}
+
 static int receive_response(const struct dwm3000_range_request *request,
                             struct uwb_response_frame *response,
                             uint64_t *resp_rx_ts,
@@ -466,12 +484,16 @@ static int receive_response(const struct dwm3000_range_request *request,
                             enum range_status *status_out)
 {
     uint8_t rx_buffer[UWB_RESP_LEN + FCS_LEN];
-    uint32_t status;
+    uint32_t status = 0u;
     size_t frame_len;
     int ret;
+    const int64_t deadline_ms = k_uptime_get() +
+        (request->timeout_ms == 0u ? RESP_RX_TIMEOUT_MS : request->timeout_ms);
+    uint32_t remaining_ms;
 
-    ret = receive_frame(request->timeout_ms == 0u ?
-                            RESP_RX_TIMEOUT_MS : request->timeout_ms,
+receive_response_again:
+    remaining_ms = remaining_timeout_ms(deadline_ms);
+    ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms,
                         &status,
                         rx_buffer,
                         sizeof(rx_buffer),
@@ -487,6 +509,9 @@ static int receive_response(const struct dwm3000_range_request *request,
                         NULL,
                         NULL,
                         false);
+    if (ret == -EMSGSIZE) {
+        goto ignore_response;
+    }
     if (ret < 0) {
         enum range_status rx_status = status_to_range_status(status);
 
@@ -506,19 +531,25 @@ static int receive_response(const struct dwm3000_range_request *request,
 
     ret = decode_response_frame(rx_buffer, frame_len, response);
     if (ret < 0) {
-        *status_out = RANGE_BAD_FRAME;
-        return ret;
+        goto ignore_response;
     }
 
     if (!dwm3000_driver_header_matches_request(&response->header,
                                                request,
                                                MSG_UWB_RESP)) {
-        *status_out = RANGE_WRONG_TARGET;
-        return -EADDRNOTAVAIL;
+        goto ignore_response;
     }
 
     *status_out = RANGE_OK;
     return 0;
+
+ignore_response:
+    ret = range_rearm_ignored_frame(deadline_ms);
+    if (ret == 0) {
+        goto receive_response_again;
+    }
+    *status_out = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+    return ret;
 }
 
 static int receive_report(const struct dwm3000_range_request *request,
@@ -527,13 +558,20 @@ static int receive_report(const struct dwm3000_range_request *request,
 {
     struct uwb_report_frame report;
     uint8_t rx_buffer[UWB_REPORT_LEN + FCS_LEN];
-    uint32_t status;
+    uint32_t status = 0u;
     size_t frame_len;
     int ret;
+    const int64_t deadline_ms = k_uptime_get() + REPORT_RX_TIMEOUT_MS;
+    uint32_t remaining_ms;
 
-    ret = receive_frame(REPORT_RX_TIMEOUT_MS, &status,
+receive_report_again:
+    remaining_ms = remaining_timeout_ms(deadline_ms);
+    ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL,
                         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false);
+    if (ret == -EMSGSIZE) {
+        goto ignore_report;
+    }
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->responder_id = responder_id;
@@ -545,8 +583,7 @@ static int receive_report(const struct dwm3000_range_request *request,
 
     ret = decode_report_frame(rx_buffer, frame_len, &report);
     if (ret < 0) {
-        result->status = RANGE_BAD_FRAME;
-        return ret;
+        goto ignore_report;
     }
 
     if (!dwm3000_driver_header_matches_request(&report.header,
@@ -554,8 +591,7 @@ static int receive_report(const struct dwm3000_range_request *request,
                                                MSG_UWB_REPORT) ||
         report.header.responder_short_addr != short_addr_from_id(responder_id) ||
         report.header.responder_id != responder_id) {
-        result->status = RANGE_WRONG_TARGET;
-        return -EADDRNOTAVAIL;
+        goto ignore_report;
     }
 
     result->initiator_id = request->initiator_id;
@@ -570,6 +606,14 @@ static int receive_report(const struct dwm3000_range_request *request,
     result->rsl_sampled = true;
     result->status = report.status;
     return report.status == RANGE_OK ? 0 : -EIO;
+
+ignore_report:
+    ret = range_rearm_ignored_frame(deadline_ms);
+    if (ret == 0) {
+        goto receive_report_again;
+    }
+    result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+    return ret;
 }
 
 static bool clicker_diag_matches_poll(const struct uwb_clicker_diag_frame *diag,

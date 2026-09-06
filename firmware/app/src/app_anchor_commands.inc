@@ -3900,7 +3900,6 @@ static int anchor_apply_discovery_assignment_command(
                 ret,
                 "claim-response-lane");
         }
-        app_survey_anchor_begin_enumeration(epoch);
         app_operation_policy_commit_prepared(&policy_candidate);
         return 0;
     }
@@ -4382,6 +4381,15 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
 
     pending = anchor_pending_command_execution;
 
+    if (!app_survey_anchor_command_allowed(&pending.command,
+                                           pending.payload,
+                                           pending.payload_len)) {
+        /* Retain previously accepted work without executing or replying
+         * during the survey. Its original age/deadline keeps advancing. */
+        (void)anchor_command_execute_reschedule(COLLECTION_RETRY_ROUND_0_MS);
+        return;
+    }
+
     now_ms = k_uptime_get_32();
     packet_age_add_elapsed(&pending.command, now_ms - pending.received_at_ms);
     anchor_pending_options_to_gateway(&pending.options, &options);
@@ -4586,6 +4594,9 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
     if (packet->dst_id != DEVICE_ID && !broadcast_command) {
         return 0;
     }
+    if (!app_survey_anchor_command_allowed(packet, payload, payload_len)) {
+        return 0;
+    }
 
     now_ms = k_uptime_get_32();
     ret = app_mesh_command_orchestrator_anchor_receive(
@@ -4761,6 +4772,15 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                 (unsigned int)command_id,
                 ret);
         return 0;
+    }
+    if (status == COMMAND_OK && app_anchor_action_command(command_id)) {
+        ret = app_anchor_action_handle(packet, payload, payload_len,
+                                       &protocol_reservation);
+        if (ret < 0) {
+            (void)app_node_comm_cancel_protocol_response_reservation(
+                &protocol_reservation);
+        }
+        return ret == 0 ? 1 : 0;
     }
     (void)anchor_execute_command_side_effects(
         packet,

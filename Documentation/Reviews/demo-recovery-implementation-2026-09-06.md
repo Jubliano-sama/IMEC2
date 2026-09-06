@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Demo recovery implementation — 2026-09-06
 
 This follows the read-only [recovery/scale/power audit](recovery-scale-power-audit-2026-09-05/README.md). Subsequent user direction prioritized failures likely to interrupt a demo and authorized firmware changes and four-board role changes. The historical audit remains evidence of the original source, not a statement that every finding is still open.

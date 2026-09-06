@@ -252,7 +252,7 @@
 #define ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS 60000u
 /* A receiver may use any supported cadence, independently of the sender.
  * Reserve one complete 10 ms RX window after the measured/recovery-rounded
- * 40 ms rearm budget inside the ordinary 500 ms click wake train. */
+ * 40 ms rearm budget inside the qualified 445 ms click wake train. */
 #define ANCHOR_UWB_SCAN_REARM_OVERHEAD_MS MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS
 #define ANCHOR_UWB_SCAN_MAX_RX_MS MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS
 #define ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS \
@@ -265,7 +265,18 @@
 #define MESH_UPLINK_WAKE_TRAIN_MS MESH_RADIO_UPLINK_WAKE_TRAIN_MS
 BUILD_ASSERT(MESH_UPLINK_WAKE_TRAIN_MS <= UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
              "uplink wake train must cover two maximum receiver scan periods");
+BUILD_ASSERT(MESH_UPLINK_WAKE_TRAIN_MS >=
+             2u * (MESH_RADIO_RECEIVER_SCAN_PERIOD_MAX_MS +
+                   MESH_RADIO_ACTIVITY_COMPLETION_US / 1000u),
+             "uplink wake train must survive one missed receiver scan");
+BUILD_ASSERT(MESH_RADIO_WAKE_TRAIN_MS >= 380u &&
+             MESH_RADIO_WAKE_TRAIN_MS >=
+                 MESH_RADIO_RECEIVER_SCAN_PERIOD_MAX_MS +
+                 MESH_RADIO_ACTIVITY_COMPLETION_US / 1000u,
+             "click wake train must cover receiver cadence and full-frame completion");
 #if DEVICE_ROLE == ROLE_ANCHOR && !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)
+BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_US >= MESH_RADIO_ANCHOR_SCAN_RX_US,
+             "continuous acquisition must cover the measured activation packet gap");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_INTERVAL_MS <= ANCHOR_UWB_SCAN_MAX_INTERVAL_MS,
              "anchor scan interval must fit the supported receiver cadence");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS <= ANCHOR_UWB_SCAN_MAX_RX_MS,
@@ -294,10 +305,11 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS <= ANCHOR_UWB_SCAN_MAX_RX_MS,
 #define UWB_MESH_ANCHOR_RX_INTERVAL_MS 6000u
 #define UWB_MESH_ANCHOR_RX_WINDOW_MS 2u
 #define ANCHOR_UWB_SCAN_MIN_INTERVAL_MS \
-    ((((uint64_t)ANCHOR_UWB_IDLE_SCAN_DUTY_US * 1000000ull + \
+    MAX(MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS, \
+        ((((uint64_t)ANCHOR_UWB_IDLE_SCAN_DUTY_US * 1000000ull + \
        ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S - 1ull) / \
       ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S - \
-      ANCHOR_UWB_IDLE_SCAN_DUTY_US + 999ull) / 1000ull)
+      ANCHOR_UWB_IDLE_SCAN_DUTY_US + 999ull) / 1000ull))
 #define ANCHOR_UWB_SCAN_RX_US_PER_S \
     (((uint64_t)ANCHOR_UWB_IDLE_SCAN_DUTY_US * 1000000ull + \
       ANCHOR_UWB_IDLE_SCAN_PERIOD_US - 1ull) / ANCHOR_UWB_IDLE_SCAN_PERIOD_US)

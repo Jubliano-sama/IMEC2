@@ -1,0 +1,20 @@
+TEST_INJECT {"phase": "START-owned", "host_monotonic": 214846.895996866, "states": [{"active": 1, "plan_valid": 0, "local_result_count": 0, "identity.generation": 37224467, "self_stop_ms": 212963}, {"active": 1, "plan_valid": 0, "local_result_count": 0, "identity.generation": 37224467, "self_stop_ms": 212120}]}
+TEST_INJECT {"phase": "range-response-lane", "host_monotonic": 214858.176315408, "states": [{"active": 1, "plan_valid": 1, "local_result_count": 0, "identity.generation": 37224467, "self_stop_ms": 52877}, {"active": 1, "plan_valid": 1, "local_result_count": 0, "identity.generation": 37224467, "self_stop_ms": 52035}]}
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/logs/scan_tuning_20260906/survey_click_interference.py", line 49, in <module>
+    assert proc.returncode==0 and finals and finals[-1]['success'],data[-2500:]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: _s": 43.813, "error": "", "status": "Received SURVEY_EVENT seq=5", "survey_phase": "ranging"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 43.913, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "ranging"}
+GUI_LOG level=event message=Survey complete: 1/1 pairs have usable median ranges
+HOST_PACKET survey=37224467 kind=4 results=1 usable=1 partial=0x0000
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 47.114, "error": "", "status": "Received SURVEY_EVENT seq=6", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 47.214, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "idle"}
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 49.014, "error": "", "status": "Received CLICK_REPORT seq=45", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 49.215, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "idle"}
+GUI_FINAL {"command_status": {"12": 0, "260": 0, "261": 0, "262": 0}, "completed_batches": [], "connection": "connected", "elapsed_s": 52.115, "error": "", "exit_reason": "survey-complete", "generation": 37224467, "neighbor_reports": 2, "pairs": [[1, 0]], "partial_reasons": 0, "plan_command_successes": 1, "planned_pairs_by_batch": {"0": 1}, "results": {"0": {"median_mm": 897, "success_count": 4, "usable": true}}, "signal_measurements": 1, "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "success": false}
+

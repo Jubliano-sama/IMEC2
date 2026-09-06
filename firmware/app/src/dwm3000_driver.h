@@ -154,6 +154,7 @@ struct dwm3000_driver_stats {
     uint32_t tx_failures;
     uint32_t spi_failures;
     uint32_t radio_recoveries;
+    uint32_t sys_status_poll_max_gap_us;
 };
 
 /*
@@ -208,6 +209,10 @@ struct dwm3000_tx_observation {
     bool rf_started;
     bool tx_completed;
 };
+
+/* Diagnostic read under the caller's existing radio lease, immediately after
+ * a successful send. The 40-bit timestamp is the radio's actual TX marker. */
+int dwm3000_driver_read_last_tx_timestamp(uint64_t *timestamp);
 
 int dwm3000_driver_send_frame_tracked(const uint8_t *frame,
                                       size_t frame_len,

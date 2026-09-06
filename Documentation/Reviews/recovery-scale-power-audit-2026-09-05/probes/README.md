@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../../../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Reproducing the audit
 
 Run from the repository root. These probes compile local code and use fake hardware boundaries; they do not access or flash boards. CMake's application-seam extracts must be regenerated from the same source revision as the archive. The recorded revision is `474ef8600ef25b50da5c3dbc1dc30241178d166a`.

@@ -151,6 +151,7 @@ struct k_work { int unused; };
 struct k_work_delayable { int unused; };
 static struct k_work_delayable battery_indicator_work;
 static int battery_indicator_mutex;
+static int battery_adc_mutex;
 static bool battery_indicator_initialized, battery_indicator_suspended;
 static bool battery_indicator_led_on, battery_indicator_sample_failure_reported;
 static bool divider_on, stopped;
@@ -179,6 +180,7 @@ static int gpio_pin_configure(void *p, unsigned pin, int level)
         return pg_cleanup_error;
     }
     if (level == GPIO_OUTPUT_LOW) {
+        assert(battery_adc_mutex == 1);
         /* A failed configure is allowed to have modified the pin. */
         divider_on = true;
         return enable_config_error;
@@ -207,18 +209,18 @@ static void k_msleep(unsigned ms)
 }
 static int adc_is_ready_dt(const void *p) { (void)p; return 1; }
 static int adc_channel_setup_dt(const void *p)
-{ (void)p; return adc_error_stage == 1 ? -EINVAL : 0; }
+{ (void)p; assert(battery_adc_mutex == 1); return adc_error_stage == 1 ? -EINVAL : 0; }
 static int adc_sequence_init_dt(const void *p, struct adc_sequence *s)
 { (void)p; (void)s; return adc_error_stage == 2 ? -EINVAL : 0; }
 static int adc_read_dt(const void *p, struct adc_sequence *s)
 {
-    (void)p; samples++; *(int16_t *)s->buffer = sampled_adc_mv;
+    (void)p; assert(battery_adc_mutex == 1); samples++; *(int16_t *)s->buffer = sampled_adc_mv;
     return adc_error_stage == 3 ? -EINVAL : 0;
 }
 static int adc_raw_to_millivolts_dt(const void *p, int32_t *mv)
 { (void)p; (void)mv; return adc_error_stage == 4 ? -EINVAL : 0; }
-static void k_mutex_lock(int *m, int timeout) { (void)m; (void)timeout; }
-static void k_mutex_unlock(int *m) { (void)m; }
+static void k_mutex_lock(int *m, int timeout) { (void)timeout; (*m)++; }
+static void k_mutex_unlock(int *m) { assert(*m > 0); (*m)--; }
 static int k_work_reschedule(struct k_work_delayable *w, unsigned ms)
 { (void)w; assert(!stopped); schedule_count++; scheduled_ms = ms; return 0; }
 static int k_work_cancel_delayable(struct k_work_delayable *w) { (void)w; return 0; }
@@ -251,9 +253,11 @@ for source, names in (
 
 for source, signature in (
     (BOARD, "int battery_usb_power_present(void)"),
+    (BOARD, "static int battery_adc_divider_disable_locked(void)"),
     (BOARD, "int battery_adc_divider_disable(void)"),
     (BOARD, "static int battery_adc_finish(int primary_ret)"),
     (BOARD, "static int battery_adc_divider_enable(void)"),
+    (BOARD, "static int battery_sample_lithium_mv_locked(uint16_t *battery_mv)"),
     (BOARD, "int battery_sample_lithium_mv(uint16_t *battery_mv)"),
     (INDICATOR, "static bool battery_indicator_role_enabled(void)"),
     (INDICATOR, "static uint32_t battery_indicator_period_ms(void)"),

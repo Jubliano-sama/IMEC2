@@ -1480,89 +1480,123 @@ static bool rx_extension_conflicts(const struct mesh_sim_world *world,
     return false;
 }
 
-int mesh_sim_radio_note_preamble_at_tx_start(struct mesh_sim_world *world,
-                                     const struct mesh_sim_transmission *tx)
+static int note_preamble_in_window(struct mesh_sim_world *world,
+                                   const struct mesh_sim_transmission *tx,
+                                   size_t i)
 {
     enum dwm3000_timing_phy production_phy = mesh_sim_radio_timing_phy(tx->phy);
     uint64_t preamble_rctu = dwm3000_timing_preamble_rctu(production_phy);
     uint64_t detect_rctu = dwm3000_timing_pac_rctu(production_phy);
 
-    for (size_t i = 0u; i < world->rx_window_count; i++) {
-        struct mesh_sim_rx_window *window = &world->rx_windows[i];
-        uint64_t arrival_start;
-        uint64_t preamble_end;
-        uint64_t detection_time;
+    struct mesh_sim_rx_window *window = &world->rx_windows[i];
+    uint64_t arrival_start;
+    uint64_t preamble_end;
+    uint64_t detection_time;
 
-        if (!window->valid || window->node_index == tx->node_index ||
-            !world->reachable[tx->node_index][window->node_index] ||
-            window->channel != tx->channel ||
-            !mesh_sim_phy_acquisition_compatible(window->phy, tx->phy)) {
-            continue;
-        }
-        arrival_start = tx->start_rctu +
-                        world->propagation_rctu[tx->node_index][window->node_index] +
-                        dwm3000_timing_us_to_rctu_ceil(
-                            tx->fault_extra_delay_us[window->node_index]);
-        preamble_end = arrival_start + preamble_rctu;
-        if (mesh_sim_interval_overlaps(window->start_rctu,
-                                       window->end_rctu,
-                                       arrival_start,
-                                       preamble_end)) {
-            uint64_t overlap_start = window->start_rctu > arrival_start ?
-                                     window->start_rctu : arrival_start;
+    if (!radio_rx_window_work_current(world, window) || window->node_index == tx->node_index ||
+        !world->reachable[tx->node_index][window->node_index] ||
+        window->channel != tx->channel ||
+        !mesh_sim_phy_acquisition_compatible(window->phy, tx->phy)) {
+        return MESH_SIM_OK;
+    }
+    arrival_start = tx->start_rctu +
+                    world->propagation_rctu[tx->node_index][window->node_index] +
+                    dwm3000_timing_us_to_rctu_ceil(
+                        tx->fault_extra_delay_us[window->node_index]);
+    preamble_end = arrival_start + preamble_rctu;
+    if (mesh_sim_interval_overlaps(window->start_rctu,
+                                   window->end_rctu,
+                                   arrival_start,
+                                   preamble_end)) {
+        uint64_t overlap_start = window->start_rctu > arrival_start ?
+                                 window->start_rctu : arrival_start;
 
-            detection_time = overlap_start + detect_rctu;
-            if (detection_time <= window->end_rctu) {
-                window->preamble_detected = true;
-                if (window->extend_on_activity) {
-                    uint64_t extension_rctu = dwm3000_timing_us_to_rctu_ceil(
+        detection_time = overlap_start + detect_rctu;
+        if (detection_time <= window->end_rctu && detection_time <= preamble_end) {
+            window->preamble_detected = true;
+            if (window->extend_on_activity) {
+                uint64_t extension_rctu = dwm3000_timing_us_to_rctu_ceil(
+                    window->activity_completion_us);
+                /* RXPRD latches acquisition. The driver's final status read
+                 * catches it even when polling resumes after this boundary;
+                 * RX stays enabled until that read. Starting the completion
+                 * allowance here is conservative versus that later read. */
+                uint64_t new_end_rctu = detection_time + extension_rctu;
+
+                if (new_end_rctu > window->end_rctu) {
+                    uint64_t old_end_us = window->end_us;
+                    uint64_t new_end_us =
+                        dwm3000_timing_rctu_to_us_ceil(new_end_rctu);
+                    int ret;
+
+                    if (rx_extension_conflicts(world,
+                                               i,
+                                               old_end_us,
+                                               new_end_us)) {
+                        return mesh_sim_fail(world,
+                                        MESH_SIM_ERR_RADIO_CONFLICT);
+                    }
+                    if (window->periodic_low_duty) {
+                        ret = dwm3000_runtime_extend_rx(
+                            &world->roles[window->node_index].dwm3000,
+                            new_end_us);
+                        if (ret != DWM3000_RUNTIME_OK) {
+                            return mesh_sim_fail(world, ret);
+                        }
+                    }
+                    window->end_rctu = new_end_rctu;
+                    window->end_us = new_end_us;
+                    ret = mesh_sim_scheduler_schedule(world,
+                                         SIM_EVENT_RX_END,
+                                         new_end_us,
+                                         (uint16_t)i);
+                    if (ret != MESH_SIM_OK) {
+                        return ret;
+                    }
+                    ret = mesh_sim_trace_add(
+                        world,
+                        dwm3000_timing_rctu_to_us_ceil(detection_time),
+                        world->roles[window->node_index].id,
+                        world->roles[tx->node_index].id,
+                        MESH_SIM_TRANSITION_RX_WINDOW_EXTENDED,
+                        0u,
                         window->activity_completion_us);
-                    uint64_t new_end_rctu = detection_time + extension_rctu;
-
-                    if (new_end_rctu > window->end_rctu) {
-                        uint64_t old_end_us = window->end_us;
-                        uint64_t new_end_us =
-                            dwm3000_timing_rctu_to_us_ceil(new_end_rctu);
-                        int ret;
-
-                        if (rx_extension_conflicts(world,
-                                                   i,
-                                                   old_end_us,
-                                                   new_end_us)) {
-                            return mesh_sim_fail(world,
-                                            MESH_SIM_ERR_RADIO_CONFLICT);
-                        }
-                        if (window->periodic_low_duty) {
-                            ret = dwm3000_runtime_extend_rx(
-                                &world->roles[window->node_index].dwm3000,
-                                new_end_us);
-                            if (ret != DWM3000_RUNTIME_OK) {
-                                return mesh_sim_fail(world, ret);
-                            }
-                        }
-                        window->end_rctu = new_end_rctu;
-                        window->end_us = new_end_us;
-                        ret = mesh_sim_scheduler_schedule(world,
-                                             SIM_EVENT_RX_END,
-                                             new_end_us,
-                                             (uint16_t)i);
-                        if (ret != MESH_SIM_OK) {
-                            return ret;
-                        }
-                        ret = mesh_sim_trace_add(
-                            world,
-                            dwm3000_timing_rctu_to_us_ceil(detection_time),
-                            world->roles[window->node_index].id,
-                            world->roles[tx->node_index].id,
-                            MESH_SIM_TRANSITION_RX_WINDOW_EXTENDED,
-                            0u,
-                            window->activity_completion_us);
-                        if (ret != MESH_SIM_OK) {
-                            return ret;
-                        }
+                    if (ret != MESH_SIM_OK) {
+                        return ret;
                     }
                 }
             }
+        }
+    }
+    return MESH_SIM_OK;
+}
+
+int mesh_sim_radio_note_preamble_at_tx_start(
+    struct mesh_sim_world *world, const struct mesh_sim_transmission *tx)
+{
+    for (size_t i = 0u; i < world->rx_window_count; i++) {
+        int ret = note_preamble_in_window(world, tx, i);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    return MESH_SIM_OK;
+}
+
+int mesh_sim_radio_note_preamble_at_rx_start(
+    struct mesh_sim_world *world, size_t window_index)
+{
+    /* A scanner can be created after TX starts. It can still acquire the
+     * remaining preamble, then must wait for a later COMPLETE frame. */
+    for (size_t i = 0u; i < world->transmission_count; i++) {
+        const struct mesh_sim_transmission *tx = &world->transmissions[i];
+        if (!radio_transmission_work_current(world, tx) ||
+            tx->start_us > world->now_us) {
+            continue;
+        }
+        int ret = note_preamble_in_window(world, tx, window_index);
+        if (ret != MESH_SIM_OK) {
+            return ret;
         }
     }
     return MESH_SIM_OK;

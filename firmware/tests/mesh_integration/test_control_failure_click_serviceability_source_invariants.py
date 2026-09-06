@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Systemic guards against failed control work making anchors deaf to clicks."""
+"""Control recovery and exclusive active-survey receive ownership guards."""
 
 from pathlib import Path
 import re
@@ -11,6 +11,7 @@ from source_text import read_composed_source
 ROOT = Path(__file__).resolve().parents[2]
 ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 SURVEY = read_composed_source(ROOT / "app/src/app_survey.c")
+SURVEY_HEADER = (ROOT / "app/src/app_survey.h").read_text(encoding="utf-8")
 REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 GATEWAY_CONTROL = read_composed_source(
     ROOT / "app/src/app_anchor.c"
@@ -228,7 +229,7 @@ class ControlFailureClickServiceabilitySourceTests(unittest.TestCase):
             4,
         )
 
-    def test_every_enumeration_or_survey_listener_activity_probes_for_click(self):
+    def test_enumeration_listener_activity_probes_for_click_outside_survey(self):
         probe = function_body(ANCHOR, "anchor_protocol_rx_probe_standard_click")
         compact = function_body(ANCHOR, "anchor_run_compact_enumeration_lane")
         scan = function_body(ANCHOR, "anchor_uwb_scan_work_handler")
@@ -292,101 +293,78 @@ class ControlFailureClickServiceabilitySourceTests(unittest.TestCase):
         self.assertIn("anchor_rx_terminate_locked(true)", recovery)
         self.assertIn("k_work_cancel_delayable(&anchor_work)", recovery)
 
-    def test_long_survey_radio_owners_probe_and_handoff_clicks(self):
-        probe = function_body(SURVEY, "anchor_probe_standard_click")
-        control_wait = function_body(
-            SURVEY, "anchor_control_wait_with_click_probes"
-        )
-        standard_wait = function_body(
-            SURVEY, "anchor_standard_wait_for_click"
-        )
-        response_lane = function_body(SURVEY, "anchor_run_response_lane")
-        neighbors = function_body(SURVEY, "anchor_neighbor_sequence")
-        execute = function_body(SURVEY, "anchor_execute_plan")
-        worker = function_body(SURVEY, "anchor_work_handler")
-        preempt = function_body(
-            SURVEY, "app_survey_anchor_preempt_for_click"
-        )
-        preempt_identity = function_body(
-            SURVEY, "anchor_preempt_for_click_identity"
-        )
-        handoff = function_body(SURVEY, "anchor_handoff_captured_click")
-
-        # A repeated standard-PHR wake train is the physical recovery
-        # mechanism while survey owns an incompatible extended-PHR receiver.
-        # Keep the probe shorter than one production wake train, and restore
-        # the survey PHY only when no valid click was captured.
-        self.assertIn("APP_SURVEY_CLICK_PROBE_BUDGET_MS < WAKE_ADV_MS", SURVEY)
-        assert_order(
-            self,
-            probe,
-            "dwm3000_driver_configure_wake_mode()",
-            "dwm3000_driver_receive_frame_continuous_extend_on_activity_until(",
-            "uwb_decode_wake_claim",
-            "app_mesh_c5_wake_claim_requires_anchor_handoff",
-            "capture->valid = true",
-        )
-        self.assertIn("APP_SURVEY_CLICK_PROBE_RX_MS", probe)
-        self.assertIn("MIN(deadline_ms,", probe)
-        self.assertIn("dwm3000_driver_configure_wake_mesh_control_mode()", probe)
-
-        # The roughly 69-second neighbor phase and every response lane have
-        # an absolute next-probe edge; neither a sleep nor an extended receive
-        # may run past it. The long ranging plan spends idle gaps in standard
-        # PHY rather than holding the incompatible control listener.
-        self.assertIn("now_ms >= *next_probe_ms", control_wait)
-        self.assertIn("MIN(deadline_ms, *next_probe_ms)", control_wait)
-        self.assertIn("anchor_probe_standard_click(capture, true,", control_wait)
-        self.assertIn("anchor_probe_standard_click(capture, false,", standard_wait)
-        self.assertGreaterEqual(
-            neighbors.count("anchor_control_wait_with_click_probes("), 3
-        )
-        self.assertIn("MIN(slot_end_ms, next_probe_ms)", neighbors)
-        self.assertIn("anchor_probe_standard_click(capture, true,", neighbors)
-        self.assertIn("next_probe_ms < receive_deadline_ms", response_lane)
-        self.assertIn("anchor_probe_standard_click(capture, true,", response_lane)
-        self.assertIn("anchor_standard_wait_for_click(", execute)
-
-        # Release the exact survey identity and its owned RF before invoking
-        # the ordinary click handler. If that handoff cannot accept the claim,
-        # a fresh scan is mandatory so the repeating train can recover.
-        assert_order(
-            self,
-            handoff,
-            "anchor_preempt_for_click_identity(",
-            "survey_ops.anchor_handle_click_wake_claim(",
-            "anchor_uwb_scan_schedule_ms(0u)",
-        )
-        self.assertIn("&snapshot->identity, false", handoff)
-        for action in (
-            "APP_SURVEY_ANCHOR_ACTION_NEIGHBORS",
-            "APP_SURVEY_ANCHOR_ACTION_EXECUTE",
+    def test_active_survey_has_no_click_capture_or_preemption_path(self):
+        # A guard at the ordinary click handler is insufficient if survey's
+        # own worker first terminates its identity and then hands off a click.
+        # No internal survey capture/probe/termination shortcut may survive.
+        for removed_api in (
+            "app_survey_click_capture",
+            "APP_SURVEY_CLICK_PROBE_",
+            "anchor_probe_standard_click",
+            "anchor_control_wait_with_click_probes",
+            "anchor_standard_wait_for_click",
+            "anchor_handoff_captured_click",
+            "anchor_preempt_for_click_identity",
+            "app_survey_anchor_preempt_for_click",
+            "anchor_handle_click_wake_claim",
+            "app_survey_anchor_begin_enumeration",
         ):
-            branch = worker.index(f"action == {action}")
-            capture = worker.index("if (click_capture.valid)", branch)
-            handoff_call = worker.index(
-                "anchor_handoff_captured_click(&snapshot, action", capture
-            )
-            return_after = worker.index("return;", handoff_call)
-            self.assertLess(capture, handoff_call)
-            self.assertLess(handoff_call, return_after)
-        assert_order(
-            self,
-            preempt_identity,
-            "anchor_rx_expire_locked(",
-            "anchor_rx_terminate_locked(true)",
-            "k_work_cancel_delayable(&anchor_work)",
-            "dwm3000_driver_request_receive_abort(",
-        )
-        self.assertIn("anchor_preempt_for_click_identity(NULL, true)", preempt)
-
-        # Hard RF or scheduling failures terminate ownership. They may never
-        # silently put the anchor back into the long continuous listener.
-        self.assertGreaterEqual(
-            worker.count("if (ret < 0 && ret != -ECANCELED)"), 2
-        )
+            with self.subTest(removed_api=removed_api):
+                self.assertNotIn(removed_api, SURVEY)
+                self.assertNotIn(removed_api, SURVEY_HEADER)
+        worker = function_body(SURVEY, "anchor_work_handler")
+        # Genuine RF/scheduling failures still terminate exact ownership.
+        self.assertGreaterEqual(worker.count("if (ret < 0 && ret != -ECANCELED)"), 2)
         self.assertGreaterEqual(worker.count("anchor_rx_terminate_locked(true)"), 6)
         self.assertNotIn("anchor_rx_continuous_locked", worker)
+
+    def test_active_survey_rejects_wakes_before_claim_or_route_mutation(self):
+        wake = function_body(REPORT, "mesh_handle_channel5_wake_claim")
+        prearm = function_body(ANCHOR, "anchor_enumeration_rx_prearm")
+        claim = function_body(ANCHOR, "anchor_handle_uwb_claim")
+        mesh_claim = function_body(ANCHOR, "anchor_handle_mesh_click_wake_claim")
+        assert_order(self, wake, "app_survey_anchor_active()", "return false;",
+                     "mesh_decode_channel5_wake_claim(", "mesh_route_activation_note(")
+        assert_order(self, prearm, "app_survey_anchor_active()", "return -EBUSY;",
+                     "protocol_rx_lifecycle_begin(")
+        assert_order(self, claim, "app_survey_anchor_active()", "return false;",
+                     "app_mesh_c5_wake_claim_requires_anchor_handoff(")
+        assert_order(self, mesh_claim, "app_survey_anchor_active()", "return false;",
+                     "k_spin_lock(&anchor_pending_click_handoff_lock)")
+
+    def test_active_survey_admission_precedes_enqueue_dispatch_and_local_execution(self):
+        enqueue = function_body(REPORT, "mesh_queue_from_frame_at_internal")
+        dispatch = function_body(REPORT, "mesh_drain_rx_queue_locked")
+        local = function_body(ANCHOR, "anchor_handle_local_command_locked")
+        delayed = function_body(ANCHOR, "anchor_command_execute_work_handler_locked")
+        allowed = function_body(SURVEY, "app_survey_anchor_command_allowed")
+
+        for body, packet in ((enqueue, "context.packet"), (dispatch, "pending->packet")):
+            self.assertIn(f"{packet}.msg_type == MSG_COMMAND", body)
+            self.assertIn(f"{packet}.msg_type == MSG_GATEWAY_ROUTE_ADV", body)
+            self.assertIn("app_survey_anchor_active()", body)
+        assert_order(self, enqueue, "app_survey_anchor_command_allowed(",
+                     "return false;", "pending.packet = context.packet")
+        assert_order(self, dispatch, "app_survey_anchor_command_allowed(",
+                     "continue;", "mesh_relay_handle_rx_with_random_radio(")
+        assert_order(self, local, "app_survey_anchor_command_allowed(",
+                     "return 0;", "app_mesh_command_orchestrator_anchor_receive(")
+        assert_order(self, delayed, "app_survey_anchor_command_allowed(",
+                     "anchor_command_execute_reschedule(", "return;",
+                     "packet_age_add_elapsed(", "anchor_commit_broadcast_command_replay(")
+        # Admission can lazily expire an already-ended operation, but cannot
+        # terminate, reschedule or replace a still-live owner to admit traffic.
+        assert_order(self, allowed, "k_mutex_lock(&survey_lock", "anchor_rx_expire_locked(",
+                     "allowed = !anchor_state.active", "gateway_command_extract_id(",
+                     "survey_control_extract_tlvs(", "survey_identity_equal(",
+                     "k_mutex_unlock(&survey_lock)")
+        for forbidden in ("anchor_rx_terminate_locked(", "anchor_work_reschedule(",
+                          "protocol_rx_lifecycle_set_deadline(", "memset(&anchor_state"):
+            self.assertNotIn(forbidden, allowed)
+        for command, phase in (("CMD_SURVEY_START", "SURVEY_PHASE_NEIGHBOR_START"),
+                               ("CMD_SURVEY_PLAN", "SURVEY_PHASE_PLAN"),
+                               ("CMD_SURVEY_CANCEL", "SURVEY_PHASE_ABORT")):
+            self.assertRegex(allowed, rf"command_id == {command}\s*&&\s*control.phase == {phase}")
 
     def test_failed_survey_control_retries_abort_to_the_remote_terminal_bound(self):
         schedule = function_body(SURVEY, "gateway_work_reschedule_owned")

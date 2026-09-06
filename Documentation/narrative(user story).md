@@ -1,3 +1,5 @@
+> Product narrative and prior-study context. Historical hardware/cloud descriptions are not the current Zephyr/UWB implementation; see the [documentation index](README.md).
+
 #internship #imec #school #system-engineering 
 ## The Living Vitality Hub
 The Living Vitality Hub serves as a testing ground where companies deploy and validate environmental equipment. Currently, the facility is outfitted with a dense sensor network measuring $CO_2$, $PM_{2.5}$, light levels, and occupancy. It also incorporates specialized recovery zones, including relaxation beds, to study their impact on cognitive performance. This ecosystem fosters a symbiotic relationship: the Hub gains access to cutting-edge technology, while companies receive empirical data to refine their products or support marketing claims.
@@ -29,7 +31,7 @@ Despite these significant advancements in software architecture and signal proce
 ## The Ambition
 This project should leverage electronic integration to capture richer data. By tracking the spatial location of these clicks, we can analyze how specific room layouts or furnishings facilitate or hinder office behavior. Furthermore, correlating these manual inputs with ambient data—such as temperature or humidity—allows us to observe how the environment dictates social friction.
 
-**Current scope addition**: Automated anchor self-setup. The system can now discover and solve the 3D geometry of the anchor network using only measured anchor-to-anchor distances plus an approximate minimum radio radius. This removes the need for manual anchor positioning surveys.
+**Current scope addition**: Automated anchor self-setup. The product objective is to discover and solve the 3D geometry of the anchor network using only measured anchor-to-anchor distances plus an approximate minimum radio radius. This removes the need for manual anchor positioning surveys.
 
 The maintained repository does not yet satisfy that 3D product requirement. Its desktop GUI is a RAM-only 2D diagnostic preview, while the future host API/solver still needs an explicit 3D contract: whether anchors have known height or plane constraints, how a relative distance solution is registered into the workplace coordinate frame, how reflection ambiguity is resolved, and how partial or non-rigid graphs expose uncertainty. Until those decisions are made, the preview must not be presented as the production 3D self-setup result.
 

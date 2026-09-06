@@ -255,11 +255,10 @@ config IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS
     int "Mesh-test channel-5 anchor scan idle interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST
     default IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
-    range 0 435
+    range 380 380
     help
-      Delay between channel-5 wake/contact scans for mesh-test anchors. A
-      value of zero makes the anchor immediately reschedule the next scan.
-      The default tracks the normal anchor low-duty wake-scan cadence.
+      Idle delay between channel-5 wake/contact scans. The qualified 380 ms
+      delay keeps idle power bounded and fits the shorter click wake train.
 
 config IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US
     int "Mesh-test channel-5 anchor scan receive window in microseconds"
@@ -349,18 +348,20 @@ config IMEC_CLICK_DELIVERY_PARENT_LISTEN
 config IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
     int "Anchor low-duty UWB wake scan interval in milliseconds"
     default 380
-    range 1 435
+    range 380 380
     help
-      Interval between low-duty anchor wake-scan attempts.
+      Idle delay between low-duty anchor wake-scan attempts. The actual
+      RX-to-RX period also includes wake, receive and release overhead.
 
 config IMEC_ANCHOR_UWB_SCAN_RX_US
     int "Anchor low-duty UWB wake scan receive slice in microseconds"
-    default 10000
+    default 5000
     range 1 1000000
     help
-      Active UWB receive time inside each low-duty anchor wake-scan attempt.
-      Ten milliseconds covers one complete combined Here-I-Am frame cadence,
-      including measured host/SPI/status overhead and bounded random gap.
+      Initial acquisition time in each low-duty anchor wake scan. Preamble
+      activity extends RX long enough to receive a complete claim. Five
+      milliseconds covers measured Here-I-Am packet gaps with margin, using
+      continuous RX to preserve sensitivity and the qualified fast SPI handoff.
 
 config IMEC_GATEWAY_BLE
     bool "Use connected Bluetooth for gateway PC communication"

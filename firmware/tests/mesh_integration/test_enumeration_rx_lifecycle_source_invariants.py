@@ -80,6 +80,89 @@ def braced_block(source: str, start: int) -> str:
 
 
 class EnumerationRxLifecycleSourceTests(unittest.TestCase):
+    def test_gateway_table_sort_keeps_observed_first_hops_with_anchor_ids(self) -> None:
+        materialize = function_body(
+            GATEWAY_CONTROL, "gateway_discovery_assignment_build_table_locked"
+        )
+        self.assertRegex(materialize,
+            r"discovery_assignment_order_roster_extension\(\s*"
+            r"gateway_discovery_assignment_state\.anchor_ids,\s*"
+            r"gateway_discovery_assignment_state\.anchor_hop_counts,\s*"
+            r"gateway_discovery_assignment_state\.anchor_previous_hop_ids,\s*"
+            r"gateway_discovery_assignment_state\.claim_count,\s*"
+            r"gateway_discovery_assignment_state\.prior_anchor_count\s*\)")
+
+    def test_compact_breadcrumbs_require_valid_descendants_and_accepted_bundle(self) -> None:
+        receive = function_body(RADIO, "anchor_compact_enumeration_handle_raw")
+        decode = receive.index("uwb_decode_enumeration_bundle(")
+        depth_gate = receive.index("timing->depth <= lane->hop_count", decode)
+        descendants = receive.index("for (uint8_t i = 0u; i < bundle.record_count", depth_gate)
+        merge = receive.index("enumeration_response_lane_merge_bundle(", descendants)
+        publish = receive.index("mesh_relay_note_enumeration_downlink(", merge)
+        ack = receive.index("ack = (struct uwb_enumeration_hop_ack_frame)", publish)
+        encode = receive.index("uwb_encode_enumeration_hop_ack(", ack)
+        send = receive.index("dwm3000_driver_send_frame_tracked_until(", encode)
+
+        prevalidation = receive[descendants:merge]
+        self.assertIn("bundle.records[i].hop_count <= lane->hop_count", prevalidation)
+        self.assertRegex(prevalidation,
+            r"\(bundle\.records\[i\]\.anchor_id == bundle\.sender_id\)\s*!=\s*"
+            r"\(bundle\.records\[i\]\.hop_count == lane->hop_count \+ 1u\)")
+        self.assertIn("ret = PROTO_ERR_MALFORMED", prevalidation)
+        self.assertIn("if (ret == PROTO_OK)", prevalidation)
+        accepted = receive.rindex("if (ret == PROTO_OK)", merge, publish)
+        publication = braced_block(receive, accepted)
+        self.assertIn("mesh_relay_note_enumeration_downlink(", publication)
+        self.assertRegex(publication,
+            r"bundle\.records\[i\]\.anchor_id,\s*bundle\.sender_id,\s*"
+            r"bundle\.records\[i\]\.hop_count - lane->hop_count")
+        self.assertIn("if (ret != PROTO_OK)", publication)
+        self.assertIn("break;", publication)
+        ack_guard = receive.rindex("if (ret == PROTO_OK)", publish, ack)
+        self.assertIn("ack =", braced_block(receive, ack_guard))
+        reject = receive.index("if (ret != PROTO_OK)", ack)
+        self.assertIn("return 1;", receive[reject:encode])
+        self.assertLess(publish, ack)
+        self.assertLess(ack, encode)
+        self.assertLess(encode, send)
+
+    def test_anchor_actions_use_current_proven_target_and_observed_first_hop(self) -> None:
+        route = function_body(GATEWAY_CONTROL, "gateway_route_mesh_host_packet")
+        parse = route.index("app_anchor_action_request(")
+        live = route.index("!gateway_discovery_assignment_state.active", parse)
+        epoch = route.index("epoch == gateway_discovery_assignment_state.epoch", live)
+        target = route.index("anchor_ids[i] == packet->dst_id", epoch)
+        depth = route.index("anchor_hop_counts[i] == hops", target)
+        proof = route.index("gateway_registered_membership_proves_assignment_ack(", depth)
+        child = route.index("enumerated_next_hop_id =", proof)
+        reject = route.index("if (!enumerated", child)
+        prepare = route.index("app_mesh_command_orchestrator_prepare_flood(", reject)
+        install = route.index("outbound->next_hop_id = enumerated_next_hop_id", prepare)
+
+        self.assertIn("table_command_seq", route[proof:child])
+        self.assertIn("table_commitment", route[proof:child])
+        self.assertIn("packet->dst_id) == 1", route[proof:child])
+        self.assertIn("anchor_previous_hop_ids[i]", route[child:reject])
+        self.assertIn("!mesh_id_is_unicast(enumerated_next_hop_id)", route[reject:prepare])
+        self.assertIn("enumerated_next_hop_id == DEVICE_ID", route[reject:prepare])
+        self.assertIn("return -EINVAL", route[reject:prepare])
+        self.assertIn("outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT", route[install:])
+        self.assertNotRegex(route, r"outbound->packet\.dst_id\s*=(?!=)")
+        self.assertNotIn("outbound->next_hop_id = packet->dst_id", route)
+        self.assertNotIn("mesh_relay_note_direct_gateway_route(", route)
+
+    def test_targeted_action_transport_wakes_receivers_and_keeps_separate_result_owner(self) -> None:
+        route = function_body(GATEWAY_CONTROL, "gateway_route_mesh_host_packet")
+        track = route.index("gateway_begin_command_result_wait_for(")
+        branch = route.index("else if (enumerated_next_hop_id != 0u)", track)
+        submit = braced_block(route, branch)
+        self.assertIn("app_node_comm_submit_delivery(outbound,", submit)
+        self.assertIn("NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD", submit)
+        self.assertIn("k_uptime_get() + delivery_timeout_ms", submit)
+        self.assertNotIn("app_node_comm_submit_protocol_response", submit)
+        self.assertNotIn("NODE_COMM_PROFILE_RELIABLE", submit)
+        self.assertLess(track, branch)
+
     def test_route_capable_anchor_scan_has_no_artificial_startup_blind_period(
         self,
     ) -> None:

@@ -65,8 +65,20 @@ static const struct gpio_dt_spec dwm_reset =
 static const struct gpio_dt_spec dwm_wakeup =
     GPIO_DT_SPEC_GET(DWM3000_NODE, wakeup_gpios);
 
-static struct spi_config dwm_spi_cfg;
-static uint32_t current_spi_hz;
+/* Zephyr may cache SPI configuration by pointer identity. Never mutate a
+ * configuration already submitted to the controller: that leaves FREQUENCY
+ * at the previous rate even though our requested frequency has changed. */
+#define DWM3000_SPI_CONFIG(hz) { \
+    .frequency = (hz), \
+    .operation = SPI_WORD_SET(8) | SPI_TRANSFER_MSB, \
+    .slave = DT_REG_ADDR(DWM3000_NODE), \
+    .cs = SPI_CS_CONTROL_INIT(DWM3000_NODE, 0), \
+}
+static const struct spi_config dwm_spi_slow_cfg =
+    DWM3000_SPI_CONFIG(DWM3000_SLOW_SPI_HZ);
+static const struct spi_config dwm_spi_fast_cfg =
+    DWM3000_SPI_CONFIG(DWM3000_FAST_SPI_HZ);
+static const struct spi_config *dwm_spi_cfg = &dwm_spi_slow_cfg;
 static bool port_ready;
 static atomic_t first_port_error;
 
@@ -147,23 +159,19 @@ static int ensure_ready(void)
 
 int dwm3000_port_set_slow_spi(void)
 {
-    dwm_spi_cfg = dwm_spi.config;
-    dwm_spi_cfg.frequency = DWM3000_SLOW_SPI_HZ;
-    current_spi_hz = DWM3000_SLOW_SPI_HZ;
+    dwm_spi_cfg = &dwm_spi_slow_cfg;
     return 0;
 }
 
 int dwm3000_port_set_fast_spi(void)
 {
-    dwm_spi_cfg = dwm_spi.config;
-    dwm_spi_cfg.frequency = DWM3000_FAST_SPI_HZ;
-    current_spi_hz = DWM3000_FAST_SPI_HZ;
+    dwm_spi_cfg = &dwm_spi_fast_cfg;
     return 0;
 }
 
 uint32_t dwm3000_port_current_spi_hz(void)
 {
-    return current_spi_hz;
+    return dwm_spi_cfg->frequency;
 }
 
 int dwm3000_port_init(void)
@@ -390,7 +398,7 @@ int dwm3000_port_transceive(const uint8_t *tx, uint8_t *rx, size_t len)
         return latch_port_error(ret);
     }
 
-    ret = spi_transceive(dwm_spi.bus, &dwm_spi_cfg,
+    ret = spi_transceive(dwm_spi.bus, dwm_spi_cfg,
                          tx != NULL ? &tx_set : NULL,
                          rx != NULL ? &rx_set : NULL);
     return latch_port_error(ret);
@@ -424,7 +432,7 @@ int dwm3000_port_write(const uint8_t *header, size_t header_len,
         return latch_port_error(ret);
     }
 
-    ret = spi_write(dwm_spi.bus, &dwm_spi_cfg, &tx_set);
+    ret = spi_write(dwm_spi.bus, dwm_spi_cfg, &tx_set);
     return latch_port_error(ret);
 }
 
@@ -461,7 +469,7 @@ int dwm3000_port_write_with_crc(const uint8_t *header, size_t header_len,
         return latch_port_error(ret);
     }
 
-    ret = spi_write(dwm_spi.bus, &dwm_spi_cfg, &tx_set);
+    ret = spi_write(dwm_spi.bus, dwm_spi_cfg, &tx_set);
     return latch_port_error(ret);
 }
 
@@ -510,6 +518,6 @@ int dwm3000_port_read(const uint8_t *header, size_t header_len,
         return latch_port_error(ret);
     }
 
-    ret = spi_transceive(dwm_spi.bus, &dwm_spi_cfg, &tx_set, &rx_set);
+    ret = spi_transceive(dwm_spi.bus, dwm_spi_cfg, &tx_set, &rx_set);
     return latch_port_error(ret);
 }

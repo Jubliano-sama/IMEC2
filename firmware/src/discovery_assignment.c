@@ -222,6 +222,7 @@ static bool anchor_order_before(uint64_t left, uint8_t left_hop,
 static int discovery_assignment_sort_anchor_ids_with_hops(
     uint64_t *anchor_ids,
     uint8_t *hop_counts,
+    uint64_t *previous_hop_ids,
     size_t anchor_count)
 {
     if ((anchor_ids == NULL && anchor_count != 0u) ||
@@ -231,6 +232,8 @@ static int discovery_assignment_sort_anchor_ids_with_hops(
     for (size_t i = 0u; i < anchor_count; i++) {
         uint64_t current = anchor_ids[i];
         uint8_t current_hop_count = hop_counts == NULL ? 0u : hop_counts[i];
+        uint64_t current_previous_hop = previous_hop_ids == NULL ?
+            0u : previous_hop_ids[i];
         size_t j = i;
 
         if (current == 0u) {
@@ -244,11 +247,17 @@ static int discovery_assignment_sort_anchor_ids_with_hops(
             if (hop_counts != NULL) {
                 hop_counts[j] = hop_counts[j - 1u];
             }
+            if (previous_hop_ids != NULL) {
+                previous_hop_ids[j] = previous_hop_ids[j - 1u];
+            }
             j--;
         }
         anchor_ids[j] = current;
         if (hop_counts != NULL) {
             hop_counts[j] = current_hop_count;
+        }
+        if (previous_hop_ids != NULL) {
+            previous_hop_ids[j] = current_previous_hop;
         }
     }
     for (size_t i = 1u; i < anchor_count; i++) {
@@ -263,11 +272,12 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
                                          size_t anchor_count)
 {
     return discovery_assignment_sort_anchor_ids_with_hops(
-        anchor_ids, NULL, anchor_count);
+        anchor_ids, NULL, NULL, anchor_count);
 }
 
 int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
                                                  uint8_t *hop_counts,
+                                                 uint64_t *previous_hop_ids,
                                                  size_t anchor_count,
                                                  size_t prior_anchor_count)
 {
@@ -294,6 +304,7 @@ int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
     ret = discovery_assignment_sort_anchor_ids_with_hops(
         &anchor_ids[prior_anchor_count],
         hop_counts == NULL ? NULL : &hop_counts[prior_anchor_count],
+        previous_hop_ids == NULL ? NULL : &previous_hop_ids[prior_anchor_count],
         anchor_count - prior_anchor_count);
     return ret;
 }

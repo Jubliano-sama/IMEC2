@@ -658,6 +658,16 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
         uint32_t now_ms = k_uptime_get_32();
         uint8_t attempt = retry_state.attempts + 1u;
 
+        /* The click owner can be waiting for this route worker while it
+         * holds the radio. Repeated local EBUSY returns must not keep the
+         * queued custody handoff behind an unbounded probe loop. */
+        if (mesh_click_preempt_boundary_requested()) {
+            status_debug_printf("DBG_DIRECT_GW_PROBE_CLICK_YIELD attempt=%u phase=pre\n",
+                                (unsigned int)attempt);
+            last_ret = -ECANCELED;
+            break;
+        }
+
         /*
          * Route probing is background work.  A prior probe may have received
          * and queued a valid frame that was not the probe's own direct ACK
@@ -701,6 +711,12 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
         ret = mesh_send_direct_gateway_probe_and_wait(probe,
                                                       reason,
                                                       attempt);
+        if (mesh_click_preempt_boundary_requested()) {
+            status_debug_printf("DBG_DIRECT_GW_PROBE_CLICK_YIELD attempt=%u phase=post\n",
+                                (unsigned int)attempt);
+            last_ret = -ECANCELED;
+            break;
+        }
         if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
             status_debug_printf(
                 "DBG_DIRECT_GW_PROBE_RX_YIELD q=%u attempt=%u phase=post\n",
@@ -751,7 +767,12 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                             retry_decision.delay_ms,
                             (unsigned int)(retry_state.attempts + 1u),
                             retry_decision.attempt_consumed ? 0u : 1u);
-        k_msleep(retry_decision.delay_ms);
+        if (mesh_click_preempt_wait_route_backoff(retry_decision.delay_ms)) {
+            status_debug_printf("DBG_DIRECT_GW_PROBE_CLICK_YIELD attempt=%u phase=backoff\n",
+                                (unsigned int)attempt);
+            last_ret = -ECANCELED;
+            break;
+        }
     }
 
 out_unlock:
@@ -910,6 +931,13 @@ static int mesh_request_route_owned(
         target_id, reason, route_policy.install_direct_route_from_probe,
         APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE,
         generation);
+    if (ret == -ECANCELED) {
+        /* Unwind caller-owned scratch before the queued click transaction
+         * runs. The retained route request remains eligible after the click. */
+        mesh_schedule_route_waiting_retry_after(
+            "route-click-yield", REPORT_TX_RETRY_DELAY_MS);
+        return ret;
+    }
     if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
         /* The direct probe queued causal RX.  Do not continue into a relay
          * wake train in the same route-work turn; let RX clear or advance the

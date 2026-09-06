@@ -400,6 +400,45 @@ uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
     return expired;
 }
 
+int mesh_relay_note_enumeration_downlink(struct mesh_relay *relay,
+    uint64_t target_id, uint64_t child_id, uint8_t remaining_hops,
+    uint32_t now_ms)
+{
+    if (relay == NULL ||
+        (relay->role != MESH_RELAY_ROLE_ANCHOR && relay->role != MESH_RELAY_ROLE_GATEWAY) ||
+        relay->upstream.current_epoch == 0u ||
+        !id_is_unicast(target_id) || !id_is_unicast(child_id) ||
+        target_id == relay->local_id || target_id == relay->gateway_id ||
+        child_id == relay->local_id || child_id == relay->gateway_id ||
+        remaining_hops == 0u || remaining_hops > MESH_NETWORK_MAX_HOPS ||
+        ((target_id == child_id) != (remaining_hops == 1u))) {
+        return PROTO_ERR_ARG;
+    }
+    const struct mesh_downlink_entry entry = {
+        .target_id = target_id, .next_hop_id = child_id,
+        .gateway_id = relay->gateway_id,
+        .route_epoch = relay->upstream.current_epoch,
+        .last_seen_ms = now_ms, .hop_count = remaining_hops, .valid = true,
+    };
+    int ret = upsert_required_gateway_downlink(relay, &entry);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    int keep = downlink_exact_index(relay, &entry);
+    if (keep < 0) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    /* The current enumeration's observed child supersedes older shortcuts. */
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        struct mesh_downlink_entry *old = downlink_at_mutable(relay, i);
+        if ((int)i != keep && old->valid && old->target_id == target_id &&
+            old->gateway_id == relay->gateway_id) {
+            memset(old, 0, sizeof(*old));
+        }
+    }
+    return PROTO_OK;
+}
+
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id)

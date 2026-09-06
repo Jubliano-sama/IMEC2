@@ -1,3 +1,5 @@
+> Product requirements and original traceability, not an implementation-status or qualification report. Apply current explicit user decisions, including exclusive survey ownership; use the [documentation index](README.md) to find implemented behavior.
+
 #internship #imec #school #system-engineering
 
 | **Priority** | **ID** | **Requirement** |

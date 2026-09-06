@@ -2,10 +2,10 @@
 
 This document is the detailed technical reference for the firmware implementation. For high-level project overview, navigation, and agent guidelines, start with:
 
-- [../README.md](../README.md) (root)
+- [Documentation index](../Documentation/README.md)
 - [../AGENTS.md](../AGENTS.md) (mandatory reading)
 
-All agents must also read [../AGENT_KNOWN_ISSUES.md](../AGENT_KNOWN_ISSUES.md) before making changes.
+Read the entire [known-issues summary](../AGENT_KNOWN_ISSUES_SUMMARY.md) before work; search the append-only [bug log](../AGENT_KNOWN_ISSUES.md) for relevant history. These logs are evidence, not design requirements.
 
 ---
 
@@ -29,7 +29,7 @@ ctest --test-dir firmware/build --output-on-failure
 
 See `firmware/tests/` and the `mesh_integration` suite for higher-fidelity simulator tests.
 For connected-routing work, the `protocol_matrix` CTest label runs the focused
-Here-I-Am-through-enumeration, connection-control, and result-custody lifecycle gate.
+Here-I-Am-through-enumeration and result-custody lifecycle gate, including retained legacy connection-control coverage. Legacy C9 tests do not define the current C5 production transport.
 The deterministic seed sweeps,
 sanitizer commands, exact replays, and flash-once hardware workflow are in
 [`tests/mesh_integration/README.md`](tests/mesh_integration/README.md).
@@ -44,7 +44,7 @@ The Zephyr app lives in `firmware/app/`. It reuses the native core and adds:
 - Radio coordination policy, BLE, and power management
 
 **Important hardware assumptions** (status-polled DWM3000, no direct IRQ):
-- DWM3000 is on SPIM3 (32 MHz runtime SPI, 2 MHz for reset/init).
+- DWM3000 is on SPIM3 (32 MHz effective runtime SPI, 2 MHz for reset/init and the wake handshake).
 - TX/RX completion is detected via bounded `SYS_STATUS` polling.
 - Retained sleep is heavily used for power.
 
@@ -71,42 +71,33 @@ Use the connected-routing mesh presets. These are the current production-candida
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/west flash --runner pyocd --build-dir build/mesh-clicker -- --dev-id <probe-id> --frequency 4000000
 ```
 
-Select the connected board and intended role before programming. Normal sector erase preserves durable configuration. Check static RAM headroom in the build output (the prototype requires more than 4 KiB), then record RTT while exercising the changed behavior. Flashing needs no manifest, capture ledger, or promotion step.
+Enumerate live probes and record the selected board and intended role before programming. Authorized bench work may reassign roles; back up durable state and initialize incompatible role storage before migration. Normal sector erase preserves durable configuration. Check static RAM headroom in the build output (the prototype requires more than 4 KiB), then record RTT while exercising the changed behavior. Flashing needs no manifest, capture ledger, or promotion step.
 
 `mesh_anchor` is one image for every production anchor. Its identity comes from the nRF FICR hardware identity; the gateway assigns discovery/ranging order. Verify enumeration, survey, and click delivery through their actual results on the host.
 
-**See AGENTS.md for the full list of presets**, including traffic generators, ML collection builds, and legacy regression roles. Always state and verify the exact preset before flashing.
+**See AGENTS.md for role semantics** and the application build configuration for available presets. Always state and verify the exact preset before flashing.
 
 ### Other Important Presets
 
 - `gateway_ble_connectivity_test`: Stripped gateway for BLE link bring-up only (no DWM3000, no mesh).
-- ML collection builds (`ml_clicker`, `ml_anchor_*`): For training data. See details in the original long-form notes below if needed.
+- ML collection builds (`ml_clicker`, `ml_anchor_*`): For training data; outside production validation unless requested.
 - Various `*_test/` directories contain standalone smoke, power-profile, and range-test applications.
 
 ---
 
 ## Timing, Power, and Low-Level Details
 
-Current key constants (as of the latest implementation):
-- Anchor low-duty scan: 380 ms interval, 10 ms normal RX window (≈2.55% RX duty).
-- Every wake train, including the combined Here-I-Am activation, is 500 ms; malformed-frame activity can extend only the receiver's listener to 1,000 ms. Here-I-Am relays hold TX continuously for that 500 ms and perform no click checks, while ordinary click-capable wake paths retain their click preemption behavior.
-- UWB PHY: 850 kbps, long preamble for wake/range, 1024-symbol for mesh control.
-- Clicker politeness: requires ≥100 ms quiet channel-5 time before wake train.
-- Status polling overhead is modeled separately from radio duty.
+The [Mesh contract](<../Documentation/Mesh Connected Routing Contract.md>) owns current wake/scan values, survey exclusivity and radio state requirements. Shared numeric bounds live in `include/mesh_radio_timing.h`, `include/dwm3000_timing.h` and `app/src/app_config.h`; avoid copying a second timing table here.
 
-Clicker idle paths:
-- Default: retained System ON (`CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE`).
-- Fallback: System OFF with RAM retention.
+The normal battery clicker uses retained System ON idle, with a configured System OFF alternative. Anchor acquisition is continuous inside each scan slice, with DW3000 parking between idle scans; hardware SNIFF and pulsed acquisition are excluded. An active survey keeps its participating anchors exclusively through all PLAN batches and drains.
 
-Detailed power budget calculations, scan duty guards, and awake-time accounting are in `Documentation/UWB+BLE Architecture 0.6.6.md`.
-
-The app enforces build-time and runtime guards so that anchor scan duty stays inside the calibrated budget (currently 26,000 µs/s). The 10 ms acquisition slice covers the measured worst-case start-to-start cadence of the combined wake/Here-I-Am frames; a shorter slice can fall entirely between two valid frames even during a 500 ms train.
+The SPI port restores effective 32 MHz after the 2 MHz wake handshake. Shared configuration caching, bounded status polling and successful radio parking are part of that guarantee. CPU/clock/peripheral, GPIO/LED, regulator and DW3000 residency all matter to power. Scan duty is a model input, not measured current or battery life. The current bench has no power instrument.
 
 ---
 
 ## Hardware Bring-Up Smoke Checklist
 
-Use this checklist with no DWM3000 IRQ routed directly to the MCU. Minimum useful topology: one gateway + one anchor + one clicker. Full acceptance requires three unique successful ranges.
+Use this checklist with no DWM3000 IRQ routed directly to the MCU. Minimum useful topology: one gateway + one anchor + one clicker. Select evidence appropriate to the configured anchor cohort and changed behavior; the normal schedule supports up to four selected anchors.
 
 1. Confirm `firmware/app/app.overlay` does **not** define `irq-gpios` for the DWM3000 node.
 2. Build the production mesh presets and verify the IRQ-free node is accepted.
@@ -118,8 +109,8 @@ Use this checklist with no DWM3000 IRQ routed directly to the MCU. Minimum usefu
 8. Measure clicker wake train: max no-preamble gap must stay within protocol target.
 9. Measure DS-TWR timing (status-detect to delayed TX) for the long-range preset (`UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS = 8000`).
 10. Record anchor idle diagnostics (scans, preambles, SFD/CRC failures, claims, `awake_us` breakdown).
-11. Verify clicker system-off current returns to baseline after full click cycle.
-12. Validate power budget against the calibrated RX-duty model.
+11. Verify the configured clicker low-power state is restored after the full click cycle.
+12. Compare measured timing/state residency with the power model. Current measurement requires an external instrument and remains unperformed when one is unavailable.
 
 Acceptance table (update as you complete gates):
 
@@ -135,23 +126,11 @@ Acceptance table (update as you complete gates):
 
 ---
 
-## Current Implementation Status
+## Implementation and evidence
 
-**Implemented** (core functionality is present and exercised in simulation + unit tests):
-- Native protocol, UWB sessions, mesh relay/routing/preemption, reports, enumeration, and gateway command handling.
-- Full click path (wake politeness → claim → discovery → schedule → multi-anchor DS-TWR → mesh report).
-- Anchor low-duty scanning, claim arbitration, and retained-sleep behavior.
-- Gateway connected BLE GATT (COBS packet service) + command routing.
-- Status-polled DWM3000 driver with proper SPI ordering and sleep/wake contracts.
-- Comprehensive native + mesh-integration test coverage.
+The production-candidate source contains the normal click path, C5 report bank, authoritative enumeration, compact survey response lane, BLE command lifecycle and host geometry/CIR processing. [The architecture map](<../Documentation/UWB+BLE Architecture.md>) points to their owners.
 
-**Still pending / hardware validation required**:
-- Full calibration of status-polled DS-TWR reply delays on real hardware.
-- Rebuilt anchor-to-anchor ranging runs.
-- End-to-end multi-board smoke testing and power measurements on target hardware.
-- Any remaining discrepancies between the simulator model and actual radio/SPI timing.
-
-For the most up-to-date status on specific features, cross-reference the latest entries in `Documentation/` (especially the Architecture and Mesh Contract documents) and run the relevant test labels.
+Presence in source is not a qualification claim. Run the focused native tests and the mandatory `mesh_integration` and `hardware_models` labels from AGENTS.md before a qualifying flash. Run those two labels sequentially because some fixtures share build directories. Validate changed hardware behavior using the resulting build and live cohort: programming/readback, startup role, assignment, actual survey samples and click host receipts are distinct checks. Dated reports under `Documentation/Reviews/` retain their original scope and do not qualify a later dirty worktree.
 
 ---
 

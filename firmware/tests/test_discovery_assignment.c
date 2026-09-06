@@ -187,11 +187,13 @@ static void test_roster_extension_preserves_prior_slots(void)
     assert(discovery_assignment_order_roster_extension(
                expected_new,
                &hop_counts[2],
+               NULL,
                sizeof(expected_new) / sizeof(expected_new[0]),
                0u) == PROTO_OK);
     assert(discovery_assignment_order_roster_extension(
                anchor_ids,
                hop_counts,
+               NULL,
                sizeof(anchor_ids) / sizeof(anchor_ids[0]),
                2u) == PROTO_OK);
     assert(anchor_ids[0] == prior_0);
@@ -226,6 +228,7 @@ static void test_roster_extension_preserves_prior_slots(void)
     assert(discovery_assignment_order_roster_extension(
                anchor_ids,
                NULL,
+               NULL,
                sizeof(anchor_ids) / sizeof(anchor_ids[0]),
                2u) == PROTO_OK);
     assert(discovery_assignment_hash(anchor_ids[2]) <
@@ -254,13 +257,136 @@ static void test_roster_extension_preserves_prior_slots(void)
     assert(discovery_assignment_order_roster_extension(
                anchor_ids,
                NULL,
+               NULL,
                sizeof(anchor_ids) / sizeof(anchor_ids[0]),
                2u) == PROTO_ERR_MALFORMED);
-    assert(discovery_assignment_order_roster_extension(NULL, NULL, 0u, 0u) ==
+    assert(discovery_assignment_order_roster_extension(NULL, NULL, NULL, 0u, 0u) ==
            PROTO_OK);
     assert(discovery_assignment_order_roster_extension(
-               anchor_ids, NULL, 2u, 3u) ==
+               anchor_ids, NULL, NULL, 2u, 3u) ==
            PROTO_ERR_ARG);
+}
+
+struct roster_route_observation {
+    uint64_t anchor_id;
+    uint8_t hop_count;
+    uint64_t first_hop_id;
+};
+
+static void assert_roster_keeps_observed_routes(
+    const struct roster_route_observation *observed,
+    size_t count,
+    size_t prior_count,
+    bool with_hop_counts)
+{
+    uint64_t ids[UWB_DISCOVERY_SLOT_COUNT + 1u];
+    uint64_t first_hops[UWB_DISCOVERY_SLOT_COUNT + 1u];
+    uint8_t hops[UWB_DISCOVERY_SLOT_COUNT + 1u];
+    const uint64_t untouched = UINT64_C(0xdeadbeef12345678);
+
+    assert(count <= UWB_DISCOVERY_SLOT_COUNT);
+    for (size_t i = 0u; i <= UWB_DISCOVERY_SLOT_COUNT; i++) {
+        ids[i] = i < count ? observed[i].anchor_id : untouched;
+        hops[i] = i < count ? observed[i].hop_count : UINT8_MAX;
+        first_hops[i] = i < count ? observed[i].first_hop_id : untouched;
+    }
+    /* Repeat materialization, as TABLE retries reuse the same live roster. */
+    for (unsigned int pass = 0u; pass < 3u; pass++) {
+        bool seen[UWB_DISCOVERY_SLOT_COUNT] = {false};
+
+        assert(discovery_assignment_order_roster_extension(
+                   ids, with_hop_counts ? hops : NULL, first_hops,
+                   count, prior_count) == PROTO_OK);
+        for (size_t i = 0u; i < count; i++) {
+            size_t original;
+
+            for (original = 0u; original < count; original++) {
+                if (ids[i] == observed[original].anchor_id) {
+                    break;
+                }
+            }
+            assert(original < count);
+            assert(!seen[original]);
+            seen[original] = true;
+            assert(first_hops[i] == observed[original].first_hop_id);
+            assert(hops[i] == observed[with_hop_counts ? original : i].hop_count);
+            if (i < prior_count) {
+                assert(original == i);
+            }
+            if (i > prior_count) {
+                const uint64_t previous_hash = discovery_assignment_hash(ids[i - 1u]);
+                const uint64_t current_hash = discovery_assignment_hash(ids[i]);
+
+                if (with_hop_counts) {
+                    assert(hops[i - 1u] <= hops[i]);
+                }
+                if (!with_hop_counts || hops[i - 1u] == hops[i]) {
+                    assert(previous_hash < current_hash ||
+                           (previous_hash == current_hash && ids[i - 1u] < ids[i]));
+                }
+            }
+        }
+        for (size_t i = count; i <= UWB_DISCOVERY_SLOT_COUNT; i++) {
+            assert(ids[i] == untouched);
+            assert(first_hops[i] == untouched);
+            assert(hops[i] == UINT8_MAX);
+        }
+    }
+}
+
+static void test_roster_route_metadata_survives_every_arrival_order(void)
+{
+    const struct roster_route_observation cohort[5] = {
+        {UINT64_C(0x56da25fe4af6d141), 1u, UINT64_C(0x56da25fe4af6d141)},
+        {UINT64_C(0xe4645c15cb365d30), 1u, UINT64_C(0xe4645c15cb365d30)},
+        {UINT64_C(0xe46070d247394d36), 2u, UINT64_C(0x56da25fe4af6d141)},
+        {UINT64_C(0x1000000100000021), 3u, UINT64_C(0x56da25fe4af6d141)},
+        {UINT64_C(0x2000000100000021), 2u, UINT64_C(0xe4645c15cb365d30)},
+    };
+
+    /* Decode each rank into one of the 5! distinct response arrival orders. */
+    for (size_t permutation = 0u; permutation < 120u; permutation++) {
+        size_t remaining[] = {0u, 1u, 2u, 3u, 4u};
+        size_t rank = permutation;
+        struct roster_route_observation arrival[5];
+
+        for (size_t i = 0u; i < 5u; i++) {
+            const size_t selected = rank % (5u - i);
+
+            rank /= 5u - i;
+            arrival[i] = cohort[remaining[selected]];
+            memmove(&remaining[selected], &remaining[selected + 1u],
+                    (4u - i - selected) * sizeof(remaining[0]));
+        }
+        for (size_t prior_count = 0u; prior_count <= 5u; prior_count++) {
+            assert_roster_keeps_observed_routes(arrival, 5u, prior_count, true);
+            assert_roster_keeps_observed_routes(arrival, 5u, prior_count, false);
+        }
+    }
+}
+
+static void test_full_roster_route_metadata_preserves_every_prior_prefix(void)
+{
+    struct roster_route_observation arrival[UWB_DISCOVERY_SLOT_COUNT];
+    const uint64_t id_base = UINT64_C(0x8000000000000001);
+
+    assert(UWB_DISCOVERY_SLOT_COUNT == 50u);
+    for (size_t i = 0u; i < UWB_DISCOVERY_SLOT_COUNT; i++) {
+        const size_t member = (i * 37u + 13u) % UWB_DISCOVERY_SLOT_COUNT;
+
+        arrival[i] = (struct roster_route_observation) {
+            .anchor_id = id_base + member,
+            .hop_count = (uint8_t)(1u + member % 8u),
+            .first_hop_id = id_base + (member / 8u) * 8u,
+        };
+    }
+    for (size_t prior_count = 0u; prior_count <= UWB_DISCOVERY_SLOT_COUNT;
+         prior_count++) {
+        assert_roster_keeps_observed_routes(
+            arrival, UWB_DISCOVERY_SLOT_COUNT, prior_count, true);
+        assert_roster_keeps_observed_routes(
+            arrival, UWB_DISCOVERY_SLOT_COUNT, prior_count, false);
+    }
 }
 
 static void test_control_and_claim_hash_round_trip(void)
@@ -701,7 +827,8 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
                MESH_ENUMERATION_RELAY_COPY_TAIL_MS);
     assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS == 540u);
     assert(DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS ==
-           MESH_RADIO_CONTROL_RELAY_WAKE_ENVELOPE_MS +
+           MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
+               MESH_RADIO_EVENT_RETUNE_GUARD_MS +
                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS);
     assert(DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS == 1100u);
     assert(discovery_assignment_control_propagation_hold_ms(0u) ==
@@ -1475,7 +1602,7 @@ static void test_hop_aware_staggering_ddd_f1f1d_f2f1d(void)
         uint64_t ids[3] = {id_b, id_c, id_a};
         uint8_t hops[3] = {0u, 0u, 0u};
 
-        assert(discovery_assignment_order_roster_extension(ids, hops, 3, 0u) == PROTO_OK);
+        assert(discovery_assignment_order_roster_extension(ids, hops, NULL, 3, 0u) == PROTO_OK);
         for (size_t i = 0u; i < 3u; i++) {
             assert(hops[i] == 0u);
         }
@@ -1503,7 +1630,7 @@ static void test_hop_aware_staggering_ddd_f1f1d_f2f1d(void)
         uint64_t ids[3] = {id_a, id_b, id_c};
         uint8_t hops[3] = {1u, 0u, 1u};
 
-        assert(discovery_assignment_order_roster_extension(ids, hops, 3, 0u) == PROTO_OK);
+        assert(discovery_assignment_order_roster_extension(ids, hops, NULL, 3, 0u) == PROTO_OK);
         /* Direct anchor (id_b) must get slot 0 (index 0) */
         assert(hops[0] == 0u);
         assert(ids[0] == id_b);
@@ -1522,7 +1649,7 @@ static void test_hop_aware_staggering_ddd_f1f1d_f2f1d(void)
         uint64_t ids[3] = {id_c, id_b, id_a};
         uint8_t hops[3] = {2u, 0u, 1u};
 
-        assert(discovery_assignment_order_roster_extension(ids, hops, 3, 0u) == PROTO_OK);
+        assert(discovery_assignment_order_roster_extension(ids, hops, NULL, 3, 0u) == PROTO_OK);
         /* Direct anchor (id_b) must get slot 0 */
         assert(hops[0] == 0u);
         assert(ids[0] == id_b);
@@ -1570,6 +1697,8 @@ int main(void)
     test_hash_order_is_deterministic_and_tied_by_id();
     test_compact_anchor_id_path_matches_entry_wire_format();
     test_roster_extension_preserves_prior_slots();
+    test_roster_route_metadata_survives_every_arrival_order();
+    test_full_roster_route_metadata_preserves_every_prior_prefix();
     test_control_and_claim_hash_round_trip();
     test_end_identity_round_trip_and_exact_binding();
     test_abort_identity_round_trip_and_exact_claim_binding();

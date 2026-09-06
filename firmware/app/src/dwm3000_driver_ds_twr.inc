@@ -557,6 +557,9 @@ static int responder_poll_once(uint64_t local_anchor_id,
     uint64_t final_rx_ts;
     uint64_t final_ipatov_rx_ts = 0u;
     int64_t poll_received_at_ms = 0;
+    int64_t poll_deadline_ms;
+    int64_t final_deadline_ms;
+    uint32_t remaining_ms;
     uint16_t reply_delay_uus;
     uint8_t quality = 0u;
     int8_t rsl_dbm = 0;
@@ -565,6 +568,10 @@ static int responder_poll_once(uint64_t local_anchor_id,
     enum range_status report_status = RANGE_OK;
     bool cir_sampled = false;
     bool capture_final_rsl;
+    int16_t final_clock_offset_raw = 0;
+    bool final_clock_offset_sampled = false;
+    int32_t final_carrier_integrator = 0;
+    bool final_carrier_integrator_sampled = false;
     bool negative_tof = false;
     int ret;
 
@@ -636,6 +643,8 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return ret;
     }
 
+    poll_deadline_ms = k_uptime_get() +
+        (timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms);
     dwt_setpreambledetecttimeout(0u);
     dwt_setrxtimeout(0u);
     clear_all_events();
@@ -644,10 +653,16 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return ret;
     }
 
-    ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,
+receive_poll_again:
+    remaining_ms = remaining_timeout_ms(poll_deadline_ms);
+    ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
                         &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
                         NULL, NULL, NULL, NULL, NULL, false);
+    if (ret == -EMSGSIZE) {
+        goto ignore_poll;
+    }
+poll_receive_result:
     if (ret == 0) {
         poll_received_at_ms = k_uptime_get();
     }
@@ -692,12 +707,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 expected->seq,
                                 expected->round_index);
         }
-        if (result != NULL) {
-            result->quality = quality;
-            result->rsl_dbm = rsl_dbm;
-            result->status = RANGE_BAD_FRAME;
-        }
-        return -EAGAIN;
+        goto ignore_poll;
     }
     if (!poll_targets_anchor(&poll.header, local_anchor_id)) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
@@ -707,14 +717,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 poll.header.seq,
                                 poll.header.round_index);
         }
-        if (result != NULL) {
-            result_set_poll_metadata(result, &poll.header,
-                                     poll.header.responder_id);
-            result->quality = quality;
-            result->rsl_dbm = rsl_dbm;
-            result->status = RANGE_WRONG_TARGET;
-        }
-        return -EAGAIN;
+        goto ignore_poll;
     }
     if (!poll_matches_expected(&poll.header, expected)) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
@@ -728,14 +731,18 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 (unsigned long long)poll.header.initiator_id,
                                 (unsigned long long)expected->initiator_id);
         }
-        if (result != NULL) {
-            result_set_poll_metadata(result, &poll.header, local_anchor_id);
-            result->quality = quality;
-            result->rsl_dbm = rsl_dbm;
-            result->status = RANGE_WRONG_TARGET;
-        }
-        return -EAGAIN;
+        goto ignore_poll;
     }
+    goto poll_accepted;
+
+ignore_poll:
+    ret = range_rearm_ignored_frame(poll_deadline_ms);
+    if (ret == 0) {
+        goto receive_poll_again;
+    }
+    goto poll_receive_result;
+
+poll_accepted:
     if (result != NULL) {
         result_set_poll_metadata(result, &poll.header, local_anchor_id);
         result->exchange_start_ms = k_uptime_get();
@@ -818,17 +825,24 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
 
     capture_final_rsl = expected->capture_rsl;
-    ret = receive_frame(ds_twr_rx_wait_timeout_ms(reply_delay_uus), &status,
+    final_deadline_ms = k_uptime_get() + ds_twr_rx_wait_timeout_ms(reply_delay_uus);
+receive_final_again:
+    remaining_ms = remaining_timeout_ms(final_deadline_ms);
+    ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len,
                         &final_rx_ts, &quality, &rsl_dbm,
                         cir_sample, &cir_sampled,
-                        result != NULL ? &result->clock_offset_raw : NULL,
-                        result != NULL ? &result->clock_offset_sampled : NULL,
-                        result != NULL ? &result->carrier_integrator : NULL,
-                        result != NULL ? &result->carrier_integrator_sampled : NULL,
+                        result != NULL ? &final_clock_offset_raw : NULL,
+                        result != NULL ? &final_clock_offset_sampled : NULL,
+                        result != NULL ? &final_carrier_integrator : NULL,
+                        result != NULL ? &final_carrier_integrator_sampled : NULL,
                         DWM3000_DS_TWR_RTT_DEBUG_ENABLED ?
                             &final_ipatov_rx_ts : NULL,
                         capture_final_rsl);
+    if (ret == -EMSGSIZE) {
+        goto ignore_final;
+    }
+final_receive_result:
     if (ret < 0) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=final-rx ret=%d sys=0x%08x fail=%u now=%u seq=%u round=%u\n",
@@ -856,19 +870,32 @@ static int responder_poll_once(uint64_t local_anchor_id,
         }
         return ret;
     }
+    ret = decode_final_frame(rx_buffer, frame_len, &final);
+    if (ret < 0 || !dwm3000_driver_final_matches_poll(&final,
+                                                      &poll.header,
+                                                      local_anchor_id)) {
+        goto ignore_final;
+    }
+    goto final_accepted;
+
+ignore_final:
+    ret = range_rearm_ignored_frame(final_deadline_ms);
+    if (ret == 0) {
+        goto receive_final_again;
+    }
+    goto final_receive_result;
+
+final_accepted:
     if (result != NULL) {
+        result->clock_offset_raw = final_clock_offset_raw;
+        result->clock_offset_sampled = final_clock_offset_sampled;
+        result->carrier_integrator = final_carrier_integrator;
+        result->carrier_integrator_sampled = final_carrier_integrator_sampled;
         result->poll_rx_ts_32 = (uint32_t)poll_rx_ts;
         result->resp_tx_ts_32 = (uint32_t)resp_tx_ts;
         result->final_rx_ts_32 = (uint32_t)final_rx_ts;
     }
-    ret = decode_final_frame(rx_buffer, frame_len, &final);
-    if (ret < 0) {
-        report_status = RANGE_BAD_FRAME;
-    } else if (!dwm3000_driver_final_matches_poll(&final,
-                                                  &poll.header,
-                                                  local_anchor_id)) {
-        report_status = RANGE_WRONG_TARGET;
-    } else if (validate_driver_reply_timing(
+    if (validate_driver_reply_timing(
                    dwt_delta_to_uus((uint32_t)poll_rx_ts,
                                     (uint32_t)resp_tx_ts),
                    dwt_delta_to_uus(final.resp_rx_ts_32,

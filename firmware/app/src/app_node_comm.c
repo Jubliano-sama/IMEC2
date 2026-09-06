@@ -2401,7 +2401,7 @@ int app_node_comm_submit_delivery(
     uint32_t client_token,
     uint32_t *handle_out)
 {
-    if (envelope == NULL || handle_out == NULL || absolute_deadline_ms == 0u ||
+    if (envelope == NULL || absolute_deadline_ms == 0u ||
         profile < NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ||
         profile >= NODE_COMM_PROFILE_COUNT) {
         return -EINVAL;
@@ -2421,7 +2421,8 @@ int app_node_comm_submit_delivery(
         return -EINVAL;
     }
     return app_node_comm_submit_delivery_internal(
-        envelope, profile, absolute_deadline_ms, client_token, false, false,
+        envelope, profile, absolute_deadline_ms, client_token,
+        handle_out == NULL, false,
         handle_out);
 }
 

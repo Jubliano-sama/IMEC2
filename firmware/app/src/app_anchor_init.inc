@@ -29,8 +29,6 @@ int app_anchor_init(void)
             .anchor_consume_enumeration_handoff =
                 anchor_enumeration_rx_consume_survey_handoff,
             .anchor_reschedule = anchor_survey_work_reschedule,
-            .anchor_handle_click_wake_claim =
-                anchor_handle_mesh_click_wake_claim,
 #endif
         };
 

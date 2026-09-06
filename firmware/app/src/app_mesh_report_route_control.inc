@@ -1577,6 +1577,13 @@ static int mesh_send_route_wake_train_with_duration(
     uint32_t train_started_ms = 0u;
     uint32_t first_claim_sent_ms = 0u;
     uint32_t last_claim_sent_ms = 0u;
+    uint32_t last_activation_send_cycles = 0u;
+    uint32_t max_activation_interval_us = 0u;
+    uint32_t previous_activation_tx_us = 0u;
+    uint32_t peak_activation_tx_us = 0u;
+    uint16_t peak_activation_frame = 0u;
+    uint64_t last_activation_rf_timestamp = 0u;
+    uint32_t max_activation_rf_interval_us = 0u;
     int64_t close_ms;
     uint16_t sent_count = 0u;
     uint16_t embedded_count = 0u;
@@ -1904,13 +1911,38 @@ wake_train_attempt:
             }
             memcpy(&frame[frame_len], route_suffix, route_suffix_len);
             frame_len += route_suffix_len;
+            uint32_t send_cycles = k_cycle_get_32();
+            if (sent_count > 0u) {
+                uint32_t interval_us = (uint32_t)k_cyc_to_us_floor64(
+                    (uint32_t)(send_cycles - last_activation_send_cycles));
+                if (interval_us > max_activation_interval_us) {
+                    max_activation_interval_us = interval_us;
+                    peak_activation_tx_us = previous_activation_tx_us;
+                    peak_activation_frame = sent_count;
+                }
+            }
+            last_activation_send_cycles = send_cycles;
             ret = dwm3000_driver_send_frame(
                 frame,
                 frame_len,
                 wake_train_config.control_tx_timeout_ms);
+            previous_activation_tx_us = (uint32_t)k_cyc_to_us_floor64(
+                (uint32_t)(k_cycle_get_32() - send_cycles));
             if (ret < 0) {
                 break;
             }
+            uint64_t rf_timestamp;
+            ret = dwm3000_driver_read_last_tx_timestamp(&rf_timestamp);
+            if (ret < 0) {
+                break;
+            }
+            if (sent_count > 0u) {
+                uint64_t delta = (rf_timestamp - last_activation_rf_timestamp) &
+                    ((UINT64_C(1) << 40) - 1u);
+                max_activation_rf_interval_us = MAX(max_activation_rf_interval_us,
+                    (uint32_t)dwm3000_timing_rctu_to_us_ceil(delta));
+            }
+            last_activation_rf_timestamp = rf_timestamp;
             status_debug_tx_wake_claim_sent_pulse();
             last_claim_sent_ms = k_uptime_get_32();
             if (sent_count == 0u) {
@@ -2068,9 +2100,9 @@ route_wake_claim_sent:
                 uwb_clicker_wake_claim_jitter_us(random_value);
             int64_t remaining_after_tx_ms = close_ms - k_uptime_get();
 
-            if (DEVICE_ROLE == ROLE_GATEWAY &&
+            if (gateway_route_adv_relay || (DEVICE_ROLE == ROLE_GATEWAY &&
                 wake_train_config.wake_adv_ms ==
-                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS) {
+                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS)) {
                 jitter_us = random_value %
                     (MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US + 1u);
             }
@@ -2119,6 +2151,15 @@ out:
                         k_uptime_get_32(),
                         sent_count,
                         ret);
+    if (gateway_route_adv_relay && sent_count > 0u) {
+        status_debug_printf("DBG_ACTIVATION_TRAIN_CADENCE sent=%u max_interval_us=%u\n",
+                            sent_count, max_activation_interval_us);
+        status_debug_printf("DBG_ACTIVATION_TRAIN_PEAK frame=%u tx_call_us=%u between_calls_us=%u\n",
+                            peak_activation_frame, peak_activation_tx_us,
+                            max_activation_interval_us - peak_activation_tx_us);
+        status_debug_printf("DBG_ACTIVATION_TRAIN_RF max_interval_us=%u\n",
+                            max_activation_rf_interval_us);
+    }
     if (click_captured) {
         mesh_c5_contact_clear("click-preempt");
         goto out_unlock;

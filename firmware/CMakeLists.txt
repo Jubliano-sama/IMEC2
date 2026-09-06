@@ -70,6 +70,17 @@ endif()
 enable_testing()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+add_executable(test_app_anchor_actions
+    tests/test_app_anchor_actions.c app/src/app_anchor_actions.c)
+target_include_directories(test_app_anchor_actions PRIVATE app/src)
+target_link_libraries(test_app_anchor_actions PRIVATE core)
+target_compile_options(test_app_anchor_actions PRIVATE -Wall -Wextra -Werror -pedantic)
+add_test(NAME app_anchor_actions COMMAND test_app_anchor_actions)
+set_tests_properties(app_anchor_actions PROPERTIES LABELS "mesh_integration;hardware_models;commands")
+add_test(NAME anchor_identify_owner COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_anchor_identify_owner.py)
+set_tests_properties(anchor_identify_owner PROPERTIES LABELS "mesh_integration;hardware_models;commands;power")
+
 add_executable(test_firmware_events tests/test_firmware_events.c)
 target_link_libraries(test_firmware_events PRIVATE core)
 add_test(NAME firmware_events COMMAND test_firmware_events)
@@ -216,6 +227,13 @@ target_link_libraries(test_enumeration_response_lane PRIVATE core)
 add_test(NAME enumeration_response_lane COMMAND test_enumeration_response_lane)
 set_tests_properties(enumeration_response_lane PROPERTIES
     LABELS "mesh_integration;hardware_models;assignment;radio;timing")
+
+add_executable(test_enumeration_downlinks tests/test_enumeration_downlinks.c)
+target_link_libraries(test_enumeration_downlinks PRIVATE core)
+target_compile_options(test_enumeration_downlinks PRIVATE -Wall -Wextra -Werror -pedantic)
+add_test(NAME enumeration_downlinks COMMAND test_enumeration_downlinks)
+set_tests_properties(enumeration_downlinks PROPERTIES
+    LABELS "mesh_integration;hardware_models;assignment;routing;protocol")
 
 add_executable(test_survey tests/test_survey.c)
 target_link_libraries(test_survey PRIVATE core)
@@ -1035,7 +1053,7 @@ hia_test_extract_span("${hia_survey_source}" "static bool anchor_identity_matche
 hia_test_extract_span("${hia_survey_source}" "int app_survey_anchor_note_ram_roster("
     "void app_survey_anchor_clear_ram_roster(" hia_roster)
 hia_test_extract_span("${hia_survey_source}" "int app_survey_anchor_apply_control("
-    "bool app_survey_anchor_active(void)" hia_control)
+    "bool app_survey_anchor_rx_continuous(void)" hia_control)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hia_survey_production.inc"
     "${hia_lifecycle}\n${hia_roster_identity}\n${hia_roster}\n${hia_control}")
 add_executable(test_app_hia_table_survey tests/test_app_hia_table_survey.c)
@@ -1044,6 +1062,58 @@ target_link_libraries(test_app_hia_table_survey PRIVATE core)
 add_test(NAME app_hia_table_survey COMMAND test_app_hia_table_survey)
 set_tests_properties(app_hia_table_survey PROPERTIES
     LABELS "mesh_integration;hardware_models;production_seam;enumeration;survey")
+
+# Exercise the actual synchronous probe and rebroadcast worker, including
+# nested scratch release, against a scheduled click and nonzero RF/backoff.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    app/src/app_config.h app/src/app_mesh_report_direct_gateway.inc
+    app/src/app_mesh_report_coordination.inc)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_config.h" probe_config_source)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_direct_gateway.inc" probe_direct_source)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_coordination.inc" probe_coordination_source)
+hia_test_extract_span("${c5_report_source}" "enum mesh_click_preempt_request_state {"
+    "BUILD_ASSERT(sizeof(struct mesh_click_preempt_request)" probe_click_state)
+hia_test_extract_span("${c5_report_source}" "struct mesh_route_capture_identity {"
+    "static int mesh_listen_for_route_reply(" probe_capture_state)
+hia_test_extract_span("${c5_route_control_source}" "static bool mesh_payload_find_u64("
+    "\n#endif" probe_payload_u64)
+hia_test_extract_span("${c5_route_control_source}" "static bool mesh_route_capture_find_u32("
+    "static bool mesh_route_capture_find_u16(" probe_payload_u32)
+hia_test_extract_span("${c5_route_control_source}" "static bool mesh_route_capture_identity_from_request("
+    "static int mesh_listen_for_route_reply(" probe_capture_identity)
+string(REGEX MATCH "#define REPORT_TX_RETRY_DELAY_MS [^\n]+" probe_retry_delay "${probe_config_source}")
+string(REGEX MATCH "#define MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS [^\n]+" probe_turnaround "${probe_config_source}")
+if(NOT probe_retry_delay OR NOT probe_turnaround)
+    message(FATAL_ERROR "Direct probe harness timing extraction failed")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/direct_probe_preempt_helpers.inc"
+    "${probe_click_state}\n${probe_capture_state}\n${probe_retry_delay}\n${probe_turnaround}\n${probe_payload_u64}\n${probe_payload_u32}\n${probe_capture_identity}")
+hia_test_extract_span("${probe_coordination_source}" "static bool mesh_click_preempt_boundary_requested(void)\n{"
+    "/* This work item" probe_backoff)
+hia_test_extract_span("${probe_direct_source}" "static int mesh_try_direct_gateway_route_probe("
+    "static bool mesh_route_request_defer_rf_busy(" probe_loop)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/direct_probe_preempt_loop.inc"
+    "${probe_backoff}\n${probe_loop}")
+hia_test_extract_span("${c5_delivery_source}" "static bool mesh_execute_route_request_action("
+    "static bool mesh_route_request_action_same_identity(" probe_execute)
+hia_test_extract_span("${c5_delivery_source}" "static void mesh_route_request_action_work_handler("
+    "\n#else\nstatic bool mesh_schedule_route_request_action(" probe_worker)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/direct_probe_preempt_worker.inc"
+    "${probe_execute}\n${probe_worker}")
+add_executable(test_app_mesh_direct_probe_click_preempt
+    tests/test_app_mesh_direct_probe_click_preempt.c
+    app/src/app_mesh_direct_gateway_retry.c
+    app/src/app_mesh_route_request_policy.c)
+target_include_directories(test_app_mesh_direct_probe_click_preempt PRIVATE
+    app/src ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_app_mesh_direct_probe_click_preempt PRIVATE core)
+target_compile_options(test_app_mesh_direct_probe_click_preempt PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+add_test(NAME app_mesh_direct_probe_click_preempt
+    COMMAND test_app_mesh_direct_probe_click_preempt)
+set_tests_properties(app_mesh_direct_probe_click_preempt PROPERTIES
+    LABELS "mesh_integration;hardware_models;production_seam;click;radio;workqueue")
+
 # Compile complete production recovery boundaries with fake hardware callbacks.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS app/src/app_watchdog.c)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_watchdog.c" recovery_watchdog_source)
@@ -1087,7 +1157,7 @@ set_tests_properties(gateway_compact_rx_recovery PROPERTIES TIMEOUT 30
 hia_test_extract_span("${hia_survey_source}" "enum app_survey_gateway_stage {"
     "enum app_survey_anchor_action {" publication_stage)
 hia_test_extract_span("${hia_survey_source}" "struct app_survey_gateway_state {"
-    "struct app_survey_click_capture {" publication_state)
+    "struct app_survey_anchor_state {" publication_state)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/survey_publication_state.inc" "${publication_stage}\n${publication_state}")
 hia_test_extract_span("${hia_survey_source}" "static bool response_bit_get("
     "static bool signal_bit_get(" publication_result_bit)
@@ -1259,6 +1329,32 @@ add_test(NAME app_mesh_ch9_ack COMMAND test_app_mesh_ch9_ack)
 set_tests_properties(app_mesh_ch9_ack PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;preemption")
 
+
+# Compile the actual port against one narrow hardware surface. Generated
+# include shims keep the production source and its platform includes intact.
+set(dwm_spi_model_includes "${CMAKE_CURRENT_BINARY_DIR}/dwm3000_port_spi_model")
+foreach(header IN ITEMS
+    hal/nrf_gpio.h hal/nrf_spim.h zephyr/devicetree.h zephyr/device.h
+    zephyr/drivers/gpio.h zephyr/drivers/spi.h zephyr/kernel.h
+    zephyr/logging/log.h zephyr/pm/device.h
+    zephyr/dt-bindings/pinctrl/nrf-pinctrl.h zephyr/sys/atomic.h)
+    get_filename_component(header_directory "${dwm_spi_model_includes}/${header}" DIRECTORY)
+    file(MAKE_DIRECTORY "${header_directory}")
+    file(WRITE "${dwm_spi_model_includes}/${header}"
+        "#include \"dwm3000_port_spi_model.h\"\n")
+endforeach()
+add_executable(test_dwm3000_port_spi_model
+    tests/mesh_integration/test_dwm3000_port_spi_model.c
+    app/src/dwm3000_port.c)
+target_include_directories(test_dwm3000_port_spi_model PRIVATE
+    app/src tests/mesh_integration "${dwm_spi_model_includes}")
+target_compile_definitions(test_dwm3000_port_spi_model PRIVATE CONFIG_PM_DEVICE=1)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_dwm3000_port_spi_model PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME dwm3000_port_spi_model COMMAND test_dwm3000_port_spi_model)
+set_tests_properties(dwm3000_port_spi_model PROPERTIES
+    LABELS "mesh_integration;hardware_models;radio;timing;power")
 
 add_test(NAME dwm3000_receive_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -1724,6 +1820,56 @@ target_include_directories(test_dwm3000_receive_error_boundary SYSTEM PRIVATE
 add_test(NAME dwm3000_receive_error_boundary COMMAND test_dwm3000_receive_error_boundary)
 set_tests_properties(dwm3000_receive_error_boundary PROPERTIES
     LABELS "mesh_integration;hardware_models;radio;production_seam")
+
+# Exercise the actual DS-TWR filtering loops, including the responder's fixed
+# delayed RESPONSE edge. Stop after FINAL acceptance, before ranging math and
+# diagnostic/report transmission; only physical RX and SPI are faked.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    app/src/dwm3000_driver.c app/src/dwm3000_driver_ranging_frames.inc
+    app/src/dwm3000_driver_ds_twr.inc)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/dwm3000_driver.c" range_filter_driver)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/dwm3000_driver_ranging_frames.inc" range_filter_frames)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/dwm3000_driver_ds_twr.inc" range_filter_ds_twr)
+hia_test_extract_span("${range_filter_driver}"
+    "#ifndef DWM3000_DS_TWR_REPLY_DLY_UUS" "#ifndef DWM3000_REPLY_TIMING_TOLERANCE_US" range_filter_constants)
+hia_test_extract_span("${rx_error_radio}"
+    "static uint16_t short_addr_from_id(" "static uint64_t timestamp_to_u64(" range_filter_short_addr)
+hia_test_extract_span("${rx_error_radio}"
+    "static uint32_t delayed_tx_time_from_rx_reference(" "static int validate_driver_reply_timing(" range_filter_timing)
+hia_test_extract_span("${rx_error_radio}"
+    "static uint32_t ds_twr_rx_wait_timeout_ms(" "static int ensure_local_data(" range_filter_wait)
+hia_test_extract_span("${rx_error_radio}"
+    "static enum range_status status_to_range_status(" "static bool rx_status_has_activity(" range_filter_status)
+hia_test_extract_span("${rx_error_radio}"
+    "static uint32_t remaining_timeout_ms(" "#if defined(CONFIG_IMEC_ML_ANCHOR)" range_filter_deadline)
+hia_test_extract_span("${rx_error_radio}"
+    "static size_t payload_len_without_fcs(" "static int decode_clicker_diag_frame(" range_filter_decoders)
+hia_test_extract_span("${rx_error_radio}"
+    "static bool poll_targets_anchor(" "static bool range_flags_valid(" range_filter_poll_identity)
+hia_test_extract_span("${range_filter_frames}"
+    "static void result_set_request_metadata(" "static int validate_range_request(" range_filter_metadata)
+hia_test_extract_span("${range_filter_frames}"
+    "static int range_rearm_ignored_frame(" "static bool clicker_diag_matches_poll(" range_filter_receivers)
+hia_test_extract_span("${range_filter_ds_twr}"
+    "static int responder_poll_once(" "    if (validate_driver_reply_timing(" range_filter_responder)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/dwm3000_range_filter_helpers.inc"
+    "${range_filter_constants}\n${range_filter_short_addr}\n${range_filter_timing}\n${range_filter_wait}\n${range_filter_status}\n${range_filter_deadline}\n${range_filter_decoders}\n${range_filter_poll_identity}\n${range_filter_metadata}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/dwm3000_range_filter_receivers.inc"
+    "${range_filter_receivers}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/dwm3000_range_filter_responder.inc"
+    "${range_filter_responder}\n    return 0;\n}\n")
+add_executable(test_dwm3000_range_receive_filter
+    tests/test_dwm3000_range_receive_filter.c
+    app/src/dwm3000_driver_handler_contract.c)
+target_include_directories(test_dwm3000_range_receive_filter PRIVATE
+    app/src ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(test_dwm3000_range_receive_filter SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../dwm3000 examples and sdk/decadriver")
+target_link_libraries(test_dwm3000_range_receive_filter PRIVATE core)
+target_compile_options(test_dwm3000_range_receive_filter PRIVATE -Wall -Wextra -Werror -pedantic)
+add_test(NAME dwm3000_range_receive_filter COMMAND test_dwm3000_range_receive_filter)
+set_tests_properties(dwm3000_range_receive_filter PROPERTIES
+    LABELS "mesh_integration;hardware_models;radio;ds_twr;survey;production_seam")
 
 add_executable(test_dwm3000_driver_handler_boundary
     tests/mesh_integration/test_dwm3000_driver_handler_boundary.c

@@ -1,0 +1,100 @@
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connecting", "elapsed_s": 0.1, "error": "", "status": "Disconnected", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: connected E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 2.101, "error": "", "status": "Connected to gateway 0x9999888877776666; packet notifications active", "survey_phase": "idle"}
+GUI_ONE_SURVEY_STARTED gateway=0x9999888877776666
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 2.202, "error": "", "status": "Refreshing mesh routes before anchor enumeration and discovery-slot assignment...", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for Survey Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+HOST_PACKET gateway_event stage=2 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 2.302, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=1", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 2.402, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=2", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 2.502, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=4 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=2/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 6.703, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=5", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 6.803, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET command=FORCE_REDISCOVERY status=0 (OK) reason=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 24.808, "error": "", "status": "Received COMMAND_RESULT seq=2", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=12 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=2/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 24.908, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=6", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.008, "error": "", "status": "BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=2 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.108, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=7", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.208, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=8", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.308, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=9", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=6 status=0 reason=0 anchor=0xc1c2306a5138ab2d previous=0xc1c2306a5138ab2d hop=1 slot=255 progress=1/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.408, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=10", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=6 status=0 reason=0 anchor=0x0f6d3a3bdac0f858 previous=0x0f6d3a3bdac0f858 hop=1 slot=255 progress=2/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.508, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=11", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 25.608, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=6 status=0 reason=0 anchor=0xc1c2306a5138ab2d previous=0x0000000000000000 hop=1 slot=0 progress=1/2 success=1 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 26.108, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=14", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET command=ASSIGN_DISCOVERY_SLOTS status=0 (OK) reason=2
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 26.208, "error": "", "status": "Received COMMAND_RESULT seq=1", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=6 status=0 reason=0 anchor=0x0f6d3a3bdac0f858 previous=0x0000000000000000 hop=1 slot=1 progress=2/2 success=1 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 26.308, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=15", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=7 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=2/2 success=2 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 26.408, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=16", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=8 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=2/2 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 26.508, "error": "", "status": "Received GATEWAY_COMMAND_EVENT seq=17", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=12 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=2/2 success=2 failure=0 duplicates=0
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 26.609, "error": "", "status": "Enumeration complete; starting scheduled neighbor collection...", "survey_phase": "neighbors"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 26.709, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "neighbors"}
+GUI_LOG level=tx message=BLE write complete for Start neighbor survey: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 26.809, "error": "", "status": "BLE write complete for Start neighbor survey: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT", "survey_phase": "neighbors"}
+HOST_PACKET command=SURVEY_START status=0 (OK) reason=0
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 27.009, "error": "", "status": "Received COMMAND_RESULT seq=3", "survey_phase": "neighbors"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 27.109, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "neighbors"}
+HOST_PACKET survey=37224467 neighbor_reports=2 occupied_slots=0,1 report_slots=0,1 heard_by_slot=0:1;1:0 partial=0x0000
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.41, "error": "", "status": "Submitting survey batch 1/1 with 1 pair...", "survey_phase": "submitting-plan"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET survey=37224467 signal_pairs=1
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.51, "error": "", "status": "Received SURVEY_EVENT seq=2", "survey_phase": "submitting-plan"}
+GUI_LOG level=tx message=BLE write complete for Submit survey ranging plan: 98 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.61, "error": "", "status": "BLE write complete for Submit survey ranging plan: 98 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT", "survey_phase": "submitting-plan"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET command=SURVEY_PLAN status=0 (OK) reason=0
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.711, "error": "", "status": "Received COMMAND_RESULT seq=4", "survey_phase": "submitting-plan"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET survey=37224467 pairs=1 waves=1 skipped=0
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.811, "error": "", "status": "Received SURVEY_EVENT seq=3", "survey_phase": "ranging"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.911, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "ranging"}
+HOST_PACKET survey=37224467 kind=3 results=1 usable=1 partial=0x0000
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 40.612, "error": "", "status": "Received SURVEY_EVENT seq=4", "survey_phase": "ranging"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 40.712, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "ranging"}
+HOST_PACKET survey=37224467 kind=3 results=1 usable=1 partial=0x0000
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 43.813, "error": "", "status": "Received SURVEY_EVENT seq=5", "survey_phase": "ranging"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 43.913, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "ranging"}
+GUI_LOG level=event message=Survey complete: 1/1 pairs have usable median ranges
+HOST_PACKET survey=37224467 kind=4 results=1 usable=1 partial=0x0000
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 47.114, "error": "", "status": "Received SURVEY_EVENT seq=6", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 47.214, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "idle"}
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 49.014, "error": "", "status": "Received CLICK_REPORT seq=45", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 49.215, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "idle"}
+GUI_FINAL {"command_status": {"12": 0, "260": 0, "261": 0, "262": 0}, "completed_batches": [], "connection": "connected", "elapsed_s": 52.115, "error": "", "exit_reason": "survey-complete", "generation": 37224467, "neighbor_reports": 2, "pairs": [[1, 0]], "partial_reasons": 0, "plan_command_successes": 1, "planned_pairs_by_batch": {"0": 1}, "results": {"0": {"median_mm": 897, "success_count": 4, "usable": true}}, "signal_measurements": 1, "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "success": false}

@@ -456,7 +456,7 @@ static bool mesh_queue_from_frame_at_internal(
     if (frame == NULL || frame_len == 0u) {
         return false;
     }
-    if (uwb_mesh_frame_decode(frame,
+    ret = uwb_mesh_frame_decode(frame,
                               frame_len,
                               NETWORK_ID,
                               DEVICE_ID,
@@ -464,12 +464,17 @@ static bool mesh_queue_from_frame_at_internal(
                               &context.packet,
                               context.payload,
                               sizeof(context.payload),
-                              &context.payload_len) != PROTO_OK) {
+                              &context.payload_len);
+    if (ret != PROTO_OK) {
         if (mesh_gateway_route_test_role()) {
-            status_debug_printf("DBG_GATEWAY_RX_DECODE_FAIL ch=%u len=%u q=%u\n",
+            status_debug_printf("DBG_GATEWAY_RX_DECODE_FAIL ch=%u len=%u q=%u ret=%d prev=0x%llx next=0x%llx\n",
                                 radio_channel,
                                 (unsigned int)frame_len,
-                                link_quality);
+                                link_quality, ret,
+                                (unsigned long long)(frame_len >= 25u ?
+                                    proto_get_u64_le(&frame[7]) : 0u),
+                                (unsigned long long)(frame_len >= 25u ?
+                                    proto_get_u64_le(&frame[15]) : 0u));
         }
         return false;
     }
@@ -490,6 +495,15 @@ static bool mesh_queue_from_frame_at_internal(
                 (unsigned long long)context.packet.src_id,
                 (unsigned long long)context.previous_hop_id);
         }
+        return false;
+    }
+    if (DEVICE_ROLE == ROLE_ANCHOR &&
+        ((context.packet.msg_type == MSG_COMMAND &&
+          !app_survey_anchor_command_allowed(&context.packet,
+                                              context.payload,
+                                              context.payload_len)) ||
+         (context.packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
+          app_survey_anchor_active()))) {
         return false;
     }
     if (context.packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
@@ -1204,6 +1218,9 @@ static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
 
     if (click_priority_out != NULL) {
         *click_priority_out = false;
+    }
+    if (DEVICE_ROLE == ROLE_ANCHOR && app_survey_anchor_active()) {
+        return false;
     }
     if (!mesh_decode_channel5_wake_claim(frame,
                                          frame_len,

@@ -171,7 +171,8 @@ _Static_assert(MESH_RELAY_RETRY_BACKOFF_MAX_MS >=
  * a 1.5 s route-selection window. The following depth cannot start until
  * that complete 4.5 s block has closed. */
 #define MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS 2500u
-#define MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS 500u
+#define MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS \
+    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS
 #define MESH_GATEWAY_ROUTE_ACTIVATION_ENVELOPE_MS \
     (MESH_GATEWAY_ROUTE_ACTIVATION_START_WINDOW_MS + \
      MESH_GATEWAY_ROUTE_ACTIVATION_TRAIN_MS)
@@ -1042,6 +1043,12 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     const struct mesh_relay *relay,
     uint64_t target_id);
+/* Publish the reverse edge of an accepted compact enumeration record.
+ * The caller must validate the active enumeration and physical child first;
+ * remaining_hops is the record's gateway depth minus the local depth. */
+int mesh_relay_note_enumeration_downlink(struct mesh_relay *relay,
+    uint64_t target_id, uint64_t child_id, uint8_t remaining_hops,
+    uint32_t now_ms);
 /* Select only among paths proven by the newest fully handled Here-I-Am.
  * This is the operation-scoped parent set used by enumeration and survey;
  * older same-epoch routes remain available to ordinary delivery failover but

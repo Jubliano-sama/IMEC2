@@ -10,6 +10,8 @@ from .protocol import (
     CMD_CLEAR_ROUTE,
     CMD_FORCE_REDISCOVERY,
     CMD_REBOOT,
+    CMD_IDENTIFY_ANCHOR,
+    CMD_READ_ANCHOR_BATTERY,
     CMD_SURVEY_CANCEL,
     CMD_SURVEY_GET_STATUS,
     CMD_SURVEY_PLAN,
@@ -34,6 +36,10 @@ PREFLIGHT_EXEMPT_COMMAND_IDS = frozenset(
         CMD_SURVEY_PLAN,
         CMD_SURVEY_CANCEL,
         CMD_SURVEY_GET_STATUS,
+        # These require an already completed enumeration in the GUI and
+        # gateway, so they use its known path without another HIA wave.
+        CMD_IDENTIFY_ANCHOR,
+        CMD_READ_ANCHOR_BATTERY,
     }
 )
 ROUTE_REFRESH_DEFAULT_BUDGET_MS = 120_000
@@ -230,6 +236,8 @@ class GatewayCommandOrchestrator:
         current = self.current
         if current is None or not event.terminal:
             return GatewayCommandTransition()
+        if current.command_id in (CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY) and event.command_status == 0:
+            return GatewayCommandTransition()
         if (
             event.command_kind != current.command_kind
             or event.command_id != current.command_id
@@ -253,6 +261,7 @@ class GatewayCommandOrchestrator:
         host_session_id: int,
         host_sequence: int,
         command_status: int,
+        anchor_result_validated: bool = False,
         now: float | None = None,
         received_at: float | None = None,
     ) -> GatewayCommandTransition:
@@ -262,12 +271,16 @@ class GatewayCommandOrchestrator:
             if expired.matched:
                 return expired
         current = self.current
+        if current is not None and current.command_id in (CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY):
+            if not anchor_result_validated:
+                return GatewayCommandTransition()
         # Successful command results can precede the typed lifecycle terminal,
-        # so only the local reboot command treats its result as terminal.  A
-        # reboot has no post-reset typed event; its following BLE disconnect is
-        # the physical completion proof.
+        # so local reboot and validated anchor actions treat their results as
+        # terminal. Reboot has no post-reset typed event; its following BLE
+        # disconnect is the physical completion proof.
         if current is None or (
-            command_status == 0 and current.command_id != CMD_REBOOT
+            command_status == 0 and current.command_id not in
+            (CMD_REBOOT, CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY)
         ):
             return GatewayCommandTransition()
         if (

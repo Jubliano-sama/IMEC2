@@ -1,8 +1,8 @@
 # IMEC2 Gateway BLE Console
 
-Isolated desktop test GUI for the connected IMEC gateway BLE edge. It scans,
+Desktop GUI and host processing application for the connected IMEC gateway BLE edge. It scans,
 connects, reads the gateway identity, subscribes to binary packet reports,
-sends the three proven gateway workflows, and inspects live packets without
+orchestrates the supported gateway workflows, and inspects live packets without
 substituting synthetic results when BLE or protocol operations fail.
 
 ## Setup
@@ -33,7 +33,7 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    success.
 4. Use `Run Survey` for the complete current workflow. The GUI runs a fresh
    RAM-only, unknown-roster survey enumeration whose Here-I-Am tells anchors to
-   retain Channel-5 RX after END. Survey START consumes that exact 65-second
+   retain Channel-5 RX after the authoritative TABLE. Survey START consumes that exact bounded
    handoff, so START, PLAN, and CANCEL use no survey wake train. The GUI binds
    the exact returned slot map to the new survey generation, submits the mutual-pair plan, shows every command
    and pair transition live, and solves the usable distances without blocking
@@ -53,11 +53,11 @@ session; use **Unlock selected** or **Unlock all** to release them. Their
 measurements still contribute to the reported fit errors. Frame and lock
 controls pause while a geometry job is running.
 
-For every ordinary command, the GUI freezes the command and its runtime policy,
+For ordinary commands that require route preflight, the GUI freezes the command and its runtime policy,
 sends a separately correlated Here-I-Am, waits for its typed successful
 terminal, and only then sends the frozen target. Failure, timeout, or disconnect
 drops the unsent target. Manual Here-I-Am and immediate recovery/liveness
-commands are exempt so preflight cannot recurse or delay recovery.
+commands are exempt so preflight cannot recurse or delay recovery. The identification/battery actions instead require a completed current-session enumeration and reuse its saved per-anchor depth without another preflight.
 
 All command controls remain disabled until the read-only identity characteristic
 returns the connected gateway firmware `DEVICE_ID`. The GUI clears that identity
@@ -166,17 +166,17 @@ acknowledgement or NVS-backed journal.
   soon as every expected unique claim arrives. Leave it blank when the roster
   is unknown so the gateway waits the complete conservative multi-hop horizon.
   The gateway floods the resulting
-  table and commits the ACKed subset; a nonempty useful subset may finish with
-  `COMMAND_OK`, while terminal counters preserve missing claims or ACKs for
-  optional strict qualification. The assigned-anchor count is returned in
+  authoritative TABLE for the frozen responders; reached anchors validate and apply it without
+  a TABLE ACK/ACK_CONFIRM quorum or terminal END wave. `COMMAND_OK` follows the
+  bounded propagation hold and does not prove every physical anchor received TABLE. The assigned-anchor count is returned in
   `REASON`.
 - **Run Survey** chains the current `CMD_SURVEY_START = 0x0105` and
   `CMD_SURVEY_PLAN = 0x0106` controls behind a fresh RAM-only enumeration. Each
   survey enumeration transmits an explicit survey-follows Here-I-Am and an
   unknown expected count, then trusts the exact
   returned roster; during this chain the count box is only a progress/warning
-  hint and a mismatch does not control firmware. Successful END keeps the exact
-  enumerated path listening for 65 seconds; START must consume that matching
+  hint and a mismatch does not control firmware. Successful TABLE admission keeps the exact
+  enumerated path listening for the bounded `SURVEY_ENUMERATION_HANDOFF_HOLD_MS`; START must consume that matching
   handoff and never falls back to a survey wake train. Follow-up passes require
   exactly the same stable anchor IDs, even if their discovery slots change, so
   measurements from different physical rosters cannot be merged. Each
@@ -184,6 +184,10 @@ acknowledgement or NVS-backed journal.
   timeout. The gateway internally retries retryable `COMMAND_BUSY` pressure;
   the GUI does not mistake that backoff for a finished survey. An explicit
   `CMD_SURVEY_CANCEL = 0x0107` remains available after the generation is known.
+
+During an active survey, unrelated command actions are disabled and firmware independently rejects them. Participating anchors ignore clicks, Here-I-Am/enumeration, assignment changes and unrelated commands throughout START, every PLAN batch and result drain. Only controls and result traffic for the active identity remain eligible; matching CANCEL releases ownership. Identification and targeted battery queries are [implemented in the working tree](<../../Documentation/Anchor identification and battery commands.md>); the recorded direct and software-forced depth-two runs each completed six of six actions. Those runs do not establish physical RF isolation or qualify later firmware changes. They require successful enumeration in the current connection session. The GUI retains stable ID, slot and observed hop depth, uses `2 * depth * 12,000 + 5,000` ms as the host deadline (29 s direct, 53 s at depth two; early replies complete immediately), and sends each action without another Here-I-Am or a boot-identity battery pre-read.
+
+The [current Mesh contract](<../../Documentation/Mesh Connected Routing Contract.md>) defines the radio lifecycle. Neighbor discovery uses 1,000 ms stable-slot intervals and compact response records. The GUI owns the complete pair queue and sends bounded PLAN batches of at most 100 pairs; firmware executes scheduled range waves and returns digest-bound response bundles. Old four-round 200 ms discovery and per-pair PREPARE/START documentation is historical.
 
 There is no arbitrary command composer. Although the envelope is extensible,
 firmware applies command-specific destinations, scopes, TLV validation, and

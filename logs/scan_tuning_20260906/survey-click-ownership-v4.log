@@ -1,0 +1,64 @@
+{
+  "protocol_ownership_pass": true,
+  "survey_sample_gate_pass": false,
+  "survey": {
+    "command_status": {
+      "12": 0,
+      "260": 0,
+      "261": 0,
+      "262": 0
+    },
+    "completed_batches": [],
+    "connection": "connected",
+    "elapsed_s": 52.115,
+    "error": "",
+    "exit_reason": "survey-complete",
+    "generation": 37224467,
+    "neighbor_reports": 2,
+    "pairs": [
+      [
+        1,
+        0
+      ]
+    ],
+    "partial_reasons": 0,
+    "plan_command_successes": 1,
+    "planned_pairs_by_batch": {
+      "0": 1
+    },
+    "results": {
+      "0": {
+        "median_mm": 897,
+        "success_count": 4,
+        "usable": true
+      }
+    },
+    "signal_measurements": 1,
+    "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation",
+    "success": false
+  },
+  "intervals": {
+    "anchor_a": {
+      "first_active_at": 214846.770743891,
+      "last_active_at": 214866.260911088,
+      "first_inactive_at": 214866.297945849
+    },
+    "anchor_b": {
+      "first_active_at": 214846.718820624,
+      "last_active_at": 214866.231418779,
+      "first_inactive_at": 214866.260911088
+    }
+  },
+  "click_attempts_without_replies": 9,
+  "post_survey_replies": [
+    {
+      "role": "anchor_a",
+      "after_inactive_s": 1.0090541510144249
+    },
+    {
+      "role": "anchor_b",
+      "after_inactive_s": 1.0490889119973872
+    }
+  ],
+  "plan_deadlines_unchanged": true
+}

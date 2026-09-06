@@ -378,6 +378,8 @@ else()
 endif()
 
 set(IMEC_APP_LOCAL_SOURCES
+    src/app_anchor_actions.c
+    src/app_anchor_action_runtime.c
     src/app_anchor_click_event_runtime.c
     src/app_click_event_sequence.c
     src/app_clicker_event_runtime.c

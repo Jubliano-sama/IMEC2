@@ -2512,6 +2512,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         if (!ack_already_recorded && observed_hop_count != 0u) {
             gateway_discovery_assignment_state.anchor_hop_counts[
                 anchor_index] = observed_hop_count;
+            gateway_discovery_assignment_state.anchor_previous_hop_ids[
+                anchor_index] = previous_hop_id;
         }
         gateway_discovery_assignment_state.ack_mask |=
             UINT64_C(1) << anchor_index;
@@ -2591,6 +2593,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                 response_bit;
             gateway_discovery_assignment_state.anchor_hop_counts[
                 anchor_index] = observed_hop_count;
+            gateway_discovery_assignment_state.anchor_previous_hop_ids[
+                anchor_index] = previous_hop_id;
             event = gateway_observability_event(
                 GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
                 GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
@@ -2637,6 +2641,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
             GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE;
     gateway_discovery_assignment_state.anchor_hop_counts[
         gateway_discovery_assignment_state.claim_count] = observed_hop_count;
+    gateway_discovery_assignment_state.anchor_previous_hop_ids[
+        gateway_discovery_assignment_state.claim_count] = previous_hop_id;
     gateway_discovery_assignment_state.claim_response_mask |=
         UINT64_C(1) << gateway_discovery_assignment_state.claim_count;
     gateway_discovery_assignment_state.claim_count++;
@@ -2701,6 +2707,7 @@ gateway_discovery_assignment_build_table_locked(struct mesh_outbound *outbound)
     ret = discovery_assignment_order_roster_extension(
         gateway_discovery_assignment_state.anchor_ids,
         gateway_discovery_assignment_state.anchor_hop_counts,
+        gateway_discovery_assignment_state.anchor_previous_hop_ids,
         gateway_discovery_assignment_state.claim_count,
         gateway_discovery_assignment_state.prior_anchor_count);
     if (ret == PROTO_OK) {
@@ -4073,10 +4080,12 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
     size_t payload_len)
 {
     struct app_mesh_command_orchestrator *orchestrator;
-    const struct mesh_outbound *outbound;
+    struct mesh_outbound *outbound;
     const struct gateway_command_options *command_options;
     enum command_id command_id = CMD_VENDOR_BASE;
     enum gateway_command_tracking_mode tracking_mode;
+    uint32_t delivery_timeout_ms = GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
+    uint64_t enumerated_next_hop_id = 0u;
     uint16_t fallback_seq = 0u;
     bool sent_now = false;
     int ret;
@@ -4093,6 +4102,40 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         return gateway_route_mesh_host_payload(packet, payload, payload_len);
     }
     (void)gateway_command_extract_id(payload, payload_len, &command_id);
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (app_anchor_action_command(command_id)) {
+        uint32_t epoch;
+        uint8_t hops;
+        bool enumerated = false;
+
+        ret = app_anchor_action_request(payload, payload_len, &epoch, &hops);
+        if (ret == 0 && !gateway_discovery_assignment_state.active &&
+            epoch == gateway_discovery_assignment_state.epoch) {
+            for (size_t i = 0u; i < gateway_discovery_assignment_state.claim_count; i++) {
+                if (gateway_discovery_assignment_state.anchor_ids[i] == packet->dst_id &&
+                    gateway_discovery_assignment_state.anchor_hop_counts[i] == hops &&
+                    gateway_registered_membership_proves_assignment_ack(
+                        epoch, gateway_discovery_assignment_state.table_command_seq,
+                        &gateway_discovery_assignment_state.table_commitment,
+                        packet->dst_id) == 1) {
+                    enumerated = true;
+                    enumerated_next_hop_id =
+                        gateway_discovery_assignment_state.anchor_previous_hop_ids[i];
+                    break;
+                }
+            }
+        }
+        if (!enumerated || !mesh_id_is_unicast(enumerated_next_hop_id) ||
+            enumerated_next_hop_id == DEVICE_ID) {
+            gateway_emit_host_command_result(packet, command_id,
+                ret < 0 ? COMMAND_MALFORMED_PAYLOAD : COMMAND_INVALID_STATE,
+                ret < 0 ? EINVAL : ESTALE);
+            return -EINVAL;
+        }
+        delivery_timeout_ms = app_anchor_action_delivery_ms(hops);
+    }
+#endif
 
     if (packet->seq == 0u) {
         struct proto_packet terminal_command;
@@ -4128,6 +4171,10 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         return mesh_errno_from_proto(ret);
     }
     outbound = &orchestrator->gateway_flow.outbound;
+    if (enumerated_next_hop_id != 0u) {
+        outbound->next_hop_id = enumerated_next_hop_id;
+        outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    }
     command_options = &orchestrator->gateway_flow.options;
     command_id = orchestrator->gateway_flow.command_id;
     tracking_mode = orchestrator->gateway_flow.tracking_mode;
@@ -4145,7 +4192,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         ret = gateway_begin_command_result_wait_for(
             outbound,
             command_id,
-            GATEWAY_COMMAND_RESULT_ROUND_TRIP_TIMEOUT_MS);
+            2u * delivery_timeout_ms);
         if (ret < 0) {
             LOG_WRN("gateway command result tracker busy: cmd=0x%04x dst=0x%016llx ret=%d",
                     (unsigned int)command_id,
@@ -4180,10 +4227,18 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         if (ret == 0 && sent_now) {
             mesh_relay_note_tx_sent(&mesh_runtime, outbound, k_uptime_get_32());
         }
+    } else if (enumerated_next_hop_id != 0u) {
+        /* A gateway-origin command needs the existing low-duty wake/control
+         * train, not an uplink waiting for its own gateway ACK. Its exact
+         * anchor result is independently owned by the tracker above. */
+        ret = app_node_comm_submit_delivery(outbound,
+            NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+            (uint64_t)k_uptime_get() + delivery_timeout_ms,
+            ((uint32_t)command_id << 16) | outbound->packet.seq, NULL);
     } else {
         ret = app_node_comm_submit_protocol_response(
             outbound,
-            (uint64_t)k_uptime_get() + GATEWAY_COMMAND_RESULT_TIMEOUT_MS,
+            (uint64_t)k_uptime_get() + delivery_timeout_ms,
             ((uint32_t)command_id << 16) | outbound->packet.seq,
             NULL);
     }

@@ -4,6 +4,12 @@ This test target runs the contemporary platform-independent mesh code against a
 deterministic discrete-event radio model. It is intended to catch timing,
 ownership, retry, and forwarding regressions before a multi-board flash cycle.
 
+## Coverage scope
+
+This suite includes current production paths, retained Channel-9 regression models and explicitly named composition/future-facade seams. A legacy module or passing fixture is not evidence that production reports still use Channel 9. The [Mesh contract](<../../../Documentation/Mesh Connected Routing Contract.md>) defines current C5 delivery and exclusive survey ownership. Click-preemption tests apply only outside an active survey; active surveys ignore click and unrelated command traffic.
+
+Build the native tree before running labels, and run `mesh_integration` and `hardware_models` sequentially because some fixtures share generated build directories. Model full-frame RX containment, collisions and nonzero SPI/BLE/watchdog costs. Hardware programming, actual RF topology and host receipt qualification remain separate from these tests.
+
 ## What is real firmware code
 
 The scenarios call the production-candidate native modules directly:
@@ -81,9 +87,13 @@ no direct-delivery fallback.
 - a safe-boundary runtime ordering check: gateway command, local click, event
   repair, then transit; plus a DS-TWR-owned receiver causing a dropped transit
   opportunity and origin retry on the same negotiated route;
-- a 500 ms channel-5 wake train over four scan phases. The real 10 ms / 380 ms
-  low-duty schedule must see enough preamble to extend that same RX operation
-  and accept a valid first-attempt wake claim;
+- a 445 ms ordinary/click wake train and a 500 ms combined activation train
+  across scan phases, including every microsecond phase and acquisition
+  boundaries for activation. The continuous 5 ms / 380 ms low-duty schedule
+  must see a complete PAC16 acquisition interval, extend that same RX operation,
+  and accept a complete first-attempt wake claim. The activation regression
+  exposes the 3 ms scan's blind phases at the measured 8,253 us RF cadence and
+  checks 5 ms against the conservative 9,037 us cadence;
 - 50 deterministic anchor claims, one extended-packet assignment table,
   one-to-eight-hop response staggering, forced decoded-claim/ACK collisions,
   four bounded retry rounds, table retransmission, and cumulative ACK

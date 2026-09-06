@@ -155,6 +155,8 @@ int app_node_comm_retry_identity_backoff_ms(
     uint32_t *delay_ms_out);
 int app_node_comm_queue_local_delivery(
     const app_node_comm_envelope *envelope);
+/* A NULL handle_out lets the service reap the transport terminal. With a
+ * handle, the caller owns collecting it. Neither mode proves remote action. */
 int app_node_comm_submit_delivery(
     const app_node_comm_envelope *envelope,
     enum node_comm_delivery_profile profile,

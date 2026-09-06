@@ -438,6 +438,62 @@ static int mesh_busy_payload_validate(const struct proto_packet *packet,
     return PROTO_OK;
 }
 
+/* Targeted service replies carry an observation boot counter, not a
+ * collection custody identity. Keep their exact schema separate so adding
+ * that counter cannot accidentally admit partial collection identities. */
+static int mesh_anchor_action_result_validate(const struct proto_packet *packet,
+    const uint8_t *payload, size_t payload_len, uint16_t command_id,
+    uint16_t status)
+{
+    static const struct mesh_exact_tlv_rule rules[] = {
+        {TLV_COMMAND_ID, sizeof(uint16_t)},
+        {TLV_COMMAND_STATUS, sizeof(uint16_t)},
+        {TLV_REASON, sizeof(uint8_t)},
+        {TLV_ANCHOR_ID, sizeof(uint64_t)},
+        {TLV_DISCOVERY_ASSIGNMENT_EPOCH, sizeof(uint32_t)},
+        {TLV_NODE_BOOT_COUNTER, sizeof(uint32_t)},
+        {TLV_TIMESTAMP_MS, sizeof(uint64_t)},
+        {TLV_BATTERY_MV, sizeof(uint16_t)},
+        {TLV_DURATION_MS, sizeof(uint32_t)},
+    };
+    uint32_t expected = (UINT32_C(1) << 7u) - 1u;
+    uint32_t seen = 0u;
+    const uint8_t *value;
+    uint8_t length;
+
+    if (status == COMMAND_OK) {
+        expected |= UINT32_C(1) <<
+            (command_id == CMD_READ_ANCHOR_BATTERY ? 7u : 8u);
+    }
+    if (mesh_exact_tlv_set_validate(payload, payload_len, rules,
+            sizeof(rules) / sizeof(rules[0]), expected, &seen) != PROTO_OK ||
+        seen != expected) {
+        return PROTO_ERR_MALFORMED;
+    }
+    (void)tlv_find_unique(payload, payload_len, TLV_ANCHOR_ID, &value, &length);
+    if (proto_get_u64_le(value) != packet->src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    (void)tlv_find_unique(payload, payload_len,
+        TLV_DISCOVERY_ASSIGNMENT_EPOCH, &value, &length);
+    if (proto_get_u32_le(value) == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    (void)tlv_find_unique(payload, payload_len,
+        TLV_NODE_BOOT_COUNTER, &value, &length);
+    if (proto_get_u32_le(value) == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (status == COMMAND_OK && command_id == CMD_IDENTIFY_ANCHOR) {
+        (void)tlv_find_unique(payload, payload_len,
+            TLV_DURATION_MS, &value, &length);
+        if (proto_get_u32_le(value) != ANCHOR_IDENTIFY_DURATION_MS) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+    return PROTO_OK;
+}
+
 static int mesh_command_result_payload_validate(
     const struct proto_packet *packet,
     const uint8_t *payload,
@@ -456,6 +512,8 @@ static int mesh_command_result_payload_validate(
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
     size_t identity_fields = 0u;
+    uint16_t command_id;
+    uint16_t status;
     int ret;
 
     ret = tlv_find_unique(payload,
@@ -467,6 +525,7 @@ static int mesh_command_result_payload_validate(
         proto_get_u16_le(value) == 0u) {
         return PROTO_ERR_MALFORMED;
     }
+    command_id = proto_get_u16_le(value);
     ret = tlv_find_unique(payload,
                           payload_len,
                           TLV_COMMAND_STATUS,
@@ -476,6 +535,7 @@ static int mesh_command_result_payload_validate(
         proto_get_u16_le(value) > COMMAND_INTERNAL_ERROR) {
         return PROTO_ERR_MALFORMED;
     }
+    status = proto_get_u16_le(value);
     ret = tlv_find_unique(payload,
                           payload_len,
                           TLV_REASON,
@@ -483,6 +543,12 @@ static int mesh_command_result_payload_validate(
                           &value_len);
     if (ret != PROTO_OK || value_len != sizeof(uint8_t)) {
         return PROTO_ERR_MALFORMED;
+    }
+
+    if (command_id == CMD_IDENTIFY_ANCHOR ||
+        command_id == CMD_READ_ANCHOR_BATTERY) {
+        return mesh_anchor_action_result_validate(packet, payload, payload_len,
+                                                   command_id, status);
     }
 
     for (size_t i = 0u; i < sizeof(identity_types); i++) {

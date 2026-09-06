@@ -82,7 +82,7 @@ BUILD_ASSERT(
 #endif
 
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
-    .wake_adv_ms = WAKE_ADV_MS,
+    .wake_adv_ms = MESH_RADIO_WAKE_TRAIN_MS,
     .max_politeness_wait_ms = MAX_POLITENESS_WAIT_MS,
     .polite_sample_rx_ms = UWB_POLITE_SAMPLE_RX_MS,
     .polite_required_quiet_samples = UWB_POLITE_REQUIRED_QUIET_SAMPLES,
@@ -93,7 +93,7 @@ static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config 
 };
 
 static const struct app_clicker_wake_train_config clicker_wake_train_config = {
-    .wake_adv_ms = WAKE_ADV_MS,
+    .wake_adv_ms = MESH_RADIO_WAKE_TRAIN_MS,
     .post_wake_claimed_duration_ms =
         UWB_CLICK_POST_WAKE_CLAIMED_DURATION_MS,
     .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
@@ -783,6 +783,9 @@ static int clicker_send_wake_claim_train_until(
         size_t frame_len = 0u;
         int64_t close_ms;
         uint16_t sent_count = 0u;
+        uint32_t train_started_cycles = 0u;
+        uint32_t last_send_started_cycles = 0u;
+        uint32_t max_send_interval_us = 0u;
         bool c5_activity = false;
         const char *activity_phase = NULL;
 
@@ -840,6 +843,7 @@ static int clicker_send_wake_claim_train_until(
         }
 
         close_ms = k_uptime_get() + config->wake_adv_ms;
+        train_started_cycles = k_cycle_get_32();
         while (k_uptime_get() < close_ms) {
             struct uwb_wake_claim_frame claim;
             int64_t remaining_ms = close_ms - k_uptime_get();
@@ -890,6 +894,13 @@ static int clicker_send_wake_claim_train_until(
                 ret = -ETIMEDOUT;
                 break;
             }
+            uint32_t send_started_cycles = k_cycle_get_32();
+            if (sent_count > 0u) {
+                uint32_t interval_us = (uint32_t)k_cyc_to_us_floor64(
+                    (uint32_t)(send_started_cycles - last_send_started_cycles));
+                max_send_interval_us = MAX(max_send_interval_us, interval_us);
+            }
+            last_send_started_cycles = send_started_cycles;
             ret = dwm3000_driver_send_frame(frame,
                                             frame_len,
                                             config->control_tx_timeout_ms);
@@ -919,6 +930,11 @@ static int clicker_send_wake_claim_train_until(
             }
         }
 
+        status_debug_printf("DBG_WAKE_TRAIN_TIMING sent=%u duration_us=%u max_interval_us=%u\n",
+                            sent_count,
+                            (unsigned int)k_cyc_to_us_floor64(
+                                (uint32_t)(k_cycle_get_32() - train_started_cycles)),
+                            max_send_interval_us);
         if (ret >= 0 && sent_count > 0u) {
             if (!app_wake_train_deadline_fits(
                     k_uptime_get(),
@@ -2230,7 +2246,7 @@ int app_clicker_run_normal_click(bool *anchor_observed)
 
     LOG_INF("normal click started on event/state path: event_seq=%u wake_ms=%u max_attempts=%u min_unique_anchors=%u samples_per_anchor=%u",
             event_seq,
-            WAKE_ADV_MS,
+            MESH_RADIO_WAKE_TRAIN_MS,
             MAX_WAKE_ATTEMPTS,
             config.min_anchor_count,
             config.samples_per_anchor);

@@ -78,7 +78,8 @@ extern "C" {
       OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
      MESH_ENUMERATION_RELAY_COPY_TAIL_MS)
 #define DISCOVERY_ASSIGNMENT_ACTIVATION_RELAY_HOP_MAX_MS \
-    (MESH_RADIO_CONTROL_RELAY_WAKE_ENVELOPE_MS + \
+    (MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS + \
+     MESH_RADIO_EVENT_RETUNE_GUARD_MS + \
      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS 150u
 #define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS 2000u
@@ -269,10 +270,12 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
 /*
  * Preserve the durable roster prefix (and therefore its slots), while
  * deterministically ordering only newly discovered suffix members. When
- * hop_counts is non-NULL, move that live per-anchor sidecar with each ID.
+ * hop_counts or previous_hop_ids is non-NULL, move each live per-anchor
+ * sidecar with its ID so depth and forwarding evidence cannot be reassigned.
  */
 int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
                                                  uint8_t *hop_counts,
+                                                 uint64_t *previous_hop_ids,
                                                  size_t anchor_count,
                                                  size_t prior_anchor_count);
 int discovery_assignment_entries_from_claims(

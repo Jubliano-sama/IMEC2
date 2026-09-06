@@ -1982,6 +1982,16 @@ static bool mesh_execute_route_request_action(uint64_t previous_hop_id,
                                               true,
                                               APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE,
                                               0u);
+    if (ret == -ECANCELED) {
+        /* Keep the exact action and its original reply deadline. The worker
+         * releases this action's scratch before servicing click custody. */
+        mesh_route_request_action_pending = true;
+        (void)mesh_reschedule_owned_work(
+            &mesh_route_request_action_work,
+            REPORT_TX_RETRY_DELAY_MS,
+            "route-request-action-click-yield");
+        goto out;
+    }
     if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
         /*
          * The direct probe captured another owner's causal frame.  This
@@ -2278,6 +2288,12 @@ static void mesh_route_request_action_work_handler(struct k_work *work)
         mesh_route_request_action_previous_hop_id,
         mesh_route_request_action_reply_deadline_ms);
     k_mutex_unlock(&mesh_route_request_action_scratch_lock);
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (mesh_click_preempt_boundary_requested() &&
+        mesh_click_preempt_service_queued_route_owned()) {
+        status_debug_note("DBG_ROUTE_REQ_REBROADCAST_CLICK_PREEMPT\n");
+    }
+#endif
 }
 #else
 static bool mesh_schedule_route_request_action(
@@ -4392,6 +4408,18 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         size_t confirmed_payload_len = 0u;
         bool confirmed_packet_valid = false;
         bool confirmed_digest_valid = false;
+
+        /* A command queued before START must pass the current survey owner
+         * before relay admission, replay state, custody or local execution. */
+        if (DEVICE_ROLE == ROLE_ANCHOR &&
+            ((pending->packet.msg_type == MSG_COMMAND &&
+              !app_survey_anchor_command_allowed(&pending->packet,
+                                                  pending->payload,
+                                                  pending->payload_len)) ||
+             (pending->packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
+              app_survey_anchor_active()))) {
+            continue;
+        }
 
         if (mesh_relay_tx_active(&mesh_runtime) &&
             mesh_runtime.pending.gateway_ack_confirm_pending) {

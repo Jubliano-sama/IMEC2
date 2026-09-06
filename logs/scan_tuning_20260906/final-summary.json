@@ -1,0 +1,202 @@
+{
+  "firmware_roles": [
+    {
+      "role": "anchor_a",
+      "uid": "E46070D247233537",
+      "ficr": "2fe8761029758f88",
+      "programmed_bytes_verified": 459339,
+      "sha256": "98cb0453bc05a414f49574270f380d923b09463521ba6ac21be17c6afe59d81f"
+    },
+    {
+      "role": "anchor_b",
+      "uid": "E46070D247394D36",
+      "ficr": "5abb8e9b787f2046",
+      "programmed_bytes_verified": 459339,
+      "sha256": "98cb0453bc05a414f49574270f380d923b09463521ba6ac21be17c6afe59d81f"
+    },
+    {
+      "role": "anchor_c",
+      "uid": "E4645C15CB365D30",
+      "ficr": "e12744976857d4df",
+      "programmed_bytes_verified": 459339,
+      "sha256": "98cb0453bc05a414f49574270f380d923b09463521ba6ac21be17c6afe59d81f"
+    },
+    {
+      "role": "gateway",
+      "uid": "E4645C15CB0F3B37",
+      "ficr": "9aa6908d89ec9b84",
+      "programmed_bytes_verified": 475025,
+      "sha256": "324445dd7840481cdc43c2001b7a75917df3d6818b90a74b786e75561fe4e07f"
+    }
+  ],
+  "native_tests": 212,
+  "mesh_integration_gate": 176,
+  "hardware_models_gate": 168,
+  "gui_tests": 305,
+  "anchor_actions": {
+    "passed": true,
+    "results": 9,
+    "min_latency_s": 0.6521273239923175,
+    "max_latency_s": 0.7525905869842973
+  },
+  "rgb": {
+    "anchor_a": {
+      "observed_active_s": 9.962720333016478,
+      "samples": 248,
+      "sleep_samples": 240,
+      "colors": [
+        0,
+        1,
+        2,
+        4
+      ]
+    },
+    "anchor_b": {
+      "observed_active_s": 9.927115890022833,
+      "samples": 248,
+      "sleep_samples": 241,
+      "colors": [
+        0,
+        1,
+        2,
+        4
+      ]
+    },
+    "anchor_c": {
+      "observed_active_s": 9.9901234729914,
+      "samples": 249,
+      "sleep_samples": 242,
+      "colors": [
+        0,
+        1,
+        2,
+        4
+      ]
+    }
+  },
+  "normal_survey": {
+    "command_status": {
+      "12": 0,
+      "260": 0,
+      "261": 0,
+      "262": 0
+    },
+    "completed_batches": [],
+    "connection": "connected",
+    "elapsed_s": 60.532,
+    "error": "",
+    "exit_reason": "survey-complete",
+    "generation": 38010901,
+    "neighbor_reports": 3,
+    "pairs": [
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        2,
+        1
+      ]
+    ],
+    "partial_reasons": 0,
+    "plan_command_successes": 1,
+    "planned_pairs_by_batch": {
+      "0": 3
+    },
+    "results": {
+      "0": {
+        "median_mm": 893,
+        "success_count": 5,
+        "usable": true
+      },
+      "1": {
+        "median_mm": 390,
+        "success_count": 5,
+        "usable": true
+      },
+      "2": {
+        "median_mm": 832,
+        "success_count": 5,
+        "usable": true
+      }
+    },
+    "signal_measurements": 3,
+    "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation",
+    "success": true
+  },
+  "click_interference": {
+    "protocol_ownership_pass": true,
+    "survey_sample_gate_pass": false,
+    "survey": {
+      "command_status": {
+        "12": 0,
+        "260": 0,
+        "261": 0,
+        "262": 0
+      },
+      "completed_batches": [],
+      "connection": "connected",
+      "elapsed_s": 52.115,
+      "error": "",
+      "exit_reason": "survey-complete",
+      "generation": 37224467,
+      "neighbor_reports": 2,
+      "pairs": [
+        [
+          1,
+          0
+        ]
+      ],
+      "partial_reasons": 0,
+      "plan_command_successes": 1,
+      "planned_pairs_by_batch": {
+        "0": 1
+      },
+      "results": {
+        "0": {
+          "median_mm": 897,
+          "success_count": 4,
+          "usable": true
+        }
+      },
+      "signal_measurements": 1,
+      "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation",
+      "success": false
+    },
+    "intervals": {
+      "anchor_a": {
+        "first_active_at": 214846.770743891,
+        "last_active_at": 214866.260911088,
+        "first_inactive_at": 214866.297945849
+      },
+      "anchor_b": {
+        "first_active_at": 214846.718820624,
+        "last_active_at": 214866.231418779,
+        "first_inactive_at": 214866.260911088
+      }
+    },
+    "click_attempts_without_replies": 9,
+    "post_survey_replies": [
+      {
+        "role": "anchor_a",
+        "after_inactive_s": 1.0090541510144249
+      },
+      {
+        "role": "anchor_b",
+        "after_inactive_s": 1.0490889119973872
+      }
+    ],
+    "plan_deadlines_unchanged": true
+  },
+  "scan": {
+    "continuous_rx_us": 5000,
+    "idle_delay_ms": 380,
+    "ordinary_wake_ms": 445,
+    "measured_max_scan_interval_ms": 393.036,
+    "current_measured": false
+  }
+}

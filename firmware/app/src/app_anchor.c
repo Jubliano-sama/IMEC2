@@ -1,4 +1,5 @@
 #include "app_anchor.h"
+#include "app_anchor_action_runtime.h"
 #include "app_anchor_command_completion.h"
 #include "app_anchor_ranging.h"
 

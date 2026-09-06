@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Real-hop mesh audit — 2026-09-05
 
 The forced-hop qualification does not establish recovery through genuinely hidden sleeping relays or dense 50-anchor contention. This read-only audit found three concrete application/protocol seams and one wake-budget defect. No hardware was accessed and no firmware or timing policy was changed by the auditor.

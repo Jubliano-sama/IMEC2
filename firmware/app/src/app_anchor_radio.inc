@@ -1021,6 +1021,13 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         if (trace_preempt_ret < 0) {
             anchor_click_window_set_active(false);
             LOG_ERR("anchor click claim deferred because mesh custody preemption failed");
+            status_debug_printf("DBG_ANCHOR_CLICK_PREEMPT_FAIL evt=%u attempt=%u ret=%d waited=%u deadline=%u now=%u\n",
+                                selected_claim.click_event_id,
+                                selected_claim.attempt_index,
+                                trace_preempt_ret,
+                                trace_preempt_end_ms - trace_preempt_start_ms,
+                                preempt_deadline_ms,
+                                trace_preempt_end_ms);
             anchor_click_event_abort_if_needed("mesh-preemption");
             if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
                 status_debug_printf("DBG_CH_AP2 e=%08x a=%02x d=%08x r=%08x w=%01x\n",
@@ -2189,6 +2196,9 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
         observed_hop_count > UWB_ENUM_MAX_HOPS) {
         return -EINVAL;
     }
+    if (app_survey_anchor_active()) {
+        return -EBUSY;
+    }
     now_ms = k_uptime_get_32();
     now_ms_64 = (uint64_t)k_uptime_get();
     block_starts_in_ms =
@@ -2307,7 +2317,6 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
             return -ESTALE;
         }
         (void)local_anchor_discovery_assignment_note_claim(epoch);
-        app_survey_anchor_begin_enumeration(epoch);
     }
     status_debug_printf(
         "DBG_ENUM_RX_PREARM epoch=%u hold=%u budget=%u survey=%u duplicate=%u observed_hop=%u selected_hop=%u compact_start=%llu deepest_start=%llu\n",
@@ -3103,7 +3112,37 @@ static int anchor_compact_enumeration_handle_raw(
         timing->depth <= lane->hop_count) {
         ret = PROTO_ERR_STALE;
     } else {
-        ret = enumeration_response_lane_merge_bundle(lane, &bundle, &added);
+        /* Prove every advertised descendant edge before the lane or route
+         * cache changes, including records in later aggregate bundles. */
+        for (uint8_t i = 0u; i < bundle.record_count; i++) {
+            if (bundle.records[i].hop_count <= lane->hop_count ||
+                ((bundle.records[i].anchor_id == bundle.sender_id) !=
+                 (bundle.records[i].hop_count == lane->hop_count + 1u))) {
+                ret = PROTO_ERR_MALFORMED;
+                break;
+            }
+        }
+        if (ret == PROTO_OK) {
+            ret = enumeration_response_lane_merge_bundle(lane, &bundle, &added);
+        }
+        if (ret == PROTO_OK) {
+            /* The accepted child bundle is the actual reverse path. Compact
+             * enumeration bypasses normal report RX, so record that evidence
+             * here before acknowledging custody to this child. */
+            for (uint8_t i = 0u; i < bundle.record_count; i++) {
+                if (bundle.records[i].hop_count <= lane->hop_count) {
+                    ret = PROTO_ERR_MALFORMED;
+                    break;
+                }
+                ret = mesh_relay_note_enumeration_downlink(&mesh_runtime,
+                    bundle.records[i].anchor_id, bundle.sender_id,
+                    bundle.records[i].hop_count - lane->hop_count,
+                    k_uptime_get_32());
+                if (ret != PROTO_OK) {
+                    break;
+                }
+            }
+        }
         if (ret == PROTO_OK) {
             ack = (struct uwb_enumeration_hop_ack_frame) {
                 .network_id = lane->network_id,
@@ -3193,6 +3232,9 @@ static int anchor_protocol_rx_probe_standard_click(
 
     if (frame == NULL || frame_len == NULL || quality == NULL) {
         return -EINVAL;
+    }
+    if (app_survey_anchor_active()) {
+        return 0;
     }
 
     started_ms = k_uptime_get_32();
@@ -3854,24 +3896,22 @@ protocol_rx_window:
                     scan_reserve_ms);
             }
 
-            if (ret != 0 && ret != -ETIMEDOUT && ret != -ECANCELED &&
+            if (survey_continuous_rx && ret != 0 &&
+                ret != -ETIMEDOUT && ret != -ECANCELED &&
+                app_anchor_rx_failure_detected_preamble(rx_failure)) {
+                /* Incompatible click/activation traffic does not change the
+                 * survey owner, PHY or deadline. Resume its control RX. */
+                ret = -ETIMEDOUT;
+            }
+            if (!app_survey_anchor_active() && ret != 0 &&
+                ret != -ETIMEDOUT && ret != -ECANCELED &&
                 app_anchor_rx_failure_detected_preamble(rx_failure)) {
                 int probe_ret = anchor_protocol_rx_probe_standard_click(
                     frame, &frame_len, &quality);
 
                 if (probe_ret > 0) {
-                    if (survey_continuous_rx &&
-                        !app_survey_anchor_preempt_for_click() &&
-                        app_survey_anchor_active()) {
-                        ret = -ECANCELED;
-                        status_debug_printf(
-                            "DBG_PROTOCOL_RX_CLICK_PREEMPT_FAIL owner=survey ret=%d\n",
-                            ret);
-                        goto scan_complete;
-                    }
                     status_debug_printf(
-                        "DBG_PROTOCOL_RX_CLICK_PREEMPT owner=%s\n",
-                        survey_continuous_rx ? "survey" : "enumeration");
+                        "DBG_PROTOCOL_RX_CLICK_PREEMPT owner=enumeration\n");
                     ret = 0;
                     goto scan_frame_ready;
                 }
@@ -3960,19 +4000,8 @@ scan_frame_ready:
                                 decode_ret);
         }
         if (decode_ret == PROTO_OK) {
-            if (app_survey_anchor_rx_continuous() &&
-                app_mesh_c5_wake_claim_requires_anchor_handoff(
-                    claim.flags, true)) {
-                if (!app_survey_anchor_preempt_for_click() &&
-                    app_survey_anchor_active()) {
-                    ret = -ECANCELED;
-                    status_debug_printf(
-                        "DBG_PROTOCOL_RX_CLICK_PREEMPT_FAIL owner=survey ret=%d\n",
-                        ret);
-                    goto scan_complete;
-                }
-                status_debug_printf(
-                    "DBG_PROTOCOL_RX_CLICK_PREEMPT owner=survey\n");
+            if (app_survey_anchor_active()) {
+                goto scan_complete;
             }
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                 !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,

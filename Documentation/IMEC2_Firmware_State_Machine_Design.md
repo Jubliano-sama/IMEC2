@@ -1,3 +1,5 @@
+> Historical design proposal, not an implemented architecture or a requirement. Its Channel-9 scheduling and interruption examples predate current C5 delivery and exclusive survey ownership. Start with the [current documentation index](README.md).
+
 ## 1. Design reasoning
 This document is more of a proposal than gospel. Treat it as a possible way to implement stuff at a high level.
 

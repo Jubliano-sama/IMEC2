@@ -4490,6 +4490,156 @@ static void test_fire_and_forget_protocol_responses_reap_terminal_capacity(void)
     assert(try_uplink_calls == 50u);
 }
 
+static void test_fire_and_forget_bounded_control_reaps_success_and_failures(void)
+{
+    const enum node_comm_terminal_reason reasons[] = {
+        NODE_COMM_TERMINAL_DELIVERED,
+        NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
+        NODE_COMM_TERMINAL_DEADLINE_EXPIRED,
+    };
+    struct app_delivery_trace_capture capture = {0};
+    uint32_t total_backend_calls = 0u;
+    uint32_t total_rf_copies = 0u;
+
+    reset_fixture();
+    assert(app_node_comm_set_delivery_transition_trace(
+               capture_app_delivery_transition, &capture) == 0);
+    for (size_t outcome = 0u; outcome < sizeof(reasons) / sizeof(reasons[0]);
+         outcome++) {
+        for (uint16_t command = 0u; command < 50u; command++) {
+            const uint16_t seq = (uint16_t)(700u + outcome * 50u + command);
+            const bool expires =
+                reasons[outcome] == NODE_COMM_TERMINAL_DEADLINE_EXPIRED;
+            const int backend_result =
+                reasons[outcome] == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ?
+                    -EIO : 0;
+            struct mesh_outbound envelope = delivery_envelope(seq);
+            struct node_comm_terminal_event event;
+            uint64_t now_ms = (uint64_t)atomic_load(&fake_now_ms);
+            const uint64_t deadline_ms = now_ms + 10000u;
+            size_t terminal_count = 0u;
+
+            /* Reset observations only: all 150 commands share adapter state. */
+            capture.count = 0u;
+            try_flood_calls = 0u;
+            for (size_t copy = 0u; copy < 3u; copy++) {
+                try_flood_results[copy] = backend_result;
+                try_flood_sent[copy] = true;
+            }
+            if (expires) {
+                try_flood_results[0] = -EBUSY;
+                try_flood_sent[0] = false;
+            }
+            /* Targeted C5 commands retain their observed intermediate hop. */
+            envelope.packet.dst_id = UINT64_C(0x5555666677778888);
+            envelope.next_hop_id = UINT64_C(0x9999aaaabbbbcccc);
+            assert(app_node_comm_submit_delivery(
+                       &envelope, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+                       deadline_ms, seq, NULL) == 0);
+            assert(app_node_comm_pending_delivery_count() == 1u);
+
+            if (expires) {
+                assert(app_node_comm_service_deliveries() == -EBUSY);
+                assert(app_node_comm_pending_delivery_count() == 1u);
+                atomic_store(&fake_now_ms, (int64_t)deadline_ms);
+                assert(app_node_comm_service_deliveries() == -EAGAIN);
+                assert(try_flood_calls == 1u);
+                assert(try_flood_wake_train[0]);
+                assert_same_frozen_control(&try_flood_envelopes[0], &envelope);
+            } else {
+                for (uint8_t copy = 0u; copy < 3u; copy++) {
+                    uint32_t delay_ms = 40u;
+
+                    assert(app_node_comm_service_deliveries() == backend_result);
+                    assert(try_flood_calls == (uint32_t)copy + 1u);
+                    assert(try_flood_wake_train[copy] == (copy == 0u));
+                    assert_same_frozen_control(&try_flood_envelopes[copy],
+                                               &envelope);
+                    assert(app_node_comm_pending_delivery_count() ==
+                           (copy == 2u ? 0u : 1u));
+                    if (backend_result != 0 && copy < 2u) {
+                        assert(app_node_comm_retry_backoff_ms(
+                                   &envelope,
+                                   NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+                                   copy + 1u, &delay_ms) == 0);
+                    }
+                    now_ms += delay_ms;
+                    atomic_store(&fake_now_ms, (int64_t)now_ms);
+                }
+                total_rf_copies += 3u;
+            }
+            total_backend_calls += try_flood_calls;
+            assert(app_node_comm_pending_delivery_count() == 0u);
+            /* No caller consumes a terminal to make the next admission fit. */
+            assert(!app_node_comm_take_delivery_event(&event));
+            for (size_t i = 0u; i < capture.count; i++) {
+                const struct app_delivery_trace_entry *entry = &capture.entries[i];
+
+                if (!entry->terminal_present) {
+                    continue;
+                }
+                terminal_count++;
+                assert(entry->terminal.client_token == seq);
+                assert(entry->terminal.reason == reasons[outcome]);
+                assert(entry->terminal.attempts_started == (expires ? 0u : 3u));
+                assert(entry->terminal.proof ==
+                       (reasons[outcome] == NODE_COMM_TERMINAL_DELIVERED ?
+                            NODE_COMM_TERMINAL_PROOF_TRANSPORT :
+                            NODE_COMM_TERMINAL_PROOF_NONE));
+            }
+            assert(terminal_count == 1u);
+        }
+    }
+    assert(total_backend_calls == 350u);
+    assert(total_rf_copies == 300u);
+    assert(try_uplink_calls == 0u);
+    assert(try_response_calls == 0u);
+    assert(watchdog_stop_calls == 0u);
+}
+
+static void test_null_duplicate_preserves_caller_owned_bounded_control(void)
+{
+    for (unsigned int failed = 0u; failed < 2u; failed++) {
+        struct mesh_outbound envelope = delivery_envelope(900u);
+        struct node_comm_terminal_event event;
+        uint32_t handle = 0u;
+        uint64_t now_ms = 0u;
+
+        reset_fixture();
+        assert(app_node_comm_submit_delivery(
+                   &envelope, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+                   10000u, 900u, &handle) == 0);
+        assert(handle != 0u);
+        assert(app_node_comm_submit_delivery(
+                   &envelope, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+                   20000u, 901u, NULL) == 0);
+        assert(app_node_comm_pending_delivery_count() == 1u);
+        for (uint8_t copy = 0u; copy < 3u; copy++) {
+            uint32_t delay_ms = 40u;
+
+            try_flood_results[copy] = failed ? -EIO : 0;
+            assert(app_node_comm_service_deliveries() == (failed ? -EIO : 0));
+            assert(app_node_comm_pending_delivery_count() == 1u);
+            if (failed && copy < 2u) {
+                assert(app_node_comm_retry_backoff_ms(
+                           &envelope, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+                           copy + 1u, &delay_ms) == 0);
+            }
+            now_ms += delay_ms;
+            atomic_store(&fake_now_ms, (int64_t)now_ms);
+        }
+        assert(try_flood_calls == 3u);
+        assert(app_node_comm_take_delivery_event_for(handle, &event));
+        assert(event.handle == handle);
+        assert(event.client_token == 900u);
+        assert(event.attempts_started == 3u);
+        assert(event.reason == (failed ? NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED :
+                                        NODE_COMM_TERMINAL_DELIVERED));
+        assert(app_node_comm_pending_delivery_count() == 0u);
+        assert(!app_node_comm_take_delivery_event_for(handle, &event));
+    }
+}
+
 static void test_auto_reap_protocol_response_returns_correlation_handle(void)
 {
     struct mesh_outbound direct = reliable_uplink_envelope(220u);
@@ -5297,6 +5447,8 @@ int main(void)
     test_durable_attempt_registry_dispatches_exact_owner();
     test_fire_and_forget_reliable_uplinks_reap_terminal_capacity();
     test_fire_and_forget_protocol_responses_reap_terminal_capacity();
+    test_fire_and_forget_bounded_control_reaps_success_and_failures();
+    test_null_duplicate_preserves_caller_owned_bounded_control();
     test_auto_reap_protocol_response_returns_correlation_handle();
     test_adapter_trace_distinguishes_transport_and_semantic_proof();
     test_redrive_rejects_delayed_old_generation_rf_evidence();

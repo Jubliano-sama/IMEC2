@@ -2,7 +2,6 @@
 
 #include "app_config.h"
 #include "app_board.h"
-#include "app_mesh_c5_priority.h"
 #include "app_radio_guard.h"
 #include "app_radio_recovery.h"
 #include "app_state.h"
@@ -10,6 +9,7 @@
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "enumeration_response_lane.h"
+#include "gateway_command.h"
 #include "status.h"
 #include "uwb_session.h"
 
@@ -32,15 +32,6 @@
 #define APP_SURVEY_RANGE_RX_GUARD_MS 25u
 #define APP_SURVEY_RANGE_TIMEOUT_MS 55u
 #define APP_SURVEY_START_EDGE_SLOP_MS SURVEY_RADIO_GUARD_MS
-#define APP_SURVEY_CLICK_PROBE_INTERVAL_MS 300u
-#define APP_SURVEY_CLICK_PROBE_RX_MS \
-    (20u + (2u * UWB_CONTROL_TX_TIMEOUT_MS) + \
-     ((UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US + 999u) / 1000u))
-#define APP_SURVEY_CLICK_PROBE_BUDGET_MS \
-    (APP_SURVEY_CLICK_PROBE_INTERVAL_MS + \
-     APP_SURVEY_CLICK_PROBE_RX_MS + \
-     (2u * MESH_RADIO_EVENT_RETUNE_GUARD_MS))
-
 _Static_assert(APP_SURVEY_RANGE_RX_GUARD_MS +
                    APP_SURVEY_RANGE_TIMEOUT_MS <=
                    SURVEY_RANGE_ATTEMPT_SPACING_MS,
@@ -54,9 +45,6 @@ _Static_assert(
     "the last range timeout and radio guard must fit inside its wave");
 _Static_assert(SURVEY_HARD_CAP_MS < INT32_MAX,
                "survey RX ownership must fit a wrap-safe uptime deadline");
-_Static_assert(APP_SURVEY_CLICK_PROBE_BUDGET_MS < WAKE_ADV_MS,
-               "survey click probes must fit one repeated wake train");
-
 enum app_survey_gateway_stage {
     APP_SURVEY_GATEWAY_IDLE = 0,
     APP_SURVEY_GATEWAY_WAIT_START_RF,
@@ -111,13 +99,6 @@ struct app_survey_gateway_state {
     enum app_survey_gateway_stage stage;
     bool cleanup_abort_pending;
     bool active;
-};
-
-struct app_survey_click_capture {
-    struct uwb_wake_claim_frame claim;
-    uint32_t observed_at_ms;
-    uint8_t quality;
-    bool valid;
 };
 
 struct app_survey_anchor_state {
@@ -190,33 +171,6 @@ static bool anchor_rx_expire_locked(uint64_t now_ms)
     }
     anchor_rx_terminate_locked(false);
     return true;
-}
-
-void app_survey_anchor_begin_enumeration(uint32_t assignment_epoch)
-{
-    bool abort_owned_rf = false;
-
-    if (DEVICE_ROLE != ROLE_ANCHOR || assignment_epoch == 0u) {
-        return;
-    }
-    k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
-    if (anchor_state.active &&
-        anchor_state.identity.assignment.assignment_epoch != assignment_epoch) {
-        /* HIA/CLAIM already established gateway authority. Stop the previous
-         * producer before its TABLE arrives; its RF worker still owns and
-         * releases the physical lease through the ordinary abort path. */
-        abort_owned_rf = anchor_rx_lifecycle.mode ==
-                            PROTOCOL_RX_MODE_OWNED_RF_WORK;
-        anchor_rx_terminate_locked(true);
-        anchor_state.roster_valid = false;
-        (void)k_work_cancel_delayable(&anchor_work);
-    }
-    k_mutex_unlock(&survey_lock);
-    if (abort_owned_rf) {
-        dwm3000_driver_request_receive_abort(
-            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
-    }
 }
 
 static bool response_bit_get(const uint64_t bits[2], uint8_t index)
@@ -354,123 +308,19 @@ static int anchor_radio_claim(uint64_t deadline_ms,
     return ret;
 }
 
-static int anchor_probe_standard_click(
-    struct app_survey_click_capture *capture,
-    bool restore_control_phy,
-    uint64_t deadline_ms)
+/* Survey owns the anchor exclusively. Between its RF slots keep the
+ * configured radio idle, and check cancellation without opening a click RX. */
+static int anchor_wait_until(uint32_t generation, uint64_t deadline_ms)
 {
-    uint8_t frame[UWB_WAKE_CLAIM_LEN];
-    struct uwb_wake_claim_frame claim;
-    enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
-    uint64_t probe_deadline_ms;
-    size_t frame_len = 0u;
-    uint8_t quality = 0u;
-    int ret;
-
-    uint64_t now_ms = (uint64_t)k_uptime_get();
-
-    if (capture == NULL || capture->valid) {
-        return -EINVAL;
-    }
-    if (now_ms >= deadline_ms) {
-        return 0;
-    }
-    ret = dwm3000_driver_configure_wake_mode();
-    if (ret < 0) {
-        return ret;
-    }
-    probe_deadline_ms = MIN(deadline_ms,
-                            (uint64_t)k_uptime_get() +
-                                APP_SURVEY_CLICK_PROBE_RX_MS);
-    ret = dwm3000_driver_receive_frame_continuous_extend_on_activity_until(
-        APP_SURVEY_CLICK_PROBE_RX_MS,
-        ANCHOR_UWB_WAKE_ACTIVITY_HOLD_MS,
-        (int64_t)probe_deadline_ms,
-        frame,
-        sizeof(frame),
-        &frame_len,
-        &quality,
-        NULL,
-        &failure);
-    if (ret == 0 && uwb_decode_wake_claim(frame, frame_len, &claim) ==
-                        PROTO_OK &&
-        app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags, true)) {
-        capture->claim = claim;
-        capture->observed_at_ms = k_uptime_get_32();
-        capture->quality = quality;
-        capture->valid = true;
-        status_debug_printf(
-            "DBG_SURVEY_CLICK_CAPTURE evt=%u attempt=%u q=%u\n",
-            claim.click_event_id, claim.attempt_index, quality);
-        return 1;
-    }
-    if (ret != 0 && ret != -ETIMEDOUT &&
-        !app_wake_train_politeness_rx_activity(ret, failure)) {
-        int recovery_ret = dwm3000_driver_force_recovery();
-
-        if (recovery_ret < 0) {
-            return recovery_ret;
-        }
-    }
-    if (restore_control_phy) {
-        ret = dwm3000_driver_configure_wake_mesh_control_mode();
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    return 0;
-}
-
-static int anchor_control_wait_with_click_probes(
-    uint32_t generation,
-    uint64_t deadline_ms,
-    uint64_t *next_probe_ms,
-    struct app_survey_click_capture *capture)
-{
-    if (next_probe_ms == NULL || capture == NULL) {
-        return -EINVAL;
-    }
     while ((uint64_t)k_uptime_get() < deadline_ms) {
         uint64_t now_ms = (uint64_t)k_uptime_get();
 
         if (!anchor_generation_live(generation)) {
             return -ECANCELED;
         }
-        if (now_ms >= *next_probe_ms) {
-            int ret = anchor_probe_standard_click(capture, true, deadline_ms);
-
-            if (ret != 0) {
-                return ret > 0 ? -EINTR : ret;
-            }
-            *next_probe_ms = (uint64_t)k_uptime_get() +
-                             APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
-            continue;
-        }
-        sleep_until_ms((int64_t)MIN(deadline_ms, *next_probe_ms));
+        sleep_until_ms((int64_t)MIN(deadline_ms, now_ms + 10u));
     }
-    return 0;
-}
-
-static int anchor_standard_wait_for_click(
-    uint32_t generation,
-    uint64_t deadline_ms,
-    struct app_survey_click_capture *capture)
-{
-    int ret = dwm3000_driver_configure_wake_mode();
-
-    if (ret < 0) {
-        return ret;
-    }
-    while ((uint64_t)k_uptime_get() < deadline_ms) {
-        if (!anchor_generation_live(generation)) {
-            return -ECANCELED;
-        }
-        ret = anchor_probe_standard_click(capture, false, deadline_ms);
-        if (ret != 0) {
-            return ret > 0 ? -EINTR : ret;
-        }
-    }
-    return 0;
+    return anchor_generation_live(generation) ? 0 : -ECANCELED;
 }
 
 static int survey_lane_try_tx(struct survey_response_lane *lane,
@@ -556,13 +406,10 @@ static int anchor_run_response_lane(
     uint8_t hop_count,
     uint8_t max_hop_count,
     const struct survey_response_record *local_records,
-    uint8_t local_record_count,
-    struct app_survey_click_capture *capture)
+    uint8_t local_record_count)
 {
     struct survey_response_lane lane;
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
-    uint64_t lane_deadline_ms;
-    uint64_t next_probe_ms;
     int32_t all_acked_elapsed_ms = -1;
     int ret;
 
@@ -572,8 +419,6 @@ static int anchor_run_response_lane(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
-    lane_deadline_ms = start_ms +
-        enumeration_response_duration_ms(max_hop_count);
     for (uint8_t i = 0u; i < local_record_count; i++) {
         ret = survey_response_lane_add_record(&lane, &local_records[i], NULL);
         if (ret != PROTO_OK) {
@@ -585,8 +430,6 @@ static int anchor_run_response_lane(
     if (ret < 0) {
         return ret;
     }
-    next_probe_ms = (uint64_t)k_uptime_get() +
-                    APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
     while (anchor_generation_live(generation)) {
         struct enumeration_response_timing timing;
         uint64_t now_ms = (uint64_t)k_uptime_get();
@@ -596,17 +439,6 @@ static int anchor_run_response_lane(
         uint8_t next_offset;
         size_t frame_len = 0u;
         enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
-
-        if (now_ms >= next_probe_ms) {
-            ret = anchor_probe_standard_click(capture, true,
-                                              lane_deadline_ms);
-            if (ret != 0) {
-                return ret > 0 ? -EINTR : ret;
-            }
-            next_probe_ms = (uint64_t)k_uptime_get() +
-                            APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
-            now_ms = (uint64_t)k_uptime_get();
-        }
 
         if (!enumeration_response_timing_at_depth(start_ms, now_ms,
                                                    max_hop_count, &timing)) {
@@ -633,9 +465,6 @@ static int anchor_run_response_lane(
         }
         next_offset = survey_response_lane_next_offset_ms(&lane, &timing);
         receive_deadline_ms = round_deadline_ms;
-        if (next_probe_ms < receive_deadline_ms) {
-            receive_deadline_ms = next_probe_ms;
-        }
         if (next_offset != SURVEY_RESPONSE_NO_OFFSET) {
             uint64_t next_tx_ms = round_start_ms + next_offset;
 
@@ -663,22 +492,13 @@ static int anchor_run_response_lane(
                     generation, (unsigned int)kind, hop_count,
                     lane.record_count, all_acked_elapsed_ms);
             }
-        } else if (ret != -ETIMEDOUT && ret != -ECANCELED) {
-            if (app_wake_train_politeness_rx_activity(ret, failure)) {
-                ret = anchor_probe_standard_click(capture, true,
-                                                  lane_deadline_ms);
-                if (ret != 0) {
-                    return ret > 0 ? -EINTR : ret;
-                }
-                next_probe_ms = (uint64_t)k_uptime_get() +
-                                APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
-            } else {
-                int recovery_ret = dwm3000_driver_force_recovery();
+        } else if (ret != -ETIMEDOUT && ret != -ECANCELED &&
+                   !app_wake_train_politeness_rx_activity(ret, failure)) {
+            int recovery_ret = dwm3000_driver_force_recovery();
 
-                if (recovery_ret < 0 ||
-                    dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
-                    return recovery_ret < 0 ? recovery_ret : ret;
-                }
+            if (recovery_ret < 0 ||
+                dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
+                return recovery_ret < 0 ? recovery_ret : ret;
             }
         } else if (ret == -ECANCELED && !anchor_generation_live(generation)) {
             return -ECANCELED;
@@ -689,8 +509,7 @@ static int anchor_run_response_lane(
 }
 
 static int anchor_neighbor_sequence(
-    const struct app_survey_anchor_state *snapshot,
-    struct app_survey_click_capture *capture)
+    const struct app_survey_anchor_state *snapshot)
 {
 #define LOCAL_SIGNAL_RECORD_CAPACITY \
     (1u + ((SURVEY_MAX_ANCHORS - 1u + \
@@ -713,7 +532,6 @@ static int anchor_neighbor_sequence(
     uint8_t record_count = 1u;
     size_t encoded_presence_len = 0u;
     uint64_t sequence_end_ms;
-    uint64_t next_probe_ms;
     int ret;
 
     ret = anchor_radio_claim(snapshot->neighbor_start_ms +
@@ -733,13 +551,9 @@ static int anchor_neighbor_sequence(
         ret = mesh_errno_from_proto(ret);
         goto out;
     }
-    next_probe_ms = (uint64_t)k_uptime_get() +
-                    APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
-    ret = anchor_control_wait_with_click_probes(
+    ret = anchor_wait_until(
         snapshot->identity.generation,
-        snapshot->neighbor_start_ms,
-        &next_probe_ms,
-        capture);
+        snapshot->neighbor_start_ms);
     if (ret < 0) {
         goto out;
     }
@@ -755,12 +569,10 @@ static int anchor_neighbor_sequence(
         if (slot == snapshot->own_slot) {
             for (uint8_t beacon = 0u;
                  beacon < SURVEY_NEIGHBOR_BEACON_COUNT; beacon++) {
-                ret = anchor_control_wait_with_click_probes(
+                ret = anchor_wait_until(
                     snapshot->identity.generation,
                     slot_start_ms +
-                        survey_neighbor_beacon_offset_ms(beacon),
-                    &next_probe_ms,
-                    capture);
+                        survey_neighbor_beacon_offset_ms(beacon));
                 if (ret < 0) {
                     goto out;
                 }
@@ -777,11 +589,9 @@ static int anchor_neighbor_sequence(
                 }
                 app_watchdog_note_radio_progress();
             }
-            ret = anchor_control_wait_with_click_probes(
+            ret = anchor_wait_until(
                 snapshot->identity.generation,
-                slot_end_ms,
-                &next_probe_ms,
-                capture);
+                slot_end_ms);
             if (ret < 0) {
                 goto out;
             }
@@ -792,23 +602,11 @@ static int anchor_neighbor_sequence(
             struct survey_presence_frame heard;
             size_t frame_len = 0u;
             uint64_t now_ms = (uint64_t)k_uptime_get();
-            uint64_t receive_deadline_ms = MIN(slot_end_ms, next_probe_ms);
             int8_t rsl_dbm = 0;
             enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
 
-            if (now_ms >= next_probe_ms) {
-                ret = anchor_probe_standard_click(capture, true, slot_end_ms);
-                if (ret != 0) {
-                    ret = ret > 0 ? -EINTR : ret;
-                    goto out;
-                }
-                next_probe_ms = (uint64_t)k_uptime_get() +
-                                APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
-                continue;
-            }
-
             ret = dwm3000_driver_receive_frame_continuous(
-                bounded_wait_ms(now_ms, receive_deadline_ms),
+                bounded_wait_ms(now_ms, slot_end_ms),
                 frame, sizeof(frame),
                 &frame_len, NULL, &rsl_dbm, &failure);
             if (ret == 0 &&
@@ -830,24 +628,13 @@ static int anchor_neighbor_sequence(
                                [rsl_sample_count[heard.sender_slot]++] =
                         rsl_dbm;
                 }
-            } else if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
-                if (app_wake_train_politeness_rx_activity(
-                        ret, failure)) {
-                    ret = anchor_probe_standard_click(capture, true,
-                                                      slot_end_ms);
-                    if (ret != 0) {
-                        ret = ret > 0 ? -EINTR : ret;
-                        goto out;
-                    }
-                    next_probe_ms = (uint64_t)k_uptime_get() +
-                                    APP_SURVEY_CLICK_PROBE_INTERVAL_MS;
-                } else {
-                    int recovery_ret = dwm3000_driver_force_recovery();
+            } else if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED &&
+                       !app_wake_train_politeness_rx_activity(ret, failure)) {
+                int recovery_ret = dwm3000_driver_force_recovery();
 
-                    if (recovery_ret < 0 ||
-                        dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
-                        goto out;
-                    }
+                if (recovery_ret < 0 ||
+                    dwm3000_driver_configure_wake_mesh_control_mode() < 0) {
+                    goto out;
                 }
             }
             app_watchdog_note_radio_progress();
@@ -895,8 +682,7 @@ static int anchor_neighbor_sequence(
         snapshot->identity.generation, 0u, SURVEY_RESPONSE_NEIGHBORS,
         sequence_end_ms + SURVEY_RESULT_PREPARE_MS,
         snapshot->parent_id, snapshot->hop_count,
-        snapshot->identity.assignment.max_hop_count, records, record_count,
-        capture);
+        snapshot->identity.assignment.max_hop_count, records, record_count);
 out:
     {
         int release_ret = anchor_radio_release(&lease, "survey-neighbors");
@@ -1052,8 +838,7 @@ static int anchor_run_initiator_pair(
 }
 
 static int anchor_execute_plan(
-    struct app_survey_anchor_state *snapshot,
-    struct app_survey_click_capture *capture)
+    struct app_survey_anchor_state *snapshot)
 {
     struct radio_guard_uwb_lease lease = {0};
     uint32_t stride_ms = survey_wave_stride_ms(
@@ -1147,8 +932,8 @@ static int anchor_execute_plan(
                 }
             }
         }
-        ret = anchor_standard_wait_for_click(
-            snapshot->identity.generation, lane_start_ms, capture);
+        ret = anchor_wait_until(
+            snapshot->identity.generation, lane_start_ms);
         if (ret < 0) {
             goto out;
         }
@@ -1164,7 +949,7 @@ static int anchor_execute_plan(
             SURVEY_RESPONSE_RANGES,
             lane_start_ms, snapshot->parent_id, snapshot->hop_count,
             snapshot->identity.assignment.max_hop_count,
-            records, snapshot->local_result_count, capture);
+            records, snapshot->local_result_count);
         if (ret < 0 && ret != -ECANCELED) {
             break;
         }
@@ -1177,58 +962,9 @@ out:
     }
 }
 
-static bool anchor_preempt_for_click_identity(
-    const struct survey_identity *expected_identity,
-    bool request_owned_rf_abort)
-{
-    bool abort_owned_rf = false;
-    bool released = false;
-
-    k_mutex_lock(&survey_lock, K_FOREVER);
-    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
-    if (anchor_state.active && !anchor_state.aborted &&
-        (expected_identity == NULL ||
-         survey_identity_equal(&anchor_state.identity, expected_identity))) {
-        abort_owned_rf = request_owned_rf_abort &&
-                         anchor_rx_lifecycle.mode ==
-                             PROTOCOL_RX_MODE_OWNED_RF_WORK;
-        anchor_rx_terminate_locked(true);
-        (void)k_work_cancel_delayable(&anchor_work);
-        released = true;
-    }
-    k_mutex_unlock(&survey_lock);
-    if (abort_owned_rf) {
-        dwm3000_driver_request_receive_abort(
-            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
-    }
-    return released;
-}
-
-static void anchor_handoff_captured_click(
-    const struct app_survey_anchor_state *snapshot,
-    enum app_survey_anchor_action action,
-    const struct app_survey_click_capture *capture)
-{
-    bool preempted = anchor_preempt_for_click_identity(
-        &snapshot->identity, false);
-    bool handled = preempted &&
-        survey_ops.anchor_handle_click_wake_claim != NULL &&
-        survey_ops.anchor_handle_click_wake_claim(
-            &capture->claim, capture->quality, capture->observed_at_ms);
-
-    status_debug_printf(
-        "DBG_SURVEY_CLICK_PREEMPT gen=%u action=%u released=%u handled=%u\n",
-        snapshot->identity.generation, (unsigned int)action,
-        preempted ? 1u : 0u, handled ? 1u : 0u);
-    if (!handled) {
-        (void)anchor_uwb_scan_schedule_ms(0u);
-    }
-}
-
 static void anchor_work_handler(struct k_work *work)
 {
     struct app_survey_anchor_state snapshot;
-    struct app_survey_click_capture click_capture = {0};
     enum app_survey_anchor_action action;
     int ret = 0;
 
@@ -1254,11 +990,7 @@ static void anchor_work_handler(struct k_work *work)
         return;
     }
     if (action == APP_SURVEY_ANCHOR_ACTION_NEIGHBORS) {
-        ret = anchor_neighbor_sequence(&snapshot, &click_capture);
-        if (click_capture.valid) {
-            anchor_handoff_captured_click(&snapshot, action, &click_capture);
-            return;
-        }
+        ret = anchor_neighbor_sequence(&snapshot);
         k_mutex_lock(&survey_lock, K_FOREVER);
         if (anchor_state.active &&
             anchor_state.identity.generation == snapshot.identity.generation) {
@@ -1279,11 +1011,7 @@ static void anchor_work_handler(struct k_work *work)
         }
         k_mutex_unlock(&survey_lock);
     } else if (action == APP_SURVEY_ANCHOR_ACTION_EXECUTE) {
-        ret = anchor_execute_plan(&snapshot, &click_capture);
-        if (click_capture.valid) {
-            anchor_handoff_captured_click(&snapshot, action, &click_capture);
-            return;
-        }
+        ret = anchor_execute_plan(&snapshot);
         k_mutex_lock(&survey_lock, K_FOREVER);
         if (anchor_state.active &&
             anchor_state.identity.generation == snapshot.identity.generation) {
@@ -2736,12 +2464,36 @@ bool app_survey_anchor_active(void)
     return active;
 }
 
-bool app_survey_anchor_preempt_for_click(void)
+bool app_survey_anchor_command_allowed(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len)
 {
+    struct survey_control control;
+    enum command_id command_id;
+    bool allowed;
+
     if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return false;
+        return true;
     }
-    return anchor_preempt_for_click_identity(NULL, true);
+    k_mutex_lock(&survey_lock, K_FOREVER);
+    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
+    allowed = !anchor_state.active;
+    if (!allowed && packet != NULL && packet->msg_type == MSG_COMMAND &&
+        packet->src_id == GATEWAY_ID &&
+        gateway_command_extract_id(payload, payload_len, &command_id) ==
+            PROTO_OK &&
+        survey_control_extract_tlvs(payload, payload_len, &control) ==
+            PROTO_OK &&
+        survey_identity_equal(&anchor_state.identity, &control.identity)) {
+        allowed = (command_id == CMD_SURVEY_START &&
+                   control.phase == SURVEY_PHASE_NEIGHBOR_START) ||
+                  (command_id == CMD_SURVEY_PLAN &&
+                   control.phase == SURVEY_PHASE_PLAN) ||
+                  (command_id == CMD_SURVEY_CANCEL &&
+                   control.phase == SURVEY_PHASE_ABORT);
+    }
+    k_mutex_unlock(&survey_lock);
+    return allowed;
 }
 
 bool app_survey_anchor_rx_continuous(void)

@@ -223,7 +223,11 @@ class Tooltip:
             self.window = None
 
 
-class GatewayGui(GatewayDiagnosticsMixin):
+from .anchor_actions import AnchorActions
+from .anchor_actions_view import GatewayAnchorActionsMixin
+
+
+class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
     MAX_PACKET_ROWS = 1000
     MAX_LOG_LINES = 2500
 
@@ -259,6 +263,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.connection_state = "disconnected"
         self.scanning = False
         self.gateway_id: int | None = None
+        self.anchor_actions = AnchorActions()
         self._command_progress_text = ""
         self._scheduled_phase_estimate: ScheduledPhaseEstimate | None = None
         self._phase_timing_calibration = PhaseTimingCalibration.for_user()
@@ -662,10 +667,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
 
     def _build_workspace(self, parent: ttk.Frame) -> None:
-        parent.grid_rowconfigure(0, weight=1)
+        parent.grid_rowconfigure(1, weight=1)
         parent.grid_columnconfigure(0, weight=1)
+        self._build_anchor_action_controls(parent).grid(row=0, column=0, sticky="ew", pady=(0, 6))
         split = ttk.Panedwindow(parent, orient="vertical")
-        split.grid(row=0, column=0, sticky="nsew")
+        split.grid(row=1, column=0, sticky="nsew")
 
         activity = ttk.Notebook(split)
         inspector = ttk.Notebook(split)
@@ -1152,6 +1158,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _dispatch_gateway_command(self, dispatch: GatewayCommandDispatch) -> None:
         if dispatch.on_dispatch is not None:
             dispatch.on_dispatch()
+        if dispatch.command_id == CMD_FORCE_REDISCOVERY:
+            # HIA replaces the gateway's live enumeration route evidence.
+            actions = getattr(self, "anchor_actions", None)
+            if actions is not None:
+                actions.reset()
         if getattr(self.command_orchestrator, "phase", None) == "preflight":
             self._command_progress_text = "Refreshing routes"
             self._set_scheduled_phase_estimate(
@@ -1217,6 +1228,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 self._survey_auto_all = False
                 self._survey_phase = "idle"
         if transition.completed and transition.dispatch is None:
+            self._finish_anchor_action(transition)
             self._command_progress_text = ""
             self._clear_scheduled_phase_estimate()
         self._refresh_survey_view()
@@ -1932,7 +1944,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._refresh_survey_view()
         self._update_command_state()
 
-    def _observe_gateway_command_result(self, packet: Packet) -> None:
+    def _observe_gateway_command_result(self, packet: Packet, *, received_at: float | None = None) -> None:
+        if self._observe_anchor_action_result(packet, received_at=received_at):
+            return
         command_id = packet.value(TLV_COMMAND_ID)
         status = packet.value(TLV_COMMAND_STATUS)
         if not isinstance(command_id, int) or not isinstance(status, int):
@@ -2058,6 +2072,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"to {deepest_hop}; future enumeration timing was enlarged.",
             )
         self._topology_gateway_id = gateway_id
+        if getattr(self, "anchor_actions", None) is not None:
+            try:
+                self.anchor_actions.remember_enumeration(gateway_id, event, anchors)
+            except ValueError as exc:
+                self._show_error(str(exc))
+                return
         self._topology_slot_span = slot_span
         self._topology_deepest_hop = deepest_hop
         self.assignment_expected_anchors_text.set(str(anchor_count))
@@ -2068,6 +2088,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._on_assignment_parameters_changed()
 
     def _reset_topology_timing(self) -> None:
+        if getattr(self, "anchor_actions", None) is not None:
+            self.anchor_actions.reset()
         self._topology_gateway_id = None
         self._topology_slot_span = None
         self._topology_deepest_hop = 0
@@ -2080,6 +2102,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _begin_topology_enumeration_timing(self) -> None:
         """Forget measured depth exactly when a new enumeration is sent."""
 
+        if getattr(self, "anchor_actions", None) is not None:
+            self.anchor_actions.reset()
         self._topology_gateway_id = self.gateway_id
         self._topology_slot_span = None
         self._topology_deepest_hop = 0
@@ -2487,6 +2511,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _set_connection_state(self, state: str) -> None:
         self.connection_state = state
         self.connected = state == "connected"
+        error_text = getattr(self, "error_text", None)
+        if self.connected and error_text is not None and error_text.get().startswith((
+            "Attempting automatic reconnect", "Auto-reconnect failed:",
+            "Gateway link dropped; auto-reconnecting",
+        )):
+            # A recovered link clears its transient reconnect notice; command
+            # errors and unknown survey outcomes keep their own state.
+            error_text.set("")
         if self.connected and getattr(getattr(self, "survey_model", None), "active", False):
             self._survey_event_due_at = time.monotonic()
         expected_reboot = getattr(
@@ -2596,6 +2628,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
         return None
 
     def _clear_gateway_identity(self, source: str) -> None:
+        if getattr(self, "anchor_actions", None) is not None:
+            self.anchor_actions.reset()
         self.gateway_id = None
         self.gateway_id_text.set("Unavailable")
         self.gateway_id_source.set(source)
@@ -2673,6 +2707,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             else "disabled"
         )
         self.refresh_button.configure(state=command_state)
+        self._update_anchor_action_controls(command_state)
         self.assignment_button.configure(state=command_state)
         if hasattr(self, "survey_button"):
             self.survey_button.configure(state=command_state)
@@ -2988,7 +3023,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     received_at=received_at,
                 )
             elif packet.msg_type == MSG_COMMAND_RESULT:
-                self._observe_gateway_command_result(packet)
+                self._observe_gateway_command_result(packet, received_at=received_at)
                 self._observe_survey_command_result(packet)
             self._observe_diagnostic_packet(packet, received_at=received_at)
         self.packet_counter += 1

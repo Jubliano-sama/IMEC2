@@ -850,7 +850,10 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         retry_note = body.index(
             "app_mesh_direct_gateway_retry_note(", success
         )
-        sleep = body.index("k_msleep(retry_decision.delay_ms)", retry_note)
+        sleep = body.index(
+            "mesh_click_preempt_wait_route_backoff(retry_decision.delay_ms)",
+            retry_note,
+        )
         unlock = body.index(
             "k_mutex_unlock(&mesh_direct_gateway_probe_scratch_lock)", sleep
         )

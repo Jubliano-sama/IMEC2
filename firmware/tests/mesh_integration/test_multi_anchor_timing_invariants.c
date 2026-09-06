@@ -130,45 +130,85 @@ static uint64_t runtime_prepare_rx_us(enum dwm3000_timing_phy phy)
     return interval.start_us;
 }
 
+/* Acquisition requires a whole PAC, not positive overlap. A clipped frame can
+ * extend RX but cannot decode; reserve 1 ms for its error/rearm path before a
+ * later complete frame. This deliberately uses only the first 15 ms of the
+ * production low-duty activity hold. All containment uses exact radio units. */
+static uint64_t continuous_scan_claim_end(struct interval rx,
+                                          uint64_t first_tx_us,
+                                          uint64_t cadence_us,
+                                          uint64_t train_end_us,
+                                          size_t frame_bytes)
+{
+    const uint64_t airtime = dwm3000_timing_airtime_rctu(
+        DWM3000_TIMING_PHY_CH5_WAKE, frame_bytes);
+    const uint64_t preamble = dwm3000_timing_preamble_rctu(
+        DWM3000_TIMING_PHY_CH5_WAKE);
+    const uint64_t pac = dwm3000_timing_pac_rctu(DWM3000_TIMING_PHY_CH5_WAKE);
+    const uint64_t completion = dwm3000_timing_us_to_rctu_floor(
+        MESH_RADIO_ACTIVITY_COMPLETION_US);
+    uint64_t rearmed = dwm3000_timing_us_to_rctu_ceil(rx.start_us);
+    uint64_t end = dwm3000_timing_us_to_rctu_floor(rx.end_us);
+    uint64_t candidate = rx.start_us > first_tx_us ?
+        (rx.start_us - first_tx_us) / cadence_us : 0u;
+    bool extended = false;
+
+    if (candidate > 0u) {
+        candidate--;
+    }
+    for (uint64_t tx_us = first_tx_us + candidate * cadence_us;
+         tx_us < train_end_us;
+         tx_us += cadence_us) {
+        const uint64_t tx = dwm3000_timing_us_to_rctu_ceil(tx_us);
+        const uint64_t frame_end = tx + airtime;
+        const uint64_t overlap_start = tx > rearmed ? tx : rearmed;
+        const uint64_t detection = overlap_start + pac;
+
+        if (tx > end) {
+            break;
+        }
+        if (!extended && detection <= tx + preamble && detection <= end) {
+            if (detection + completion > end) {
+                end = detection + completion;
+            }
+            extended = true;
+        }
+        if (tx >= rearmed && frame_end <= end) {
+            return dwm3000_timing_rctu_to_us_ceil(frame_end);
+        }
+        if (extended && tx < rearmed && frame_end > rearmed) {
+            rearmed = frame_end + dwm3000_timing_us_to_rctu_ceil(1000u);
+        }
+    }
+    return 0u;
+}
+
 static bool wake_train_has_contained_claim(uint64_t phase_us,
                                            int32_t drift_us,
                                            uint32_t jitter_us)
 {
     const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_WAKE, UWB_WAKE_CLAIM_LEN);
-    const uint64_t preamble_us = dwm3000_timing_rctu_to_us_ceil(
-        dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
     const uint64_t rx_arm_us = runtime_prepare_rx_us(DWM3000_TIMING_PHY_CH5_WAKE);
-    uint64_t tx_us = 0u;
+    const uint64_t cadence_us = airtime_us +
+        MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US + jitter_us;
+    const uint64_t first_tx_us = drift_us < 0 ?
+        (uint64_t)((int64_t)cadence_us + drift_us) : (uint64_t)drift_us;
 
     CHECK(rx_arm_us > 0u, "wake RX preparation cost was not modeled");
 
-    while (tx_us < (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u) {
-        int64_t shifted = (int64_t)tx_us + drift_us;
-        struct interval frame;
+    for (uint8_t scan = 0u; scan < 2u; scan++) {
+        const struct interval rx = {
+            .start_us = phase_us + (uint64_t)scan * SCAN_PERIOD_US,
+            .end_us = phase_us + (uint64_t)scan * SCAN_PERIOD_US +
+                      MESH_RADIO_ANCHOR_SCAN_RX_US,
+        };
 
-        if (shifted >= 0) {
-            frame.start_us = (uint64_t)shifted;
-            frame.end_us = frame.start_us + airtime_us;
-            /* Preamble detection extends this same RX operation through CRC. */
-            for (uint8_t scan = 0u; scan < 2u; scan++) {
-                struct interval rx = {
-                    .start_us = phase_us + (uint64_t)scan * SCAN_PERIOD_US,
-                    .end_us = phase_us + (uint64_t)scan * SCAN_PERIOD_US +
-                              MESH_RADIO_ANCHOR_SCAN_RX_US,
-                };
-
-                struct interval preamble = {
-                    frame.start_us,
-                    frame.start_us + preamble_us,
-                };
-
-                if (preamble.start_us < rx.end_us && preamble.end_us > rx.start_us) {
-                    return true;
-                }
-            }
+        if (continuous_scan_claim_end(rx, first_tx_us, cadence_us,
+                (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u,
+                UWB_WAKE_CLAIM_LEN) != 0u) {
+            return true;
         }
-        tx_us += airtime_us + MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US + jitter_us;
     }
     return false;
 }
@@ -179,14 +219,12 @@ static bool enumeration_activation_contains_claim_and_followup(
     const uint64_t activation_airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_WAKE,
         UWB_WAKE_CLAIM_LEN + MESH_GATEWAY_ROUTE_ACTIVATION_LEN);
-    const uint64_t claim_preamble_us = dwm3000_timing_rctu_to_us_ceil(
-        dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
     const uint64_t control_airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_MESH_CONTROL, UWB_MESH_MAX_FRAME_LEN);
     const uint64_t control_prepare_us = runtime_prepare_rx_us(
         DWM3000_TIMING_PHY_CH5_MESH_CONTROL);
     const uint64_t claim_spacing_us = activation_airtime_us +
-        MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+        MESH_RADIO_ACTIVATION_TX_HOST_GAP_MAX_US +
         MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US;
     const uint64_t train_end_us =
         (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS * 1000u;
@@ -207,34 +245,18 @@ static bool enumeration_activation_contains_claim_and_followup(
                           ENUMERATION_SCAN_START_TO_START_US +
                       MESH_RADIO_ANCHOR_SCAN_RX_US,
         };
-        const uint64_t nearest_claim = rx.start_us / claim_spacing_us;
-        const uint64_t first_candidate = nearest_claim > 0u ?
-            nearest_claim - 1u : 0u;
+        const uint64_t decoded_end_us = continuous_scan_claim_end(
+            rx, 0u, claim_spacing_us, train_end_us,
+            UWB_WAKE_CLAIM_LEN + MESH_GATEWAY_ROUTE_ACTIVATION_LEN);
 
-        /* Only claims adjacent to the RX start can overlap this short slice. */
-        for (uint64_t candidate = first_candidate;
-             candidate <= nearest_claim + 1u;
-             candidate++) {
-            const uint64_t claim_start_us = candidate * claim_spacing_us;
-            const struct interval preamble = {
-                .start_us = claim_start_us,
-                .end_us = claim_start_us + claim_preamble_us,
+        if (decoded_end_us != 0u) {
+            const struct interval listener = {
+                .start_us = decoded_end_us + control_prepare_us,
+                .end_us = decoded_end_us + (uint64_t)
+                    discovery_assignment_control_listener_duration_ms(1u) * 1000u,
             };
 
-            if (claim_start_us < train_end_us &&
-                preamble.start_us < rx.end_us &&
-                preamble.end_us > rx.start_us) {
-                const struct interval listener = {
-                    .start_us = claim_start_us + activation_airtime_us +
-                                control_prepare_us,
-                    .end_us = claim_start_us + activation_airtime_us +
-                              (uint64_t)
-                                  discovery_assignment_control_listener_duration_ms(
-                                      1u) * 1000u,
-                };
-
-                return fully_contained(control, listener);
-            }
+            return fully_contained(control, listener);
         }
     }
     return false;
@@ -418,7 +440,8 @@ static bool complete_wake_received(uint64_t scan_period_us,
                                   uint64_t scan_phase_us,
                                   uint64_t tx_phase_us,
                                   uint64_t train_us,
-                                  int lost_scan)
+                                  int lost_scan,
+                                  uint32_t rx_us)
 {
     const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_WAKE, UWB_WAKE_CLAIM_LEN);
@@ -429,7 +452,7 @@ static bool complete_wake_received(uint64_t scan_period_us,
     for (int scan = -1; scan < 3; scan++) {
         const int64_t start = (int64_t)scan_phase_us +
             (int64_t)scan * (int64_t)scan_period_us;
-        int64_t end = start + MESH_RADIO_ANCHOR_SCAN_RX_US;
+        int64_t end = start + rx_us;
         int64_t rearmed = start;
         bool extended = false;
 
@@ -442,13 +465,17 @@ static bool complete_wake_received(uint64_t scan_period_us,
                 dwm3000_timing_rctu_to_us_ceil(dwm3000_timing_preamble_rctu(
                     DWM3000_TIMING_PHY_CH5_WAKE));
             /* Activity only prolongs RX; it never certifies this frame.
-             * Budget 1 ms to notice activity and another 1 ms to rearm after
+             * Budget the qualified acquisition latency and 1 ms to rearm after
              * a clipped frame. The production low-duty hunt holds for 1 s;
              * this uses only its first 15 ms completion interval. */
-            if (!extended && preamble_end >= rearmed + 1000 &&
-                (int64_t)tx + 1000 <= end) {
+            const int64_t pac_us = (int64_t)dwm3000_timing_rctu_to_us_ceil(
+                dwm3000_timing_pac_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
+            if (!extended && preamble_end >= rearmed + pac_us &&
+                rearmed + pac_us <= end &&
+                (int64_t)tx + pac_us <= end) {
                 const int64_t activity = (int64_t)tx > rearmed ?
-                    (int64_t)tx + 1000 : rearmed + 1000;
+                    (int64_t)tx + pac_us :
+                    rearmed + pac_us;
                 end = activity + MESH_RADIO_ACTIVITY_COMPLETION_US;
                 extended = true;
             }
@@ -470,8 +497,10 @@ static void test_mixed_receiver_cadence_complete_frame_sweep(void)
         MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS,
     };
     bool old_sender_local_train_missed = false;
+    bool two_ms_scan_missed = false;
+    bool one_ms_scan_missed = false;
 
-    CHECK(MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS == 435u,
+    CHECK(MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS == 380u,
           "maximum receiver interval must reserve rearm and full RX");
     CHECK(MESH_RADIO_UPLINK_WAKE_TRAIN_MS <= UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
           "two receiver scans exceed the wire duration limit");
@@ -488,21 +517,32 @@ static void test_mixed_receiver_cadence_complete_frame_sweep(void)
                  tx_phase += PHASE_STEP_US) {
                 for (int lost = -1; lost <= 1; lost++) {
                     CHECK(complete_wake_received(period, phase, tx_phase,
-                        (uint64_t)MESH_RADIO_UPLINK_WAKE_TRAIN_MS * 1000u, lost),
+                        (uint64_t)MESH_RADIO_UPLINK_WAKE_TRAIN_MS * 1000u, lost,
+                        MESH_RADIO_ANCHOR_SCAN_RX_US),
                         "uplink missed a complete frame after one lost scan");
                     if (!complete_wake_received(period, phase, tx_phase,
-                                                860000u, lost)) {
+                                                860000u, lost,
+                                                MESH_RADIO_ANCHOR_SCAN_RX_US)) {
                         old_sender_local_train_missed = true;
                     }
                 }
                 CHECK(complete_wake_received(period, phase, tx_phase,
-                    (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u, -2),
+                    (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u, -2,
+                    MESH_RADIO_ANCHOR_SCAN_RX_US),
                     "ordinary click wake missed a complete receiver frame");
+                two_ms_scan_missed |= !complete_wake_received(
+                    period, phase, tx_phase,
+                    (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u, -2, 2000u);
+                one_ms_scan_missed |= !complete_wake_received(
+                    period, phase, tx_phase,
+                    (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u, -2, 1000u);
             }
         }
     }
     CHECK(old_sender_local_train_missed,
           "mixed receiver sweep must detect the sender-local 860 ms defect");
+    CHECK(two_ms_scan_missed && one_ms_scan_missed,
+          "phase sweep must expose the blind spots in the shorter 1 ms and 2 ms scans");
 }
 
 static void test_claim_phase_sweep(void)
@@ -528,10 +568,9 @@ static void test_enumeration_activation_phase_sweep(void)
               (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS *
                   1000u,
           "enumeration activation train no longer covers every scan phase");
-    CHECK(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS ==
-              MESH_RADIO_WAKE_TRAIN_MS &&
-              MESH_RADIO_WAKE_TRAIN_MS == 500u,
-          "Here-I-Am and ordinary wake trains no longer share 500 ms");
+    CHECK(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS == 500u &&
+              MESH_RADIO_WAKE_TRAIN_MS == 445u,
+          "Here-I-Am must retain its loaded 500 ms allowance while ordinary wakes use 445 ms");
 
     for (uint64_t phase_us = 0u;
          phase_us < ENUMERATION_SCAN_START_TO_START_US;
@@ -539,6 +578,69 @@ static void test_enumeration_activation_phase_sweep(void)
         CHECK(enumeration_activation_contains_claim_and_followup(phase_us),
               "enumeration activation missed wake or extended CLAIM containment");
     }
+}
+
+static void test_activation_scan_cadence_regression(void)
+{
+    const size_t frame_bytes = UWB_WAKE_CLAIM_LEN + MESH_GATEWAY_ROUTE_ACTIVATION_LEN;
+    const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE, frame_bytes);
+    const uint64_t cadences_us[] = {
+        8253u, /* Actual consecutive RF starts captured on the gateway bench. */
+        airtime_us + MESH_RADIO_ACTIVATION_TX_HOST_GAP_MAX_US +
+            MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US,
+    };
+    const uint64_t preamble = dwm3000_timing_preamble_rctu(
+        DWM3000_TIMING_PHY_CH5_WAKE);
+    const uint64_t pac = dwm3000_timing_pac_rctu(DWM3000_TIMING_PHY_CH5_WAKE);
+    const uint64_t train_end_us =
+        (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS * 1000u;
+
+    CHECK(cadences_us[1] == 9037u && cadences_us[1] > cadences_us[0],
+          "activation cadence must include margin over the measured 8253 us RF gap");
+    for (size_t index = 0u; index < ARRAY_SIZE(cadences_us); index++) {
+        const uint64_t cadence_us = cadences_us[index];
+        const uint64_t minimum_rx_us = dwm3000_timing_rctu_to_us_ceil(
+            dwm3000_timing_us_to_rctu_ceil(cadence_us) - preamble + 2u * pac);
+        size_t old_scan_misses = 0u;
+        size_t current_scan_misses = 0u;
+
+        /* Independently phase a single scan over every microsecond of one
+         * complete RF cadence. A longer train cannot repair a blind single
+         * scan phase when the following scan may begin after the train ends. */
+        for (uint64_t phase_us = 0u; phase_us < cadence_us; phase_us++) {
+            const uint64_t start_us = cadence_us + phase_us;
+            const struct interval old_rx = { start_us, start_us + 3000u };
+            const struct interval current_rx = {
+                start_us, start_us + MESH_RADIO_ANCHOR_SCAN_RX_US,
+            };
+
+            old_scan_misses += continuous_scan_claim_end(
+                old_rx, 0u, cadence_us, train_end_us, frame_bytes) == 0u;
+            current_scan_misses += continuous_scan_claim_end(
+                current_rx, 0u, cadence_us, train_end_us, frame_bytes) == 0u;
+        }
+        CHECK(old_scan_misses > 0u && minimum_rx_us > 3000u,
+              "measured activation cadence must expose the old 3 ms blind phases");
+        CHECK(current_scan_misses == 0u &&
+                  minimum_rx_us <= MESH_RADIO_ANCHOR_SCAN_RX_US,
+              "continuous production scan must acquire and decode at every RF phase");
+        printf("activation cadence=%llu us: phases=%llu old_3ms_misses=%zu "
+               "current_5ms_misses=%zu minimum_rx=%llu us\n",
+               (unsigned long long)cadence_us, (unsigned long long)cadence_us,
+               old_scan_misses, current_scan_misses,
+               (unsigned long long)minimum_rx_us);
+    }
+    const uint64_t preamble_end_us = dwm3000_timing_rctu_to_us_floor(preamble);
+    CHECK(continuous_scan_claim_end(
+              (struct interval) { preamble_end_us, preamble_end_us + 1u },
+              0u, cadences_us[1], train_end_us, frame_bytes) == 0u,
+          "less than one PAC at the preamble tail must not extend RX");
+    CHECK(continuous_scan_claim_end(
+              (struct interval) { 1u, 1u + MESH_RADIO_ANCHOR_SCAN_RX_US },
+              0u, cadences_us[1], train_end_us, frame_bytes) ==
+                  cadences_us[1] + airtime_us,
+          "a clipped first frame must wait for a complete later frame after rearm");
 }
 
 static void test_depth_aware_enumeration_control_listener(void)
@@ -803,11 +905,11 @@ static void test_maintained_normal_click_phy_and_capacity_contract(void)
     CHECK(wake != NULL && range != NULL && control != NULL,
           "production channel-5 PHY profiles are unavailable");
     if (wake != NULL && range != NULL) {
-        CHECK(wake->pac_symbols == 32u && range->pac_symbols == 32u,
-              "production channel-5 PHY must use PAC32");
-        CHECK(wake->sfd_timeout_symbols == 4073u &&
-                  range->sfd_timeout_symbols == 4073u,
-              "production channel-5 PHY must use the documented 4073-symbol SFD timeout");
+        CHECK(wake->pac_symbols == 16u && range->pac_symbols == 16u,
+              "production channel-5 PHY must use PAC16");
+        CHECK(wake->sfd_timeout_symbols == 4097u &&
+                  range->sfd_timeout_symbols == 4097u,
+              "production channel-5 PHY must use the shipped 4097-symbol SFD timeout");
         CHECK(wake->preamble_symbols == 4096u &&
                   range->preamble_symbols == 4096u,
               "duty-cycled sniffers still need the 4096-symbol wake train");
@@ -851,9 +953,9 @@ int main(void)
 {
     CHECK(SCAN_PERIOD_US == UINT64_C(380000),
           "test is not using the production low-duty scan period");
-    CHECK(MESH_RADIO_WAKE_TRAIN_MS == 500u,
-          "ordinary production wake trains must remain at least 500 ms");
-    CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 10000u,
+    CHECK(MESH_RADIO_WAKE_TRAIN_MS == 445u,
+          "ordinary production wake trains use the qualified 445 ms budget");
+    CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 5000u,
           "test is not using the production scan window");
     CHECK(dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,
                                          UWB_WAKE_CLAIM_LEN) > 0u,
@@ -863,6 +965,7 @@ int main(void)
     test_claim_phase_sweep();
     test_mixed_receiver_cadence_complete_frame_sweep();
     test_enumeration_activation_phase_sweep();
+    test_activation_scan_cadence_regression();
     test_depth_aware_enumeration_control_listener();
     test_depth_aware_survey_control_schedule();
     test_route_wave_depths_are_non_overlapping();

@@ -298,6 +298,15 @@ int dwm3000_driver_send_frame(const uint8_t *frame,
                                              NULL);
 }
 
+int dwm3000_driver_read_last_tx_timestamp(uint64_t *timestamp)
+{
+    if (timestamp == NULL || !radio_awake || !radio_configured) {
+        return -EINVAL;
+    }
+    *timestamp = read_tx_timestamp_u64();
+    return take_port_error("tx-cadence-timestamp");
+}
+
 int dwm3000_driver_send_frame_tracked(const uint8_t *frame,
                                       size_t frame_len,
                                       uint32_t timeout_ms,
@@ -578,6 +587,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     uint32_t rearm_count = 0u;
     uint32_t hunt_started_ms = 0u;
     uint32_t hunt_ended_ms = 0u;
+    uint32_t hunt_started_cycles;
     uint64_t observed_at_ms = 0u;
     bool activity_seen = false;
     bool completion_active = false;
@@ -609,6 +619,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
         return ret;
     }
     hunt_started_ms = k_uptime_get_32();
+    hunt_started_cycles = k_cycle_get_32();
     acquire_deadline_ms = k_uptime_get() + acquire_timeout_ms;
 
     driver_stats.rx_starts++;
@@ -646,15 +657,17 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             *failure = DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_DWM_CH5_RX_HUNT_EMPTY s=%u e=%u ret=%d sys=%08x phy=%u cfg=%u aw=%u unk=%u\n",
+            status_debug_printf("DBG_DWM_CH5_RX_HUNT_EMPTY s=%u e=%u sys=%08x phy=%u state=%u%u%u cyc=%u rx_us=%u\n",
                                 hunt_started_ms,
                                 hunt_ended_ms,
-                                ret,
                                 status,
                                 (unsigned int)active_phy_mode,
                                 radio_configured ? 1u : 0u,
                                 radio_awake ? 1u : 0u,
-                                radio_state_unknown ? 1u : 0u);
+                                radio_state_unknown ? 1u : 0u,
+                                hunt_started_cycles,
+                                (unsigned int)k_cyc_to_us_floor64(
+                                    (uint32_t)(k_cycle_get_32() - hunt_started_cycles)));
         }
         return finish_abortible_continuous_receive(-ETIMEDOUT);
     }

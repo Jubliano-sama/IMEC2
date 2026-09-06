@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "app_board.h"
+#include "app_anchor_actions.h"
 #include "app_state.h"
 #include "stack_diag_transport.h"
 #include "uwb.h"
@@ -28,6 +29,16 @@ LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
 #define DEBUG_CH5_RX_PULSE_MS 1000u
 #define DEBUG_CH5_TX_PULSE_MS 400u
 #define DEBUG_TX_BOOT_TEST_MS 600u
+
+K_MUTEX_DEFINE(battery_adc_mutex);
+K_MUTEX_DEFINE(status0_mutex);
+static struct k_work_delayable status0_identify_work;
+static uint64_t status0_identify_started_ms;
+static uint8_t status0_desired_rgb;
+static bool status0_identify_active;
+static bool status0_identify_ready;
+static bool status0_disconnected;
+static void status0_disconnect(void);
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(battery_pg), okay)
 static const struct gpio_dt_spec battery_pg =
@@ -170,7 +181,7 @@ int battery_usb_power_present(void)
 #endif
 }
 
-int battery_adc_divider_disable(void)
+static int battery_adc_divider_disable_locked(void)
 {
 #if DT_NODE_HAS_STATUS(BATTERY_ADC_ENABLE_NODE, okay)
     int ret = -EIO;
@@ -204,9 +215,19 @@ int battery_adc_divider_disable(void)
 #endif
 }
 
+int battery_adc_divider_disable(void)
+{
+    int ret;
+
+    k_mutex_lock(&battery_adc_mutex, K_FOREVER);
+    ret = battery_adc_divider_disable_locked();
+    k_mutex_unlock(&battery_adc_mutex);
+    return ret;
+}
+
 static int battery_adc_finish(int primary_ret)
 {
-    int disable_ret = battery_adc_divider_disable();
+    int disable_ret = battery_adc_divider_disable_locked();
 
     if (disable_ret < 0) {
         LOG_WRN("battery ADC divider cleanup failed: primary_ret=%d disable_ret=%d",
@@ -238,7 +259,7 @@ static int battery_adc_divider_enable(void)
 #endif
 }
 
-int battery_sample_lithium_mv(uint16_t *battery_mv)
+static int battery_sample_lithium_mv_locked(uint16_t *battery_mv)
 {
 #if HAS_BATTERY_ADC
     int16_t raw_sample = 0;
@@ -295,6 +316,16 @@ int battery_sample_lithium_mv(uint16_t *battery_mv)
     ARG_UNUSED(battery_mv);
     return -ENODEV;
 #endif
+}
+
+int battery_sample_lithium_mv(uint16_t *battery_mv)
+{
+    int ret;
+
+    k_mutex_lock(&battery_adc_mutex, K_FOREVER);
+    ret = battery_sample_lithium_mv_locked(battery_mv);
+    k_mutex_unlock(&battery_adc_mutex);
+    return ret;
 }
 
 static void set_output(const struct gpio_dt_spec *gpio, bool enabled)
@@ -354,7 +385,7 @@ void status_leds_set(bool red, bool green, bool blue)
     status_led1_set(red, green, blue);
 }
 
-void status_led0_set(bool red, bool green, bool blue)
+static void status_led0_apply(bool red, bool green, bool blue)
 {
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     set_output(&status0_red, red);
@@ -365,6 +396,95 @@ void status_led0_set(bool red, bool green, bool blue)
 #if DT_NODE_HAS_STATUS(STATUS0_BLUE_NODE, okay)
     set_output(&status0_blue, blue);
 #endif
+}
+
+void status_led0_set(bool red, bool green, bool blue)
+{
+    k_mutex_lock(&status0_mutex, K_FOREVER);
+    status0_desired_rgb = (red ? 1u : 0u) | (green ? 2u : 0u) |
+                          (blue ? 4u : 0u);
+    if (!status0_identify_active && !status0_disconnected) {
+        status_led0_apply(red, green, blue);
+    }
+    k_mutex_unlock(&status0_mutex);
+}
+
+static void status0_identify_finish(void)
+{
+    status0_identify_active = false;
+    if (status0_disconnected) {
+        status_led0_apply(false, false, false);
+        status0_disconnect();
+    } else {
+        status_led0_apply((status0_desired_rgb & 1u) != 0u,
+                         (status0_desired_rgb & 2u) != 0u,
+                         (status0_desired_rgb & 4u) != 0u);
+    }
+}
+
+static void status0_identify_work_handler(struct k_work *work)
+{
+    uint32_t next_ms;
+    uint64_t elapsed;
+    uint8_t color;
+
+    ARG_UNUSED(work);
+    k_mutex_lock(&status0_mutex, K_FOREVER);
+    if (!status0_identify_active) {
+        k_mutex_unlock(&status0_mutex);
+        return;
+    }
+    elapsed = (uint64_t)k_uptime_get() - status0_identify_started_ms;
+    color = app_anchor_identify_color(
+        (uint32_t)MIN(elapsed, (uint64_t)UINT32_MAX), &next_ms);
+    if (next_ms == 0u) {
+        status0_identify_finish();
+        status_debug_printf("DBG_ANCHOR_IDENTIFY_DONE elapsed=%llu\n",
+                            (unsigned long long)elapsed);
+    } else {
+        status_led0_apply((color & 1u) != 0u, (color & 2u) != 0u,
+                         (color & 4u) != 0u);
+        if (k_work_reschedule(&status0_identify_work, K_MSEC(next_ms)) < 0) {
+            status0_identify_finish();
+        }
+    }
+    k_mutex_unlock(&status0_mutex);
+}
+
+int status_identify_anchor(void)
+{
+    int ret = 0;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || !status0_identify_ready) {
+        return -ENOTSUP;
+    }
+    k_mutex_lock(&status0_mutex, K_FOREVER);
+#if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
+    ret |= configure_output(&status0_red);
+#endif
+#if DT_NODE_HAS_STATUS(STATUS0_GREEN_NODE, okay)
+    ret |= configure_output(&status0_green);
+#endif
+#if DT_NODE_HAS_STATUS(STATUS0_BLUE_NODE, okay)
+    ret |= configure_output(&status0_blue);
+#endif
+    if (ret == 0) {
+        status0_identify_started_ms = (uint64_t)k_uptime_get();
+        status0_identify_active = true;
+        status_led0_apply(true, false, false);
+        ret = k_work_reschedule(&status0_identify_work, K_MSEC(250));
+        if (ret < 0) {
+            status0_identify_finish();
+        } else {
+            status_debug_printf("DBG_ANCHOR_IDENTIFY_START at=%llu duration=%u\n",
+                (unsigned long long)status0_identify_started_ms,
+                ANCHOR_IDENTIFY_DURATION_MS);
+        }
+    } else {
+        status0_identify_finish();
+    }
+    k_mutex_unlock(&status0_mutex);
+    return ret < 0 ? ret : 0;
 }
 
 void status_led1_set(bool red, bool green, bool blue)
@@ -798,7 +918,7 @@ static void disconnect_gpio(const struct gpio_dt_spec *gpio)
     }
 }
 
-void status_leds_disconnect(void)
+static void status0_disconnect(void)
 {
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     disconnect_gpio(&status0_red);
@@ -809,6 +929,16 @@ void status_leds_disconnect(void)
 #if DT_NODE_HAS_STATUS(STATUS0_BLUE_NODE, okay)
     disconnect_gpio(&status0_blue);
 #endif
+}
+
+void status_leds_disconnect(void)
+{
+    k_mutex_lock(&status0_mutex, K_FOREVER);
+    status0_disconnected = true;
+    if (!status0_identify_active) {
+        status0_disconnect();
+    }
+    k_mutex_unlock(&status0_mutex);
 #if DT_NODE_HAS_STATUS(STATUS1_RED_NODE, okay)
     disconnect_gpio(&status1_red);
 #endif
@@ -859,6 +989,9 @@ int status_leds_connect(void)
 {
     int ret = 0;
 
+    k_mutex_lock(&status0_mutex, K_FOREVER);
+    status0_disconnected = false;
+    if (!status0_identify_active) {
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     ret |= configure_output(&status0_red);
 #endif
@@ -868,6 +1001,8 @@ int status_leds_connect(void)
 #if DT_NODE_HAS_STATUS(STATUS0_BLUE_NODE, okay)
     ret |= configure_output(&status0_blue);
 #endif
+    }
+    k_mutex_unlock(&status0_mutex);
 #if DT_NODE_HAS_STATUS(STATUS1_RED_NODE, okay)
     ret |= configure_output(&status1_red);
 #endif
@@ -890,6 +1025,8 @@ int status_leds_connect(void)
 
 int status_leds_init(void)
 {
+    k_work_init_delayable(&status0_identify_work, status0_identify_work_handler);
+    status0_identify_ready = true;
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     k_work_init_delayable(&status1_debug_pulse_restore_work,
                           status1_debug_pulse_restore_handler);

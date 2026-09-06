@@ -1,4 +1,8 @@
-# Protocol timelines
+# Historical protocol timelines
+
+These bundles preserve earlier designs and measured traces. They are not current runtime timing or qualification authority. In particular, C9 rhythms, TABLE ACK_CONFIRM, 200 ms survey probes and survey click-preemption examples have been superseded. Use the [Mesh contract](<../Mesh Connected Routing Contract.md>) for current behavior and inspect each bundle’s original date/commit before reusing evidence.
+
+The descriptions below identify the historical subject of each bundle; words such as “current”, “implemented” and “live-proven” refer to that bundle’s original checkpoint.
 
 - `four_board_qualification_status`: current end-to-end qualification map.
 - `enumeration_slot_contract`: implemented depth/slot-ordered CLAIM responses and exact TABLE ACK_CONFIRM quorum, shown in parallel for D-F1-F2.

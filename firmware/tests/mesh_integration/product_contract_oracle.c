@@ -112,7 +112,7 @@ static int ordering_oracle(void)
     };
     uint8_t hop_counts[] = {2u, 0u, 1u, 0u};
     int ret = discovery_assignment_order_roster_extension(
-        anchor_ids, hop_counts,
+        anchor_ids, hop_counts, NULL,
         sizeof(anchor_ids) / sizeof(anchor_ids[0]), 0u);
 
     if (ret != PROTO_OK) {

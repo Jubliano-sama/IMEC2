@@ -380,6 +380,7 @@ class SurveyGeometryView(ttk.Frame):
         on_layout_edited: Callable[[dict[str, tuple[float, float]]], None]
         | None = None,
         on_refine_requested: Callable[[], None] | None = None,
+        on_anchor_selected: Callable[[str | None], None] | None = None,
         on_solve_requested: Callable[
             [
                 str,
@@ -398,6 +399,7 @@ class SurveyGeometryView(ttk.Frame):
         self._on_positions_changed = on_positions_changed
         self._on_layout_edited = on_layout_edited
         self._on_refine_requested = on_refine_requested
+        self._on_anchor_selected = on_anchor_selected
         self._on_solve_requested = on_solve_requested
         self._layout_revision = -1
         self._layout_object: object | None = None
@@ -1013,6 +1015,8 @@ class SurveyGeometryView(ttk.Frame):
 
     def _select_anchor(self, anchor_id: str | None) -> None:
         self._selected_anchor_id = anchor_id
+        if self._on_anchor_selected is not None:
+            self._on_anchor_selected(anchor_id)
         self._selected_edge_key = None
         self._sync_edge_editor()
         self._redraw()
@@ -1327,6 +1331,8 @@ class SurveyGeometryView(ttk.Frame):
             self._select_anchor(None)
             return None
         self._selected_anchor_id = closest[1]
+        if self._on_anchor_selected is not None:
+            self._on_anchor_selected(closest[1])
         self._selected_edge_key = None
         self._sync_edge_editor()
         if (

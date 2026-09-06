@@ -295,6 +295,44 @@ class AppModelTests(unittest.TestCase):
         self.assertIn("4 anchors, max hop 3, slot span 7",
                       gui._topology_timing_summary)
 
+    def test_reconnect_notices_clear_only_after_connected(self) -> None:
+        notices = (
+            "Attempting automatic reconnect to AA:BB:CC:DD:EE:FF...",
+            "Gateway link dropped; auto-reconnecting to AA:BB:CC:DD:EE:FF...",
+            "Auto-reconnect failed: notification setup timed out",
+        )
+        for notice in notices:
+            with self.subTest(notice=notice):
+                gui = self.identity_gui_model()
+                gui.error_text = FakeVariable(notice)  # type: ignore[assignment]
+                for state in ("reconnecting", "connecting", "disconnecting", "disconnected"):
+                    gui._set_connection_state(state)
+                    self.assertEqual(gui.error_text.get(), notice)
+                gui._set_connection_state("connected")
+                self.assertTrue(gui.connected)
+                self.assertEqual(gui.error_text.get(), "")
+
+    def test_reconnect_preserves_command_errors_and_unknown_survey_outcome(self) -> None:
+        unknown = "BLE disconnected; the remote survey outcome is unknown."
+        errors = (
+            "IDENTIFY_ANCHOR failed: INVALID_STATE",
+            "Survey failed: only 3/5 usable samples",
+            unknown,
+            "Command failed after Auto-reconnect failed: outcome unknown",
+        )
+        for error in errors:
+            with self.subTest(error=error):
+                gui = self.identity_gui_model()
+                gui.error_text = FakeVariable(error)  # type: ignore[assignment]
+                step = SimpleNamespace(state="warning", detail=unknown)
+                survey = SimpleNamespace(active=True, steps={"ranging": step})
+                gui.survey_model = survey  # type: ignore[assignment]
+                gui._set_connection_state("connected")
+                self.assertEqual(gui.error_text.get(), error)
+                self.assertIs(gui.survey_model, survey)
+                self.assertTrue(survey.active)
+                self.assertEqual((step.state, step.detail), ("warning", unknown))
+
     def test_different_gateway_clears_topology_before_policy_calculation(
         self,
     ) -> None:

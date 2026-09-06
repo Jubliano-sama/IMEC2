@@ -7,7 +7,7 @@ This workspace is a Zephyr/west firmware tree for the IMEC clicker, anchor, and 
 - `firmware/app/`: Zephyr application, board overlay, DWM3000 port, role-specific runtime.
 - `firmware/tests/`: native C tests.
 - `tools/gateway_gui/`: Python desktop GUI that connects to the gateway over BLE and owns the heavy host-side processing.
-- `Documentation/`: architecture, protocols, implementation task list.
+- `Documentation/`: current protocol references, product requirements and explicitly historical plans/reviews.
 
 I like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
 
@@ -16,6 +16,12 @@ Channel both "measure twice, cut once" and "yagni". Fight scope creep. Try to ho
 The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
 
 After you notice that a debugging process is taking longer than it should, try to improve your debugging process by modifying what you log, when you log, and how you filter the logs, but do not bound your debugging improvement step by this rule.
+
+## Documentation authority
+
+Before relying on architecture, timing or protocol prose, read [Documentation/README.md](Documentation/README.md). Explicit current user requirements take precedence; inspect the active checkout, including dirty edits, to establish implemented behavior. Dated reviews, timelines and state-machine proposals are evidence or plans, not current runtime contracts. `COMPILED_DOCUMENTATION.md` now points to maintained source documents instead of duplicating them. Production reports use Channel 5; retained Channel-9 code/tests do not establish a production cadence. Survey uses the compact START/PLAN/CANCEL response-lane protocol.
+
+For scan/wake/power changes, use the [Mesh contract](<Documentation/Mesh Connected Routing Contract.md>) and shared timing headers. Keep acquisition continuous: hardware SNIFF and pulsed acquisition are excluded. Include nRF and DW3000 states in power reasoning; absent a power instrument, distinguish modeled residency from measured current.
 
 ## Gateway BLE GUI (tools/gateway_gui)
 
@@ -27,10 +33,10 @@ Do not use NVS as secondary RAM. Its flash endurance is only about 10,000 write 
 
 ## Build, Test, and Development Commands
 
-Use the local uv-managed Python environment:
+Reuse the existing local uv-managed Python environment. Create it only if missing; install requirements as needed:
 
 ```sh
-UV_CACHE_DIR=$PWD/.uv-cache uv venv --clear .venv
+UV_CACHE_DIR=$PWD/.uv-cache uv venv .venv
 UV_CACHE_DIR=$PWD/.uv-cache uv pip install --python .venv/bin/python -r zephyr/scripts/requirements.txt -r nrf/scripts/requirements.txt
 ```
 
@@ -44,18 +50,20 @@ ctest --test-dir firmware/build --output-on-failure
 
 ## Firmware Lines and Role Meaning
 
-The connected-routing mesh line is the production successor and will become the main firmware after the migration is complete. Treat its role presets as the default target for new product behavior even while their names still carry the `mesh_` prefix:
+The `mesh_clicker`, `mesh_anchor` and `mesh_gateway` presets are the production-candidate line and the default for product work. Their historical `mesh_` and connected-routing names do not imply Channel-9 delivery:
 
 - `mesh_clicker`: normal battery clicker behavior. It sleeps normally, wakes for a physical click/range sequence, and uses the connected-routing mesh path for delivery. It is not a continuously active test transmitter.
 - `mesh_anchor`: the single connected-routing anchor image for every production anchor. It derives a stable node ID from the nRF FICR hardware identity; logical discovery/ranging order is assigned by the gateway and persisted. An anchor ranges local clicks, relays mesh work, and prioritizes its own click reports over transit traffic.
-- `mesh_gateway`: gateway role for the same connected-routing firmware, including gateway BLE ingress/egress and highest-priority gateway commands.
+- `mesh_gateway`: gateway role for the same connected-routing firmware, including gateway BLE ingress/egress and command admission subject to active survey ownership.
 
 The remaining build lines are not alternative production architectures:
 
-- `mesh_transmitter` and `mesh_transmitter_forcedhop` are synthetic trafficgenerators used to load and regression-test the production-successor mesh path. They must not be treated as deployable anchor firmware.
+- `mesh_transmitter` and `mesh_transmitter_forcedhop` are synthetic traffic generators used to load and regression-test the production-successor mesh path. They must not be treated as deployable anchor firmware.
 - `ml_clicker` and `ml_anchor_1` through `ml_anchor_8` are demo/data-collection images for gathering training and validation data for a distance-offset compensation model. You do not need to take them into account in tests or validation unless its specifically mentioned by the user.
 
 ## Flashing and Monitoring
+
+When bench work is authorized, reassign the attached boards to whichever clicker, anchor, gateway, or test roles the experiment needs without asking for role approval again. Enumerate the live probes, keep an explicit probe-to-role mapping, and report the final roles. Before a role migration, back up durable configuration and initialize incompatible role storage when needed; a board's previous role is not a constraint on the experiment.
 
 Flash mesh roles with `west flash`. Select the build and the currently connected probe for the intended role:
 
@@ -63,7 +71,7 @@ Flash mesh roles with `west flash`. Select the build and the currently connected
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor -- --dev-id <probe-id> --frequency 4000000
 ```
 
-Use the normal sector erase so durable configuration survives. Check the build's RAM margin, then capture RTT and exercise the behavior changed by the firmware. A successful flash proves programming completed; enumeration, survey, and click delivery need their own observed results.
+Use the normal sector erase so compatible durable configuration survives. Check the build's RAM margin, then capture RTT and exercise the behavior changed by the firmware. A successful flash proves programming completed; enumeration, survey, and click delivery need their own observed results.
 
 With more than one probe attached, pass the probe ID to west after the runner separator: `-- --dev-id <probe-id> --frequency 4000000`. The shorter `-u <probe-id>` form belongs to direct `pyocd` commands such as RTT and must not be used as a west-flash argument.
 
@@ -80,6 +88,10 @@ Hardware RTT and flash commands must run with direct USB device access. A sandbo
 **Mandatory pre-step**: Before starting any new work, adding code, refactoring, performing file operations, structural changes, or build modifications, read the entire `AGENT_KNOWN_ISSUES_SUMMARY.md`; it is the recommended first pass and intentionally weights contemporary problems more heavily. It is strictly a bug log: its entries are historical evidence, not requirements. Search or review the full append-only `AGENT_KNOWN_ISSUES.md` for similar subsystem-specific history when relevant. Add every new annoying tool behavior, escaped bug, or corrected root cause as a one-line entry to the full file, never to the summary; update the summary only as a deliberate curation task. Historical entries do not prove that a bug is still present, so verify current code and tests before relying on them.
 
 **Project context for agents**: This is a research experience-sampling system for correlating subjective user clicks with environmental sensors in a real office testbed. A major new capability is automated anchor self-setup (solving network geometry from anchor-to-anchor distances), the solving part is not part of the firmware, but a separate well-working project with known and tested input requirements. The single most important property is **robustness** — the system must not stall, lose data, or return incorrect results under any circumstances, including multi-month operation. See the Documentation folder for core requirements and the narrative behind them. You are allowed to deviate from the requirements in small ways as long as user permission is aquired for each change. Read the narrative and requirements before starting any core work beyond small patches. You are not responsible for every single requirement. For example, 20cm location inaccuracy is inherent to the design, and is not something you should worry about; those tradeoffs have already been made. The same goes for anonymity and showing the question.
+
+## Survey ownership
+
+An active survey owns each participating anchor exclusively, from accepted START through every PLAN batch and result drain until completion, matching CANCEL, bounded expiry, or terminal failure. During that ownership an anchor must ignore clicks, enumeration/Here-I-Am activations, assignment changes, and every unrelated gateway command, including identification LEDs and battery requests. Do not cancel a survey to service a click, periodically probe the click PHY, acknowledge rejected commands, or let rejected traffic change the survey's identity, roster, or deadlines. Only validated controls for the same survey identity and that survey's ranging/result traffic remain eligible. Within ranging receive waits, discard unrelated or malformed frames against the original absolute deadline; a decoded click must not end the wait early or refresh its timeout. Check both RF admission and already queued command execution; the gateway and GUI should prevent unrelated operations while a survey is active. This is an explicit user requirement confirmed on 2026-09-06 and overrides older click-preemption descriptions and tests.
 
 ## Long Term Stable Development
 

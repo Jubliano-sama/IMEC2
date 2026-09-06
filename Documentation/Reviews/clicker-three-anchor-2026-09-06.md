@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Clicker qualification with three anchors — 2026-09-06
 
 This follows the recovery implementation pass. The user replaced the gateway's debug target with a separate physical clicker. Fresh FICR reads identified that clicker as `0xa378b0f6495e09ac`, node `0xea35f5b508104aae`, on probe `E46070D247394D36`. The original gateway remained powered and reachable over BLE at `E4:16:B7:C7:E6:95`, so delivery can be checked with five powered boards and four debug probes.

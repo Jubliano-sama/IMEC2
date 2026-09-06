@@ -1,3 +1,5 @@
+> Test scope: click handoff outside active survey ownership. Active surveys ignore clicks and unrelated controls; see the [current Mesh contract](<../../../../Documentation/Mesh Connected Routing Contract.md>). Composition/future-facade tests below describe their test adapters, not a deployed replacement for production custody.
+
 # Click-handoff production seam
 
 The first native_sim ztest compiles and invokes the exact click-handoff block from

@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Anchor and clicker power audit
 
 Audit date: 2026-09-05. Source: `474ef8600ef25b50da5c3dbc1dc30241178d166a`. Scope: the production `mesh_clicker` and `mesh_anchor` presets, their board power handling, radio receive/transmit waits, GPIO gesture ownership, battery indication, diagnostics, and current Channel-5 delivery. This was a source audit; no firmware/configuration changes, hardware actions, or current measurements were performed. Line references below are physical file lines, including for `.inc` files that contain compiler `#line` directives.

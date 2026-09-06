@@ -1,3 +1,5 @@
+> Historical review/evidence: findings, timings, probe mappings and test totals below belong to the recorded checkout and experiment. Revalidate against the current implementation; use the [documentation index](../../../README.md) for current contracts. Recommendations here are not user-approved requirements.
+
 # Holdout plan, frozen before running the holdout
 
 The development suite contains 87 cases: 33 cases from earlier experiments and

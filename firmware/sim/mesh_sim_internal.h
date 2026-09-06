@@ -214,6 +214,8 @@ int mesh_sim_radio_evaluate_transmission(
 int mesh_sim_radio_note_preamble_at_tx_start(
     struct mesh_sim_world *world,
     const struct mesh_sim_transmission *tx);
+int mesh_sim_radio_note_preamble_at_rx_start(
+    struct mesh_sim_world *world, size_t window_index);
 int mesh_sim_radio_process_anchor_low_duty_start(
     struct mesh_sim_world *world,
     uint8_t node_index);
