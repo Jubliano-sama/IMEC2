@@ -1,0 +1,38 @@
+EFF.
+======================================================================
+ERROR: test_bad_event_cannot_skip_expiry_or_remaining_events (tools.gateway_gui.tests.test_command_recovery.CommandRecoveryTests.test_bad_event_cannot_skip_expiry_or_remaining_events)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_command_recovery.py", line 74, in test_bad_event_cannot_skip_expiry_or_remaining_events
+    gui._drain_events()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/app.py", line 2403, in _drain_events
+    self._handle_event(event)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_command_recovery.py", line 72, in handle
+    if event['kind']=='bad':raise ValueError('malformed injected event')
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: malformed injected event
+
+======================================================================
+FAIL: test_enumeration_timeout_retires_survey_chain_and_model (tools.gateway_gui.tests.test_command_recovery.CommandRecoveryTests.test_enumeration_timeout_retires_survey_chain_and_model)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_command_recovery.py", line 51, in test_enumeration_timeout_retires_survey_chain_and_model
+    self.assertFalse(gui.survey_model.active,phase)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false : preflight
+
+======================================================================
+FAIL: test_every_gateway_command_expires_despite_continuous_unrelated_events (tools.gateway_gui.tests.test_command_recovery.CommandRecoveryTests.test_every_gateway_command_expires_despite_continuous_unrelated_events)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_command_recovery.py", line 63, in test_every_gateway_command_expires_despite_continuous_unrelated_events
+    self.assertFalse(gui.command_orchestrator.active,command)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false : 260
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.005s
+
+FAILED (failures=2, errors=1)

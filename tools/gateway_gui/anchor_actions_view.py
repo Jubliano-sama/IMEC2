@@ -101,6 +101,9 @@ class GatewayAnchorActionsMixin:
                 node_id = anchor.node_id
                 reply = model.batteries.get(node_id)
                 state = model.battery_outcomes.get(node_id, "Not read")
+                latest = model.replies.get(node_id)
+                if state == "failed" and latest is not None and latest.stale_assignment:
+                    state = "Failed: enumerate again"
                 if model.battery_queue and node_id in model.battery_queue:
                     state = "Reading…" if model.pending and model.pending.anchor.node_id == node_id else "Queued"
                 values = (f"slot {anchor.slot} · {node_id:016x}",
@@ -231,17 +234,17 @@ class GatewayAnchorActionsMixin:
                 host_sequence=packet.seq, command_status=reply.status, anchor_result_validated=True,
                 received_at=received_at)
             if transition.matched:
+                # Retire command/batch ownership before rendering feedback.
+                # A widget failure must not strand an already-completed target.
+                self._apply_gateway_command_transition(transition)
                 self.status_text.set(reply.text)
                 self._append_log("event" if reply.status == 0 else "error",
                                  f"Anchor {packet.src_id:016x}: {reply.text}")
-                self._apply_gateway_command_transition(transition)
         return True
 
     def _finish_anchor_action(self, transition):
         model = getattr(self, "anchor_actions", None)
         if model is not None and model.pending is not None and transition.completed:
-            if transition.outcome in ("timeout", "disconnected"):
-                self._show_error(f"Anchor command {transition.outcome}; its outcome is unknown.")
             request = model.pending
             model.pending = None
             if request.command_id == CMD_READ_ANCHOR_BATTERY and model.battery_batch_active:
@@ -250,3 +253,5 @@ class GatewayAnchorActionsMixin:
                 else:
                     model.finish_battery_target(request.anchor.node_id, transition.outcome or "failed")
                     self.root.after_idle(self._advance_battery_batch)
+            if transition.outcome in ("timeout", "disconnected"):
+                self._show_error(f"Anchor command {transition.outcome}; its outcome is unknown.")

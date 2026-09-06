@@ -258,6 +258,8 @@ class GatewayDiagnosticsMixin:
             except CommandTelemetryDecodeError as exc:
                 self._show_error(f"Malformed gateway command telemetry: {exc}")
                 return
+            if received_at is not None:
+                self._expire_gateway_command(now=received_at)
             self.command_timeline_model.observe(event)
             observe_progress = getattr(self, "_observe_operation_progress", None)
             if callable(observe_progress):
@@ -311,13 +313,13 @@ class GatewayDiagnosticsMixin:
                 self.click_location_model.event_states,
             )
 
-    def _expire_gateway_command(self) -> None:
-        transition = self.command_orchestrator.expire()
+    def _expire_gateway_command(self, *, now: float | None = None) -> None:
+        transition = self.command_orchestrator.expire(now=now)
         if transition.matched:
             self._apply_gateway_command_transition(transition)
             if transition.phase != "preflight":
                 self.status_text.set(
-                    "Gateway command timed out; controls are available again"
+                    "Gateway command timed out; its remote outcome is unknown"
                 )
 
     def _wake_evidence(self, packet: Packet) -> WakeEvidence:

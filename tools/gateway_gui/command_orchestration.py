@@ -298,6 +298,10 @@ class GatewayCommandOrchestrator:
     def release_waiting_target(
         self, *, now: float | None = None
     ) -> GatewayCommandTransition:
+        if now is not None:
+            expired = self.expire(now=now)
+            if expired.matched:
+                return expired
         if self.phase != "target_wait" or self.plan is None:
             return GatewayCommandTransition()
         target = self.plan.target

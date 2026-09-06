@@ -1,0 +1,106 @@
+LOG event BLE state: connecting E4:16:B7:C7:E6:95
+TICK 0.1 connect idle pending None batch None
+TICK 1.1 connect idle pending None batch None
+TICK 2.1 connect idle pending None batch None
+LOG event BLE state: connected E4:16:B7:C7:E6:95
+TICK 3.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+LOG tx BLE write complete for Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 4.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 5.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 6.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 7.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 8.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 9.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 10.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 11.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 12.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 13.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 14.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 15.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 16.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 17.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 18.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 19.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 20.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 21.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 22.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 23.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 24.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+TICK 25.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219625454, host_sequence=2, started_at=219625.453940147, timeout_s=125.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 26.1 enumeration idle pending PendingGatewayCommand(command_kind=1, host_session_id=219625453, host_sequence=1, started_at=219648.254514481, timeout_s=1805.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 27.1 enumeration idle pending PendingGatewayCommand(command_kind=1, host_session_id=219625453, host_sequence=1, started_at=219648.254514481, timeout_s=1805.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+ROSTER [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 28.1 battery-before idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625455, host_sequence=3, started_at=219650.465219436, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG event Anchor c1c2306a5138ab2d: Battery: 2.924 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 29.1 battery-before idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625456, host_sequence=4, started_at=219651.132815167, timeout_s=29.0) batch [1111608711777941592, 10851724756609819875]
+LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.724 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 30.1 battery-before idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625457, host_sequence=5, started_at=219651.887371547, timeout_s=29.0) batch [10851724756609819875]
+LOG event Anchor 9699122bd60a64e3: Battery: 3.194 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+BATTERY_BEFORE {13961775027989293869: 'complete', 1111608711777941592: 'complete', 10851724756609819875: 'complete'}
+TICK 31.1 reset idle pending None batch None
+TICK 32.1 reset idle pending None batch None
+TICK 33.1 reset idle pending None batch None
+TICK 34.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 35.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 36.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 37.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 38.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 39.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 40.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 41.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 42.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 43.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 44.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 45.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 46.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 47.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 48.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 49.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 50.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 51.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 52.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 53.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 54.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 55.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 56.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 57.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+TICK 58.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625458, host_sequence=6, started_at=219656.46759195, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+LOG error Anchor 9999888877776666: Command failed: TIMEOUT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 59.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219625459, host_sequence=7, started_at=219680.809252547, timeout_s=29.0) batch [1111608711777941592, 10851724756609819875]
+LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.738 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG event Anchor 9699122bd60a64e3: Battery: 3.188 V · just received
+BATTERY_AFTER {13961775027989293869: 'failed', 1111608711777941592: 'complete', 10851724756609819875: 'complete'}
+CONTROLS Ready for a gateway command.
+FINAL battery-after elapsed 60.11748555500526
+LOG event BLE state: disconnecting
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation

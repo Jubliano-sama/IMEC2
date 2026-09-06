@@ -88,6 +88,12 @@ Connect and complete **1. Enumerate & Assign Slots**. In **Anchor controls**, **
 
 Right-click an anchor in **Click Location** or **Survey & Geometry** and choose **Blink RGB (10 s)**. Hover an anchor to see its last available battery voltage and age; hovering sends no command. These controls also work in fullscreen. Right-drag on empty space still rotates the layout. Active surveys disable radio actions, while cached voltage remains readable.
 
+## Failure recovery
+
+A restarted anchor can lose its RAM-only survey assignment. A stale-assignment battery failure says **Failed: enumerate again**; other targets still run, and cached voltage remains available. Re-enumerate before retrying.
+
+Shared command deadlines remain absolute through contention and host event backlogs. The GUI drains a finite snapshot of queued events before checking expiry, preserving timely replies across Tk ticks without allowing new traffic to defer expiry forever. Bad events are reported individually. Late results or receipt notifications cannot launch a follow-up after its deadline, and completed owners are retired before rendering feedback. Setup failures release the complete local survey state. After START, lost controls/events retain the existing bounded, exact-survey status recovery so unrelated commands cannot interrupt remote survey ownership.
+
 ## Test
 
 ```sh

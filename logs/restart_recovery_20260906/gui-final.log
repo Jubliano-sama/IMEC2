@@ -1,0 +1,59 @@
+LOG event BLE state: connecting E4:16:B7:C7:E6:95
+LOG event BLE state: connected E4:16:B7:C7:E6:95
+LOG tx BLE write complete for Survey Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG event Suppressed exact replay of command result src=0x9999888877776666 session=219435313 seq=2; host delivery is at-least-once
+LOG event Suppressed exact replay of command result src=0x9999888877776666 session=219435313 seq=2; host delivery is at-least-once
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG event Suppressed exact replay of gateway command event src=0x9999888877776666 session=38535352 seq=184; host delivery is at-least-once
+LOG event Suppressed exact replay of gateway command event src=0x9999888877776666 session=38535352 seq=184; host delivery is at-least-once
+LOG event Suppressed exact replay of gateway command event src=0x9999888877776666 session=38535352 seq=184; host delivery is at-least-once
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Start neighbor survey: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Submit survey ranging plan: 102 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG info Solving with Neighbor intervals (radio interval 7-15 m) from 3/3 ranges (distance weight power 0)...
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG info Geometry re-solve complete: Neighbor intervals (7-15 m); seed Visibility branching; RMSE 0.030 m, max residual 0.030 m.
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG event Survey complete: 3/3 pairs have usable median ranges
+SURVEY_RESULTS {0: SurveyRangeResult(pair_index=0, success_count=5, responder_slot=0, median_mm=695), 1: SurveyRangeResult(pair_index=1, success_count=5, responder_slot=0, median_mm=233), 2: SurveyRangeResult(pair_index=2, success_count=5, responder_slot=1, median_mm=1017)}
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG event Anchor c1c2306a5138ab2d: Battery: 2.920 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.732 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG event Anchor 9699122bd60a64e3: Battery: 3.182 V · just received
+FINAL {"success": true, "phase": "battery", "elapsed_s": 63.60357781199855, "anchors": [10851724756609819875, 1111608711777941592, 13961775027989293869], "batteries": {"13961775027989293869": "complete", "1111608711777941592": "complete", "10851724756609819875": "complete"}}
+LOG event BLE state: disconnecting
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation

@@ -1,0 +1,80 @@
+{
+  "anchor_a": [
+    {
+      "start": 0,
+      "end": 376308,
+      "match": true,
+      "actual_sha256": "39632509efdfb1f704adf8438c66fcc83c569a941deb25247a9315ec1f362853"
+    },
+    {
+      "start": 376320,
+      "end": 457972,
+      "match": true,
+      "actual_sha256": "b744333b5d9b69512351d5fd7e0eb0de5ca279ff8093e7aa8e9fcc8af0246a84"
+    },
+    {
+      "start": 457980,
+      "end": 458531,
+      "match": true,
+      "actual_sha256": "fd81d0eeed345361a1938bf48d6b7b96ac614c4d199acad37a8289f385d6cb91"
+    },
+    {
+      "start": 458532,
+      "end": 459360,
+      "match": true,
+      "actual_sha256": "3383f04fe007e6014b4f164b0f97aee5bd523e68b19ba9b5031daffd3ecde21e"
+    }
+  ],
+  "anchor_b": [
+    {
+      "start": 0,
+      "end": 376308,
+      "match": true,
+      "actual_sha256": "39632509efdfb1f704adf8438c66fcc83c569a941deb25247a9315ec1f362853"
+    },
+    {
+      "start": 376320,
+      "end": 457972,
+      "match": true,
+      "actual_sha256": "b744333b5d9b69512351d5fd7e0eb0de5ca279ff8093e7aa8e9fcc8af0246a84"
+    },
+    {
+      "start": 457980,
+      "end": 458531,
+      "match": true,
+      "actual_sha256": "fd81d0eeed345361a1938bf48d6b7b96ac614c4d199acad37a8289f385d6cb91"
+    },
+    {
+      "start": 458532,
+      "end": 459360,
+      "match": true,
+      "actual_sha256": "3383f04fe007e6014b4f164b0f97aee5bd523e68b19ba9b5031daffd3ecde21e"
+    }
+  ],
+  "anchor_c": [
+    {
+      "start": 0,
+      "end": 376308,
+      "match": true,
+      "actual_sha256": "39632509efdfb1f704adf8438c66fcc83c569a941deb25247a9315ec1f362853"
+    },
+    {
+      "start": 376320,
+      "end": 457972,
+      "match": true,
+      "actual_sha256": "b744333b5d9b69512351d5fd7e0eb0de5ca279ff8093e7aa8e9fcc8af0246a84"
+    },
+    {
+      "start": 457980,
+      "end": 458531,
+      "match": true,
+      "actual_sha256": "fd81d0eeed345361a1938bf48d6b7b96ac614c4d199acad37a8289f385d6cb91"
+    },
+    {
+      "start": 458532,
+      "end": 459360,
+      "match": true,
+      "actual_sha256": "3383f04fe007e6014b4f164b0f97aee5bd523e68b19ba9b5031daffd3ecde21e"
+    }
+  ]
+}

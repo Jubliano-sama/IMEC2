@@ -193,6 +193,18 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         gui._clear_scheduled_phase_estimate = Mock()
         return gui
 
+    def test_all_survey_controls_expire_before_applying_a_late_result(self) -> None:
+        for command in (CMD_SURVEY_START, CMD_SURVEY_PLAN, CMD_SURVEY_CANCEL, CMD_SURVEY_GET_STATUS):
+            gui = self.recovery_gui()
+            gui.survey_command_owner.begin(command, 50, 1, "control", now=0., timeout_s=1.)
+            gui._observe_survey_command_result(result_packet(command, 50, 1, 0), received_at=2.)
+            self.assertIsNone(gui.survey_command_owner.pending)
+            self.assertFalse(gui.survey_model.start_accepted)
+            self.assertFalse(gui.survey_model.plan_accepted)
+            if command in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
+                self.assertEqual(gui._survey_phase, "recovering")
+                self.assertTrue(gui.survey_model.active)  # Preserve remote ownership until status recovery.
+
     def test_lost_events_get_three_owned_status_attempts_then_unknown_failure(self) -> None:
         gui = self.recovery_gui()
         gui.survey_model.generation = 9
@@ -283,14 +295,19 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         gui._expire_gateway_command.assert_called_once()
         gui._expire_survey_command.assert_called_once()
 
-    def test_event_callback_failure_propagates_and_next_drain_is_scheduled(self) -> None:
+    def test_event_callback_failure_is_reported_and_next_drain_is_scheduled(self) -> None:
         gui = gui_model()
         gui.root = Mock()
         gui.events = queue.Queue()
         gui.events.put({"kind": "packet"})
         gui._handle_event = Mock(side_effect=RuntimeError("semantic apply failed"))
-        with self.assertRaisesRegex(RuntimeError, "semantic apply failed"):
-            gui._drain_events()
+        gui._expire_gateway_command = Mock()
+        gui._expire_survey_command = Mock()
+        gui._reconcile_stalled_survey = Mock()
+        gui._update_scheduled_phase_progress = Mock()
+        gui._drain_events()
+        self.assertIn("semantic apply failed", gui._show_error.call_args.args[0])
+        gui.root.report_callback_exception.assert_called_once()
         gui.root.after.assert_called_once_with(50, gui._drain_events)
 
     def test_operator_disabled_edge_is_removed_from_range_and_neighbor_inputs(self) -> None:

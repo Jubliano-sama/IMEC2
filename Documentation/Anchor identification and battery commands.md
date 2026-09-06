@@ -8,6 +8,8 @@ Both actions require a successful enumeration in the current GUI connection sess
 
 For saved hop depth `h`, the GUI waits at most `2 * h * 12,000 + 5,000` ms: 29 s for a direct anchor and 53 s at depth two. The gateway's outbound allowance is `h * 12,000` ms and its result-wait allowance is `2 * h * 12,000` ms. These reuse the existing per-hop safety allowance; they are deadlines, not intentional delays. An early correlated result completes immediately. It retains that command's identity and deadline through delivery; an old or mismatched response cannot complete a newer request. A successful enumeration establishes the bounded route context, not a guarantee that the anchor remains reachable forever. Missing replies end in an explicit timeout against the selected anchor.
 
+A board restart can discard a survey RAM-only assignment and restore an older durable epoch. Its explicit `INVALID_STATE` rejection is terminal for that target; the GUI marks **Failed: enumerate again**, preserves any older cached reading, and continues the batch. Complete a fresh enumeration before retrying that anchor.
+
 Each action uses the established path directly. It launches neither another enumeration nor a separate Here-I-Am preflight, and identification requires no battery/status pre-read solely to obtain a boot identity. These commands do not change assignment or write configuration.
 
 ## User actions

@@ -1235,11 +1235,19 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             self.status_text.set(
                 "Here I Am preflight failed; requested command was not sent"
             )
-            if self._survey_chain_pending:
+        if transition.completed and transition.dispatch is None:
+            # Before START there is no remote survey to recover or cancel.
+            # Retire the entire local chain when either preflight or
+            # enumeration fails, including the model that gates GUI controls.
+            if (getattr(self, "_survey_chain_pending", False)
+                    and transition.outcome != "complete"):
+                step = "routes" if transition.phase == "preflight" else "enumeration"
+                detail = f"Survey {step} {transition.outcome}; start a new survey to retry."
                 self._survey_chain_pending = False
                 self._survey_auto_all = False
                 self._survey_phase = "idle"
-        if transition.completed and transition.dispatch is None:
+                self.survey_model.fail(step, detail)
+                self._show_error(detail)
             self._finish_anchor_action(transition)
             self._command_progress_text = ""
             self._clear_scheduled_phase_estimate()
@@ -1895,7 +1903,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             if applied:
                 self._commit_buffered_survey_packet(buffered_packet)
 
-    def _observe_survey_command_result(self, packet: Packet) -> None:
+    def _observe_survey_command_result(self, packet: Packet, *, received_at: float | None = None) -> None:
         command_id = packet.value(TLV_COMMAND_ID)
         status = packet.value(TLV_COMMAND_STATUS)
         if command_id not in {
@@ -1905,6 +1913,8 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             CMD_SURVEY_GET_STATUS,
         } or not isinstance(status, int):
             return
+        if received_at is not None:
+            self._expire_survey_command(now=received_at)
         transition = self.survey_command_owner.observe_result(
             command_id,
             packet.session_id,
@@ -1968,10 +1978,14 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             host_session_id=packet.session_id,
             host_sequence=packet.seq,
             command_status=status,
+            received_at=received_at,
         )
         if not transition.matched:
             return
-        if status == 0 and command_id == CMD_REBOOT:
+        self._apply_gateway_command_transition(transition)
+        if transition.outcome == "timeout":
+            self._show_error("Gateway command timed out; late result ignored")
+        elif status == 0 and command_id == CMD_REBOOT:
             self.status_text.set(
                 "Gateway accepted reboot; waiting for its BLE reconnect..."
             )
@@ -1986,7 +2000,6 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 f"{COMMAND_NAMES.get(command_id, 'Gateway command')} was "
                 f"rejected with {status_name}"
             )
-        self._apply_gateway_command_transition(transition)
 
     def _handle_expected_gateway_reboot_transport_error(
         self, message: str
@@ -2395,23 +2408,33 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
 
     def _drain_events(self) -> None:
         try:
-            for _ in range(64):
+            # Freeze a finite FIFO prefix. Arrivals during its processing
+            # belong to the next pass, so unrelated traffic cannot postpone
+            # expiry forever. All already-queued replies remain eligible.
+            if not getattr(self, "_event_drain_remaining", 0):
+                self._event_drain_cutoff = time.monotonic()
+                self._event_drain_remaining = self.events.qsize()
+            for _ in range(min(64, self._event_drain_remaining)):
                 try:
                     event = self.events.get_nowait()
                 except queue.Empty:
+                    self._event_drain_remaining = 0
                     break
-                self._handle_event(event)
-            # Keep packets received before a deadline eligible across bounded
-            # Tk drains. Expiry waits until this FIFO backlog has been applied.
-            if self.events.empty():
-                self._expire_gateway_command()
-                self._expire_survey_command()
+                self._event_drain_remaining -= 1
+                try:
+                    self._handle_event(event)
+                except Exception as exc:
+                    # Do not ACK a rejected record or let a bad event prevent
+                    # later records and protocol deadlines from being handled.
+                    self._show_error(f"Failed to process {event.get('kind', 'event')}: {exc}")
+                    self.root.report_callback_exception(type(exc), exc, exc.__traceback__)
+            if not self._event_drain_remaining:
+                self._expire_gateway_command(now=self._event_drain_cutoff)
+                self._expire_survey_command(now=self._event_drain_cutoff)
                 self._reconcile_stalled_survey()
             self._update_scheduled_phase_progress()
             self._update_command_state()
         finally:
-            # Tk reports callback exceptions; semantic failures must remain
-            # visible and must not disable all subsequent transport processing.
             if self.root.winfo_exists():
                 self.root.after(50, self._drain_events)
 
@@ -3038,7 +3061,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 )
             elif packet.msg_type == MSG_COMMAND_RESULT:
                 self._observe_gateway_command_result(packet, received_at=received_at)
-                self._observe_survey_command_result(packet)
+                self._observe_survey_command_result(packet, received_at=received_at)
             self._observe_diagnostic_packet(packet, received_at=received_at)
         self.packet_counter += 1
         iid = f"packet-{self.packet_counter}"

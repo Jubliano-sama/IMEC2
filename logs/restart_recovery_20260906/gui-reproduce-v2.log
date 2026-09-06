@@ -1,0 +1,130 @@
+LOG event BLE state: connecting E4:16:B7:C7:E6:95
+TICK 0.1 connect idle pending None batch None
+TICK 1.1 connect idle pending None batch None
+TICK 2.1 connect idle pending None batch None
+LOG event BLE state: connected E4:16:B7:C7:E6:95
+TICK 3.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+LOG tx BLE write complete for Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 4.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 5.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 6.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 7.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 8.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 9.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 10.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 11.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 12.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 13.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 14.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 15.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 16.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 17.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 18.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 19.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 20.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 21.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 22.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 23.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 24.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+TICK 25.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099225, host_sequence=2, started_at=219099.224774248, timeout_s=125.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 26.1 enumeration idle pending PendingGatewayCommand(command_kind=1, host_session_id=219099224, host_sequence=1, started_at=219122.022727918, timeout_s=1805.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 27.1 enumeration idle pending PendingGatewayCommand(command_kind=1, host_session_id=219099224, host_sequence=1, started_at=219122.022727918, timeout_s=1805.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+ROSTER [1111608711777941592, 13961775027989293869]
+TICK 28.1 reset-c idle pending None batch None
+TICK 29.1 reset-c idle pending None batch None
+TICK 30.1 reset-c idle pending None batch None
+TICK 31.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+LOG tx BLE write complete for Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 32.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 33.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 34.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 35.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 36.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 37.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 38.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 39.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 40.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 41.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 42.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 43.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 44.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 45.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 46.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 47.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 48.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 49.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 50.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 51.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 52.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+TICK 53.1 enumeration idle pending PendingGatewayCommand(command_kind=3, host_session_id=219099227, host_sequence=4, started_at=219127.228441723, timeout_s=125.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 54.1 enumeration idle pending PendingGatewayCommand(command_kind=1, host_session_id=219099226, host_sequence=3, started_at=219150.036405226, timeout_s=1805.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+TICK 55.1 enumeration idle pending PendingGatewayCommand(command_kind=1, host_session_id=219099226, host_sequence=3, started_at=219150.036405226, timeout_s=1805.0) batch None
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+ROSTER [10851724756609819875, 13961775027989293869, 1111608711777941592]
+TICK 56.1 battery-before idle pending PendingGatewayCommand(command_kind=2, host_session_id=219099228, host_sequence=5, started_at=219152.238205319, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG event Anchor c1c2306a5138ab2d: Battery: 2.920 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 57.1 battery-before idle pending PendingGatewayCommand(command_kind=2, host_session_id=219099229, host_sequence=6, started_at=219152.961949268, timeout_s=29.0) batch [1111608711777941592, 10851724756609819875]
+LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.730 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 58.1 battery-before idle pending PendingGatewayCommand(command_kind=2, host_session_id=219099230, host_sequence=7, started_at=219153.766625757, timeout_s=29.0) batch [10851724756609819875]
+LOG event Anchor 9699122bd60a64e3: Battery: 3.202 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+BATTERY_BEFORE {13961775027989293869: 'complete', 1111608711777941592: 'complete', 10851724756609819875: 'complete'}
+TICK 59.1 reset idle pending None batch None
+TICK 60.1 reset idle pending None batch None
+TICK 61.1 reset idle pending None batch None
+TICK 62.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219099231, host_sequence=8, started_at=219158.239850214, timeout_s=29.0) batch [13961775027989293869, 1111608711777941592, 10851724756609819875]
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+LOG error Anchor c1c2306a5138ab2d: Command failed: INVALID_STATE; anchor assignment changed, enumerate again before retrying
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 63.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219099232, host_sequence=9, started_at=219158.990110495, timeout_s=29.0) batch [1111608711777941592, 10851724756609819875]
+LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.738 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+TICK 64.1 battery-after idle pending PendingGatewayCommand(command_kind=2, host_session_id=219099233, host_sequence=10, started_at=219159.794520276, timeout_s=29.0) batch [10851724756609819875]
+LOG event Anchor 9699122bd60a64e3: Battery: 3.198 V · just received
+LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+BATTERY_AFTER {13961775027989293869: 'failed', 1111608711777941592: 'complete', 10851724756609819875: 'complete'}
+CONTROLS Ready for a gateway command.
+FINAL battery-after elapsed 65.11678289200063
+LOG event BLE state: disconnecting

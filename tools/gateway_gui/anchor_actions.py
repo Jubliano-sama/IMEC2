@@ -52,6 +52,7 @@ class AnchorActionReply:
     sampled_at_ms: int | None = None
     age_ms: int | None = None
     received_at: float = field(default_factory=time.monotonic)
+    stale_assignment: bool = False
 
 
 class AnchorActions:
@@ -179,7 +180,13 @@ class AnchorActions:
         if status not in COMMAND_STATUS_NAMES:
             raise ValueError("Anchor reply has an unknown command status.")
         if status != 0:
-            reply = AnchorActionReply(status, f"Command failed: {COMMAND_STATUS_NAMES[status]}")
+            message = f"Command failed: {COMMAND_STATUS_NAMES[status]}"
+            reported_epoch = packet.value(TLV_DISCOVERY_ASSIGNMENT_EPOCH)
+            stale_assignment = (status == 7 and packet.src_id == request.anchor.node_id
+                                and isinstance(reported_epoch, int) and reported_epoch != request.epoch)
+            if stale_assignment:
+                message += "; anchor assignment changed, enumerate again before retrying"
+            reply = AnchorActionReply(status, message, stale_assignment=stale_assignment)
         else:
             if packet.src_id != request.anchor.node_id:
                 return None  # Gateway admission cannot stand in for the anchor's result.

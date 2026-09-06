@@ -1038,7 +1038,7 @@ class AppModelTests(unittest.TestCase):
 
         self.assertLess(
             body.index("self._handle_event(event)"),
-            body.index("self._expire_gateway_command()"),
+            body.index("self._expire_gateway_command(now="),
         )
 
     def test_immediate_ok_result_does_not_release_command_before_typed_terminal(self) -> None:

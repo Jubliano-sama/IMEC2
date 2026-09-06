@@ -72,6 +72,18 @@ class BatchGui(GatewayAnchorActionsMixin):
 
 
 class BatteryBatchTests(unittest.TestCase):
+    def test_feedback_exception_cannot_strand_completed_batch_target(self):
+        gui = BatchGui()
+        gui._read_all_batteries()
+        gui._append_log = Mock(side_effect=RuntimeError("widget failed"))
+        with self.assertRaisesRegex(RuntimeError, "widget failed"):
+            gui.complete(status=7)
+        self.assertIsNone(gui.anchor_actions.pending)
+        self.assertFalse(gui.command_orchestrator.active)
+        self.assertEqual(gui.anchor_actions.battery_outcomes, {100: "failed"})
+        gui.pump()
+        self.assertEqual(gui.anchor_actions.pending.anchor.node_id, 101)
+
     def test_one_action_reads_all_50_with_sequential_exact_depth_budgets(self):
         gui = BatchGui(50)
         gui._read_all_batteries()

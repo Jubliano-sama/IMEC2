@@ -126,6 +126,24 @@ class AnchorActionTests(unittest.TestCase):
         failure = self.model.observe(self.reply(status=7, src_id=1, omit=TLV_BATTERY_MV))
         self.assertIsNone(failure.battery_mv)
 
+    def test_rebooted_ram_assignment_failure_explains_required_reenumeration(self):
+        self.model.remember_enumeration(1, *enumeration())
+        self.prepare()
+        # The hardware returned INVALID_STATE with its restored, older epoch.
+        packet = self.reply(status=7, omit=TLV_BATTERY_MV)
+        payload = bytearray(packet.payload)
+        offset = 0
+        while offset < len(payload):
+            tag, size = payload[offset:offset+2]
+            if tag == TLV_DISCOVERY_ASSIGNMENT_EPOCH:
+                payload[offset+2:offset+2+size] = (12).to_bytes(size, 'little')
+            offset += 2 + size
+        packet = self.reply(status=7, payload=bytes(payload))
+        failure = self.model.observe(packet)
+        self.assertTrue(failure.stale_assignment)
+        self.assertIn("enumerate again", failure.text)
+        self.assertIsNone(failure.battery_mv)
+
     def test_identify_acceptance(self):
         self.model.remember_enumeration(1, *enumeration())
         self.prepare(CMD_IDENTIFY_ANCHOR)
