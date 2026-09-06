@@ -61,6 +61,9 @@ class AnchorActions:
         self.anchors: dict[int, EnumeratedAnchor] = {}
         self.pending: AnchorActionRequest | None = None
         self.replies: dict[int, AnchorActionReply] = {}
+        self.batteries: dict[int, AnchorActionReply] = {}
+        self.battery_queue: list[int] | None = None
+        self.battery_outcomes: dict[int, str] = {}
 
     def reset(self) -> None:
         self.gateway_id = None
@@ -68,6 +71,9 @@ class AnchorActions:
         self.anchors.clear()
         self.pending = None
         self.replies.clear()
+        self.batteries.clear()
+        self.battery_queue = None
+        self.battery_outcomes.clear()
 
     def remember_enumeration(self, gateway_id: int, terminal: GatewayCommandEvent,
                              details: dict[int, GatewayCommandEvent]) -> None:
@@ -91,6 +97,43 @@ class AnchorActions:
         self.gateway_id, self.epoch = gateway_id, terminal.gateway_sequence
         self.anchors = anchors
         self.replies.clear()
+        self.batteries.clear()
+        self.battery_queue = None
+        self.battery_outcomes.clear()
+
+    @property
+    def battery_batch_active(self) -> bool:
+        return self.battery_queue is not None
+
+    def begin_battery_batch(self) -> None:
+        if not self.gateway_id or not self.epoch or not self.anchors:
+            raise ValueError("Enumerate anchors before reading batteries.")
+        if self.pending is not None or self.battery_batch_active:
+            raise ValueError("An anchor command is already active.")
+        self.battery_queue = [a.node_id for a in sorted(self.anchors.values(), key=lambda a: a.slot)]
+        self.battery_outcomes.clear()
+
+    def finish_battery_target(self, anchor_id: int, outcome: str) -> None:
+        if not self.battery_queue or self.battery_queue[0] != anchor_id:
+            return
+        self.battery_outcomes[anchor_id] = outcome
+        self.battery_queue.pop(0)
+        if not self.battery_queue:
+            self.battery_queue = None
+
+    def cancel_battery_batch(self) -> None:
+        for node_id in self.battery_queue or ():
+            self.battery_outcomes[node_id] = "cancelled"
+        self.battery_queue = None
+
+    def battery_text(self, anchor_id: int, *, now: float | None = None) -> str:
+        reply = self.batteries.get(anchor_id)
+        if reply is None or reply.battery_mv is None:
+            return "Battery: not read yet"
+        elapsed = max(0.0, (time.monotonic() if now is None else now) - reply.received_at)
+        freshness = (f"received {elapsed:.0f} s ago" if reply.age_ms is None else
+                     f"sample age {reply.age_ms / 1000 + elapsed:.0f} s")
+        return f"Battery: {reply.battery_mv / 1000:.3f} V · {freshness}"
 
     def prepare(self, *, gateway_id: int, host_id: int, anchor_id: int,
                 command_id: int, session_id: int, sequence: int) -> CommandFrame:
@@ -100,6 +143,9 @@ class AnchorActions:
             raise ValueError("Enumerate anchors on this connection before using these commands.")
         if command_id not in ANCHOR_ACTION_COMMANDS:
             raise ValueError("Unknown anchor action.")
+        if self.battery_batch_active and (command_id != CMD_READ_ANCHOR_BATTERY or
+                                          not self.battery_queue or self.battery_queue[0] != anchor_id):
+            raise ValueError("Wait until all batteries have been read.")
         anchor = self.anchors[anchor_id]
         payload = bytearray()
         for tag, value, width in ((TLV_COMMAND_ID, command_id, 2),
@@ -155,5 +201,7 @@ class AnchorActions:
                     raise ValueError("Anchor did not accept a ten-second identification.")
                 reply = AnchorActionReply(status, "10-second RGB identification accepted",
                                           boot_counter=boot, sampled_at_ms=sampled, age_ms=age)
+        if reply.battery_mv is not None:
+            self.batteries[request.anchor.node_id] = reply
         self.replies[request.anchor.node_id] = reply
         return reply

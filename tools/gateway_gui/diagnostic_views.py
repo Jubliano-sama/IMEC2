@@ -10,6 +10,7 @@ from typing import Callable, Iterable
 
 from PIL import Image, ImageEnhance, ImageTk, UnidentifiedImageError
 
+from .compact_dialog import show_dialog, tabbed_dialog
 from .diagnostic_models import (
     ClickDiagnosticState, CommandTimelineModel, TopologyComparison,
     COLLISION_WINDOW_MS, WAKE_COLLISION, WAKE_LATE, WAKE_NORMAL, anchor_label,
@@ -17,6 +18,7 @@ from .diagnostic_models import (
 )
 from .command_telemetry import GatewayCommandEvent
 from .command_telemetry import GATEWAY_COMMAND_KIND_NAMES, GATEWAY_COMMAND_REASON_NAMES, GATEWAY_COMMAND_STAGE_NAMES
+from .anchor_context import AnchorContext, nearest_anchor
 from .layout_gestures import bind_layout_gestures
 from .layout_motion import rotation_safe_bounds
 from .survey_view import (
@@ -127,6 +129,9 @@ class ClickDiagnosticsView(ttk.Frame):
         self,
         parent: tk.Misc,
         *,
+        on_identify_anchor: Callable[[str], None] = lambda _anchor: None,
+        can_identify_anchor: Callable[[str], bool] = lambda _anchor: False,
+        anchor_hover_text: Callable[[str], str] = lambda anchor: f"Anchor {anchor}",
         on_translate: Callable[[float, float], None] = lambda _x, _y: None,
         on_scale: Callable[[float], None] = lambda _factor: None,
         on_reset: Callable[[], None] = lambda: None,
@@ -140,6 +145,9 @@ class ClickDiagnosticsView(ttk.Frame):
         on_click_deleted: Callable[[tuple[int, int, int]], None] = lambda _key: None,
     ) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
+        self._on_identify_anchor = on_identify_anchor
+        self._can_identify_anchor = can_identify_anchor
+        self._anchor_hover_text = anchor_hover_text
         self._layout_tool_var = tk.StringVar(value="select")
         self._on_translate = on_translate
         self._on_scale = on_scale
@@ -155,7 +163,6 @@ class ClickDiagnosticsView(ttk.Frame):
         self._on_click_deleted = on_click_deleted
         self._fullscreen_window: tk.Toplevel | None = None
         self._fullscreen_canvas: tk.Canvas | None = None
-        self._fullscreen_registration_controls: LayoutRegistrationControls | None = None
         self._held_move_keys: set[str] = set()
         self._held_move_after_id: str | None = None
         self._registration_scale = 1.0
@@ -203,10 +210,15 @@ class ClickDiagnosticsView(ttk.Frame):
             textvariable=self.selection_var,
             style="PanelMuted.TLabel",
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(3, 0))
-        self.blueprint_controls = self._make_blueprint_controls(self)
+        self.settings_window, (layout_page, blueprint_page) = tabbed_dialog(
+            self, "Click layout settings", ("Layout", "Blueprint"))
+        self.settings_button = ttk.Button(bar, text="Edit layout…",
+            command=lambda: show_dialog(self.settings_window))
+        self.settings_button.grid(row=0, column=1, sticky="e", padx=6)
+        self.blueprint_controls = self._make_blueprint_controls(blueprint_page)
         self.blueprint_controls.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         self.registration_controls = LayoutRegistrationControls(
-            self,
+            layout_page,
             on_translate=on_translate,
             on_scale=on_scale,
             on_reset=on_reset,
@@ -250,6 +262,14 @@ class ClickDiagnosticsView(ttk.Frame):
             tool=self._layout_tool_var.get,
         )
 
+        AnchorContext(canvas, hit_test=lambda x, y: self._anchor_at(canvas, x, y),
+                      identify=self._on_identify_anchor, can_identify=self._can_identify_anchor,
+                      hover_text=self._anchor_hover_text)
+
+    def _anchor_at(self, canvas, x, y):
+        project = self._projection_for_canvas(canvas)
+        return nearest_anchor(self.positions, project, x, y) if project else None
+
     def _make_blueprint_controls(self, parent: tk.Misc) -> BlueprintControls:
         controls = BlueprintControls(
             parent,
@@ -285,8 +305,6 @@ class ClickDiagnosticsView(ttk.Frame):
             self._selected_anchor_id = None
             self.selection_var.set("Drag an anchor to edit it; press L to lock / unlock the selection.")
         self.registration_controls.set_enabled(bool(positions))
-        if self._fullscreen_registration_controls is not None:
-            self._fullscreen_registration_controls.set_enabled(bool(positions))
         self._sync_blueprint_controls()
         if state.identity:
             self.identity_var.set(f"Session {state.identity[0]}  •  Event {state.identity[1]}  •  Clicker {anchor_label(state.identity[2])}")
@@ -413,12 +431,6 @@ class ClickDiagnosticsView(ttk.Frame):
             registration.translate_x_m,
             registration.translate_y_m,
         )
-        if self._fullscreen_registration_controls is not None:
-            self._fullscreen_registration_controls.show_registration(
-                registration.scale,
-                registration.translate_x_m,
-                registration.translate_y_m,
-            )
         if redraw:
             self.redraw()
 
@@ -735,38 +747,8 @@ class ClickDiagnosticsView(ttk.Frame):
             command=self._close_fullscreen,
         ).grid(row=0, column=2, rowspan=2)
 
-        fullscreen_blueprint_controls = self._make_blueprint_controls(window)
-        fullscreen_blueprint_controls.grid(
-            row=1,
-            column=0,
-            sticky="ew",
-            padx=8,
-            pady=(2, 4),
-        )
-        self._fullscreen_registration_controls = LayoutRegistrationControls(
-            window,
-            on_translate=self._on_translate,
-            on_scale=self._on_scale,
-            on_reset=self._on_reset,
-            on_rotate=self._on_rotate,
-            tool_var=self._layout_tool_var,
-        )
-        ttk.Button(self._fullscreen_registration_controls, text="Lock / unlock selected (L)",
-                   command=self._toggle_selected_lock).grid(row=5, column=0, columnspan=8, sticky="w", pady=3)
-        self._fullscreen_registration_controls.grid(
-            row=2,
-            column=0,
-            sticky="ew",
-            padx=8,
-            pady=(2, 4),
-        )
-        self._fullscreen_registration_controls.set_enabled(bool(self.positions))
-        self._fullscreen_registration_controls.show_registration(
-            self._registration_scale,
-            self._registration_translate_x_m,
-            self._registration_translate_y_m,
-        )
-        self._sync_blueprint_controls()
+        ttk.Button(header, text="Edit layout…",
+                   command=lambda: show_dialog(self.settings_window)).grid(row=0, column=3, padx=6)
         canvas = tk.Canvas(window, background=CANVAS_BG, highlightthickness=0)
         self._fullscreen_canvas = canvas
         canvas.grid(row=3, column=0, sticky="nsew")
@@ -834,7 +816,6 @@ class ClickDiagnosticsView(ttk.Frame):
             window.after_cancel(after_id)
         self._fullscreen_window = None
         self._fullscreen_canvas = None
-        self._fullscreen_registration_controls = None
         if window is not None and window.winfo_exists():
             window.destroy()
         if canvas is not None:

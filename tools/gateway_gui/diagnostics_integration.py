@@ -53,6 +53,11 @@ class GatewayDiagnosticsMixin:
     _update_command_state: Callable[[], None]
     _apply_gateway_command_transition: Callable[[Any], None]
     status_text: Any
+    packet_inspector: ttk.Notebook
+    _identify_map_anchor: Callable[[str], None]
+    _anchor_can_identify: Callable[[str], bool]
+    _anchor_hover_text: Callable[[str], str]
+    _select_anchor_action: Callable[[str | None], None]
     def _initialize_gateway_diagnostics(self) -> None:
         self.click_location_model = ClickLocationModel()
         self.wake_monitor = WakeTrainMonitor()
@@ -92,6 +97,9 @@ class GatewayDiagnosticsMixin:
         self.mesh_commands_tab = mesh_tab
         self.click_diagnostics_view = ClickDiagnosticsView(
             click_tab,
+            on_identify_anchor=self._identify_map_anchor,
+            can_identify_anchor=self._anchor_can_identify,
+            anchor_hover_text=self._anchor_hover_text,
             on_translate=self._nudge_layout_translation,
             on_scale=self._nudge_layout_scale,
             on_reset=self._reset_layout_registration,
@@ -107,6 +115,9 @@ class GatewayDiagnosticsMixin:
         self.click_diagnostics_view.pack(fill="both", expand=True)
         self.survey_geometry_view = SurveyGeometryView(
             survey_tab,
+            on_identify_anchor=self._identify_map_anchor,
+            can_identify_anchor=self._anchor_can_identify,
+            anchor_hover_text=self._anchor_hover_text,
             on_anchor_selected=self._select_anchor_action,
             on_positions_changed=self._apply_survey_geometry_positions,
             on_layout_edited=self._apply_manual_anchor_layout,
@@ -227,14 +238,16 @@ class GatewayDiagnosticsMixin:
         if not hasattr(self, "click_location_tab"):
             return
         selected = self.activity_notebook.nametowidget(self.activity_notebook.select())
-        if selected not in (
-            self.click_location_tab,
-            self.survey_geometry_tab,
-            self.mesh_commands_tab,
-        ):
-            return
         split = cast(ttk.Panedwindow, self.activity_notebook.master)
-        self.root.after_idle(lambda: split.sashpos(0, max(360, int(split.winfo_height() * 0.68))))
+        inspector = self.packet_inspector
+        map_tab = selected in (self.click_location_tab, self.survey_geometry_tab,
+                               self.mesh_commands_tab)
+        visible = str(inspector) in split.panes()
+        if map_tab and visible:
+            split.forget(inspector)
+        elif not map_tab and not visible:
+            split.add(inspector, weight=2)
+            split.sashpos(0, int(split.winfo_height() * 0.55))
 
     def _observe_diagnostic_packet(
         self, packet: Packet, *, received_at: float | None = None

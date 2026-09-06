@@ -166,7 +166,7 @@ class SurveyLockTests(unittest.TestCase):
         view._toggle_anchor_lock()
         view._open_fullscreen()
         view._select_anchor(self.anchor)
-        self.assertEqual(len(view._anchor_lock_buttons), 2)
+        self.assertEqual(len(view._anchor_lock_buttons), 1)  # Main and fullscreen share settings.
         for button in view._anchor_lock_buttons:
             self.assertEqual(button.cget("text"), "Unlock selected")
         before = view.registration
@@ -184,7 +184,7 @@ class SurveyLockTests(unittest.TestCase):
         self.assertEqual(view.registration, before)
         self.assertEqual(view.locked_positions_m, fixed)
         view.set_geometry_job_pending(False)
-        view._anchor_lock_buttons[1].invoke()
+        view._anchor_lock_buttons[0].invoke()
         self.assertFalse(view.locked_positions_m)
         self.assertEqual(view._anchor_lock_buttons[0].cget("text"), "Lock selected")
         view._close_fullscreen()

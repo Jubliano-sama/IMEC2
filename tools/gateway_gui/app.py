@@ -223,6 +223,7 @@ class Tooltip:
             self.window = None
 
 
+from .compact_dialog import show_dialog
 from .anchor_actions import AnchorActions
 from .anchor_actions_view import GatewayAnchorActionsMixin
 
@@ -236,8 +237,8 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         self.root.title(
             f"IMEC2 Gateway BLE Console — {GUI_PROTOCOL_REVISION}"
         )
-        self.root.geometry("1420x900")
-        self.root.minsize(1080, 700)
+        self.root.geometry("1240x660")
+        self.root.minsize(1080, 620)
         self.root.configure(background=APP_BG)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -392,7 +393,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         self.root.grid_rowconfigure(3, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
-        header = ttk.Frame(self.root, style="Header.TFrame", padding=(16, 10))
+        header = ttk.Frame(self.root, style="Header.TFrame", padding=(16, 6))
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
         ttk.Label(header, text="IMEC2 Gateway BLE Console", style="Header.TLabel").grid(row=0, column=0, sticky="w")
@@ -459,6 +460,16 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         parent.grid_propagate(False)
         parent.grid_columnconfigure(0, weight=1)
 
+        self.more_actions_window = tk.Toplevel(parent)
+        self.more_actions_window.title("More network actions")
+        self.more_actions_window.withdraw()
+        self.more_actions_window.protocol("WM_DELETE_WINDOW", self.more_actions_window.withdraw)
+        advanced = ttk.Frame(self.more_actions_window, padding=12)
+        advanced.pack(fill="both", expand=True)
+        advanced.columnconfigure(0, weight=1)
+        ttk.Button(parent, text="More network actions…",
+                   command=lambda: show_dialog(self.more_actions_window)).grid(row=1, column=0, sticky="ew")
+
         # Primary Mesh Network Actions
         operations = ttk.LabelFrame(parent, text="Mesh Network Operations", padding=10)
         operations.grid(row=0, column=0, sticky="ew", pady=(0, 10))
@@ -521,7 +532,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.survey_all_button = ttk.Button(
-            operations,
+            advanced,
             text="Survey All Neighbors",
             style="Primary.TButton",
             command=self._run_all_neighbor_surveys,
@@ -537,7 +548,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.survey_add_button = ttk.Button(
-            operations,
+            advanced,
             text="Add Other Neighbors",
             command=lambda: self._run_survey(SURVEY_PASS_ADDITIONAL_MERGE),
         )
@@ -551,7 +562,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.survey_new_only_button = ttk.Button(
-            operations,
+            advanced,
             text="Other Neighbors Only",
             command=lambda: self._run_survey(SURVEY_PASS_ADDITIONAL_ONLY),
         )
@@ -565,7 +576,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.survey_iterate_button = ttk.Button(
-            operations,
+            advanced,
             text="Iterate Closest-4",
             command=lambda: self._run_survey(SURVEY_PASS_CLOSEST_ONLY),
         )
@@ -593,7 +604,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.clear_survey_button = ttk.Button(
-            operations,
+            advanced,
             text="Clear Survey Data",
             command=self._clear_survey_data,
         )
@@ -608,12 +619,12 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.refresh_button = ttk.Button(
-            operations,
+            advanced,
             text="Refresh Routes (Here I Am)",
             command=self._send_here_i_am,
         )
         self.refresh_button.grid(
-            row=9, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=10, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.refresh_button,
@@ -621,13 +632,13 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
         self.clear_memory_button = ttk.Button(
-            operations,
+            advanced,
             text="Clear Host Memory / Reboot Gateway",
             style="Danger.TButton",
             command=self._clear_gateway_memory,
         )
         self.clear_memory_button.grid(
-            row=10, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=11, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.clear_memory_button,
@@ -677,6 +688,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         inspector = ttk.Notebook(split)
         split.add(activity, weight=3)
         split.add(inspector, weight=2)
+        self.packet_inspector = inspector
 
         packet_tab = ttk.Frame(activity, style="Panel.TFrame", padding=8)
         log_tab = ttk.Frame(activity, style="Panel.TFrame", padding=8)
@@ -2342,9 +2354,10 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
 
     def _reconcile_stalled_survey(self) -> None:
+        gateway_id = getattr(self, "gateway_id", None)
         model = getattr(self, "survey_model", None)
         if (model is None or not model.active or not getattr(self, "connected", False)
-                or not getattr(self, "gateway_id", None)
+                or not gateway_id
                 or self.survey_command_owner.pending is not None
                 or getattr(self, "_survey_event_due_at", float("inf")) > time.monotonic()):
             return
@@ -2368,7 +2381,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         host_id = self._parse_int("Host ID", self.host_id_text.get())
         session_id, seq = self._next_identity()
         command = build_survey_get_status_command(
-            host_id=host_id, gateway_id=self.gateway_id,
+            host_id=host_id, gateway_id=gateway_id,
             session_id=session_id, seq=seq, generation=model.generation,
         )
         self._survey_reconcile_attempts = attempts + 1
@@ -2643,7 +2656,8 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             survey_owner.pending if survey_owner is not None else None
         )
         command_active = bool(
-            getattr(orchestrator, "active", False)
+            getattr(getattr(self, "anchor_actions", None), "battery_batch_active", False)
+            or getattr(orchestrator, "active", False)
             or (tracker is not None and tracker.pending is not None)
             or survey_pending is not None
         )

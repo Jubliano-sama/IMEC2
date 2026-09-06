@@ -47,7 +47,7 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
 Both geometry and click-location views have **Select / drag anchor**, **Move**,
 **Rotate**, and **Scale** tools. Select a tool and drag with the left button;
 rotation and scale use horizontal dragging. Shortcuts work in every tool:
-Shift-drag or middle-drag moves the frame, right-drag rotates continuously,
+Shift-drag or middle-drag moves the frame, right-drag on empty space rotates continuously,
 and the wheel scales. Hold Ctrl for fine movement, rotation, or scaling.
 Use the degree field for an exact relative rotation, including decimals.
 The same tools work in fullscreen. Scaling keeps the layout center in place,
@@ -77,6 +77,16 @@ All command controls remain disabled until the read-only identity characteristic
 returns the connected gateway firmware `DEVICE_ID`. The GUI clears that identity
 on disconnect and rejects contradictions from gateway-local packets; it never
 derives `DEVICE_ID` from the BLE address.
+
+## Small-screen layout
+
+The default 1240×660 window leaves space for desktop chrome on a 1280×720 screen. Click Location and Survey & Geometry use the full workspace height; packet inspection returns when selecting Packets or Activity. **Edit layout…** and **Edit / solve…** open the shared map editors, including in fullscreen. **Survey details…** shows the step and range tables. **More network actions…** contains additional survey passes, route refresh, and memory controls.
+
+## Anchor batteries and identification
+
+Connect and complete **1. Enumerate & Assign Slots**. In **Anchor controls**, **Read all batteries** refreshes the whole enumerated roster and opens a separate window with per-anchor voltages and request outcomes. **Show voltages** reopens that window without requesting new readings. Reads run sequentially with each route's saved hop-depth timeout; one unavailable anchor does not prevent the remaining reads.
+
+Right-click an anchor in **Click Location** or **Survey & Geometry** and choose **Blink RGB (10 s)**. Hover an anchor to see its last available battery voltage and age; hovering sends no command. These controls also work in fullscreen. Right-drag on empty space still rotates the layout. Active surveys disable radio actions, while cached voltage remains readable.
 
 ## Test
 

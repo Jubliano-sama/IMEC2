@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from tkinter import messagebox, ttk
 from typing import Iterable
 
+from .compact_dialog import show_dialog, tabbed_dialog
 from .anchor_geometry import (
     AnchorPairDistance,
     AnchorLayoutResult,
@@ -33,6 +34,7 @@ from .anchor_geometry_nlos import NLOS_ONE_SIDED_ALGORITHM
 from .diagnostic_models import anchor_label
 from .survey_runtime import SurveyOperationModel
 from .survey_timing import ScheduledPhaseSnapshot
+from .anchor_context import AnchorContext, nearest_anchor
 from .layout_gestures import bind_layout_gestures
 from .layout_motion import rotation_safe_bounds
 from .theme import (
@@ -417,6 +419,9 @@ class SurveyGeometryView(ttk.Frame):
         self,
         parent: tk.Misc,
         *,
+        on_identify_anchor: Callable[[str], None] = lambda _anchor: None,
+        can_identify_anchor: Callable[[str], bool] = lambda _anchor: False,
+        anchor_hover_text: Callable[[str], str] = lambda anchor: f"Anchor {anchor}",
         on_positions_changed: Callable[[LayoutRegistration], None] | None = None,
         on_layout_edited: Callable[[dict[str, tuple[float, float]]], None]
         | None = None,
@@ -436,6 +441,9 @@ class SurveyGeometryView(ttk.Frame):
         | None = None,
     ) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
+        self._on_identify_anchor = on_identify_anchor
+        self._can_identify_anchor = can_identify_anchor
+        self._anchor_hover_text = anchor_hover_text
         self.model: SurveyOperationModel | None = None
         self._on_positions_changed = on_positions_changed
         self._layout_tool_var = tk.StringVar(value="select")
@@ -462,11 +470,6 @@ class SurveyGeometryView(ttk.Frame):
         self.distance_weight_power_var = tk.StringVar(value="0")
         self._fullscreen_window: tk.Toplevel | None = None
         self._fullscreen_canvas: tk.Canvas | None = None
-        self._fullscreen_registration_controls: LayoutRegistrationControls | None = None
-        self._fullscreen_layout_buttons: list[ttk.Button] = []
-        self._fullscreen_solve_button: ttk.Button | None = None
-        self._fullscreen_refine_button: ttk.Button | None = None
-        self._fullscreen_resolve_dragged_button: ttk.Button | None = None
         self._held_move_keys: set[str] = set()
         self._held_move_after_id: str | None = None
         self._drag_anchor_id: str | None = None
@@ -497,13 +500,20 @@ class SurveyGeometryView(ttk.Frame):
         self.columnconfigure(0, weight=2)
         self.columnconfigure(1, weight=3)
         self.rowconfigure(1, weight=3)
-        self.rowconfigure(2, weight=2)
+        self.settings_window, (solve_page, layout_page, edge_page) = tabbed_dialog(
+            self, "Survey geometry settings", ("Solve", "Layout", "Connections"))
+        self.details_window, (steps_page, pairs_page) = tabbed_dialog(
+            self, "Survey details", ("Steps", "Ranges"))
+        self.details_window.geometry("1000x400")
+        steps_page.rowconfigure(1, weight=1)
+        pairs_page.rowconfigure(2, weight=1)
 
         summary = ttk.Frame(self, style="Panel.TFrame")
         summary.grid(
             row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6)
         )
-        summary.columnconfigure(0, weight=1)
+        summary.columnconfigure(0, weight=3)
+        summary.columnconfigure(1, weight=1)
         self.headline_var = tk.StringVar(
             value="Run a survey to enumerate anchors, range pairs, and solve geometry."
         )
@@ -513,18 +523,18 @@ class SurveyGeometryView(ttk.Frame):
             style="Section.TLabel",
             wraplength=900,
             justify="left",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
         self.identity_var = tk.StringVar(value="No active survey generation")
         ttk.Label(
             summary, textvariable=self.identity_var, style="PanelMuted.TLabel"
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
         self.phase_timing_var = tk.StringVar(
             value="Scheduled phase timing appears when a survey is active."
         )
         ttk.Label(
             summary,
             textvariable=self.phase_timing_var,
-            style="PanelMuted.TLabel",
+            style="PanelMuted.TLabel", wraplength=650,
         ).grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.phase_progress = ttk.Progressbar(
             summary, orient="horizontal", mode="determinate", maximum=100.0
@@ -534,13 +544,13 @@ class SurveyGeometryView(ttk.Frame):
             summary,
             text="Overall survey workflow",
             style="PanelMuted.TLabel",
-        ).grid(row=4, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(4, 0))
         self.progress = ttk.Progressbar(
             summary, orient="horizontal", mode="determinate", maximum=100.0
         )
-        self.progress.grid(row=5, column=0, sticky="ew", pady=(3, 0))
+        self.progress.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=(3, 0))
 
-        steps_frame = ttk.Frame(self, style="Panel.TFrame")
+        steps_frame = ttk.Frame(steps_page, style="Panel.TFrame")
         steps_frame.grid(
             row=1, column=0, sticky="nsew", padx=(0, 6), pady=(0, 6)
         )
@@ -569,7 +579,7 @@ class SurveyGeometryView(ttk.Frame):
         self.steps.grid(row=0, column=0, sticky="nsew")
 
         geometry = ttk.Frame(self, style="Panel.TFrame")
-        geometry.grid(row=1, column=1, sticky="nsew", pady=(0, 6))
+        geometry.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(0, 6))
         geometry.columnconfigure(0, weight=1)
         geometry.rowconfigure(4, weight=1)
         toolbar = ttk.Frame(geometry, style="Panel.TFrame")
@@ -579,18 +589,24 @@ class SurveyGeometryView(ttk.Frame):
         ttk.Label(
             toolbar,
             textvariable=self.geometry_var,
-            style="PanelMuted.TLabel",
-        ).grid(row=0, column=0, sticky="w")
+            style="PanelMuted.TLabel", wraplength=850,
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        self.settings_button = ttk.Button(toolbar, text="Edit / solve…",
+            command=lambda: show_dialog(self.settings_window))
+        self.settings_button.grid(row=1, column=0, sticky="w")
+        self.details_button = ttk.Button(toolbar, text="Survey details…",
+            command=lambda: show_dialog(self.details_window))
+        self.details_button.grid(row=1, column=1, sticky="w")
         self.mirror_button = ttk.Button(
-            toolbar, text="Mirror", command=self._mirror, state="disabled"
+            layout_page, text="Mirror", command=self._mirror, state="disabled"
         )
         self.mirror_button.grid(row=0, column=1, padx=(4, 0))
         self.left_button = ttk.Button(
-            toolbar, text="−1°", command=lambda: self._rotate(-1.0), state="disabled"
+            layout_page, text="−1°", command=lambda: self._rotate(-1.0), state="disabled"
         )
         self.left_button.grid(row=0, column=2, padx=(4, 0))
         self.right_button = ttk.Button(
-            toolbar, text="+1°", command=lambda: self._rotate(1.0), state="disabled"
+            layout_page, text="+1°", command=lambda: self._rotate(1.0), state="disabled"
         )
         self.right_button.grid(row=0, column=3, padx=(4, 0))
         self.fullscreen_button = ttk.Button(
@@ -599,8 +615,8 @@ class SurveyGeometryView(ttk.Frame):
             command=self._open_fullscreen,
             state="disabled",
         )
-        self.fullscreen_button.grid(row=0, column=4, padx=(8, 0))
-        solver_bar = ttk.Frame(geometry, style="Panel.TFrame")
+        self.fullscreen_button.grid(row=1, column=2, padx=(8, 0))
+        solver_bar = ttk.Frame(solve_page, style="Panel.TFrame")
         solver_bar.grid(row=1, column=0, sticky="ew", pady=(0, 4))
         solver_row = ttk.Frame(solver_bar, style="Panel.TFrame")
         solver_row.grid(row=0, column=0, sticky="w")
@@ -715,7 +731,7 @@ class SurveyGeometryView(ttk.Frame):
         )
 
         self.registration_controls = LayoutRegistrationControls(
-            geometry,
+            layout_page,
             on_translate=self.nudge_translation,
             on_scale=self.nudge_scale,
             on_reset=self.reset_transform,
@@ -723,7 +739,7 @@ class SurveyGeometryView(ttk.Frame):
             tool_var=self._layout_tool_var,
         )
         self.registration_controls.grid(row=2, column=0, sticky="ew", pady=(0, 4))
-        self.edge_editor = self._build_edge_editor(geometry)
+        self.edge_editor = self._build_edge_editor(edge_page)
         self.edge_editor.grid(row=3, column=0, sticky="ew", pady=(0, 4))
         self.canvas = tk.Canvas(
             geometry,
@@ -736,7 +752,7 @@ class SurveyGeometryView(ttk.Frame):
         self.canvas.bind("<Configure>", lambda _event: self._redraw())
         self._bind_anchor_dragging(self.canvas)
 
-        pairs_frame = ttk.Frame(self, style="Panel.TFrame")
+        pairs_frame = ttk.Frame(pairs_page, style="Panel.TFrame")
         pairs_frame.grid(
             row=2, column=0, columnspan=2, sticky="nsew"
         )
@@ -1344,6 +1360,18 @@ class SurveyGeometryView(ttk.Frame):
             tool=self._layout_tool_var.get,
         )
 
+        AnchorContext(canvas, hit_test=lambda x, y: self._anchor_at(canvas, x, y),
+                      identify=self._on_identify_anchor, can_identify=self._can_identify_anchor,
+                      hover_text=self._anchor_hover_text)
+
+    def _anchor_at(self, canvas, x, y):
+        if self.model is None:
+            return None
+        positions = self._display_positions or self._fallback_positions(self.model)
+        project = _canvas_projection(rotation_safe_bounds(self._oriented_positions or positions),
+                                     max(canvas.winfo_width(), 160), max(canvas.winfo_height(), 80))
+        return nearest_anchor(positions, project.project, x, y)
+
     def edit_display_anchor(self, anchor_id: str, point: tuple[float, float]) -> None:
         """Commit an anchor drag from the click view through the same model owner."""
         if self._geometry_job_pending or anchor_id in self._locked_positions_m:
@@ -1641,17 +1669,8 @@ class SurveyGeometryView(ttk.Frame):
         )
 
     def _show_registration(self) -> None:
-        controls = (
-            self.registration_controls,
-            self._fullscreen_registration_controls,
-        )
-        for control in controls:
-            if control is not None and control.winfo_exists():
-                control.show_registration(
-                    self._uniform_scale,
-                    self._translate_x_m,
-                    self._translate_y_m,
-                )
+        self.registration_controls.show_registration(
+            self._uniform_scale, self._translate_x_m, self._translate_y_m)
 
     def _sync_control_states(self, has_layout: bool | None = None) -> None:
         if has_layout is None:
@@ -1668,13 +1687,9 @@ class SurveyGeometryView(ttk.Frame):
             self.mirror_button,
             self.left_button,
             self.right_button,
-            *self._fullscreen_layout_buttons,
         ):
             button.configure(state=state)
         self.registration_controls.set_enabled(can_transform)
-        controls = self._fullscreen_registration_controls
-        if controls is not None and controls.winfo_exists():
-            controls.set_enabled(can_transform)
         self._sync_anchor_locks()
         for button in self._fit_details_buttons:
             if button.winfo_exists():
@@ -1695,28 +1710,6 @@ class SurveyGeometryView(ttk.Frame):
             state="normal" if has_layout and can_solve else "disabled",
             text="Refine distances",
         )
-        if self._fullscreen_solve_button is not None:
-            self._fullscreen_solve_button.configure(
-                state="normal" if can_solve else "disabled",
-                text=(
-                    "Solving..."
-                    if self._geometry_job_pending
-                    else "Solve / re-solve"
-                ),
-            )
-        if self._fullscreen_refine_button is not None:
-            self._fullscreen_refine_button.configure(
-                state="normal" if has_layout and can_solve else "disabled",
-                text="Refine measured distances only",
-            )
-        if self._fullscreen_resolve_dragged_button is not None:
-            self._fullscreen_resolve_dragged_button.configure(
-                state=(
-                    "normal"
-                    if can_solve and self._manual_layout_dirty
-                    else "disabled"
-                )
-            )
 
     def _open_fullscreen(self) -> None:
         window = self._fullscreen_window
@@ -1749,122 +1742,10 @@ class SurveyGeometryView(ttk.Frame):
             command=self._close_fullscreen,
         ).grid(row=0, column=2)
 
-        solver_bar = ttk.Frame(window, style="Panel.TFrame", padding=(8, 2))
-        solver_bar.grid(row=1, column=0, sticky="ew")
-        ttk.Label(solver_bar, text="Solver", style="Panel.TLabel").grid(row=0, column=0, padx=(0, 3))
-        ttk.Combobox(
-            solver_bar,
-            textvariable=self.solver_var,
-            values=SOLVER_CHOICES,
-            state="readonly",
-            width=40,
-        ).grid(row=0, column=1, padx=(0, 8))
-        ttk.Label(solver_bar, text="Seed", style="Panel.TLabel").grid(row=0, column=2, padx=(0, 3))
-        ttk.Combobox(
-            solver_bar,
-            textvariable=self.seed_var,
-            values=CONNECTIVITY_SEEDS,
-            state="readonly",
-            width=24,
-        ).grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(solver_bar, text="Radio min (m)", style="Panel.TLabel").grid(
-            row=0,
-            column=4,
-            padx=(0, 3),
-        )
-        ttk.Spinbox(
-            solver_bar,
-            textvariable=self.neighbor_min_var,
-            from_=0.1,
-            to=100.0,
-            increment=0.5,
-            width=6,
-        ).grid(row=0, column=5, padx=(0, 8))
-        ttk.Label(solver_bar, text="Neighbor max (m)", style="Panel.TLabel").grid(
-            row=0,
-            column=6,
-            padx=(0, 3),
-        )
-        ttk.Spinbox(
-            solver_bar,
-            textvariable=self.neighbor_max_var,
-            from_=0.1,
-            to=100.0,
-            increment=0.5,
-            width=6,
-        ).grid(row=0, column=7, padx=(0, 8))
-        ttk.Label(solver_bar, text="Closest ranges / anchor (0=all)", style="Panel.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
-        )
-        ttk.Spinbox(
-            solver_bar,
-            textvariable=self.nearest_anchor_count_var,
-            from_=0,
-            to=255,
-            increment=1,
-            width=6,
-        ).grid(row=1, column=2, sticky="w", pady=(4, 0))
-        self._build_distance_weight_control(solver_bar).grid(
-            row=2, column=0, columnspan=10, sticky="w", pady=(4, 0)
-        )
-        self._build_anchor_lock_controls(solver_bar).grid(
-            row=3, column=0, columnspan=10, sticky="w", pady=(4, 0)
-        )
-        self._fullscreen_solve_button = ttk.Button(
-            solver_bar,
-            text="Solve / re-solve",
-            command=self._request_solve,
-        )
-        self._fullscreen_solve_button.grid(row=0, column=8)
-        self._fullscreen_refine_button = ttk.Button(
-            solver_bar,
-            text="Refine measured distances only",
-            command=self._request_refinement,
-        )
-        self._fullscreen_refine_button.grid(row=0, column=9, padx=(4, 8))
-        self._fullscreen_resolve_dragged_button = ttk.Button(
-            solver_bar,
-            text="Re-solve dragged",
-            command=self._request_dragged_solve,
-        )
-        self._fullscreen_resolve_dragged_button.grid(
-            row=1, column=4, sticky="w", pady=(4, 0)
-        )
-        for column, (label, command) in enumerate(
-            (
-                ("Mirror", self._mirror),
-                ("−1°", lambda: self._rotate(-1.0)),
-                ("+1°", lambda: self._rotate(1.0)),
-            ),
-            start=10,
-        ):
-            button = ttk.Button(solver_bar, text=label, command=command)
-            button.grid(row=0, column=column, padx=(4, 0))
-            self._fullscreen_layout_buttons.append(button)
-
-        self._fullscreen_registration_controls = LayoutRegistrationControls(
-            window,
-            on_translate=self.nudge_translation,
-            on_scale=self.nudge_scale,
-            on_reset=self.reset_transform,
-            on_rotate=self._rotate,
-            tool_var=self._layout_tool_var,
-        )
-        self._fullscreen_registration_controls.grid(
-            row=2,
-            column=0,
-            sticky="ew",
-            padx=8,
-            pady=(2, 4),
-        )
-        edge_editor = self._build_edge_editor(window)
-        edge_editor.grid(
-            row=3,
-            column=0,
-            sticky="ew",
-            padx=8,
-            pady=(0, 4),
-        )
+        ttk.Button(header, text="Edit / solve…",
+                   command=lambda: show_dialog(self.settings_window)).grid(row=0, column=3, padx=6)
+        ttk.Button(header, text="Survey details…",
+                   command=lambda: show_dialog(self.details_window)).grid(row=0, column=4, padx=6)
         canvas = tk.Canvas(
             window,
             background=CANVAS_BG,
@@ -1930,11 +1811,6 @@ class SurveyGeometryView(ttk.Frame):
             window.after_cancel(after_id)
         self._fullscreen_window = None
         self._fullscreen_canvas = None
-        self._fullscreen_registration_controls = None
-        self._fullscreen_layout_buttons = []
-        self._fullscreen_solve_button = None
-        self._fullscreen_refine_button = None
-        self._fullscreen_resolve_dragged_button = None
         if canvas is not None and self._drag_canvas is canvas:
             try:
                 canvas.grab_release()

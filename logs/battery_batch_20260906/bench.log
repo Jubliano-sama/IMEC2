@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/logs/battery_batch_20260906/bench.py", line 49, in <module>
+    assert proc.returncode==0,'GUI failed, see gui.log'
+           ^^^^^^^^^^^^^^^^^^
+AssertionError: GUI failed, see gui.log

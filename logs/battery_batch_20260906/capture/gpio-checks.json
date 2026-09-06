@@ -1,0 +1,35 @@
+{
+  "anchor_a": {
+    "observed_active_s": 9.965138009982184,
+    "samples": 250,
+    "sleep_samples": 243,
+    "colors": [
+      0,
+      1,
+      2,
+      4
+    ]
+  },
+  "anchor_b": {
+    "observed_active_s": 9.923717604018748,
+    "samples": 246,
+    "sleep_samples": 241,
+    "colors": [
+      0,
+      1,
+      2,
+      4
+    ]
+  },
+  "anchor_c": {
+    "observed_active_s": 9.926123014010955,
+    "samples": 246,
+    "sleep_samples": 239,
+    "colors": [
+      0,
+      1,
+      2,
+      4
+    ]
+  }
+}

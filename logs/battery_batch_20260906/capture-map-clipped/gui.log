@@ -1,0 +1,64 @@
+GUI_LOG event BLE state: connecting E4:16:B7:C7:E6:95
+GUI_LOG event BLE state: connected E4:16:B7:C7:E6:95
+GUI_LOG tx BLE write complete for Survey Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Start neighbor survey: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Submit survey ranging plan: 102 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG info Solving with Neighbor intervals (radio interval 7-15 m) from 3/3 ranges (distance weight power 0)...
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG info Geometry re-solve complete: Neighbor intervals (7-15 m); seed Graph MDS; RMSE 0.000 m, max residual 0.000 m.
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG event Survey complete: 3/3 pairs have usable median ranges
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG event Anchor c1c2306a5138ab2d: Battery: 2.936 V · just received
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.726 V · just received
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG event Anchor 9699122bd60a64e3: Battery: 2.930 V · just received
+BATTERY_BATCH {"phase": "batch1", "readings": {"13961775027989293869": {"status": 0, "text": "Battery: 2.936 V \u00b7 just received", "battery_mv": 2936, "boot_counter": 81, "sampled_at_ms": 57625, "age_ms": null, "received_at": 216976.454139673}, "1111608711777941592": {"status": 0, "text": "Battery: 3.726 V \u00b7 just received", "battery_mv": 3726, "boot_counter": 244, "sampled_at_ms": 57583, "age_ms": null, "received_at": 216977.259109678}, "10851724756609819875": {"status": 0, "text": "Battery: 2.930 V \u00b7 just received", "battery_mv": 2930, "boot_counter": 10, "sampled_at_ms": 57510, "age_ms": null, "received_at": 216978.06403}}}
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG event Anchor c1c2306a5138ab2d: Battery: 2.944 V · just received
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG event Anchor 0f6d3a3bdac0f858: Battery: 3.732 V · just received
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG tx BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_LOG event Anchor 9699122bd60a64e3: Battery: 2.938 V · just received
+BATTERY_BATCH {"phase": "batch2", "readings": {"13961775027989293869": {"status": 0, "text": "Battery: 2.944 V \u00b7 just received", "battery_mv": 2944, "boot_counter": 81, "sampled_at_ms": 60006, "age_ms": null, "received_at": 216978.81887215}, "1111608711777941592": {"status": 0, "text": "Battery: 3.732 V \u00b7 just received", "battery_mv": 3732, "boot_counter": 244, "sampled_at_ms": 59924, "age_ms": null, "received_at": 216979.573969072}, "10851724756609819875": {"status": 0, "text": "Battery: 2.938 V \u00b7 just received", "battery_mv": 2938, "boot_counter": 10, "sampled_at_ms": 59810, "age_ms": null, "received_at": 216980.328898372}}}
+GUI_LOG tx BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/logs/battery_batch_20260906/gui_hil.py", line 73, in poll
+    assert tips,(kind,'hover absent')
+           ^^^^
+AssertionError: ('click', 'hover absent')
+BATCH_FINAL {"success": false, "batteries": {"13961775027989293869": {"status": 0, "text": "Battery: 2.944 V \u00b7 just received", "battery_mv": 2944, "boot_counter": 81, "sampled_at_ms": 60006, "age_ms": null, "received_at": 216978.81887215}, "1111608711777941592": {"status": 0, "text": "Battery: 3.732 V \u00b7 just received", "battery_mv": 3732, "boot_counter": 244, "sampled_at_ms": 59924, "age_ms": null, "received_at": 216979.573969072}, "10851724756609819875": {"status": 0, "text": "Battery: 2.938 V \u00b7 just received", "battery_mv": 2938, "boot_counter": 10, "sampled_at_ms": 59810, "age_ms": null, "received_at": 216980.328898372}}, "elapsed_s": 60.23114289098885}
+GUI_LOG event BLE state: disconnecting
