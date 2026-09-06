@@ -1,0 +1,11 @@
+test_click_anchor_drag_and_lock (tools.gateway_gui.tests.test_layout_gestures.LayoutGestureTests.test_click_anchor_drag_and_lock) ... ok
+test_exact_angle_and_invalid_input (tools.gateway_gui.tests.test_layout_gestures.LayoutGestureTests.test_exact_angle_and_invalid_input) ... ok
+test_left_button_tools_take_precedence_over_anchor_selection (tools.gateway_gui.tests.test_layout_gestures.LayoutGestureTests.test_left_button_tools_take_precedence_over_anchor_selection) ... ok
+test_rotation_is_continuous_and_control_is_fine (tools.gateway_gui.tests.test_layout_gestures.LayoutGestureTests.test_rotation_is_continuous_and_control_is_fine) ... ok
+test_shift_release_during_move_does_not_leave_a_grab (tools.gateway_gui.tests.test_layout_gestures.LayoutGestureTests.test_shift_release_during_move_does_not_leave_a_grab) ... ok
+test_wheel_reverses_and_disabled_gestures_do_nothing (tools.gateway_gui.tests.test_layout_gestures.LayoutGestureTests.test_wheel_reverses_and_disabled_gestures_do_nothing) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.431s
+
+OK

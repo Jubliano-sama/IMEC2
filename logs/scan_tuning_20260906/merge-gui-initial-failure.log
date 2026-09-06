@@ -1,0 +1,25 @@
+..............................................................................................................................................................................F.F...........................................................................................................................................
+======================================================================
+FAIL: test_click_anchor_drag_and_lock (test_layout_gestures.LayoutGestureTests.test_click_anchor_drag_and_lock)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_layout_gestures.py", line 108, in test_click_anchor_drag_and_lock
+    moved.assert_called_once()
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/unittest/mock.py", line 958, in assert_called_once
+    raise AssertionError(msg)
+AssertionError: Expected 'mock' to have been called once. Called 0 times.
+
+======================================================================
+FAIL: test_left_button_tools_take_precedence_over_anchor_selection (test_layout_gestures.LayoutGestureTests.test_left_button_tools_take_precedence_over_anchor_selection)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_layout_gestures.py", line 89, in test_left_button_tools_take_precedence_over_anchor_selection
+    self.assertAlmostEqual(sum(call.args[0] for call in self.rotate.call_args_list), -5)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != -5 within 7 places (5 difference)
+
+----------------------------------------------------------------------
+Ran 316 tests in 25.278s
+
+FAILED (failures=2)

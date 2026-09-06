@@ -33,6 +33,8 @@ from .anchor_geometry_nlos import NLOS_ONE_SIDED_ALGORITHM
 from .diagnostic_models import anchor_label
 from .survey_runtime import SurveyOperationModel
 from .survey_timing import ScheduledPhaseSnapshot
+from .layout_gestures import bind_layout_gestures
+from .layout_motion import rotation_safe_bounds
 from .theme import (
     ACCENT,
     AMBER,
@@ -172,7 +174,7 @@ def point_segment_distance_px(
 
 
 class LayoutRegistrationControls(ttk.Frame):
-    """Button-only controls shared by geometry and click-location views."""
+    """Fine frame controls shared by geometry and click-location views."""
 
     def __init__(
         self,
@@ -181,9 +183,11 @@ class LayoutRegistrationControls(ttk.Frame):
         on_translate: Callable[[float, float], None],
         on_scale: Callable[[float], None],
         on_reset: Callable[[], None],
+        on_rotate: Callable[[float], None] = lambda _degrees: None,
+        tool_var: tk.StringVar | None = None,
     ) -> None:
         super().__init__(parent, style="Panel.TFrame")
-        ttk.Label(self, text="Move frame", style="Panel.TLabel").grid(row=0, column=0, padx=(0, 3))
+        ttk.Label(self, text="Move frame", style="Panel.TLabel").grid(row=4, column=0, padx=(0, 3))
         specs: tuple[tuple[str, Callable[[], None]], ...] = (
             ("X −", lambda: on_translate(-TRANSLATION_STEP_M, 0.0)),
             ("X +", lambda: on_translate(TRANSLATION_STEP_M, 0.0)),
@@ -202,8 +206,44 @@ class LayoutRegistrationControls(ttk.Frame):
                 state="disabled",
                 width=4 if label.startswith(("X", "Y")) else 7,
             )
-            button.grid(row=0, column=column, padx=(3, 0))
+            button.grid(row=4, column=column, padx=(3, 0))
             self.buttons.append(button)
+        self.tool_var = tool_var if tool_var is not None else tk.StringVar(value="select")
+        tool_row = ttk.Frame(self, style="Panel.TFrame")
+        tool_row.grid(row=0, column=0, columnspan=8, sticky="w")
+        for label, mode in (("Select / drag anchor", "select"), ("Move", "move"),
+                            ("Rotate", "rotate"), ("Scale", "scale")):
+            ttk.Radiobutton(tool_row, text=label, value=mode, variable=self.tool_var, style="Toolbutton").pack(side="left", padx=(0, 8))
+        rotation = ttk.Frame(self, style="Panel.TFrame")
+        rotation.grid(row=2, column=0, columnspan=8, sticky="w", pady=(4, 0))
+        ttk.Label(rotation, text="Rotate", style="Panel.TLabel").pack(side="left")
+        for label, degrees in (("−1°", -1.0), ("+1°", 1.0)):
+            button = ttk.Button(rotation, text=label, width=5,
+                                command=lambda amount=degrees: on_rotate(amount), state="disabled")  # type: ignore[misc]
+            button.pack(side="left", padx=3)
+            self.buttons.append(button)
+        self.rotation_var = tk.StringVar(value="15")
+        self.rotation_entry = ttk.Entry(rotation, textvariable=self.rotation_var, width=7)
+        self.rotation_entry.pack(side="left", padx=3)
+
+        def apply_rotation(_event=None):
+            try:
+                degrees = float(self.rotation_var.get())
+            except ValueError:
+                degrees = float("nan")
+            if not math.isfinite(degrees):
+                self.status_var.set("Enter a finite rotation in degrees (for example 12.5).")
+                return "break"
+            if not self.rotation_entry.instate(["disabled"]):
+                on_rotate(degrees % 360.0)
+            return "break"
+
+        self.rotation_entry.bind("<Return>", apply_rotation)
+        button = ttk.Button(rotation, text="Apply °", command=apply_rotation, state="disabled")
+        button.pack(side="left", padx=3)
+        self.buttons.append(button)
+        ttk.Label(self, text="Shift-drag / middle-drag: move · right-drag: rotate · wheel: scale · Ctrl: fine",
+                  style="PanelMuted.TLabel").grid(row=3, column=0, columnspan=8, sticky="w", pady=(3, 0))
         self.status_var = tk.StringVar(
             value="Frame: scale 1.000, offset (0.000, 0.000) m"
         )
@@ -214,6 +254,7 @@ class LayoutRegistrationControls(ttk.Frame):
         ).grid(row=1, column=0, columnspan=8, sticky="w", pady=(2, 0))
 
     def set_enabled(self, enabled: bool) -> None:
+        self.rotation_entry.configure(state="normal" if enabled else "disabled")
         for button in self.buttons:
             button.configure(state="normal" if enabled else "disabled")
 
@@ -397,6 +438,7 @@ class SurveyGeometryView(ttk.Frame):
         super().__init__(parent, style="Panel.TFrame", padding=8)
         self.model: SurveyOperationModel | None = None
         self._on_positions_changed = on_positions_changed
+        self._layout_tool_var = tk.StringVar(value="select")
         self._on_layout_edited = on_layout_edited
         self._on_refine_requested = on_refine_requested
         self._on_anchor_selected = on_anchor_selected
@@ -544,11 +586,11 @@ class SurveyGeometryView(ttk.Frame):
         )
         self.mirror_button.grid(row=0, column=1, padx=(4, 0))
         self.left_button = ttk.Button(
-            toolbar, text="-90°", command=lambda: self._rotate(-90.0), state="disabled"
+            toolbar, text="−1°", command=lambda: self._rotate(-1.0), state="disabled"
         )
         self.left_button.grid(row=0, column=2, padx=(4, 0))
         self.right_button = ttk.Button(
-            toolbar, text="+90°", command=lambda: self._rotate(90.0), state="disabled"
+            toolbar, text="+1°", command=lambda: self._rotate(1.0), state="disabled"
         )
         self.right_button.grid(row=0, column=3, padx=(4, 0))
         self.fullscreen_button = ttk.Button(
@@ -677,6 +719,8 @@ class SurveyGeometryView(ttk.Frame):
             on_translate=self.nudge_translation,
             on_scale=self.nudge_scale,
             on_reset=self.reset_transform,
+            on_rotate=self._rotate,
+            tool_var=self._layout_tool_var,
         )
         self.registration_controls.grid(row=2, column=0, sticky="ew", pady=(0, 4))
         self.edge_editor = self._build_edge_editor(geometry)
@@ -1229,6 +1273,10 @@ class SurveyGeometryView(ttk.Frame):
         self._move_locks_with_layout()
         self._apply_transform()
 
+    def rotate_layout_frame(self, degrees: float) -> None:
+        """Rotate the shared registration from either tab."""
+        self._rotate(degrees)
+
     def mirror_layout_frame(self) -> None:
         """Mirror the shared survey/click registration from either tab."""
 
@@ -1284,11 +1332,40 @@ class SurveyGeometryView(ttk.Frame):
             ),
         )
 
+        canvas.bind("<Key-l>", lambda _event: self._toggle_anchor_lock())
+        bind_layout_gestures(
+            canvas, on_translate=self.nudge_translation, on_scale=self.nudge_scale,
+            on_rotate=self._rotate,
+            pixels_per_metre=lambda: _canvas_projection(
+                rotation_safe_bounds(self._oriented_positions),
+                max(canvas.winfo_width(), 160), max(canvas.winfo_height(), 80),
+            ).scale,
+            enabled=lambda: bool(self._oriented_positions) and not self._geometry_job_pending,
+            tool=self._layout_tool_var.get,
+        )
+
+    def edit_display_anchor(self, anchor_id: str, point: tuple[float, float]) -> None:
+        """Commit an anchor drag from the click view through the same model owner."""
+        if self._geometry_job_pending or anchor_id in self._locked_positions_m:
+            return
+        if anchor_id not in self._oriented_positions:
+            return
+        self._oriented_positions[anchor_id] = inverse_transform_point(
+            point, scale=self._uniform_scale, translate_x_m=self._translate_x_m,
+            translate_y_m=self._translate_y_m,
+        )
+        self._manual_layout_dirty = True
+        if self._on_layout_edited is not None:
+            self._on_layout_edited(dict(self._oriented_positions))
+        self._apply_transform()
+        self._sync_control_states()
+
     def _anchor_drag_started(
         self,
         canvas: tk.Canvas,
         event: tk.Event[tk.Misc],
     ) -> str | None:
+        canvas.focus_set()
         model = self.model
         if model is None:
             return None
@@ -1299,7 +1376,7 @@ class SurveyGeometryView(ttk.Frame):
         height = max(canvas.winfo_height(), 80)
         reference = self._oriented_positions or positions
         projection = _canvas_projection(
-            (*reference.values(), (0.0, 0.0)),
+            rotation_safe_bounds(reference),
             width,
             height,
         )
@@ -1420,7 +1497,7 @@ class SurveyGeometryView(ttk.Frame):
             self._on_positions_changed(self.registration)
         self.geometry_var.set(
             f"Dragged {anchor_id}; kept in GUI RAM. "
-            "Use Re-solve dragged to optimize from this layout."
+            "Click location recalculated; use Re-solve dragged to optimize anchors."
         )
         self._sync_control_states()
         self._redraw()
@@ -1446,7 +1523,13 @@ class SurveyGeometryView(ttk.Frame):
     def nudge_scale(self, factor: float) -> None:
         if self._geometry_job_pending or not math.isfinite(factor) or factor <= 0.0:
             return
-        self._uniform_scale *= factor
+        new_scale = min(100.0, max(0.01, self._uniform_scale * factor))
+        if self._oriented_positions:
+            center_x = sum(p[0] for p in self._oriented_positions.values()) / len(self._oriented_positions)
+            center_y = sum(p[1] for p in self._oriented_positions.values()) / len(self._oriented_positions)
+            self._translate_x_m += (self._uniform_scale - new_scale) * center_x
+            self._translate_y_m += (self._uniform_scale - new_scale) * center_y
+        self._uniform_scale = new_scale
         self._apply_transform()
 
     def reset_transform(self, *, notify: bool = True) -> None:
@@ -1750,8 +1833,8 @@ class SurveyGeometryView(ttk.Frame):
         for column, (label, command) in enumerate(
             (
                 ("Mirror", self._mirror),
-                ("-90°", lambda: self._rotate(-90.0)),
-                ("+90°", lambda: self._rotate(90.0)),
+                ("−1°", lambda: self._rotate(-1.0)),
+                ("+1°", lambda: self._rotate(1.0)),
             ),
             start=10,
         ):
@@ -1764,6 +1847,8 @@ class SurveyGeometryView(ttk.Frame):
             on_translate=self.nudge_translation,
             on_scale=self.nudge_scale,
             on_reset=self.reset_transform,
+            on_rotate=self._rotate,
+            tool_var=self._layout_tool_var,
         )
         self._fullscreen_registration_controls.grid(
             row=2,
@@ -1926,7 +2011,7 @@ class SurveyGeometryView(ttk.Frame):
             self._drag_projection
             if canvas is self._drag_canvas and self._drag_projection is not None
             else _canvas_projection(
-                (*reference.values(), (0.0, 0.0)),
+                rotation_safe_bounds(reference),
                 width,
                 height,
             )

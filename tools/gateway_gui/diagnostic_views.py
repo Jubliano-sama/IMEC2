@@ -17,6 +17,8 @@ from .diagnostic_models import (
 )
 from .command_telemetry import GatewayCommandEvent
 from .command_telemetry import GATEWAY_COMMAND_KIND_NAMES, GATEWAY_COMMAND_REASON_NAMES, GATEWAY_COMMAND_STAGE_NAMES
+from .layout_gestures import bind_layout_gestures
+from .layout_motion import rotation_safe_bounds
 from .survey_view import (
     HELD_TRANSLATION_INTERVAL_MS,
     LayoutRegistration,
@@ -129,14 +131,26 @@ class ClickDiagnosticsView(ttk.Frame):
         on_scale: Callable[[float], None] = lambda _factor: None,
         on_reset: Callable[[], None] = lambda: None,
         on_mirror: Callable[[], None] = lambda: None,
+        on_rotate: Callable[[float], None] = lambda _degrees: None,
+        on_anchor_moved: Callable[[str, tuple[float, float]], None] = lambda _id, _point: None,
+        on_anchor_lock: Callable[[str], None] = lambda _id: None,
+        anchor_locked: Callable[[str], bool] = lambda _id: False,
+        editing_enabled: Callable[[], bool] = lambda: True,
         on_click_selected: Callable[[tuple[int, int, int]], None] = lambda _key: None,
         on_click_deleted: Callable[[tuple[int, int, int]], None] = lambda _key: None,
     ) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
+        self._layout_tool_var = tk.StringVar(value="select")
         self._on_translate = on_translate
         self._on_scale = on_scale
         self._on_reset = on_reset
         self._on_mirror = on_mirror
+        self._on_rotate = on_rotate
+        self._on_anchor_moved = on_anchor_moved
+        self._on_anchor_lock = on_anchor_lock
+        self._anchor_locked = anchor_locked
+        self._editing_enabled = editing_enabled
+        self._anchor_drag: tuple[str, int, int, tuple[float, float], float] | None = None
         self._on_click_selected = on_click_selected
         self._on_click_deleted = on_click_deleted
         self._fullscreen_window: tk.Toplevel | None = None
@@ -163,7 +177,7 @@ class ClickDiagnosticsView(ttk.Frame):
             value="Load a raster blueprint, then enter its exact size in metres."
         )
         self.selection_var = tk.StringVar(
-            value="Click an anchor to isolate its connections."
+            value="Drag an anchor to edit it; press L to lock / unlock the selection."
         )
         self._blueprint_controls: list[BlueprintControls] = []
         self.columnconfigure(0, weight=1)
@@ -196,8 +210,12 @@ class ClickDiagnosticsView(ttk.Frame):
             on_translate=on_translate,
             on_scale=on_scale,
             on_reset=on_reset,
+            on_rotate=on_rotate,
+            tool_var=self._layout_tool_var,
         )
         self.registration_controls.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(self.registration_controls, text="Lock / unlock selected (L)",
+                   command=self._toggle_selected_lock).grid(row=5, column=0, columnspan=8, sticky="w", pady=3)
         self.canvas = tk.Canvas(
             self,
             background=CANVAS_BG,
@@ -212,6 +230,8 @@ class ClickDiagnosticsView(ttk.Frame):
         )
         self.canvas.bind("<B1-Motion>", self._drag_blueprint)
         self.canvas.bind("<ButtonRelease-1>", self._end_blueprint_drag)
+        self._bind_layout_gestures(self.canvas)
+        self.canvas.bind("<Key-l>", lambda _event: self._toggle_selected_lock())
         self.canvas.bind("<Delete>", self._delete_selected_click)
         self.canvas.bind("<BackSpace>", self._delete_selected_click)
         self.diagnostic_state: ClickDiagnosticState | None = None
@@ -220,6 +240,15 @@ class ClickDiagnosticsView(ttk.Frame):
         self.reference_positions: dict[str, tuple[float, float]] = {}
         self.connections: frozenset[tuple[str, str]] = frozenset()
         self._sync_blueprint_controls()
+
+    def _bind_layout_gestures(self, canvas: tk.Canvas) -> None:
+        bind_layout_gestures(
+            canvas, on_translate=self._on_translate, on_scale=self._on_scale,
+            on_rotate=self._on_rotate,
+            pixels_per_metre=lambda: getattr(self._projection_for_canvas(canvas), "scale", 1.0),
+            enabled=lambda: bool(self.positions) and self._editing_enabled(),
+            tool=self._layout_tool_var.get,
+        )
 
     def _make_blueprint_controls(self, parent: tk.Misc) -> BlueprintControls:
         controls = BlueprintControls(
@@ -254,7 +283,7 @@ class ClickDiagnosticsView(ttk.Frame):
         self.positions = dict(positions)
         if self._selected_anchor_id not in self.positions:
             self._selected_anchor_id = None
-            self.selection_var.set("Click an anchor to isolate its connections.")
+            self.selection_var.set("Drag an anchor to edit it; press L to lock / unlock the selection.")
         self.registration_controls.set_enabled(bool(positions))
         if self._fullscreen_registration_controls is not None:
             self._fullscreen_registration_controls.set_enabled(bool(positions))
@@ -301,7 +330,23 @@ class ClickDiagnosticsView(ttk.Frame):
                 return "break"
         return self._select_anchor_at(canvas, event)
 
+    def _toggle_selected_lock(self) -> None:
+        if self._selected_anchor_id is not None and self._editing_enabled():
+            self._on_anchor_lock(self._selected_anchor_id)
+            self.redraw()
+
     def _press_at(self, canvas: tk.Canvas, event: tk.Event[tk.Misc]) -> str | None:
+        # Anchors take precedence over nearby click markers while editing.
+        canvas.focus_set()
+        selected = self._select_anchor_at(canvas, event)
+        anchor = self._selected_anchor_id
+        if anchor is not None:
+            project = self._projection_for_canvas(canvas)
+            if self._editing_enabled() and not self._anchor_locked(anchor) and project is not None:
+                self._anchor_drag = (anchor, event.x, event.y, self.positions[anchor], project.scale)
+                canvas.grab_set()
+                canvas.configure(cursor="fleur")
+            return "break"
         selected = self._select_at(canvas, event)
         if selected == "break" or self._blueprint_source is None:
             self._blueprint_drag_start = None
@@ -316,6 +361,13 @@ class ClickDiagnosticsView(ttk.Frame):
         return "break"
 
     def _drag_blueprint(self, event: tk.Event[tk.Misc]) -> str | None:
+        if self._anchor_drag is not None:
+            anchor, x, y, point, scale = self._anchor_drag
+            if self._editing_enabled() and not self._anchor_locked(anchor):
+                self.positions[anchor] = (point[0] + (event.x - x) / scale,
+                                          point[1] - (event.y - y) / scale)
+                self.redraw()
+            return "break"
         start = self._blueprint_drag_start
         if start is None or start[4] <= 0.0:
             return None
@@ -325,6 +377,20 @@ class ClickDiagnosticsView(ttk.Frame):
         return "break"
 
     def _end_blueprint_drag(self, _event: tk.Event[tk.Misc]) -> str | None:
+        if self._anchor_drag is not None:
+            self._drag_blueprint(_event)
+            anchor, x, y, point, scale = self._anchor_drag
+            self._anchor_drag = None
+            _event.widget.grab_release()
+            if isinstance(_event.widget, tk.Canvas):
+                _event.widget.configure(cursor="")
+            if self.positions[anchor] != point:
+                if self._editing_enabled() and not self._anchor_locked(anchor):
+                    self._on_anchor_moved(anchor, self.positions[anchor])
+                else:
+                    self.positions[anchor] = point
+            self.redraw()
+            return "break"
         if self._blueprint_drag_start is None:
             return None
         self._blueprint_drag_start = None
@@ -337,7 +403,7 @@ class ClickDiagnosticsView(ttk.Frame):
         self._on_click_deleted(state.identity)
         return "break"
 
-    def show_registration(self, registration: LayoutRegistration) -> None:
+    def show_registration(self, registration: LayoutRegistration, *, redraw: bool = True) -> None:
         self.reference_positions = dict(registration.reference_positions_m)
         self._registration_scale = registration.scale
         self._registration_translate_x_m = registration.translate_x_m
@@ -353,11 +419,13 @@ class ClickDiagnosticsView(ttk.Frame):
                 registration.translate_x_m,
                 registration.translate_y_m,
             )
-        self.redraw()
+        if redraw:
+            self.redraw()
 
-    def show_connections(self, connections: frozenset[tuple[str, str]]) -> None:
+    def show_connections(self, connections: frozenset[tuple[str, str]], *, redraw: bool = True) -> None:
         self.connections = connections
-        self.redraw()
+        if redraw:
+            self.redraw()
 
     def _load_blueprint(self) -> None:
         selected = filedialog.askopenfilename(
@@ -433,7 +501,7 @@ class ClickDiagnosticsView(ttk.Frame):
     def _projection_for_canvas(self, canvas: tk.Canvas):
         if not self.positions:
             return None
-        points = list((self.reference_positions or self.positions).values())
+        points = list(rotation_safe_bounds(self.reference_positions or self.positions))
         if self._blueprint_source is not None:
             blueprint_x = self._registration_translate_x_m + self._blueprint_drag_x_m
             blueprint_y = self._registration_translate_y_m + self._blueprint_drag_y_m
@@ -469,7 +537,7 @@ class ClickDiagnosticsView(ttk.Frame):
         self.selection_var.set(
             f"…{self._selected_anchor_id[-4:]}: incident connections highlighted"
             if self._selected_anchor_id is not None
-            else "Click an anchor to isolate its connections."
+            else "Drag an anchor to edit it; press L to lock / unlock the selection."
         )
         self.redraw()
         return "break" if self._selected_anchor_id is not None else None
@@ -585,6 +653,8 @@ class ClickDiagnosticsView(ttk.Frame):
         for anchor_id, point in sorted(self.positions.items()):
             x, y = project(*point)
             selected = anchor_id == self._selected_anchor_id
+            if self._anchor_locked(anchor_id):
+                canvas.create_oval(x - 11, y - 11, x + 11, y + 11, outline=AMBER, width=2)
             canvas.create_oval(
                 x - 7,
                 y - 7,
@@ -678,7 +748,11 @@ class ClickDiagnosticsView(ttk.Frame):
             on_translate=self._on_translate,
             on_scale=self._on_scale,
             on_reset=self._on_reset,
+            on_rotate=self._on_rotate,
+            tool_var=self._layout_tool_var,
         )
+        ttk.Button(self._fullscreen_registration_controls, text="Lock / unlock selected (L)",
+                   command=self._toggle_selected_lock).grid(row=5, column=0, columnspan=8, sticky="w", pady=3)
         self._fullscreen_registration_controls.grid(
             row=2,
             column=0,
@@ -703,6 +777,8 @@ class ClickDiagnosticsView(ttk.Frame):
         )
         canvas.bind("<B1-Motion>", self._drag_blueprint)
         canvas.bind("<ButtonRelease-1>", self._end_blueprint_drag)
+        self._bind_layout_gestures(canvas)
+        canvas.bind("<Key-l>", lambda _event: self._toggle_selected_lock())
         window.bind("<KeyPress>", self._fullscreen_key_pressed)
         window.bind("<KeyRelease>", self._fullscreen_key_released)
         window.bind("<Escape>", lambda _event: self._close_fullscreen())
