@@ -1789,3 +1789,5 @@ Facade control-flood repeats must not send a full wake train before every succes
 - 2026-09-06 Four attached boards cannot exercise the production three-anchor click quorum alongside a separate gateway: click tests use the existing matched CONFIG_IMEC_TWO_ANCHOR_CLICK_BENCH option on all four participants plus clicker RTT gesture injection, and final production images must disable both bench options.
 - 2026-09-06 Bench restoration preflight initially compared little-endian FICR bytes with the printed 64-bit identity and stopped before programming; decode DEVICEID as little-endian and close/resume a halted probe on preflight failure. The original storage backup remained untouched.
 - 2026-09-06 Staging the generated audit function inventory exposed CRLF on all 4,807 TSV lines as Git trailing whitespace; normalize generated text to LF and capture large whitespace-check output to a file.
+
+- Tk custom bindtags beginning with a dot are interpreted as widget paths and fail with `bad window path name`; use a non-dot class tag and release its registered Tcl commands when the canvas is destroyed.

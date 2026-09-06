@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from typing import Protocol
 
+from .layout_motion import rigid_motion
 from .anchor_geometry import (
     AnchorLayoutResult,
     AnchorPairDistance,
@@ -230,6 +231,10 @@ class ClickLocationModel:
             and generation == self.geometry_generation
             and set(positions) == set(self.positions_m)
         )
+        motion = (
+            rigid_motion(self.positions_m, positions)
+            if preserve_click and range_scale == self.range_scale else None
+        )
         previous_scale = self.range_scale
         self.positions_m = dict(positions)
         self.range_scale = range_scale
@@ -244,7 +249,22 @@ class ClickLocationModel:
                 selected_key = self.current_key
                 selected_wake = self.state.wake
                 for key in tuple(self._ranges_by_key):
-                    self._solve_ranges(key, self._states_by_key.get(key, self.state).wake)
+                    cached = self._states_by_key.get(key)
+                    if motion is not None and cached is not None and cached.result is not None:
+                        result = cached.result
+                        x, y = motion(result.x_m, result.y_m)
+                        seed_x, seed_y = motion(result.seed_x_m, result.seed_y_m)
+                        readings = tuple(
+                            replace(reading, x_m=self.positions_m[reading.anchor_id][0],
+                                    y_m=self.positions_m[reading.anchor_id][1])
+                            for reading in result.processed_readings
+                        )
+                        self._states_by_key[key] = replace(cached, result=replace(
+                            result, x_m=x, y_m=y, seed_x_m=seed_x, seed_y_m=seed_y,
+                            processed_readings=readings,
+                        ))
+                    else:
+                        self._solve_ranges(key, self._states_by_key.get(key, self.state).wake)
                 return self.select(selected_key) or self._solve_ranges(selected_key, selected_wake)
         self.current_key = None
         self.ranges_m.clear()

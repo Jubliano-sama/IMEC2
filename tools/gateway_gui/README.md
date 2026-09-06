@@ -44,7 +44,21 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    consecutive merge passes until every mutually reported neighbor pair has
    been attempted.
 
-In the geometry view, drag an anchor into place, select it, and use **Lock
+Both geometry and click-location views have **Select / drag anchor**, **Move**,
+**Rotate**, and **Scale** tools. Select a tool and drag with the left button;
+rotation and scale use horizontal dragging. Shortcuts work in every tool:
+Shift-drag or middle-drag moves the frame, right-drag rotates continuously,
+and the wheel scales. Hold Ctrl for fine movement, rotation, or scaling.
+Use the degree field for an exact relative rotation, including decimals.
+The same tools work in fullscreen. Scaling keeps the layout center in place,
+and rotation keeps the viewport steady. Reset restores the layout frame.
+Dragging an anchor recalculates retained click locations on release; anchor
+geometry solving remains an explicit **Solve / re-solve** or **Re-solve dragged**
+action. Rotating or moving the entire frame transforms retained click estimates
+exactly without rerunning the nonlinear solver.
+
+Drag an anchor in either view, then press **L** to lock or unlock the selection;
+a ring identifies locked anchors. In the geometry view, you can also use **Lock
 selected** to hold that position through solving and distance refinement.
 Locked anchors have a ring and a `[locked]` label in both the embedded and
 fullscreen views. Whole-layout rotation, mirroring, translation, scaling, and

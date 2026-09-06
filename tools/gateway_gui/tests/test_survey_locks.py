@@ -8,6 +8,7 @@ import tkinter as tk
 import unittest
 from unittest.mock import Mock, patch
 
+from tools.gateway_gui.layout_motion import rotation_safe_bounds
 from tools.gateway_gui.anchor_geometry import AnchorPairDistance, evaluate_anchor_layout
 from tools.gateway_gui.anchor_geometry_nlos import NLOS_ONE_SIDED_ALGORITHM
 from tools.gateway_gui.diagnostic_models import refine_geometry
@@ -58,7 +59,7 @@ class SurveyLockTests(unittest.TestCase):
     def anchor_event(self, key):
         view = self.view
         projection = _canvas_projection(
-            (*view.registration.reference_positions_m.values(), (0.0, 0.0)),
+            rotation_safe_bounds(view.registration.reference_positions_m),
             max(view.canvas.winfo_width(), 160), max(view.canvas.winfo_height(), 80),
         )
         x, y = projection.project(*view.registration.positions_m[key])
@@ -139,7 +140,7 @@ class SurveyLockTests(unittest.TestCase):
         after = view.registration
         for key in fixed:
             self.assertEqual(after.positions_m[key], before.positions_m[key])
-        self.assertEqual((after.scale, after.translate_x_m, after.translate_y_m), (1.5, 2.0, -1.0))
+        self.assertEqual((after.scale, after.translate_x_m, after.translate_y_m), (before.scale, before.translate_x_m, before.translate_y_m))
 
         # Fresh survey telemetry can temporarily clear the layout; locks remain
         # bound to hardware identities until explicitly unlocked.
@@ -188,3 +189,20 @@ class SurveyLockTests(unittest.TestCase):
         self.assertEqual(view._anchor_lock_buttons[0].cget("text"), "Lock selected")
         view._close_fullscreen()
         self.assertEqual(len(view._anchor_lock_buttons), 1)
+
+    def test_scale_keeps_layout_center_and_drag_requires_explicit_solve(self):
+        view = self.view
+        def center():
+            points = list(view.registration.positions_m.values())
+            return tuple(sum(p[axis] for p in points) / len(points) for axis in (0, 1))
+        before = center()
+        view.nudge_scale(1.5)
+        for a, b in zip(before, center()):
+            self.assertAlmostEqual(a, b)
+        solve = Mock()
+        view._on_solve_requested = solve
+        view.edit_display_anchor(self.anchor, (1., 2.))
+        self.edited.assert_called_once()
+        solve.assert_not_called()
+        view._request_dragged_solve()
+        solve.assert_called_once()

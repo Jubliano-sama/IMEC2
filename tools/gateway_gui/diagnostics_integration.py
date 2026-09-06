@@ -96,6 +96,11 @@ class GatewayDiagnosticsMixin:
             on_scale=self._nudge_layout_scale,
             on_reset=self._reset_layout_registration,
             on_mirror=self._mirror_layout_frame,
+            on_rotate=self._rotate_layout_frame,
+            on_anchor_moved=lambda anchor, point: self.survey_geometry_view.edit_display_anchor(anchor, point),
+            on_anchor_lock=self._toggle_click_anchor_lock,
+            anchor_locked=lambda anchor: anchor in self.survey_geometry_view.locked_positions_m,
+            editing_enabled=lambda: not self.survey_geometry_view._geometry_job_pending,
             on_click_selected=self._select_click_location,
             on_click_deleted=self._delete_click_location,
         )
@@ -135,8 +140,8 @@ class GatewayDiagnosticsMixin:
         )
         click_view = getattr(self, "click_diagnostics_view", None)
         if click_view is not None:
-            click_view.show_registration(registration)
-            click_view.show_connections(self.survey_model.neighbor_pairs)
+            click_view.show_registration(registration, redraw=False)
+            click_view.show_connections(self.survey_model.neighbor_pairs, redraw=False)
             click_view.show(
                 state,
                 registration.positions_m,
@@ -202,6 +207,15 @@ class GatewayDiagnosticsMixin:
         view = getattr(self, "survey_geometry_view", None)
         if view is not None:
             view.reset_transform()
+
+    def _toggle_click_anchor_lock(self, anchor: str) -> None:
+        self.survey_geometry_view._select_anchor(anchor)
+        self.survey_geometry_view._toggle_anchor_lock()
+
+    def _rotate_layout_frame(self, degrees: float) -> None:
+        view = getattr(self, "survey_geometry_view", None)
+        if view is not None:
+            view.rotate_layout_frame(degrees)
 
     def _mirror_layout_frame(self) -> None:
         view = getattr(self, "survey_geometry_view", None)
