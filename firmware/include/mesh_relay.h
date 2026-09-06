@@ -1061,15 +1061,19 @@ int mesh_relay_validate_forced_gateway_control_parent(
     uint8_t required_gateway_relay_hops);
 /*
  * An accepted gateway-originated channel-5 control frame proves a fresh
- * reverse first hop for the immediate response. origin_ttl is the TTL used by
- * the gateway before any relay forwarded the frame; the stored upstream hop
- * count is derived from the received packet TTL.
+ * reverse first hop for the immediate response. The caller supplies the
+ * locally measured RSL when available, so selection never treats an observed
+ * below-margin link as an unmeasured usable parent. origin_ttl is the TTL used
+ * by the gateway before any relay forwarded the frame; the stored upstream
+ * hop count is derived from the received packet TTL.
  */
 int mesh_relay_note_gateway_control_reverse_route(
     struct mesh_relay *relay,
     const struct proto_packet *packet,
     uint64_t previous_hop_id,
     uint8_t link_quality,
+    int8_t link_rsl_dbm,
+    bool link_rsl_valid,
     uint8_t origin_ttl,
     uint32_t now_ms);
 /*

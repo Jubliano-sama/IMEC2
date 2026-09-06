@@ -215,7 +215,7 @@ config IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS
     int "Require an exact number of gateway relay hops"
     depends on IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ
     default 1
-    range 1 8
+    range 1 7
     help
       Bench-only exact route-depth policy. Route discovery accepts a gateway
       route only when the authenticated route reply reports this many relay
@@ -255,7 +255,7 @@ config IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS
     int "Mesh-test channel-5 anchor scan idle interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST
     default IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
-    range 0 60000
+    range 0 435
     help
       Delay between channel-5 wake/contact scans for mesh-test anchors. A
       value of zero makes the anchor immediately reschedule the next scan.
@@ -349,7 +349,7 @@ config IMEC_CLICK_DELIVERY_PARENT_LISTEN
 config IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
     int "Anchor low-duty UWB wake scan interval in milliseconds"
     default 380
-    range 1 60000
+    range 1 435
     help
       Interval between low-duty anchor wake-scan attempts.
 

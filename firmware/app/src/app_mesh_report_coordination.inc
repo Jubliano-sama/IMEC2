@@ -723,12 +723,12 @@ static uint8_t mesh_uplink_next_hop_depth(uint64_t next_hop_id)
 
 /*
  * Wake-train length for an uplink to a parent that is not known to be
- * listening.  Sized from the live scan cadence rather than the compile-time
- * default because the anchor scan interval is runtime-commandable.
+ * listening.  Sized from the maximum supported receiver cadence: a peer may
+ * have a different runtime-commanded interval than this sender.
  */
 static uint32_t mesh_uplink_wake_train_ms(void)
 {
-    return MESH_UPLINK_WAKE_TRAIN_MS_FOR_INTERVAL(anchor_uwb_scan_interval_ms);
+    return MESH_UPLINK_WAKE_TRAIN_MS;
 }
 
 static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)

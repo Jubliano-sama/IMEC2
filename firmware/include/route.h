@@ -100,6 +100,10 @@ bool route_link_rsl_immediately_usable(int8_t rsl_dbm);
 uint8_t route_link_quality_from_rsl(int8_t rsl_dbm);
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate);
+/* Passive downlink evidence preserves failures, holds, dead ends and any
+ * existing measured RSL when the hint has no PHY measurement. */
+int route_note_candidate_hint(struct route_table *table,
+                              const struct route_candidate *candidate);
 /* Shared by ordinary selection, packet-aware selection and depth reporting. */
 bool route_candidate_eligible_at(const struct route_table *table,
                                   const struct route_candidate *candidate,

@@ -17,6 +17,7 @@ import tempfile
 
 
 SURVEY_MAX_HOPS = 8
+SURVEY_HARD_CAP_MS = 1_800_000
 
 # Relays retain the complete gateway-origin, eight-depth, weak-fallback wave.
 # The gateway can release its local command owner at 20 s because the wave is
@@ -46,7 +47,7 @@ CONTROL_LISTENER_REDUNDANCY_MS = 2_000
 RADIO_GUARD_MS = 60
 
 RESPONSE_ROUND_MS = 125
-RESPONSE_SOURCE_ROUNDS_PER_DEPTH = 12
+RESPONSE_SOURCE_ROUNDS_PER_DEPTH = 20
 RESPONSE_FORWARD_ROUNDS_PER_HOP = 2
 HIA_RESPONSE_LEAD_DEPTHS = 2
 HIA_RESPONSE_CLOCK_GUARD_MS = 100
@@ -138,6 +139,19 @@ def survey_ranging_phase_ms(max_hop_count: int, wave_count: int) -> int:
         survey_control_delivery_ms(max_hop_count)
         + (wave_count + RANGE_EXTRA_DRAIN_STRIDES)
         * survey_wave_stride_ms(max_hop_count)
+    )
+
+
+def survey_batch_queue_budget_ms(max_hop_count: int, pair_counts: tuple[int, ...]) -> int:
+    """Conservative firmware schedule for a queue within one START generation.
+
+    Every pair may interfere with every other pair, so reserve one wave per
+    pair. Each batch also needs its own control origin, delivery and drain
+    strides. Splitting RAM batches never resets SURVEY_HARD_CAP_MS.
+    """
+    return sum(
+        CONTROL_ORIGIN_BUDGET_MS + survey_ranging_phase_ms(max_hop_count, count)
+        for count in pair_counts
     )
 
 

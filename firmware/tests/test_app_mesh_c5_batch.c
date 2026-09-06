@@ -2,6 +2,7 @@
  * boundaries are faked; packet encoding, identity, ACK admission and routes
  * use the real native core. RX requires complete frame airtime in its window. */
 #include "mesh_relay.h"
+#include "node_comm.h"
 #include "app_mesh_report_delivery_state.h"
 #include "uwb.h"
 #include "app_mesh_ch9_ack.h"
@@ -72,6 +73,9 @@ static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
 static bool mesh_route_waiting_tx_valid;
 static unsigned route_requests;
 static int completion_error;
+static int terminal_range_error, terminal_comm_error;
+static unsigned terminal_range_calls, terminal_comm_calls, expired_count;
+static struct mesh_outbound terminal_expected;
 static uint64_t mesh_c5_rx_burst_peer;
 static int mesh_rx_msgq, mesh_send_scratch_lock, report_tx_queue_overflow_lock;
 static struct mesh_outbound queue[REPORT_TX_QUEUE_DEPTH], sent[4];
@@ -172,6 +176,31 @@ static int mesh_anchor_range_report_note_gateway_confirmed(const struct proto_pa
 { (void)packet; (void)digest; return -ENOENT; }
 static int app_node_comm_note_gateway_confirmed_digest_at(const struct proto_packet *packet, const uint8_t *digest, uint64_t now)
 { (void)packet; (void)digest; (void)now; assert(locks==0u); if (completion_error) return completion_error; retired_count++; return 0; }
+static bool mesh_terminal_cleanup_idempotent_status(int ret)
+{ return ret == 0 || ret == -ENOENT || ret == -ESTALE || ret == -ENOTSUP; }
+static int mesh_anchor_range_report_note_terminal_release(const struct proto_packet *packet,
+    const uint8_t *payload, size_t payload_len)
+{
+    assert(locks == 0u && packet->src_id == DEVICE_ID);
+    assert(packet->seq == terminal_expected.packet.seq);
+    assert(packet->session_id == terminal_expected.packet.session_id);
+    assert(payload_len == terminal_expected.payload_len);
+    assert(memcmp(payload, terminal_expected.payload, payload_len) == 0);
+    terminal_range_calls++;
+    return terminal_range_error;
+}
+static int app_node_comm_note_gateway_failed_digest(const struct proto_packet *packet,
+    const uint8_t *digest, enum node_comm_terminal_reason reason)
+{
+    uint8_t expected[SEMANTIC_DIGEST_SHA256_LEN];
+    assert(locks == 0u && packet->src_id == DEVICE_ID);
+    assert(reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(mesh_packet_semantic_digest(&terminal_expected.packet,
+        terminal_expected.payload, terminal_expected.payload_len, expected));
+    assert(memcmp(digest, expected, sizeof(expected)) == 0);
+    terminal_comm_calls++;
+    return terminal_comm_error;
+}
 static struct app_mesh_rf_retry_key mesh_rf_retry_packet_key(const struct proto_packet *packet, int operation)
 { (void)operation; return (struct app_mesh_rf_retry_key){packet->seq}; }
 static uint32_t mesh_rf_retry_bank_next_delay_ms(int *bank, const struct app_mesh_rf_retry_key *key, int policy, const char *why)
@@ -210,6 +239,7 @@ static bool mesh_handoff_anchor_click_claim(const struct uwb_wake_claim_frame *c
 static void status_debug_printf(const char *format, ...) { (void)format; }
 #define status_debug_note(...) ((void)0)
 #define fw_delivery_loss_note_sent(...) ((void)0)
+#define fw_delivery_loss_note_drop(...) ((void)expired_count++)
 #define app_stack_workload_diag_relay_release(...) ((void)0)
 #define app_mesh_report_click_participant(...) true
 #define app_mesh_report_click_listen_active(...) true
@@ -405,6 +435,9 @@ static void reset_fixture(unsigned count)
     capture_mode=false; follower_index=follower_count=follower_duration_ms=0;
     gateway_ble_stream_init(&gateway_ble_stream_state);
     mesh_route_waiting_tx_valid=false; route_requests=0; completion_error=0; mesh_c5_rx_burst_peer=0;
+    terminal_range_error=terminal_comm_error=0;
+    terminal_range_calls=terminal_comm_calls=expired_count=0;
+    memset(&terminal_expected,0,sizeof(terminal_expected));
     mesh_relay_init(&mesh_runtime,MESH_RELAY_ROLE_ANCHOR,DEVICE_ID,GATEWAY_ID,1u);
     struct route_candidate route={.next_hop_id=GATEWAY_ID,.gateway_id=GATEWAY_ID,
         .route_epoch=1u,.last_seen_ms=now_ms,.hop_count=0u,.link_quality=90u,.valid=true};
@@ -413,7 +446,135 @@ static void reset_fixture(unsigned count)
         .packet={.msg_type=MSG_MESH_DATA,.flags=FLAG_GATEWAY_ACK_REQUIRED|FLAG_DIAGNOSTIC,
             .src_id=DEVICE_ID,.dst_id=GATEWAY_ID,.session_id=77u,.seq=(uint16_t)(i+1),
             .ttl=MESH_DEFAULT_TTL,.payload_len=3u},
-        .payload={TLV_MESH_TEST_PADDING,1u,(uint8_t)i},.payload_len=3u,.queued_at_ms=now_ms};
+        .payload={TLV_MESH_TEST_PADDING,1u,(uint8_t)i},.payload_len=3u,
+        .queued_at_ms=now_ms,.queued_at_valid=true};
+}
+
+static void refresh_gateway_route(void)
+{
+    struct route_candidate route = {.next_hop_id=GATEWAY_ID,.gateway_id=GATEWAY_ID,
+        .route_epoch=1u,.last_seen_ms=now_ms,.hop_count=0u,.link_quality=90u,.valid=true};
+    assert(route_upsert_candidate(&mesh_runtime.upstream,&route)==PROTO_OK);
+}
+
+static void test_transit_expiry_releases_bank_without_false_ack(void)
+{
+    const uint32_t bases[] = {0u, 1000u, UINT32_MAX - 500u};
+    for (unsigned trial=0u;trial<sizeof(bases)/sizeof(bases[0]);trial++) {
+        reset_fixture(1u);
+        now_ms=bases[trial]; refresh_gateway_route();
+        queue[0].packet.src_id=UINT64_C(0xb100);
+        queue[0].queued_at_ms=now_ms;
+        uint32_t horizon=mesh_relay_outbox_expiry_s_for_packet(
+            &queue[0].packet,queue[0].payload,queue[0].payload_len)*1000u;
+        queue[0].packet.message_age_ms=horizon-1000u;
+        receive_error=-ETIMEDOUT;
+        assert(mesh_report_delivery_step()==0);
+        assert(sent_count==1u && mesh_report_delivery.count==1u);
+        assert(retired_count==0u && expired_count==0u);
+        now_ms=bases[trial]+1000u;
+        sent_count=0u;
+        assert(mesh_report_delivery_step()==-ENOENT);
+        assert(!mesh_report_delivery_active() && sent_count==0u);
+        assert(expired_count==1u && retired_count==0u);
+        assert(terminal_range_calls==0u && terminal_comm_calls==0u);
+        assert(watchdog_stops==0u);
+    }
+}
+
+static void test_expired_local_custody_retries_exact_terminal_cleanup(void)
+{
+    for (unsigned failed_stage=0u;failed_stage<3u;failed_stage++) {
+        reset_fixture(1u);
+        queue[0].packet.message_age_ms=mesh_relay_outbox_expiry_s_for_packet(
+            &queue[0].packet,queue[0].payload,queue[0].payload_len)*1000u;
+        terminal_expected=queue[0];
+        if (failed_stage==0u) terminal_range_error=-EBUSY;
+        else terminal_comm_error=failed_stage==1u ? -EIO : -EAGAIN;
+        assert(mesh_report_delivery_step()==0);
+        assert(mesh_report_delivery.count==1u && !mesh_report_delivery.entries[0].acked);
+        assert(sent_count==0u && retired_count==0u && expired_count==0u);
+        assert(terminal_range_calls==1u && terminal_comm_calls==(failed_stage!=0u));
+        assert(watchdog_stops==(failed_stage==1u));
+        assert(mesh_report_delivery_step()==0);
+        assert(sent_count==0u && expired_count==0u && watchdog_stops==(failed_stage==1u ? 2u : 0u));
+        terminal_range_error=terminal_comm_error=0;
+        assert(mesh_report_delivery_step()==-ENOENT);
+        assert(!mesh_report_delivery_active() && expired_count==1u && retired_count==0u);
+    }
+}
+
+static void test_ack_proof_wins_over_expiry(void)
+{
+    reset_fixture(1u); completion_error=-EBUSY;
+    assert(mesh_report_delivery_step()==0);
+    assert(mesh_report_delivery.entries[0].acked && sent_count==1u);
+    now_ms+=mesh_relay_outbox_expiry_s_for_packet(
+        &mesh_report_delivery.entries[0].outbound.packet,
+        mesh_report_delivery.entries[0].outbound.payload,
+        mesh_report_delivery.entries[0].outbound.payload_len)*1000u;
+    completion_error=0;
+    assert(mesh_report_delivery_step()==-ENOENT);
+    assert(retired_count==1u && sent_count==1u && expired_count==0u);
+    assert(terminal_range_calls==0u && terminal_comm_calls==0u);
+}
+
+static void test_expiry_before_first_rf_and_without_route(void)
+{
+    reset_fixture(1u);
+    queue[0].packet.src_id=UINT64_C(0xb100);
+    const uint32_t horizon=mesh_relay_outbox_expiry_s_for_packet(
+        &queue[0].packet,queue[0].payload,queue[0].payload_len)*1000u;
+    route_table_init(&mesh_runtime.upstream,1u);
+    assert(mesh_report_delivery_step()==0);
+    assert(mesh_report_delivery.count==1u && sent_count==0u && route_requests==1u);
+    now_ms+=horizon;
+    assert(mesh_report_delivery_step()==-ENOENT);
+    assert(!mesh_report_delivery_active() && expired_count==1u && route_requests==1u);
+
+    reset_fixture(4u);
+    for (unsigned i=0u;i<4u;i++) {
+        queue[i].packet.src_id=UINT64_C(0xb100);
+        queue[i].packet.message_age_ms=i<3u ? UINT32_MAX : 0u;
+    }
+    scheduled_ms=999u;
+    assert(mesh_report_delivery_step()==-ENOENT);
+    assert(expired_count==3u && sent_count==0u && queue_count==1u);
+    assert(scheduled_ms==0u); /* The fresh suffix still has a work owner. */
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1u && sent[0].packet.seq==4u);
+    assert(!mesh_report_delivery_active() && queue_count==0u);
+    assert(expired_count==3u && terminal_comm_calls==0u && watchdog_stops==0u);
+}
+
+static void test_local_report_preempts_retained_transit_without_queue_space(void)
+{
+    reset_fixture(4u);
+    for (unsigned i=0u;i<4u;i++) queue[i].packet.src_id=UINT64_C(0xb100);
+    receive_error=-ETIMEDOUT;
+    assert(mesh_report_delivery_step()==0);
+    assert(mesh_report_delivery.count==3u && queue_count==1u);
+    for (unsigned i=0u;i<3u;i++) assert(mesh_report_delivery.entries[i].outbound.packet.seq==i+1u);
+    /* Model the queue's local-priority head after concurrent admission fills
+     * every free queue slot; no displaced transit packet could fit there. */
+    queue[3]=queue[2]=queue[1]=queue[0];
+    queue_count=REPORT_TX_QUEUE_DEPTH;
+    queue[0].packet.src_id=DEVICE_ID;
+    queue[0].packet.seq=99u;
+    sent_count=ack_reads=0u; receive_error=0; credit=3u;
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==1u && sent[0].packet.seq==99u && retired_count==1u);
+    assert(mesh_report_delivery.count==3u && queue_count==3u);
+    for (unsigned i=0u;i<3u;i++) {
+        assert(mesh_report_delivery.entries[i].outbound.packet.seq==i+1u);
+        assert(!mesh_report_delivery.entries[i].acked);
+    }
+    /* The parent did not ACK the unsent transit members when it accepted the
+     * local packet. They still make their own complete source-bound burst. */
+    sent_count=ack_reads=0u; final_mask=BIT(1)|BIT(2);
+    assert(mesh_report_delivery_step()==0);
+    assert(sent_count==3u && !mesh_report_delivery_active() && queue_count==3u);
+    assert(expired_count==0u && retired_count==1u && watchdog_stops==0u);
 }
 static void test_credit_and_partial_ack(void)
 {
@@ -821,6 +982,11 @@ static void test_gateway_credit_uses_real_stream_occupancy(void)
 }
 int main(void)
 {
+    test_transit_expiry_releases_bank_without_false_ack();
+    test_expired_local_custody_retries_exact_terminal_cleanup();
+    test_ack_proof_wins_over_expiry();
+    test_expiry_before_first_rf_and_without_route();
+    test_local_report_preempts_retained_transit_without_queue_space();
     test_forwarded_report_queue_is_independent_of_route_and_activity();
     test_ack_wait_queues_unrelated_data_and_foreign_ack();
     test_typed_phy_activity_keeps_original_ack_deadline();

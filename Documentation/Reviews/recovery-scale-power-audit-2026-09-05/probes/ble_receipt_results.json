@@ -1,0 +1,52 @@
+{
+  "head": "474ef8600ef25b50da5c3dbc1dc30241178d166a",
+  "source": "firmware/app/src/app_gateway_ble.c",
+  "source_line": 2030,
+  "source_sha256": "e9ae426678c3e0f642f782623b4fac55d4543a449e9d90e535054e9be5547e01",
+  "worker_sha256": "8d857ee3396af2dc3c2aabd0ee5d4a697f0903b6c09c2a788688d79e3f75b4bc",
+  "fixture_sha256": "f657376627d854918d83aa24d518cd4f4cb250b3a73804776c3dc7b21106a955",
+  "deadline_seconds": 1,
+  "cases": [
+    {
+      "case": "receipt_first_no_credit",
+      "returncode": 0,
+      "stdout": "case=receipt_first_no_credit invocations=10 queued=0 receipts_pending=0 receipts_handled=1 commands_handled=1 reserve_calls=1 last_reserve_return=0 credits=0\n",
+      "stderr": "",
+      "status": "PASS",
+      "elapsed_seconds": 0.000653
+    },
+    {
+      "case": "command_first_one_credit",
+      "returncode": 0,
+      "stdout": "case=command_first_one_credit invocations=10 queued=0 receipts_pending=0 receipts_handled=1 commands_handled=1 reserve_calls=1 last_reserve_return=0 credits=1\n",
+      "stderr": "",
+      "status": "PASS",
+      "elapsed_seconds": 0.000663
+    },
+    {
+      "case": "command_only_no_credit",
+      "returncode": 0,
+      "stdout": "case=command_only_no_credit invocations=10 queued=1 receipts_pending=0 receipts_handled=0 commands_handled=0 reserve_calls=10 last_reserve_return=-28 credits=0\n",
+      "stderr": "",
+      "status": "PASS",
+      "elapsed_seconds": 0.000601
+    },
+    {
+      "case": "command_first_no_credit",
+      "returncode": 1,
+      "stdout": "case=command_first_no_credit invocations=10 queued=2 receipts_pending=1 receipts_handled=0 commands_handled=0 reserve_calls=10 last_reserve_return=-28 credits=0\nFAIL: valid queued receipt was not dispatched under result backpressure\n",
+      "stderr": "",
+      "status": "FAIL",
+      "elapsed_seconds": 0.000633
+    },
+    {
+      "case": "command_first_then_reorder",
+      "returncode": 0,
+      "stdout": "case=command_first_then_reorder invocations=10 queued=2 receipts_pending=1 receipts_handled=0 commands_handled=0 reserve_calls=10 last_reserve_return=-28 credits=0\nafter_fixture_reorder queued=0 receipts_pending=0 receipts_handled=1 commands_handled=1 credits=0\n",
+      "stderr": "",
+      "status": "PASS",
+      "elapsed_seconds": 0.000611
+    }
+  ],
+  "contract_passed": false
+}

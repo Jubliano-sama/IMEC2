@@ -250,35 +250,27 @@
     ((ANCHOR_UWB_SCAN_INTERVAL_MS * 1000u) + ANCHOR_UWB_STARTUP_US + \
      ANCHOR_UWB_PLL_US)
 #define ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS 60000u
+/* A receiver may use any supported cadence, independently of the sender.
+ * Reserve one complete 10 ms RX window after the measured/recovery-rounded
+ * 40 ms rearm budget inside the ordinary 500 ms click wake train. */
+#define ANCHOR_UWB_SCAN_REARM_OVERHEAD_MS MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS
+#define ANCHOR_UWB_SCAN_MAX_RX_MS MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS
 #define ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS \
-    ((((uint64_t)WAKE_ADV_MS * 1000ull) - ANCHOR_UWB_STARTUP_US - \
-      ANCHOR_UWB_PLL_US - 1ull) / 1000ull)
+    MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS
 #define ANCHOR_UWB_SCAN_MAX_INTERVAL_MS \
-    (ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS < \
-     ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS ? \
-     ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS : \
-     ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS)
-/*
- * Cost of one low-duty scan iteration that is not receive time: the anchor
- * leaves retained sleep and reconfigures the DW3000 from mesh-control back to
- * the standard-PHR wake PHY, which is a full from-reset configure.  Measured
- * at ~21.5 ms on the bench (DBG_DWM_PHY_SWITCH from=4 to=2 fast=0), rounded
- * up for the guard claim and low-power release around it.
- */
-#define ANCHOR_UWB_SCAN_REARM_OVERHEAD_MS 40u
-/*
- * A wake train aimed at a parent that did not take part in the click must
- * survive that parent losing one whole scan opportunity, so it has to cover
- * two complete scan periods (interval + rearm overhead + receive window).
- * Bounded by the wire cap on wake_train_ends_in_ms.
- */
-#define MESH_UPLINK_WAKE_TRAIN_SCAN_PERIODS 2u
-#define MESH_UPLINK_WAKE_TRAIN_MS_FOR_INTERVAL(interval_ms) \
-    MIN(UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS, \
-        MAX(WAKE_ADV_MS, \
-            MESH_UPLINK_WAKE_TRAIN_SCAN_PERIODS * \
-            ((uint32_t)(interval_ms) + ANCHOR_UWB_SCAN_REARM_OVERHEAD_MS + \
-             ANCHOR_UWB_SCAN_RX_MS)))
+    MIN(ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS, \
+        ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS)
+/* Cover a receiver missing one scan. Never clip a required duration to the
+ * wire limit: unsupported bounds must fail the build instead. */
+#define MESH_UPLINK_WAKE_TRAIN_MS MESH_RADIO_UPLINK_WAKE_TRAIN_MS
+BUILD_ASSERT(MESH_UPLINK_WAKE_TRAIN_MS <= UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
+             "uplink wake train must cover two maximum receiver scan periods");
+#if DEVICE_ROLE == ROLE_ANCHOR && !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)
+BUILD_ASSERT(ANCHOR_UWB_SCAN_INTERVAL_MS <= ANCHOR_UWB_SCAN_MAX_INTERVAL_MS,
+             "anchor scan interval must fit the supported receiver cadence");
+BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS <= ANCHOR_UWB_SCAN_MAX_RX_MS,
+             "anchor scan RX must fit the supported receiver cadence");
+#endif
 #define ANCHOR_CLAIM_COLLECTION_MS 15u
 #define ANCHOR_FALSE_WAKE_COOLDOWN_MS 100u
 #define ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS 15u

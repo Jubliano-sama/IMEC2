@@ -14,6 +14,8 @@
 #include <stdint.h>
 
 struct app_survey_ops {
+    /* Consume a pre-reserved control ID in RAM; never write NVS on START. */
+    int (*next_generation)(uint32_t *generation);
     int (*send_control)(const struct survey_control *control,
                         uint32_t *delivery_handle);
     int (*control_origin)(uint32_t delivery_handle,
@@ -70,6 +72,8 @@ int app_survey_anchor_note_ram_roster(
     uint32_t table_command_seq,
     const struct discovery_assignment_table_commitment *table_commitment);
 void app_survey_anchor_clear_ram_roster(void);
+/* Called only after accepting an authoritative fresh enumeration identity. */
+void app_survey_anchor_begin_enumeration(uint32_t assignment_epoch);
 int app_survey_anchor_apply_control(const struct proto_packet *packet,
                                     const struct survey_control *control);
 bool app_survey_anchor_active(void);

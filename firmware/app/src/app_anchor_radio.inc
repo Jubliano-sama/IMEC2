@@ -71,6 +71,7 @@ int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
                 ret,
                 delay_ms);
         app_watchdog_stop_feeding();
+        app_watchdog_schedule_terminal_restart();
     }
     return ret;
 #else
@@ -1340,9 +1341,13 @@ discovery_miss:
         reply.hop_depth = (uint8_t)(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS + 1u);
 #else
         {
-            const struct route_candidate *selected_candidate = route_selected(&mesh_runtime.upstream);
-            reply.hop_depth = (selected_candidate != NULL && selected_candidate->hop_count < UWB_ENUM_MAX_HOPS) ?
-                              (uint8_t)(selected_candidate->hop_count + 1u) : 1u;
+            const uint8_t depth = mesh_relay_local_depth(
+                &mesh_runtime, k_uptime_get_32());
+
+            /* The discovery wire has no unreachable sentinel. Schedule an
+             * unknown route at the deepest layer, never as a direct anchor. */
+            reply.hop_depth = depth > 0u && depth <= UWB_ENUM_MAX_HOPS ?
+                              depth : UWB_ENUM_MAX_HOPS;
         }
 #endif
 #endif
@@ -2302,6 +2307,7 @@ static int anchor_enumeration_rx_prearm(uint32_t epoch,
             return -ESTALE;
         }
         (void)local_anchor_discovery_assignment_note_claim(epoch);
+        app_survey_anchor_begin_enumeration(epoch);
     }
     status_debug_printf(
         "DBG_ENUM_RX_PREARM epoch=%u hold=%u budget=%u survey=%u duplicate=%u observed_hop=%u selected_hop=%u compact_start=%llu deepest_start=%llu\n",

@@ -3278,6 +3278,7 @@ static struct button_wake_recovery clicker_action_submit_recovery;
 static struct k_spinlock click_button_edge_lock;
 static bool click_button_press_pending;
 static bool click_button_press_cycle_active;
+static atomic_t click_button_release_irq_armed;
 static uint32_t click_button_press_at_ms;
 static uint32_t clicker_low_power_transition_failures;
 static bool click_button_systemoff_wake_armed;
@@ -3668,7 +3669,7 @@ static int click_button_gesture_handle(enum button_signal signal,
                                                   action);
     while (app_clicker_event_runtime_take_effect(&clicker_event_runtime,
                                                  &effect)) {
-        /* GPIO release polling and the existing delayable work items own the
+        /* GPIO edges and the existing delayable recovery work items own the
          * actual timers.  The shared button machine has already recorded the
          * requested START/CANCEL transition, so consume those effects at the
          * same serialized work boundary. */
@@ -3747,6 +3748,10 @@ static bool click_button_wait_for_release(void)
 
 static int click_button_arm_idle_interrupt(void)
 {
+    k_spinlock_key_t key;
+    bool release_owner;
+    bool submit_press = false;
+    bool submit_release = false;
     int pressed;
     int ret;
 
@@ -3758,45 +3763,58 @@ static int click_button_arm_idle_interrupt(void)
     if (ret < 0) {
         return ret;
     }
+
+    /* GPIO configuration is IRQ-safe on this board. Serialize mode selection
+     * with press-cycle retirement: an older action entering idle must not
+     * overwrite a newer gesture's release edge with a press edge. */
+    key = k_spin_lock(&click_button_edge_lock);
+    release_owner = click_button_press_cycle_active;
     ret = gpio_pin_interrupt_configure(click_button.port,
                                        click_button.pin,
                                        GPIO_INT_DISABLE);
     if (ret < 0) {
-        return ret;
+        goto unlock;
     }
     click_button_clear_latch();
+    atomic_set(&click_button_release_irq_armed, release_owner ? 1 : 0);
     ret = gpio_pin_interrupt_configure(click_button.port,
                                        click_button.pin,
-                                       GPIO_INT_EDGE_TO_ACTIVE);
+                                       release_owner ? GPIO_INT_EDGE_TO_INACTIVE :
+                                                       GPIO_INT_EDGE_TO_ACTIVE);
     if (ret < 0) {
-        return ret;
+        goto unlock;
     }
 
-    /*
-     * Close the clear/arm race: a press that became active before edge
-     * sensing was enabled may not produce an edge, so sample after arming and
-     * hand the already-active level to the same serialized work owner.
-     */
+    /* An edge between clear and arm may never fire. Reconcile its level
+     * while the same owner still determines which edge the ISR will report. */
     pressed = click_button_pressed();
     if (pressed < 0) {
         (void)gpio_pin_interrupt_configure(click_button.port,
                                            click_button.pin,
                                            GPIO_INT_DISABLE);
-        return pressed;
+        ret = pressed;
+        goto unlock;
     }
-    if (pressed != 0) {
-        (void)click_button_latch_press(k_uptime_get_32());
-    }
-    if (pressed != 0 || click_button_press_is_pending()) {
-        ret = k_work_submit(&click_button_work);
-        if (ret < 0) {
-            (void)gpio_pin_interrupt_configure(click_button.port,
-                                               click_button.pin,
-                                               GPIO_INT_DISABLE);
-            return ret;
+    if (release_owner) {
+        submit_release = pressed == 0;
+    } else {
+        if (pressed != 0 && !click_button_press_pending) {
+            click_button_press_at_ms = k_uptime_get_32();
+            click_button_press_pending = true;
         }
+        submit_press = click_button_press_pending;
     }
-    return 0;
+unlock:
+    k_spin_unlock(&click_button_edge_lock, key);
+    if (ret < 0) {
+        return ret;
+    }
+    if (submit_release) {
+        ret = k_work_reschedule(&click_button_release_work, K_NO_WAIT);
+    } else if (submit_press) {
+        ret = k_work_submit(&click_button_work);
+    }
+    return ret < 0 ? ret : 0;
 }
 
 static bool clicker_capture_systemoff_button_action(enum button_action *action)
@@ -4137,10 +4155,10 @@ static void clicker_enter_systemon_retained_idle(void)
         LOG_WRN("click event sequence standby unavailable in retained idle: %d",
                 ret);
     }
-    LOG_INF("CLICKER_IDLE" " mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=1 dwm_pins=%s",
+    LOG_INF("CLICKER_IDLE" " mode=system_on_retained wake_source=P0.%u button_irq=press_release_edges release_poll=0 local_command_poll=0 radio_retained=1 dwm_pins=%s",
             (unsigned int)CLICK_BUTTON_PIN_NUM,
             pins_floated ? "float" : "driven");
-    LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",
+    LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press/release edge interrupts",
             (unsigned int)CLICK_BUTTON_PIN_NUM);
     status_leds_set(false, false, false);
     status_leds_disconnect();
@@ -4489,22 +4507,31 @@ static void click_button_release_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
+    if (!click_button_press_cycle_is_active()) {
+        return;
+    }
+
     pressed = click_button_pressed();
     if (pressed < 0) {
         LOG_ERR("failed to poll click button release: %d", pressed);
         click_button_retry_release_poll(pressed);
         return;
     }
+    if (pressed != 0) {
+        ret = click_button_arm_idle_interrupt();
+        if (ret < 0) {
+            click_button_retry_release_poll(ret);
+            return;
+        }
+        (void)button_wake_recovery_note(
+            &click_button_release_recovery,
+            BUTTON_WAKE_OBSERVATION_ARMED);
+        return;
+    }
+
     (void)button_wake_recovery_note(
         &click_button_release_recovery,
         BUTTON_WAKE_OBSERVATION_WAITING);
-    if (pressed != 0) {
-        (void)click_button_reschedule_or_reset(
-            &click_button_release_work,
-            CLICK_BUTTON_RELEASE_POLL_MS,
-            "release_poll_held");
-        return;
-    }
 
     click_button_clear_latch();
     click_button_handle_signal(BUTTON_SIGNAL_RELEASE, "release_poll");
@@ -4688,6 +4715,14 @@ static void click_button_isr(const struct device *dev, struct gpio_callback *cb,
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
 
+    if (atomic_get(&click_button_release_irq_armed) != 0) {
+        ret = k_work_reschedule(&click_button_release_work, K_NO_WAIT);
+        if (ret < 0) {
+            app_watchdog_stop_feeding();
+        }
+        return;
+    }
+
     (void)click_button_latch_press(k_uptime_get_32());
     ret = k_work_submit(&click_button_work);
     if (ret < 0) {
@@ -4743,6 +4778,7 @@ int ML_CLICKER_BUTTON_UNUSED app_clicker_button_init(void)
     click_button_press_pending = false;
     click_button_press_cycle_active = false;
     click_button_press_at_ms = 0u;
+    atomic_clear(&click_button_release_irq_armed);
     k_spin_unlock(&click_button_edge_lock, edge_key);
     button_wake_recovery_init(&clicker_action_submit_recovery,
                               CLICK_BUTTON_RECOVERY_MAX_FAILURES);

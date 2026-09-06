@@ -18047,6 +18047,57 @@ static void test_remove_direct_gateway_route_selects_relay_candidate(void)
     assert(next_hop_id == ANCHOR_B);
 }
 
+static void test_weak_direct_control_keeps_strong_relay(void)
+{
+    struct mesh_relay relay;
+    const struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY,
+        .dst_id = ANCHOR_A,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    struct route_candidate parent = {
+        .next_hop_id = ANCHOR_B,
+        .gateway_id = GATEWAY,
+        .route_epoch = 7u,
+        .last_seen_ms = 100u,
+        .hop_count = 1u,
+        .link_quality = route_link_quality_from_rsl(-85),
+        .link_rsl_dbm = -85,
+        .link_rsl_valid = true,
+        .valid = true,
+    };
+    const struct route_candidate *direct;
+    uint64_t next_hop = 0u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 7u);
+    assert(route_upsert_candidate(&relay.upstream, &parent) == PROTO_OK);
+    assert(mesh_relay_note_gateway_control_reverse_route(
+        &relay, &command, GATEWAY, route_link_quality_from_rsl(-105),
+        -105, true, MESH_DEFAULT_TTL, 200u) == PROTO_OK);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop) == PROTO_OK);
+    assert(next_hop == ANCHOR_B);
+    direct = find_route_candidate(&relay, GATEWAY);
+    assert(direct != NULL && direct->link_rsl_valid);
+    assert(direct->link_rsl_dbm == -105);
+
+    /* A later command without RSL must not promote the marginal direct
+     * path simply because the receiver lost its measurement. */
+    assert(mesh_relay_note_gateway_control_reverse_route(
+        &relay, &command, GATEWAY, 100u, 0, false,
+        MESH_DEFAULT_TTL, 300u) == PROTO_OK);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop) == PROTO_OK);
+    assert(next_hop == ANCHOR_B);
+    assert(direct->link_rsl_valid && direct->link_rsl_dbm == -105);
+
+    /* A newly measured above-margin direct link still wins by hop cost. */
+    assert(mesh_relay_note_gateway_control_reverse_route(
+        &relay, &command, GATEWAY, route_link_quality_from_rsl(-90),
+        -90, true, MESH_DEFAULT_TTL, 400u) == PROTO_OK);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop) == PROTO_OK);
+    assert(next_hop == GATEWAY);
+}
+
 static void test_gateway_control_reverse_route_preserves_parent_quarantine(void)
 {
     struct mesh_relay relay;
@@ -18077,6 +18128,8 @@ static void test_gateway_control_reverse_route_preserves_parent_quarantine(void)
                &command,
                ANCHOR_B,
                78u,
+               0,
+               false,
                MESH_DEFAULT_TTL,
                1000u) == PROTO_OK);
 
@@ -18099,6 +18152,8 @@ static void test_gateway_control_reverse_route_preserves_parent_quarantine(void)
                &command,
                ANCHOR_B,
                91u,
+               0,
+               false,
                MESH_DEFAULT_TTL,
                1200u) == PROTO_OK);
     parent = find_route_candidate(&relay, ANCHOR_B);
@@ -18125,6 +18180,8 @@ static void test_gateway_control_reverse_route_preserves_parent_quarantine(void)
                &command,
                ANCHOR_B,
                96u,
+               -85,
+               true,
                MESH_DEFAULT_TTL,
                1400u) == PROTO_OK);
     parent = find_route_candidate(&relay, ANCHOR_B);
@@ -21311,6 +21368,7 @@ int main(void)
     test_direct_gateway_route_probe_marks_route_ready();
     test_direct_gateway_route_probe_clears_hold_down();
     test_remove_direct_gateway_route_selects_relay_candidate();
+    test_weak_direct_control_keeps_strong_relay();
     test_gateway_control_reverse_route_preserves_parent_quarantine();
     test_forced_gateway_control_parent_rejects_deeper_cycle_edge();
     test_downlink_recency_tie_break_survives_uptime_wrap();

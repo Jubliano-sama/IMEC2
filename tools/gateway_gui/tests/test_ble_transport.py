@@ -512,6 +512,73 @@ class BleTransportIdentityTests(unittest.TestCase):
             ["first", "second"],
         )
 
+    def test_failed_fragment_disconnects_before_queued_receipt_can_write(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        async def exercise() -> tuple[FakeBleakClient, FakeBleakClient]:
+            disconnect_started = asyncio.Event()
+            disconnect_release = asyncio.Event()
+
+            class FragmentFailureClient(FakeBleakClient):
+                async def write_gatt_char(
+                    self, characteristic: Any, data: bytes, *, response: bool
+                ) -> None:
+                    if self.writes:
+                        raise RuntimeError("ATT insufficient resources")
+                    await super().write_gatt_char(
+                        characteristic, data, response=response
+                    )
+
+                async def disconnect(self) -> None:
+                    disconnect_started.set()
+                    await disconnect_release.wait()
+                    await super().disconnect()
+
+            first = FragmentFailureClient(
+                "first", timeout=12.0, disconnected_callback=lambda _client: None
+            )
+            first.is_connected = True
+            transport._client = first
+            command = asyncio.create_task(
+                transport._send_frame(b"AAAABBBB\x00", "command")
+            )
+            await asyncio.wait_for(disconnect_started.wait(), timeout=1.0)
+            receipt = asyncio.create_task(
+                transport._send_frame(b"receipt\x00", "queued receipt")
+            )
+            await asyncio.sleep(0)
+            self.assertFalse(receipt.done())
+            self.assertEqual(first.writes, [(b"AAAA", True)])
+            disconnect_release.set()
+            with self.assertRaisesRegex(RuntimeError, "ATT insufficient resources"):
+                await command
+            with self.assertRaisesRegex(RuntimeError, "connection changed"):
+                await receipt
+            self.assertIsNone(transport._client)
+            self.assertFalse(first.is_connected)
+
+            # A new link starts at a fresh COBS boundary; the retained stream
+            # can replay its event and receive an intact receipt there.
+            await transport._connect("second", 12.0)
+            second = FakeBleakClient.instances[-1]
+            await transport._send_frame(b"receipt\x00", "replayed receipt")
+            return first, second
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(ble_transport, "BleakClient", FakeBleakClient),
+        ):
+            first, second = asyncio.run(exercise())
+        self.assertEqual(first.writes, [(b"AAAA", True)])
+        self.assertEqual(
+            b"receipt\x00", b"".join(chunk for chunk, _ in second.writes)
+        )
+        self.assertEqual(
+            [event["label"] for event in events if event["kind"] == "tx_written"],
+            ["replayed receipt"],
+        )
+
     def test_queued_frame_rejects_reconnect_before_writer_lock(self) -> None:
         events: list[dict[str, Any]] = []
         transport = transport_model(events)

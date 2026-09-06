@@ -228,6 +228,7 @@ add_executable(test_survey_response_lane
 target_link_libraries(test_survey_response_lane PRIVATE core)
 add_test(NAME survey_response_lane COMMAND test_survey_response_lane)
 set_tests_properties(survey_response_lane PROPERTIES
+    TIMEOUT 30
     LABELS "mesh_integration;hardware_models;survey;radio;timing;custody")
 
 add_executable(test_survey_protocol tests/test_survey_protocol.c)
@@ -1043,6 +1044,81 @@ target_link_libraries(test_app_hia_table_survey PRIVATE core)
 add_test(NAME app_hia_table_survey COMMAND test_app_hia_table_survey)
 set_tests_properties(app_hia_table_survey PROPERTIES
     LABELS "mesh_integration;hardware_models;production_seam;enumeration;survey")
+# Compile complete production recovery boundaries with fake hardware callbacks.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS app/src/app_watchdog.c)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_watchdog.c" recovery_watchdog_source)
+hia_test_extract_span("${recovery_watchdog_source}" "static atomic_t terminal_restart_scheduled;"
+    "void app_watchdog_get_health(" recovery_terminal_restart)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/terminal_restart_production.inc" "${recovery_terminal_restart}")
+add_executable(test_app_terminal_restart tests/test_app_terminal_restart.c)
+target_include_directories(test_app_terminal_restart PRIVATE app/src ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME app_terminal_restart COMMAND test_app_terminal_restart)
+set_tests_properties(app_terminal_restart PROPERTIES TIMEOUT 30
+    LABELS "mesh_integration;hardware_models;production_seam;watchdog;recovery")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    app/src/app_gateway_ble.c app/src/app_mesh_report_rx.inc
+    app/src/app_anchor_gateway_control.inc)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_gateway_ble.c" recovery_ble_source)
+hia_test_extract_span("${recovery_ble_source}"
+    "static void gateway_ble_rx_work_handler(struct k_work *work)\n{"
+    "void gateway_ble_get_status(" recovery_ble_worker)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gateway_ble_rx_worker.inc" "${recovery_ble_worker}")
+add_executable(test_app_gateway_ble_rx tests/test_app_gateway_ble_rx.c)
+target_include_directories(test_app_gateway_ble_rx PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_app_gateway_ble_rx PRIVATE core)
+add_test(NAME app_gateway_ble_rx COMMAND test_app_gateway_ble_rx)
+set_tests_properties(app_gateway_ble_rx PROPERTIES TIMEOUT 30
+    LABELS "mesh_integration;hardware_models;production_seam;ble;recovery")
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_mesh_report_rx.inc" recovery_rx_source)
+hia_test_extract_span("${recovery_rx_source}"
+    "static bool mesh_gateway_run_enumeration_response_slice(void)"
+    "static void mesh_uwb_rx_work_handler(" recovery_compact_rx)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gateway_compact_rx_production.inc" "${recovery_compact_rx}")
+add_executable(test_gateway_compact_rx_recovery
+    tests/mesh_integration/test_gateway_compact_rx_recovery.c
+    app/src/app_mesh_rx_policy.c)
+target_include_directories(test_gateway_compact_rx_recovery PRIVATE app/src ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_gateway_compact_rx_recovery PRIVATE core)
+add_test(NAME gateway_compact_rx_recovery COMMAND test_gateway_compact_rx_recovery)
+set_tests_properties(gateway_compact_rx_recovery PROPERTIES TIMEOUT 30
+    LABELS "mesh_integration;hardware_models;production_seam;enumeration;recovery")
+
+hia_test_extract_span("${hia_survey_source}" "enum app_survey_gateway_stage {"
+    "enum app_survey_anchor_action {" publication_stage)
+hia_test_extract_span("${hia_survey_source}" "struct app_survey_gateway_state {"
+    "struct app_survey_click_capture {" publication_state)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/survey_publication_state.inc" "${publication_stage}\n${publication_state}")
+hia_test_extract_span("${hia_survey_source}" "static bool response_bit_get("
+    "static bool signal_bit_get(" publication_result_bit)
+hia_test_extract_span("${hia_survey_source}" "static bool signal_bit_get("
+    "static bool anchor_identity_matches_roster(" publication_signal_bit)
+hia_test_extract_span("${hia_survey_source}" "static void gateway_build_progress_event_locked("
+    "int app_survey_init(" publication_worker)
+hia_test_extract_span("${hia_survey_source}" "int app_survey_gateway_start("
+    "int app_survey_gateway_submit_plan(" publication_start)
+hia_test_extract_span("${hia_survey_source}" "int app_survey_gateway_handle_bundle("
+    "int app_survey_anchor_note_ram_roster(" publication_bundle)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/survey_publication_production.inc"
+    "${publication_result_bit}\n${publication_signal_bit}\n${publication_worker}\n${publication_start}\n${publication_bundle}")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/src/app_anchor_gateway_control.inc" recovery_gateway_source)
+hia_test_extract_span("${recovery_gateway_source}" "K_MUTEX_DEFINE(gateway_survey_publication_mutex);"
+    "static int gateway_survey_send_control(" publication_adapter)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/survey_publication_adapter.inc" "${publication_adapter}")
+add_executable(test_app_survey_publication tests/test_app_survey_publication.c)
+target_include_directories(test_app_survey_publication PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(test_app_survey_publication PRIVATE core)
+add_test(NAME app_survey_publication COMMAND test_app_survey_publication)
+set_tests_properties(app_survey_publication PROPERTIES TIMEOUT 30
+    LABELS "mesh_integration;hardware_models;production_seam;survey;recovery")
+
+add_executable(test_enumeration_c5_contention_scenarios
+    tests/mesh_integration/test_enumeration_c5_contention_scenarios.c)
+target_link_libraries(test_enumeration_c5_contention_scenarios PRIVATE core)
+add_test(NAME enumeration_c5_contention_scenarios COMMAND test_enumeration_c5_contention_scenarios)
+set_tests_properties(enumeration_c5_contention_scenarios PROPERTIES TIMEOUT 30
+    LABELS "mesh_integration;hardware_models;enumeration;scale;channel5")
+
 add_test(NAME mesh_forwarded_ack_late_authorization_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_forwarded_ack_late_authorization_source_invariants.py)

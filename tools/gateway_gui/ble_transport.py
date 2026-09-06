@@ -440,14 +440,23 @@ class BleTransport:
                     or not client.is_connected
                 ):
                     raise RuntimeError("gateway disconnected while writing frame")
-                await client.write_gatt_char(
-                    characteristic,
-                    frame[offset:offset + chunk_size],
-                    # Commands and exact host receipts are custody edges, so
-                    # require ATT admission instead of treating a locally
-                    # queued write command as delivery to the gateway.
-                    response=True,
-                )
+                try:
+                    await client.write_gatt_char(
+                        characteristic,
+                        frame[offset:offset + chunk_size],
+                        # Commands and exact host receipts are custody edges,
+                        # so require ATT admission for every chunk.
+                        response=True,
+                    )
+                except Exception:
+                    # Firmware preserves an admitted COBS prefix when a later
+                    # ATT chunk fails. We do not retry that exact chunk, so a
+                    # fresh frame must wait for disconnect to clear the prefix.
+                    # Keep the writer lock until teardown; queued receipts must
+                    # never append themselves to the abandoned command.
+                    await self._disconnect_client_quietly(client)
+                    self._on_disconnected(client, generation)
+                    raise
                 chunks += 1
                 if offset + chunk_size < len(frame):
                     await asyncio.sleep(0.005)

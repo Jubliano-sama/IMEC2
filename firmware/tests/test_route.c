@@ -861,8 +861,47 @@ static void test_unreachable_candidate_stays_ineligible_until_finite_refresh(voi
     }
 }
 
+static void test_passive_hint_preserves_weak_wave_and_dead_end(void)
+{
+    struct route_table table;
+    struct route_candidate weak = candidate(1u, 7u, 0u, 20u, 100u);
+    struct route_candidate hint = candidate(1u, 7u, 0u, 99u, 200u);
+    const struct route_candidate *stored;
+
+    weak.link_rsl_dbm = -105;
+    weak.link_rsl_valid = true;
+    weak.provisional_until_ms = 1000u;
+    weak.provisional_valid = true;
+    route_table_init(&table, 7u);
+    assert(route_upsert_candidate(&table, &weak) == PROTO_OK);
+    assert(route_selected(&table) == NULL);
+    assert(route_note_candidate_hint(&table, &hint) == PROTO_OK);
+    stored = candidate_for_next_hop(&table, 1u);
+    assert(stored != NULL);
+    assert(stored->link_rsl_valid && stored->link_rsl_dbm == -105);
+    assert(stored->link_quality == 20u);
+    assert(stored->provisional_until_ms == 1000u);
+    assert(route_selected(&table) == NULL);
+    assert(route_select_best_at(&table, 1000u) == PROTO_OK);
+
+    /* An explicit no-route ACK cannot be undone by a one-way command,
+     * including after its temporary hold has elapsed. */
+    table.candidates[table.selected_index].hop_count = UINT8_MAX;
+    hint.last_seen_ms = 2000u;
+    assert(route_note_candidate_hint(&table, &hint) == PROTO_OK);
+    assert(route_selected(&table) == NULL);
+    assert(candidate_for_next_hop(&table, 1u)->hop_count == UINT8_MAX);
+    assert(route_upsert_candidate(&table, &hint) == PROTO_OK);
+    assert(route_selected(&table)->next_hop_id == 1u);
+    hint.route_epoch = 8u;
+    assert(route_note_candidate_hint(&table, &hint) == PROTO_ERR_STALE);
+    assert(table.current_epoch == 7u);
+    assert(route_selected(&table)->next_hop_id == 1u);
+}
+
 int main(void)
 {
+    test_passive_hint_preserves_weak_wave_and_dead_end();
     test_unreachable_candidate_stays_ineligible_until_finite_refresh();
     test_weighted_cost_prefers_useful_direct_route();
     test_weighted_cost_avoids_unusable_direct_route();

@@ -24,7 +24,7 @@
 #define TABLE_SEQ UINT32_C(21758005)
 typedef int k_spinlock_key_t;
 static int anchor_enumeration_rx_lock, anchor_discovery_claim_mutex, survey_lock, anchor_work;
-static unsigned lock_depth, claim_calls, scheduled, consumed;
+static unsigned lock_depth, claim_calls, scheduled, consumed, receive_aborts;
 static uint32_t now_ms;
 static uint64_t scheduled_at;
 static struct mesh_relay mesh_runtime;
@@ -56,7 +56,8 @@ static void k_spin_unlock(int *lock,int key) { (void)lock; (void)key; assert(loc
 static void k_mutex_lock(int *lock,int timeout) { (void)timeout; (void)k_spin_lock(lock); }
 static void k_mutex_unlock(int *lock) { k_spin_unlock(lock,0); }
 static int k_work_cancel_delayable(int *work) { (void)work; return 0; }
-static void dwm3000_driver_request_receive_abort(int reason) { (void)reason; }
+static void dwm3000_driver_request_receive_abort(int reason)
+{ assert(reason == DWM3000_RECEIVE_ABORT_MESH_CONTROL); receive_aborts++; }
 static void status_debug_printf(const char *fmt,...) { (void)fmt; }
 static int anchor_uwb_scan_schedule_ms(uint32_t ms) { (void)ms; return 0; }
 static void anchor_enumeration_rx_clear_phase_identities(void)
@@ -87,8 +88,9 @@ static bool local_anchor_discovery_assignment_identity_get(uint32_t *epoch,uint3
 static int anchor_work_reschedule(uint64_t due) { scheduled++; scheduled_at=due; return 0; }
 static int upstream(uint64_t *parent,uint8_t *hops) { *parent=GATEWAY_ID; *hops=1u; return 0; }
 static int consume(uint32_t epoch)
-{ assert(epoch==NEW_EPOCH); consumed++; return 0; }
+{ assert(epoch==assignment_policy.committed_epoch); consumed++; return 0; }
 
+void app_survey_anchor_begin_enumeration(uint32_t assignment_epoch);
 #include "hia_prearm_production.inc"
 #include "hia_survey_production.inc"
 
@@ -98,7 +100,7 @@ static struct discovery_assignment_entry entries[] = {
 };
 static void reset_fixture(void)
 {
-    now_ms=1000u; lock_depth=claim_calls=scheduled=consumed=0u;
+    now_ms=1000u; lock_depth=claim_calls=scheduled=consumed=receive_aborts=0u;
     scheduled_at=0u;
     memset(&anchor_state,0,sizeof(anchor_state));
     memset(&anchor_enumeration_response_config,0,sizeof(anchor_enumeration_response_config));
@@ -185,11 +187,44 @@ static void test_survey_requires_matching_accepted_roster(void)
     assert(app_survey_anchor_apply_control(&packet,&control)==-ESTALE);
     assert(!anchor_state.active && scheduled==0u && consumed==0u);
 }
+static void test_fresh_enumeration_retires_only_the_old_survey(void)
+{
+    for (unsigned owned_rf = 0u; owned_rf < 2u; owned_rf++) {
+        reset_fixture();
+        assert(prearm(NEW_EPOCH) == 0);
+        assert(apply_table(NEW_EPOCH) == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+        struct survey_control control = start_control();
+        struct proto_packet packet = {.msg_type=MSG_COMMAND, .src_id=GATEWAY_ID};
+        assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+        if (owned_rf) {
+            assert(protocol_rx_lifecycle_rf_begin(&anchor_rx_lifecycle,
+                PROTOCOL_RX_OPERATION_SURVEY, control.identity.generation));
+        }
+        uint64_t old_stop = anchor_state.self_stop_ms;
+        /* Same-epoch HIA and malformed prearm cannot cancel current work. */
+        assert(prearm(NEW_EPOCH) == 0 && anchor_state.active);
+        assert(prearm(0u) == -EINVAL && anchor_state.active);
+        /* Authority comes from valid HIA, even for a lower replacement epoch. */
+        uint32_t next_epoch = NEW_EPOCH - 1u;
+        now_ms += 100u;
+        assert(prearm(next_epoch) == 0);
+        assert(now_ms < old_stop && !anchor_state.active);
+        assert(anchor_state.aborted && !anchor_state.roster_valid);
+        assert(receive_aborts == owned_rf);
+        assert(apply_table(next_epoch) == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+        control.identity.assignment.assignment_epoch = next_epoch;
+        control.identity.generation++;
+        assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+        assert(anchor_state.active && consumed == 2u && lock_depth == 0u);
+    }
+}
+
 int main(void)
 {
     test_lower_hia_authorizes_table_and_survey_without_separate_claim();
     test_invalid_or_conflicting_hia_does_not_rebase_policy();
     test_survey_requires_matching_accepted_roster();
+    test_fresh_enumeration_retires_only_the_old_survey();
     puts("production HIA TABLE survey harness passed");
     return 0;
 }

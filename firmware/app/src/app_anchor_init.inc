@@ -15,6 +15,7 @@ int app_anchor_init(void)
     {
         const struct app_survey_ops survey_runtime_ops = {
 #if DEVICE_ROLE == ROLE_GATEWAY
+            .next_generation = app_gateway_control_sequence_next,
             .send_control = gateway_survey_send_control,
             .control_origin = gateway_survey_control_origin,
             .control_detach = gateway_survey_control_detach,

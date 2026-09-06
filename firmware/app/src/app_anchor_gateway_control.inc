@@ -3604,11 +3604,14 @@ static int gateway_cancel_survey(const struct proto_packet *packet,
                                  size_t payload_len);
 static int gateway_get_survey_status(const struct proto_packet *packet);
 
+K_MUTEX_DEFINE(gateway_survey_publication_mutex);
+
 static int gateway_survey_emit_event(const struct survey_event *event)
 {
     uint8_t payload[SURVEY_EVENT_MAX_WIRE_LEN];
     struct proto_packet packet = {0};
     size_t payload_len;
+    int ret;
 
     if (event == NULL) {
         return -EINVAL;
@@ -3617,20 +3620,28 @@ static int gateway_survey_emit_event(const struct survey_event *event)
     if (payload_len == 0u) {
         return -EBADMSG;
     }
-    gateway_survey_event_seq++;
-    if (gateway_survey_event_seq == 0u) {
-        gateway_survey_event_seq = 1u;
+    k_mutex_lock(&gateway_survey_publication_mutex, K_FOREVER);
+    packet.seq = gateway_survey_event_seq + 1u;
+    if (packet.seq == 0u) {
+        packet.seq = 1u;
     }
     packet.msg_type = MSG_SURVEY_EVENT;
     packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
     packet.src_id = DEVICE_ID;
     packet.dst_id = DEVICE_ID;
     packet.session_id = event->identity.generation;
-    packet.seq = gateway_survey_event_seq;
     packet.ttl = 1u;
     packet.payload_len = (uint16_t)payload_len;
-    return gateway_ble_stream_packet(&packet, payload, payload_len,
-                                     k_uptime_get_32());
+    ret = gateway_ble_stream_packet(&packet, payload, payload_len,
+                                    k_uptime_get_32());
+    /* A rejected admission has no observable transport identity. GET_STATUS
+     * may consume the next sequence before the same semantic event retries;
+     * an admitted item's identity is thereafter owned by the BLE stream. */
+    if (ret == 0) {
+        gateway_survey_event_seq = packet.seq;
+    }
+    k_mutex_unlock(&gateway_survey_publication_mutex);
+    return ret;
 }
 
 static int gateway_survey_send_control(

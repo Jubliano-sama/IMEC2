@@ -137,6 +137,9 @@ typedef int (*gateway_ble_custody_send_fn)(const uint8_t *frame,
                                            void *ctx);
 typedef void (*gateway_ble_custody_wait_fn)(void *ctx);
 
+/* ATT completion must retain these classes until exact GUI acceptance. */
+bool gateway_ble_stream_requires_host_receipt(const struct proto_packet *packet);
+
 void gateway_ble_stream_init(struct gateway_ble_stream_state *state);
 bool gateway_ble_should_stream_packet(uint8_t msg_type,
                                       uint8_t flags,

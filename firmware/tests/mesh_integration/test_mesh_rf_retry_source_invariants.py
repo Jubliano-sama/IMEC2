@@ -1251,24 +1251,24 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_report_completion_failure_keeps_ack_owned_before_more_rf(self):
         complete = function_body(REPORT, "mesh_report_delivery_complete")
-        self.assertIn(
-            "entry->acked && mesh_c5_retire_batch_member(&entry->outbound) == 0",
-            complete,
-        )
+        acknowledged = braced_block_after(complete, "if (entry->acked)")
+        self.assertIn("mesh_c5_retire_batch_member(&entry->outbound)", acknowledged)
+        # Actual failed producer callbacks and bank retention are exercised by
+        # test_app_mesh_c5_batch; keep this boundary check about RF ordering.
         self.assertIn(
             "mesh_report_delivery.entries[kept] = mesh_report_delivery.entries[i]",
             complete,
         )
         body = function_body(REPORT, "mesh_report_delivery_step")
         completion = body.index("mesh_report_delivery_complete()")
-        retained_ack = body.index("if (mesh_report_delivery.entries[i].acked)",
-                                  completion)
+        retained_ack = braced_block_after(body, "if (mesh_report_delivery_complete())")
+        self.assertIn("report_tx_schedule(REPORT_TX_RETRY_DELAY_MS)", retained_ack)
+        self.assertIn("return 0", retained_ack)
         retry = body.index("report_tx_schedule(REPORT_TX_RETRY_DELAY_MS)",
-                           retained_ack)
+                           completion)
         stop = body.index("return 0", retry)
         next_send = body.index("mesh_send_route_wake_train_with_duration(", stop)
-        self.assertLess(completion, retained_ack)
-        self.assertLess(retained_ack, retry)
+        self.assertLess(completion, retry)
         self.assertLess(retry, stop)
         self.assertLess(stop, next_send)
 

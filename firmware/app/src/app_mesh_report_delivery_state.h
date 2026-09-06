@@ -3,6 +3,8 @@
 
 #include "mesh_relay.h"
 
+/* Transit leaves MESH_CUSTODY_OWN_RESERVE entries available so a later local
+ * report can preempt its retries without returning custody to a full queue. */
 #define MESH_REPORT_DELIVERY_CAPACITY 4u
 
 struct mesh_report_delivery_entry {

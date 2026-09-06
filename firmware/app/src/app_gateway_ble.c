@@ -446,10 +446,10 @@ struct gateway_ble_frame_pending {
     uint16_t len;
 };
 
-K_MSGQ_DEFINE(gateway_ble_rx_msgq,
-              sizeof(struct gateway_ble_frame_pending),
-              GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH,
-              4);
+BUILD_ASSERT(GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH == GATEWAY_BLE_INGRESS_DEPTH,
+             "BLE ingress must retain the configured four-frame RAM bound");
+static struct gateway_ble_ingress gateway_ble_rx_queue;
+static struct k_spinlock gateway_ble_rx_lock;
 
 static struct k_work gateway_ble_rx_work;
 static struct k_work_delayable gateway_ble_stream_work;
@@ -466,9 +466,6 @@ static uint8_t gateway_ble_notify_failure_count;
 static bool gateway_ble_packet_notify_enabled;
 static uint8_t gateway_ble_uwb_quiet_depth;
 static bool gateway_ble_quiet_stopped_advertising;
-static uint8_t gateway_ble_rx_frame[SERIAL_FRAME_MAX_LEN];
-static size_t gateway_ble_rx_len;
-static bool gateway_ble_rx_overflow;
 static struct k_spinlock gateway_ble_tx_lock;
 static enum gateway_ble_tx_source gateway_ble_tx_source;
 static uint8_t gateway_ble_tx_frame[GATEWAY_BLE_PACKET_TX_FRAME_MAX_LEN];
@@ -496,10 +493,6 @@ static int gateway_ble_rx_bytes(const uint8_t *data, size_t len);
 static int gateway_ble_start_advertising(void);
 static int gateway_ble_stop_advertising(const char *reason);
 static void gateway_ble_rx_work_handler(struct k_work *work);
-#if DEVICE_ROLE == ROLE_GATEWAY
-static bool gateway_ble_pending_is_host_receipt(
-    const struct gateway_ble_frame_pending *pending);
-#endif
 static void gateway_ble_stream_work_handler(struct k_work *work);
 static void gateway_ble_host_receipt_timeout_work_handler(
     struct k_work *work);
@@ -526,28 +519,31 @@ static void gateway_ble_schedule_failed(const char *owner, int ret)
     app_watchdog_stop_feeding();
 }
 
-static int gateway_ble_rx_write_capacity(const uint8_t *data, size_t len)
+static uint8_t gateway_ble_rx_depth(void)
 {
-    uint32_t completed_frames = 0u;
+    k_spinlock_key_t key = k_spin_lock(&gateway_ble_rx_lock);
+    uint8_t count = gateway_ble_rx_queue.count;
 
-    if (data == NULL && len != 0u) {
-        return -EINVAL;
-    }
-    /*
-     * COBS excludes zero from an encoded frame, so every delimiter in this
-     * write completes at most one frame.  Reserve enough raw-ingress slots
-     * before consuming any bytes from the ATT write.  This keeps a failed
-     * write request retryable at the same chunk boundary and prevents a
-     * coalesced write from admitting a prefix before reporting ENOSPC.
-     */
-    for (size_t i = 0u; i < len; i++) {
-        if (data[i] == SERIAL_FRAME_DELIMITER) {
-            completed_frames++;
-        }
-    }
-    return completed_frames <=
-               (uint32_t)k_msgq_num_free_get(&gateway_ble_rx_msgq) ?
-           0 : -ENOSPC;
+    k_spin_unlock(&gateway_ble_rx_lock, key);
+    return count;
+}
+
+static int gateway_ble_rx_take(bool receipt,
+                               struct gateway_ble_ingress_frame *pending)
+{
+    k_spinlock_key_t key = k_spin_lock(&gateway_ble_rx_lock);
+    int ret = gateway_ble_ingress_take(&gateway_ble_rx_queue, receipt, pending);
+
+    k_spin_unlock(&gateway_ble_rx_lock, key);
+    return ret;
+}
+
+static void gateway_ble_rx_reset_partial(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&gateway_ble_rx_lock);
+
+    gateway_ble_ingress_reset_partial(&gateway_ble_rx_queue);
+    k_spin_unlock(&gateway_ble_rx_lock, key);
 }
 
 static void gateway_ble_resume_rx(void)
@@ -559,7 +555,7 @@ static void gateway_ble_resume_rx(void)
         status_debug_printf(
             "DBG_GATEWAY_BLE_RX_SUBMIT ret=%d q=%u receipts=%d busy=0x%x\n",
             ret,
-            (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+            (unsigned int)gateway_ble_rx_depth(),
             (int)atomic_get(&gateway_ble_host_receipt_ingress_count),
             (unsigned int)k_work_busy_get(&gateway_ble_rx_work));
     }
@@ -772,11 +768,7 @@ static ssize_t gateway_ble_packet_rx_write(struct bt_conn *conn,
     }
 
     {
-        int ret = gateway_ble_rx_write_capacity(buf, len);
-
-        if (ret == 0) {
-            ret = gateway_ble_rx_bytes(buf, len);
-        }
+        int ret = gateway_ble_rx_bytes(buf, len);
         if (ret < 0) {
             LOG_ERR("gateway BLE command ingress failed closed: len=%u ret=%d flags=0x%02x",
                     len, ret, flags);
@@ -983,35 +975,6 @@ int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
     return 0;
 }
 
-/* Packets whose BLE completion owns a source-custody ACK boundary. */
-static bool gateway_host_custody_supported(const struct proto_packet *packet)
-{
-    if (packet == NULL) {
-        return false;
-    }
-
-    /* Only the durable assignment publisher is command-event host custody.
-     * Generic observability packets are self-addressed best-effort telemetry. */
-    if (packet->msg_type == MSG_GATEWAY_COMMAND_EVENT) {
-        return packet->flags == FLAG_GATEWAY_ACK_REQUIRED;
-    }
-    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
-        return false;
-    }
-
-    switch (packet->msg_type) {
-    case MSG_CLICK_REPORT:
-    case MSG_SELF_TEST_REPORT:
-    case MSG_ANCHOR_HEARTBEAT:
-    case MSG_COMMAND_RESULT:
-    case MSG_RESULT_BUNDLE:
-        return true;
-    case MSG_MESH_DATA:
-        return (packet->flags & FLAG_DIAGNOSTIC) != 0u;
-    default:
-        return false;
-    }
-}
 
 int gateway_command_event_finish_host_receipt(
     const struct proto_packet *packet)
@@ -1234,7 +1197,7 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
         host_custody_supported =
             packet_ret == 0 && gateway_ble_stream_state.count > 0u &&
             gateway_ble_stream_state.items[0].retain_until_sent &&
-            gateway_host_custody_supported(&completed_packet);
+            gateway_ble_stream_requires_host_receipt(&completed_packet);
         if (host_custody_supported) {
             host_notification_ret = gateway_ble_stream_mark_host_notified(
                 &gateway_ble_stream_state);
@@ -1636,8 +1599,7 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     gateway_ble_packet_notify_enabled = false;
     k_spin_unlock(&gateway_ble_tx_lock, key);
     gateway_ble_stream_cancel_active();
-    gateway_ble_rx_len = 0u;
-    gateway_ble_rx_overflow = false;
+    gateway_ble_rx_reset_partial();
     gateway_ble_recovery_round = 0u;
     (void)k_work_cancel_delayable(&gateway_ble_recovery_work);
     /* As a peripheral Zephyr retains this request until the standards-defined
@@ -1722,8 +1684,7 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
     }
     (void)k_work_cancel_delayable(&gateway_ble_stream_work);
     bt_conn_unref(disconnected_conn);
-    gateway_ble_rx_len = 0u;
-    gateway_ble_rx_overflow = false;
+    gateway_ble_rx_reset_partial();
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE PC link disconnected: reason=0x%02x", reason);
     gateway_ble_schedule_recovery("disconnected");
 }
@@ -1880,8 +1841,7 @@ int gateway_ble_init(void)
     }
 #endif
     gateway_ble_tx_reset_locked();
-    gateway_ble_rx_len = 0u;
-    gateway_ble_rx_overflow = false;
+    gateway_ble_rx_reset_partial();
     gateway_ble_stack_ready = false;
     gateway_ble_recovery_round = 0u;
 
@@ -1918,105 +1878,31 @@ int gateway_ble_init(void)
     return 0;
 }
 
-static int gateway_ble_queue_frame(void)
+static int gateway_ble_rx_bytes(const uint8_t *data, size_t len)
 {
-    struct gateway_ble_frame_pending pending = {0};
-#if DEVICE_ROLE == ROLE_GATEWAY
-    bool host_receipt;
-#endif
-    int ret;
+    uint8_t receipts_added = 0u;
+    k_spinlock_key_t key = k_spin_lock(&gateway_ble_rx_lock);
+    int ret = gateway_ble_ingress_write(&gateway_ble_rx_queue, data, len,
+                                        &receipts_added);
 
-    if (gateway_ble_rx_len <= 1u) {
-        gateway_ble_rx_len = 0u;
-        return 0;
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (ret == 0 && receipts_added != 0u) {
+        atomic_add(&gateway_ble_host_receipt_ingress_count, receipts_added);
     }
-
-    pending.len = (uint16_t)gateway_ble_rx_len;
-    memcpy(pending.frame, gateway_ble_rx_frame, gateway_ble_rx_len);
-#if DEVICE_ROLE == ROLE_GATEWAY
-    host_receipt = gateway_ble_pending_is_host_receipt(&pending);
 #endif
-    ret = k_msgq_put(&gateway_ble_rx_msgq, &pending, K_NO_WAIT);
-    if (ret < 0) {
-        LOG_WRN("gateway BLE RX frame queue full: len=%u", pending.len);
-    } else {
+    k_spin_unlock(&gateway_ble_rx_lock, key);
+    if (ret == 0) {
 #if DEVICE_ROLE == ROLE_GATEWAY
-        if (host_receipt) {
-            atomic_inc(&gateway_ble_host_receipt_ingress_count);
-            /* The system workqueue also owns continuous Channel-9 RX.  Make
-             * the completed receipt a radio boundary before scheduling its
-             * worker, or that worker can sit behind the whole RX slice. */
+        if (receipts_added != 0u) {
+            /* End the active RX slice before its workqueue dispatches the
+             * receipt. No radio or workqueue lock nests inside the RX lock. */
             mesh_gateway_host_receipt_ingress_queued();
         }
 #endif
         gateway_ble_resume_rx();
     }
-    gateway_ble_rx_len = 0u;
-    return ret < 0 ? -ENOSPC : 0;
+    return ret;
 }
-
-static int gateway_ble_rx_bytes(const uint8_t *data, size_t len)
-{
-    int first_error = 0;
-
-    if (data == NULL && len != 0u) {
-        return -EINVAL;
-    }
-
-    for (size_t i = 0u; i < len; i++) {
-        uint8_t byte = data[i];
-
-        if (gateway_ble_rx_overflow) {
-            if (byte == SERIAL_FRAME_DELIMITER) {
-                gateway_ble_rx_overflow = false;
-                gateway_ble_rx_len = 0u;
-                LOG_WRN("gateway BLE RX frame dropped after overflow");
-                if (first_error == 0) {
-                    first_error = -EMSGSIZE;
-                }
-            }
-            continue;
-        }
-
-        if (gateway_ble_rx_len >= sizeof(gateway_ble_rx_frame)) {
-            gateway_ble_rx_overflow = true;
-            gateway_ble_rx_len = 0u;
-            continue;
-        }
-
-        gateway_ble_rx_frame[gateway_ble_rx_len] = byte;
-        gateway_ble_rx_len++;
-        if (byte == SERIAL_FRAME_DELIMITER) {
-            int ret = gateway_ble_queue_frame();
-
-            if (ret < 0 && first_error == 0) {
-                first_error = ret;
-            }
-        }
-    }
-    return first_error;
-}
-
-#if DEVICE_ROLE == ROLE_GATEWAY
-static bool gateway_ble_pending_is_host_receipt(
-    const struct gateway_ble_frame_pending *pending)
-{
-    struct proto_packet packet;
-    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    size_t payload_len = 0u;
-
-    if (pending == NULL ||
-        serial_frame_decode_packet(pending->frame,
-                                    pending->len,
-                                    &packet,
-                                    payload,
-                                    sizeof(payload),
-                                    &payload_len) != PROTO_OK) {
-        return false;
-    }
-    return packet.msg_type == MSG_GATEWAY_HOST_RECEIPT;
-}
-#endif
 
 bool gateway_ble_host_receipt_ingress_pending(void)
 {
@@ -2029,7 +1915,7 @@ bool gateway_ble_host_receipt_ingress_pending(void)
 
 static void gateway_ble_rx_work_handler(struct k_work *work)
 {
-    struct gateway_ble_frame_pending pending;
+    struct gateway_ble_ingress_frame pending;
 
     ARG_UNUSED(work);
 
@@ -2037,7 +1923,7 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
     if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
         status_debug_printf(
             "DBG_GATEWAY_BLE_RX_WORK stage=enter q=%u receipts=%d\n",
-            (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+            (unsigned int)gateway_ble_rx_depth(),
             (int)atomic_get(&gateway_ble_host_receipt_ingress_count));
     }
 #endif
@@ -2051,24 +1937,16 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
         int ret;
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-        /* Host receipts must bypass result-credit admission, or a full
-         * command-result pool can strand the exact item they release. Peek
-         * first, then dequeue/consume receipts with token zero. */
-        ret = k_msgq_peek(&gateway_ble_rx_msgq, &pending);
-        if (ret < 0) {
-            break;
-        }
-        if (gateway_ble_pending_is_host_receipt(&pending)) {
-            ret = k_msgq_get(&gateway_ble_rx_msgq, &pending, K_NO_WAIT);
-            if (ret < 0) {
-                break;
-            }
+        /* Receipt extraction preserves command FIFO and requires no result
+         * credit, even when three commands precede the retained-head receipt. */
+        ret = gateway_ble_rx_take(true, &pending);
+        if (ret == 0) {
             (void)gateway_handle_ble_frame(pending.frame, pending.len, 0u);
             atomic_dec(&gateway_ble_host_receipt_ingress_count);
             if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
                 status_debug_printf(
                     "DBG_GATEWAY_BLE_RX_WORK stage=receipt q=%u receipts=%d\n",
-                    (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+                    (unsigned int)gateway_ble_rx_depth(),
                     (int)atomic_get(
                         &gateway_ble_host_receipt_ingress_count));
             }
@@ -2076,6 +1954,12 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
         }
 #endif
 
+        /* Releasing an unused result token resubmits this worker. Do not
+         * reserve on an empty queue or the cooperative system workqueue will
+         * continuously requeue itself and starve the radio workqueues. */
+        if (gateway_ble_rx_depth() == 0u) {
+            break;
+        }
 #if DEVICE_ROLE == ROLE_GATEWAY
         ret = gateway_command_result_reserve_ingress(
             &result_reservation_token);
@@ -2084,7 +1968,7 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
                 status_debug_printf(
                     "DBG_GATEWAY_BLE_RX_WORK stage=reserve ret=%d q=%u receipts=%d\n",
                     ret,
-                    (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+                    (unsigned int)gateway_ble_rx_depth(),
                     (int)atomic_get(
                         &gateway_ble_host_receipt_ingress_count));
             }
@@ -2095,7 +1979,7 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
             break;
         }
 #endif
-        ret = k_msgq_get(&gateway_ble_rx_msgq, &pending, K_NO_WAIT);
+        ret = gateway_ble_rx_take(false, &pending);
         if (ret < 0) {
             if (result_reservation_token != 0u) {
                 gateway_command_result_release_ingress(

@@ -11,6 +11,8 @@ BUILD_ASSERT(MESH_C5_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "the largest credited ACK must fit the transport");
 BUILD_ASSERT(MESH_REPORT_DELIVERY_CAPACITY <= MESH_RX_QUEUE_DEPTH,
              "a granted burst must fit the physical RX queue");
+BUILD_ASSERT(MESH_REPORT_DELIVERY_CAPACITY > MESH_CUSTODY_OWN_RESERVE,
+             "transit custody must leave room for an own report");
 
 static void mesh_c5_update_credit(void)
 {
@@ -281,6 +283,49 @@ static int mesh_c5_retire_batch_member(struct mesh_outbound *out)
     return 0;
 }
 
+static bool mesh_c5_batch_member_expired(const struct mesh_outbound *out,
+                                        uint32_t now_ms)
+{
+    uint32_t expiry_s = mesh_relay_outbox_expiry_s_for_packet(
+        &out->packet, out->payload, out->payload_len);
+    uint64_t age_ms = out->packet.message_age_ms;
+
+    if (out->queued_at_valid) {
+        age_ms += (uint32_t)(now_ms - out->queued_at_ms);
+    }
+    return expiry_s != 0u && expiry_s != UINT32_MAX &&
+           age_ms >= (uint64_t)expiry_s * 1000u;
+}
+
+static int mesh_c5_expire_batch_member(const struct mesh_outbound *out)
+{
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    if (!mesh_packet_semantic_digest(&out->packet, out->payload,
+                                     out->payload_len, digest)) {
+        return -EBADMSG;
+    }
+    if (out->packet.src_id == DEVICE_ID) {
+        /* This bank, rather than the core's pending outbox, owns transport
+         * custody. Retire the exact source owners without inventing an ACK
+         * or trying to commit a different core transaction. */
+        int ret = mesh_anchor_range_report_note_terminal_release(
+            &out->packet, out->payload, out->payload_len);
+        if (!mesh_terminal_cleanup_idempotent_status(ret)) {
+            return ret;
+        }
+        ret = app_node_comm_note_gateway_failed_digest(&out->packet, digest,
+            NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+        if (!mesh_terminal_cleanup_idempotent_status(ret)) {
+            return ret;
+        }
+    }
+    fw_delivery_loss_note_drop(&mesh_delivery_loss, NULL);
+    app_stack_workload_diag_relay_release(&out->packet, -ETIMEDOUT,
+                                         report_tx_queue_used(), 0u);
+    return 0;
+}
+
 static bool mesh_report_delivery_active(void)
 {
     return mesh_report_delivery.count != 0u;
@@ -306,16 +351,34 @@ static bool mesh_report_delivery_contains(const struct mesh_outbound *out)
     return false;
 }
 
-static void mesh_report_delivery_complete(void)
+static bool mesh_report_delivery_complete(void)
 {
     uint8_t completed = 0u;
     uint8_t kept = 0u;
+    bool cleanup_failed = false;
     /* Completion may call producers. Keep their admission lock free until
      * callbacks finish, then publish the compacted bank in one operation. */
     for (uint8_t i = 0u; i < mesh_report_delivery.count; i++) {
         struct mesh_report_delivery_entry *entry = &mesh_report_delivery.entries[i];
-        if (entry->acked && mesh_c5_retire_batch_member(&entry->outbound) == 0) {
+        int ret;
+        if (entry->acked) {
+            /* Exact ACK proof wins even when local cleanup crosses expiry. */
+            ret = mesh_c5_retire_batch_member(&entry->outbound);
+        } else if (mesh_c5_batch_member_expired(&entry->outbound,
+                                               k_uptime_get_32())) {
+            ret = mesh_c5_expire_batch_member(&entry->outbound);
+        } else {
+            continue;
+        }
+        if (ret == 0) {
             completed |= BIT(i);
+        } else {
+            /* Contention keeps the exact cleanup retryable. A hard error
+             * leaves custody unproven and must not feed a live pin. */
+            if (ret != -EAGAIN && ret != -EBUSY) {
+                app_watchdog_stop_feeding();
+            }
+            cleanup_failed = true;
         }
     }
     k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
@@ -330,6 +393,7 @@ static void mesh_report_delivery_complete(void)
     }
     mesh_report_delivery.count = kept;
     k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return cleanup_failed;
 }
 
 static int mesh_report_delivery_step(void)
@@ -351,19 +415,29 @@ static int mesh_report_delivery_step(void)
     if (mesh_relay_tx_active(&mesh_runtime) || mesh_route_waiting_tx_valid) {
         return -EBUSY;
     }
-    mesh_report_delivery_complete();
-    for (uint8_t i = 0u; i < mesh_report_delivery.count; i++) {
-        if (mesh_report_delivery.entries[i].acked) {
-            report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
-            return 0;
-        }
+    if (mesh_report_delivery_complete()) {
+        report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        return 0;
     }
-    if (mesh_report_delivery.count == 0u) {
+    bool retained_transit = mesh_report_delivery.count != 0u &&
+        mesh_report_delivery.entries[0].outbound.packet.src_id != DEVICE_ID;
+    if (mesh_report_delivery.count == 0u || retained_transit) {
+        const uint8_t retained_count = mesh_report_delivery.count;
         while (mesh_report_delivery.count < MESH_REPORT_DELIVERY_CAPACITY) {
             struct app_mesh_queue_head_token token;
             uint64_t candidate_peer = 0u;
             uint32_t now = k_uptime_get_32();
             if (report_tx_queue_begin_head(scratch, &token) != 0) {
+                break;
+            }
+            /* Transit can fill only three entries. The reserved entry lets
+             * a later local queue head run without returning retained bytes
+             * to a possibly full queue or shortening the transit retry. */
+            if ((retained_transit && scratch->packet.src_id != DEVICE_ID) ||
+                (scratch->packet.src_id != DEVICE_ID &&
+                 mesh_report_delivery.count >= MESH_REPORT_DELIVERY_CAPACITY -
+                                              MESH_CUSTODY_OWN_RESERVE)) {
+                (void)report_tx_queue_abort_head(&token);
                 break;
             }
             if (!mesh_c5_batch_packet(scratch)) {
@@ -376,7 +450,7 @@ static int mesh_report_delivery_step(void)
             int route_ret = mesh_relay_select_next_hop_for_packet(&mesh_runtime,
                 &scratch->packet, scratch->payload, scratch->payload_len,
                 now, &candidate_peer);
-            if (!ready || (mesh_report_delivery.count != 0u &&
+            if (!ready || (mesh_report_delivery.count != retained_count &&
                 (route_ret != PROTO_OK || candidate_peer != peer ||
                  scratch->packet.src_id != source ||
                  scratch->payload_len + 3u > sizeof(scratch->payload)))) {
@@ -396,6 +470,19 @@ static int mesh_report_delivery_step(void)
                 (void)report_tx_queue_abort_head(&token);
                 break;
             }
+            if (retained_transit) {
+                /* Publish the local-first order under the admission lock,
+                 * which also protects bank semantic duplicate checks. */
+                k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+                uint8_t last = mesh_report_delivery.count - 1u;
+                for (uint8_t i = last; i > 0u; i--) {
+                    mesh_report_delivery.entries[i] = mesh_report_delivery.entries[i - 1u];
+                }
+                mesh_report_delivery.entries[0].outbound = *scratch;
+                mesh_report_delivery.entries[0].acked = false;
+                k_mutex_unlock(&report_tx_queue_overflow_lock);
+                break;
+            }
             /* Route lookup does not own bytes. Keep the first packet here
              * while actual discovery runs; never invent gateway contact. */
             if (route_ret != PROTO_OK ||
@@ -404,7 +491,16 @@ static int mesh_report_delivery_step(void)
             }
         }
     }
+    /* Queue residence counts too, including packets already expired before
+     * their first radio attempt or while no route was available. */
+    if (mesh_report_delivery_complete()) {
+        report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        return 0;
+    }
     if (mesh_report_delivery.count == 0u) {
+        if (report_tx_queue_used() != 0u) {
+            report_tx_schedule(0u);
+        }
         return -ENOENT;
     }
     struct mesh_outbound *first = &mesh_report_delivery.entries[0].outbound;
@@ -420,7 +516,8 @@ static int mesh_report_delivery_step(void)
     for (uint8_t i = 0u; i < mesh_report_delivery.count; i++) {
         struct mesh_outbound *out = &mesh_report_delivery.entries[i].outbound;
         uint64_t selected_peer = 0u;
-        if (mesh_relay_select_next_hop_for_packet(&mesh_runtime, &out->packet,
+        if (out->packet.src_id != first->packet.src_id ||
+            mesh_relay_select_next_hop_for_packet(&mesh_runtime, &out->packet,
                 out->payload, out->payload_len, k_uptime_get_32(),
                 &selected_peer) != PROTO_OK || selected_peer != peer) {
             break;

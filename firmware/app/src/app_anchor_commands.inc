@@ -3900,6 +3900,7 @@ static int anchor_apply_discovery_assignment_command(
                 ret,
                 "claim-response-lane");
         }
+        app_survey_anchor_begin_enumeration(epoch);
         app_operation_policy_commit_prepared(&policy_candidate);
         return 0;
     }

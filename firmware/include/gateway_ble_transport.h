@@ -17,6 +17,30 @@ extern "C" {
     (GATEWAY_BLE_ATT_DEFAULT_MTU - GATEWAY_BLE_ATT_VALUE_OVERHEAD)
 #define GATEWAY_BLE_ATT_MAX_MTU 517u
 #define GATEWAY_BLE_DEFAULT_CONNECTION_INTERVAL_US 30000u
+#define GATEWAY_BLE_INGRESS_DEPTH 4u
+
+struct gateway_ble_ingress_frame {
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    uint16_t len;
+    bool receipt;
+};
+
+/* The final slot is reserved for receipts. The caller serializes write/take
+ * operations; command-result credit never owns this queue's receipt lane. */
+struct gateway_ble_ingress {
+    struct gateway_ble_ingress_frame frames[GATEWAY_BLE_INGRESS_DEPTH];
+    uint8_t partial[SERIAL_FRAME_MAX_LEN];
+    uint16_t partial_len;
+    uint8_t count;
+};
+
+int gateway_ble_ingress_write(struct gateway_ble_ingress *ingress,
+                              const uint8_t *bytes, size_t len,
+                              uint8_t *receipts_added);
+int gateway_ble_ingress_take(struct gateway_ble_ingress *ingress,
+                             bool receipt,
+                             struct gateway_ble_ingress_frame *frame);
+void gateway_ble_ingress_reset_partial(struct gateway_ble_ingress *ingress);
 
 enum gateway_ble_link_status {
     GATEWAY_BLE_LINK_OK = 0,

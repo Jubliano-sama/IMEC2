@@ -286,6 +286,8 @@ static void test_ingress_to_c5_normalizes_command_class_ttl(void)
                        &flow.outbound.packet,
                        gateway_id,
                        95u,
+                       0,
+                       false,
                        origin_ttl,
                        1001u) == PROTO_OK);
             route = route_selected(&target.upstream);

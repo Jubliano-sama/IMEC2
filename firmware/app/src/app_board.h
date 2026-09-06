@@ -36,6 +36,8 @@ void status_stack_diag_transaction_end(void);
 void status_leds_disconnect(void);
 void status_apply(const struct status_inputs *inputs);
 int battery_adc_divider_disable(void);
+/* 1 for valid USB input, 0 for battery power, negative errno on GPIO failure. */
+int battery_usb_power_present(void);
 int battery_sample_lithium_mv(uint16_t *battery_mv);
 int debug_serial_init(void);
 

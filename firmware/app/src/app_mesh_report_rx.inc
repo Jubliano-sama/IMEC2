@@ -1721,12 +1721,23 @@ static bool mesh_gateway_run_enumeration_response_slice(void)
         }
         if (ret < 0) {
             int receive_ret = ret;
-            int recovery_ret = dwm3000_driver_force_recovery();
+            int recovery_ret;
 
             if (error_count < UINT16_MAX) {
                 error_count++;
             }
 
+            /* Sibling BUNDLE collisions are ordinary RF outcomes. The
+             * receive driver has already released RX; rearm the retained
+             * control PHY instead of resetting it through the next siblings'
+             * offsets. Unknown/port failures still require proven recovery.
+             * Keep the watchdog's independent progress classification. */
+            if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                    ret, failure)) {
+                ret = 0;
+                continue;
+            }
+            recovery_ret = dwm3000_driver_force_recovery();
             ret = recovery_ret < 0 ? recovery_ret :
                 dwm3000_driver_configure_wake_mesh_control_mode();
             status_debug_printf(

@@ -150,7 +150,10 @@ class ForcedHopRamPolicyTests(unittest.TestCase):
         self.assertIn(
             "config IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS", kconfig
         )
-        self.assertIn("range 1 8", kconfig)
+        self.assertIn("range 1 7", kconfig.split(
+            "config IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS", 1
+        )[1].split("\nconfig ", 1)[0])
+        self.assertIn('MATCHES "^[1-7]$"', forced_anchor)
         self.assertIn(
             "route_policy_state.required_gateway_relay_hops", direct_gateway
         )

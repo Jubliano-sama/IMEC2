@@ -12,6 +12,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/reboot.h>
 
 #include <errno.h>
 #include <string.h>
@@ -447,6 +448,26 @@ void app_watchdog_stop_feeding(void)
         return;
     }
     atomic_set(&feeding_stopped, 1);
+}
+
+static atomic_t terminal_restart_scheduled;
+
+static void terminal_restart_handler(struct k_timer *timer)
+{
+    ARG_UNUSED(timer);
+    /* A timer runs independently of the workqueue that may own the fault. */
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+K_TIMER_DEFINE(terminal_restart_timer, terminal_restart_handler, NULL);
+
+void app_watchdog_schedule_terminal_restart(void)
+{
+    if (atomic_cas(&terminal_restart_scheduled, 0, 1)) {
+        k_timer_start(&terminal_restart_timer,
+                      K_MSEC(APP_WATCHDOG_TERMINAL_RESTART_DELAY_MS),
+                      K_NO_WAIT);
+    }
 }
 
 void app_watchdog_get_health(struct app_watchdog_health *health)

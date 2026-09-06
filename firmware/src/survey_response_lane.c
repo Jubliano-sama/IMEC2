@@ -9,6 +9,23 @@ _Static_assert(SURVEY_RESPONSE_MAX_BUNDLES == 9u,
 _Static_assert(sizeof(struct survey_response_lane) <= 1408u,
                "survey response custody must remain below 1408 bytes");
 
+#define SURVEY_RESPONSE_ROUND_SPAN_MS \
+    (ENUMERATION_RESPONSE_TX_WINDOW_MS - \
+     ENUMERATION_RESPONSE_TX_LATE_GUARD_MS)
+#define SURVEY_RESPONSE_ROUND_CAPACITY \
+    (1u + (SURVEY_RESPONSE_ROUND_SPAN_MS - 1u) / \
+           ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS)
+
+_Static_assert(ENUMERATION_RESPONSE_TX_WINDOW_MS >
+                   ENUMERATION_RESPONSE_TX_LATE_GUARD_MS &&
+               SURVEY_RESPONSE_ROUND_SPAN_MS <= UINT8_MAX &&
+               ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS > 0u,
+               "survey offsets need a nonempty representable spacing window");
+_Static_assert(SURVEY_RESPONSE_MAX_BUNDLES <=
+                   SURVEY_RESPONSE_ROUND_CAPACITY *
+                       ENUMERATION_RESPONSE_FORWARD_ROUNDS_PER_HOP,
+               "each upstream retry tail must schedule the complete survey lane");
+
 static bool kind_valid(enum survey_response_kind kind)
 {
     return kind == SURVEY_RESPONSE_NEIGHBORS ||
@@ -79,6 +96,7 @@ int survey_response_lane_begin(
     uint64_t local_id,
     uint64_t parent_id,
     enum survey_response_kind kind,
+    uint8_t batch_index,
     uint8_t hop_count,
     uint8_t max_hop_count,
     uint64_t start_ms)
@@ -90,6 +108,8 @@ int survey_response_lane_begin(
         parent_id == 0u || local_id == parent_id || !kind_valid(kind) ||
         hop_count == 0u || hop_count > max_hop_count ||
         max_hop_count == 0u || max_hop_count > UWB_ENUM_MAX_HOPS ||
+        batch_index >= SURVEY_MAX_BATCHES ||
+        (kind == SURVEY_RESPONSE_NEIGHBORS && batch_index != 0u) ||
         start_ms == 0u) {
         return PROTO_ERR_MALFORMED;
     }
@@ -101,6 +121,7 @@ int survey_response_lane_begin(
     lane->local_id = local_id;
     lane->parent_id = parent_id;
     lane->kind = kind;
+    lane->batch_index = batch_index;
     lane->hop_count = hop_count;
     lane->max_hop_count = max_hop_count;
     lane->start_ms = start_ms;
@@ -140,6 +161,10 @@ int survey_response_lane_add_record(
     if (lane->record_count >= max_records_for_kind(lane->kind)) {
         return PROTO_ERR_NO_SPACE;
     }
+    /* Appending changes the last partial bundle and invalidates its ACK. */
+    uint8_t sequence = lane->record_count / SURVEY_RESPONSE_RECORDS_PER_BUNDLE;
+    lane->acked_mask &= (uint16_t)~(UINT16_C(1) << sequence);
+    lane->attempted_mask &= (uint16_t)~(UINT16_C(1) << sequence);
     lane->records[lane->record_count++] = *record;
     lane->prepared_round = UINT8_MAX;
     if (added != NULL) {
@@ -154,13 +179,15 @@ int survey_response_lane_merge_bundle(
     bool *added_records)
 {
     uint8_t prior_count;
-    bool any_added = false;
+    uint8_t new_count = 0u;
 
     if (lane == NULL || bundle == NULL) {
         return PROTO_ERR_ARG;
     }
     if (!lane->active || bundle->network_id != lane->network_id ||
         bundle->generation != lane->generation ||
+        bundle->batch_index != lane->batch_index ||
+        bundle->sequence >= SURVEY_RESPONSE_MAX_BUNDLES ||
         bundle->parent_id != lane->local_id ||
         bundle->sender_id == 0u || bundle->sender_id == lane->local_id ||
         bundle->kind != lane->kind || bundle->record_count == 0u ||
@@ -168,18 +195,46 @@ int survey_response_lane_merge_bundle(
         return PROTO_ERR_MALFORMED;
     }
     prior_count = lane->record_count;
+    /* Validate the complete bundle before changing custody. A valid prefix
+     * followed by a conflict must not inherit an older upstream bundle ACK. */
     for (uint8_t i = 0u; i < bundle->record_count; i++) {
-        bool added = false;
-        int ret = survey_response_lane_add_record(lane,
-                                                  &bundle->records[i],
-                                                  &added);
+        const struct survey_response_record *record = &bundle->records[i];
+        int existing;
+        bool duplicate = false;
 
-        if (ret != PROTO_OK) {
-            return ret;
+        if (!record_valid(lane->kind, record)) {
+            return PROTO_ERR_MALFORMED;
         }
-        any_added |= added;
+        existing = record_index(lane, record);
+        if (existing >= 0) {
+            if (memcmp(&lane->records[existing], record, sizeof(*record)) != 0) {
+                return PROTO_ERR_STALE;
+            }
+            continue;
+        }
+        for (uint8_t prior = 0u; prior < i; prior++) {
+            if (bundle->records[prior].bytes[0] == record->bytes[0]) {
+                if (memcmp(&bundle->records[prior], record,
+                           sizeof(*record)) != 0) {
+                    return PROTO_ERR_STALE;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            new_count++;
+        }
     }
-    if (any_added) {
+    if ((uint16_t)prior_count + new_count > max_records_for_kind(lane->kind)) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    for (uint8_t i = 0u; i < bundle->record_count; i++) {
+        if (record_index(lane, &bundle->records[i]) < 0) {
+            lane->records[lane->record_count++] = bundle->records[i];
+        }
+    }
+    if (new_count != 0u) {
         uint8_t bundle_count = bundle_count_for_records(lane->record_count);
         uint8_t first_changed =
             (uint8_t)(prior_count / SURVEY_RESPONSE_RECORDS_PER_BUNDLE);
@@ -192,7 +247,7 @@ int survey_response_lane_merge_bundle(
         lane->prepared_round = UINT8_MAX;
     }
     if (added_records != NULL) {
-        *added_records = any_added;
+        *added_records = new_count != 0u;
     }
     return PROTO_OK;
 }
@@ -203,6 +258,7 @@ int survey_response_lane_prepare_round(
     uint32_t random_value)
 {
     uint8_t pending[SURVEY_RESPONSE_MAX_BUNDLES];
+    uint8_t jitter[SURVEY_RESPONSE_MAX_BUNDLES];
     uint8_t pending_count = 0u;
     uint8_t bundle_count;
 
@@ -220,7 +276,15 @@ int survey_response_lane_prepare_round(
     memset(lane->round_offsets_ms, SURVEY_RESPONSE_NO_OFFSET,
            sizeof(lane->round_offsets_ms));
     bundle_count = bundle_count_for_records(lane->record_count);
-    for (uint8_t sequence = 0u; sequence < bundle_count; sequence++) {
+    /* The current 71 ms span holds eight 10 ms-spaced starts, while a full
+     * lane owns nine bundles. Rotate admission before randomizing offsets so
+     * an unacknowledged deferred bundle is scheduled in the following round. */
+    for (uint8_t i = 0u;
+         i < bundle_count && pending_count < SURVEY_RESPONSE_ROUND_CAPACITY;
+         i++) {
+        uint8_t sequence = (uint8_t)((round * SURVEY_RESPONSE_ROUND_CAPACITY +
+                                     i) % bundle_count);
+
         if ((lane->acked_mask & (UINT16_C(1) << sequence)) == 0u) {
             pending[pending_count++] = sequence;
         }
@@ -235,35 +299,24 @@ int survey_response_lane_prepare_round(
                        UINT32_C(1013904223);
     }
     for (uint8_t i = 0u; i < pending_count; i++) {
-        uint8_t sequence = pending[i];
-        uint8_t span = ENUMERATION_RESPONSE_TX_WINDOW_MS -
-                       ENUMERATION_RESPONSE_TX_LATE_GUARD_MS;
-        uint8_t offset = (uint8_t)(random_value % span);
+        uint8_t slack = (uint8_t)(SURVEY_RESPONSE_ROUND_SPAN_MS -
+            (pending_count - 1u) *
+                ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS);
+        uint8_t offset = (uint8_t)(random_value % slack);
+        uint8_t position = i;
 
-        while (true) {
-            bool collision = false;
-
-            for (uint8_t prior = 0u; prior < i; prior++) {
-                uint8_t prior_offset =
-                    lane->round_offsets_ms[pending[prior]];
-                uint8_t distance = offset > prior_offset ?
-                    (uint8_t)(offset - prior_offset) :
-                    (uint8_t)(prior_offset - offset);
-
-                if (distance < ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS) {
-                    collision = true;
-                    break;
-                }
-            }
-            if (!collision) {
-                break;
-            }
-            offset = (uint8_t)((offset +
-                ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS) % span);
+        /* Sorted jitter plus the mandatory spacing constructs a valid set
+         * directly; no seed can require a retry-until-fit search. */
+        for (; position > 0u && jitter[position - 1u] > offset; position--) {
+            jitter[position] = jitter[position - 1u];
         }
-        lane->round_offsets_ms[sequence] = offset;
+        jitter[position] = offset;
         random_value = random_value * UINT32_C(1664525) +
                        UINT32_C(1013904223);
+    }
+    for (uint8_t i = 0u; i < pending_count; i++) {
+        lane->round_offsets_ms[pending[i]] = (uint8_t)(jitter[i] +
+            i * ENUMERATION_RESPONSE_MIN_LOCAL_TX_SPACING_MS);
     }
     lane->prepared_round = round;
     return PROTO_OK;
@@ -309,6 +362,7 @@ int survey_response_lane_bundle_for_offset(
         bundle->sender_id = lane->local_id;
         bundle->parent_id = lane->parent_id;
         bundle->kind = lane->kind;
+        bundle->batch_index = lane->batch_index;
         bundle->sequence = sequence;
         bundle->record_count = count;
         memcpy(bundle->records, &lane->records[start],
@@ -328,6 +382,7 @@ bool survey_response_lane_note_ack(
     if (lane == NULL || ack == NULL || !lane->active ||
         ack->network_id != lane->network_id ||
         ack->generation != lane->generation ||
+        ack->batch_index != lane->batch_index ||
         ack->parent_id != lane->parent_id || ack->child_id != lane->local_id ||
         ack->kind != lane->kind) {
         return false;
@@ -335,6 +390,25 @@ bool survey_response_lane_note_ack(
     bundle_count = bundle_count_for_records(lane->record_count);
     if (ack->sequence >= bundle_count ||
         (lane->attempted_mask & (UINT16_C(1) << ack->sequence)) == 0u) {
+        return false;
+    }
+    struct survey_response_bundle bundle = {
+        .network_id = lane->network_id, .generation = lane->generation,
+        .sender_id = lane->local_id, .parent_id = lane->parent_id,
+        .kind = lane->kind, .batch_index = lane->batch_index,
+        .sequence = ack->sequence,
+    };
+    struct survey_response_hop_ack expected;
+    uint8_t start = ack->sequence * SURVEY_RESPONSE_RECORDS_PER_BUNDLE;
+    bundle.record_count = lane->record_count - start;
+    if (bundle.record_count > SURVEY_RESPONSE_RECORDS_PER_BUNDLE) {
+        bundle.record_count = SURVEY_RESPONSE_RECORDS_PER_BUNDLE;
+    }
+    memcpy(bundle.records, &lane->records[start],
+           bundle.record_count * sizeof(bundle.records[0]));
+    if (survey_response_bundle_make_ack(&bundle, &expected) != PROTO_OK ||
+        !semantic_digest_equal(expected.bundle_digest, ack->bundle_digest,
+                               sizeof(expected.bundle_digest))) {
         return false;
     }
     lane->acked_mask |= (uint16_t)(UINT16_C(1) << ack->sequence);
@@ -502,7 +576,11 @@ static int survey_bundle_validate(const struct survey_response_bundle *bundle)
     if (bundle == NULL || bundle->network_id == 0u ||
         bundle->generation == 0u || bundle->sender_id == 0u ||
         bundle->parent_id == 0u || bundle->sender_id == bundle->parent_id ||
-        !kind_valid(bundle->kind) || bundle->record_count == 0u ||
+        !kind_valid(bundle->kind) ||
+        bundle->sequence >= SURVEY_RESPONSE_MAX_BUNDLES ||
+        bundle->batch_index >= SURVEY_MAX_BATCHES ||
+        (bundle->kind == SURVEY_RESPONSE_NEIGHBORS && bundle->batch_index != 0u) ||
+        bundle->record_count == 0u ||
         bundle->record_count > SURVEY_RESPONSE_RECORDS_PER_BUNDLE) {
         return PROTO_ERR_MALFORMED;
     }
@@ -547,7 +625,9 @@ int uwb_encode_survey_bundle(const struct survey_response_bundle *bundle,
     out[27] = (uint8_t)bundle->kind;
     out[28] = bundle->sequence;
     out[29] = bundle->record_count;
-    memcpy(&out[30], bundle->records,
+    out[30] = SURVEY_RESPONSE_WIRE_VERSION;
+    out[31] = bundle->batch_index;
+    memcpy(&out[32], bundle->records,
            (size_t)bundle->record_count * sizeof(bundle->records[0]));
     survey_sync_finish(out, total_len);
     *written = total_len;
@@ -571,7 +651,11 @@ int uwb_decode_survey_bundle(const uint8_t *data,
         return survey_sync_validate(data, data_len, data_len,
                                     MSG_UWB_SURVEY_BUNDLE);
     }
+    if (data[30] != SURVEY_RESPONSE_WIRE_VERSION) {
+        return PROTO_ERR_BAD_VERSION;
+    }
     memset(bundle, 0, sizeof(*bundle));
+    bundle->batch_index = data[31];
     bundle->network_id = proto_get_u32_le(&data[3]);
     bundle->generation = proto_get_u32_le(&data[7]);
     bundle->sender_id = proto_get_u64_le(&data[11]);
@@ -588,7 +672,7 @@ int uwb_decode_survey_bundle(const uint8_t *data,
     if (ret != PROTO_OK) {
         return ret;
     }
-    memcpy(bundle->records, &data[30],
+    memcpy(bundle->records, &data[32],
            (size_t)bundle->record_count * sizeof(bundle->records[0]));
     return survey_bundle_validate(bundle);
 }
@@ -598,6 +682,8 @@ static int survey_ack_validate(const struct survey_response_hop_ack *ack)
     return ack != NULL && ack->network_id != 0u && ack->generation != 0u &&
            ack->parent_id != 0u && ack->child_id != 0u &&
            ack->parent_id != ack->child_id && kind_valid(ack->kind) &&
+           ack->batch_index < SURVEY_MAX_BATCHES &&
+           (ack->kind != SURVEY_RESPONSE_NEIGHBORS || ack->batch_index == 0u) &&
            ack->sequence < SURVEY_RESPONSE_MAX_BUNDLES ?
         PROTO_OK : PROTO_ERR_MALFORMED;
 }
@@ -626,6 +712,9 @@ int uwb_encode_survey_hop_ack(const struct survey_response_hop_ack *ack,
     proto_put_u64_le(&out[19], ack->child_id);
     out[27] = (uint8_t)ack->kind;
     out[28] = ack->sequence;
+    out[29] = ack->batch_index;
+    out[30] = SURVEY_RESPONSE_WIRE_VERSION;
+    memcpy(&out[31], ack->bundle_digest, sizeof(ack->bundle_digest));
     survey_sync_finish(out, UWB_SURVEY_HOP_ACK_LEN);
     *written = UWB_SURVEY_HOP_ACK_LEN;
     return PROTO_OK;
@@ -645,6 +734,11 @@ int uwb_decode_survey_hop_ack(const uint8_t *data,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (data[30] != SURVEY_RESPONSE_WIRE_VERSION) {
+        return PROTO_ERR_BAD_VERSION;
+    }
+    ack->batch_index = data[29];
+    memcpy(ack->bundle_digest, &data[31], sizeof(ack->bundle_digest));
     ack->network_id = proto_get_u32_le(&data[3]);
     ack->generation = proto_get_u32_le(&data[7]);
     ack->parent_id = proto_get_u64_le(&data[11]);
@@ -652,4 +746,29 @@ int uwb_decode_survey_hop_ack(const uint8_t *data,
     ack->kind = (enum survey_response_kind)data[27];
     ack->sequence = data[28];
     return survey_ack_validate(ack);
+}
+
+int survey_response_bundle_make_ack(
+    const struct survey_response_bundle *bundle,
+    struct survey_response_hop_ack *ack)
+{
+    uint8_t canonical[UWB_SURVEY_BUNDLE_MAX_LEN];
+    size_t length;
+    int ret;
+
+    if (ack == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = uwb_encode_survey_bundle(bundle, canonical, sizeof(canonical), &length);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    *ack = (struct survey_response_hop_ack) {
+        .network_id = bundle->network_id, .generation = bundle->generation,
+        .parent_id = bundle->parent_id, .child_id = bundle->sender_id,
+        .kind = bundle->kind, .batch_index = bundle->batch_index,
+        .sequence = bundle->sequence,
+    };
+    return semantic_digest_sha256(canonical, length, ack->bundle_digest) ?
+        PROTO_OK : PROTO_ERR_MALFORMED;
 }

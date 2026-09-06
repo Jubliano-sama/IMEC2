@@ -18,10 +18,18 @@ from tools.gateway_gui.survey_timing import (
     survey_ranging_phase_ms,
     survey_response_lane_ms,
     survey_wave_stride_ms,
+    survey_batch_queue_budget_ms,
+    SURVEY_HARD_CAP_MS,
 )
 
 
 class SurveyTimingTests(unittest.TestCase):
+    def test_depth_eight_full_pair_queue_exceeds_one_generation_even_when_split(self) -> None:
+        self.assertGreater(survey_batch_queue_budget_ms(8, (100,)), SURVEY_HARD_CAP_MS)
+        self.assertGreater(survey_batch_queue_budget_ms(8, (50, 50)), SURVEY_HARD_CAP_MS)
+        self.assertLess(survey_batch_queue_budget_ms(8, (60,)), SURVEY_HARD_CAP_MS)
+        self.assertLess(survey_batch_queue_budget_ms(1, (100,)), SURVEY_HARD_CAP_MS)
+
     def test_success_offsets_survive_restart_and_keep_topology_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "survey-timing.json"
@@ -77,12 +85,12 @@ class SurveyTimingTests(unittest.TestCase):
 
     def test_neighbor_estimate_uses_depth_and_sparse_slot_span(self) -> None:
         self.assertEqual(survey_control_delivery_ms(3), 3_830)
-        self.assertEqual(survey_response_lane_ms(3), 5_250)
-        self.assertEqual(survey_neighbor_phase_ms(3, 3), 22_120)
+        self.assertEqual(survey_response_lane_ms(3), 8_250)
+        self.assertEqual(survey_neighbor_phase_ms(3, 3), 25_120)
 
     def test_ranging_estimate_uses_accepted_wave_count_and_drain(self) -> None:
-        self.assertEqual(survey_wave_stride_ms(3), 5_950)
-        self.assertEqual(survey_ranging_phase_ms(3, 2), 27_630)
+        self.assertEqual(survey_wave_stride_ms(3), 8_950)
+        self.assertEqual(survey_ranging_phase_ms(3, 2), 39_630)
 
     def test_phase_snapshot_saturates_without_becoming_a_deadline(self) -> None:
         estimate = ScheduledPhaseEstimate("routes", "Refresh routes", 10.0, 1_000)

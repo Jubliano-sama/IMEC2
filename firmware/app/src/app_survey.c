@@ -84,6 +84,10 @@ struct app_survey_gateway_state {
         struct survey_signal_record signals[SURVEY_MAX_SIGNAL_RECORDS];
     } records;
     struct survey_event last_event;
+    /* Payloads stay in graph/plan/records until their host admission. */
+    uint16_t publication_partial[SURVEY_EVENT_SIGNALS + 1u];
+    uint8_t publication_status[SURVEY_EVENT_SIGNALS + 1u];
+    uint8_t publication_pending;
     uint64_t node_ids_by_slot[SURVEY_MAX_ANCHORS];
     uint64_t result_received_mask[2];
     uint64_t signal_received_mask[2];
@@ -146,6 +150,7 @@ static struct app_survey_gateway_state gateway_state;
 static struct app_survey_anchor_state anchor_state;
 static struct protocol_rx_lifecycle anchor_rx_lifecycle;
 static struct k_work_delayable gateway_work;
+static struct k_work_delayable gateway_publication_work;
 static struct k_work_delayable anchor_work;
 K_MUTEX_DEFINE(survey_lock);
 
@@ -185,6 +190,33 @@ static bool anchor_rx_expire_locked(uint64_t now_ms)
     }
     anchor_rx_terminate_locked(false);
     return true;
+}
+
+void app_survey_anchor_begin_enumeration(uint32_t assignment_epoch)
+{
+    bool abort_owned_rf = false;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || assignment_epoch == 0u) {
+        return;
+    }
+    k_mutex_lock(&survey_lock, K_FOREVER);
+    (void)anchor_rx_expire_locked((uint64_t)k_uptime_get());
+    if (anchor_state.active &&
+        anchor_state.identity.assignment.assignment_epoch != assignment_epoch) {
+        /* HIA/CLAIM already established gateway authority. Stop the previous
+         * producer before its TABLE arrives; its RF worker still owns and
+         * releases the physical lease through the ordinary abort path. */
+        abort_owned_rf = anchor_rx_lifecycle.mode ==
+                            PROTOCOL_RX_MODE_OWNED_RF_WORK;
+        anchor_rx_terminate_locked(true);
+        anchor_state.roster_valid = false;
+        (void)k_work_cancel_delayable(&anchor_work);
+    }
+    k_mutex_unlock(&survey_lock);
+    if (abort_owned_rf) {
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    }
 }
 
 static bool response_bit_get(const uint64_t bits[2], uint8_t index)
@@ -500,14 +532,9 @@ static int survey_lane_handle_raw(
     if (ret != PROTO_OK) {
         return 1;
     }
-    ack = (struct survey_response_hop_ack) {
-        .network_id = lane->network_id,
-        .generation = lane->generation,
-        .parent_id = lane->local_id,
-        .child_id = bundle.sender_id,
-        .kind = lane->kind,
-        .sequence = bundle.sequence,
-    };
+    if (survey_response_bundle_make_ack(&bundle, &ack) != PROTO_OK) {
+        return 1;
+    }
     ret = uwb_encode_survey_hop_ack(&ack, encoded, sizeof(encoded),
                                     &encoded_len);
     if (ret != PROTO_OK) {
@@ -522,6 +549,7 @@ static int survey_lane_handle_raw(
 
 static int anchor_run_response_lane(
     uint32_t generation,
+    uint8_t batch_index,
     enum survey_response_kind kind,
     uint64_t start_ms,
     uint64_t parent_id,
@@ -539,7 +567,7 @@ static int anchor_run_response_lane(
     int ret;
 
     ret = survey_response_lane_begin(&lane, NETWORK_ID, generation,
-                                     DEVICE_ID, parent_id, kind,
+                                     DEVICE_ID, parent_id, kind, batch_index,
                                      hop_count, max_hop_count, start_ms);
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
@@ -864,7 +892,7 @@ static int anchor_neighbor_sequence(
     sequence_end_ms = snapshot->neighbor_start_ms +
         survey_neighbor_sequence_duration_ms(snapshot->slot_span);
     ret = anchor_run_response_lane(
-        snapshot->identity.generation, SURVEY_RESPONSE_NEIGHBORS,
+        snapshot->identity.generation, 0u, SURVEY_RESPONSE_NEIGHBORS,
         sequence_end_ms + SURVEY_RESULT_PREPARE_MS,
         snapshot->parent_id, snapshot->hop_count,
         snapshot->identity.assignment.max_hop_count, records, record_count,
@@ -1132,7 +1160,8 @@ static int anchor_execute_plan(
             }
         }
         ret = anchor_run_response_lane(
-            snapshot->identity.generation, SURVEY_RESPONSE_RANGES,
+            snapshot->identity.generation, snapshot->plan.batch_index,
+            SURVEY_RESPONSE_RANGES,
             lane_start_ms, snapshot->parent_id, snapshot->hop_count,
             snapshot->identity.assignment.max_hop_count,
             records, snapshot->local_result_count, capture);
@@ -1337,6 +1366,99 @@ static void gateway_build_progress_event_locked(
         SURVEY_TERMINAL_COMPLETE : SURVEY_TERMINAL_PARTIAL;
 }
 
+/* One attempt per invocation bounds BLE work independently of radio deadlines.
+ * New plans/operations cannot overwrite payload backing until all authoritative
+ * publications have entered the retained BLE stream. No second event buffer is
+ * needed, including while terminal cleanup overtakes a blocked publication. */
+#define APP_SURVEY_PUBLICATION_RETRY_MS 100u
+_Static_assert(SURVEY_EVENT_SIGNALS < 8u,
+               "pending survey event kinds must fit their bounded mask");
+
+static void gateway_publication_schedule_locked(uint32_t delay_ms)
+{
+    if (k_work_reschedule(&gateway_publication_work, K_MSEC(delay_ms)) < 0) {
+        app_watchdog_stop_feeding();
+    }
+}
+
+static void gateway_publication_note_locked(const struct survey_event *event)
+{
+    uint8_t bit = (uint8_t)(1u << event->kind);
+
+    if ((gateway_state.publication_pending & bit) == 0u) {
+        gateway_state.publication_partial[event->kind] = event->partial_reasons;
+        gateway_state.publication_status[event->kind] = (uint8_t)event->status;
+        gateway_state.publication_pending |= bit;
+        gateway_publication_schedule_locked(0u);
+    }
+}
+
+static void gateway_publication_work_handler(struct k_work *work)
+{
+    static const enum survey_event_kind order[] = {
+        SURVEY_EVENT_NEIGHBOR_GRAPH, SURVEY_EVENT_SIGNALS,
+        SURVEY_EVENT_PLAN_ACCEPTED, SURVEY_EVENT_BATCH_COMPLETE,
+        SURVEY_EVENT_TERMINAL,
+    };
+    struct survey_event event;
+    struct app_survey_ops ops;
+    uint8_t bit = 0u;
+    int ret;
+
+    ARG_UNUSED(work);
+    memset(&event, 0, sizeof(event));
+    k_mutex_lock(&survey_lock, K_FOREVER);
+    for (size_t i = 0u; i < ARRAY_SIZE(order); i++) {
+        bit = (uint8_t)(1u << order[i]);
+        if ((gateway_state.publication_pending & bit) != 0u) {
+            event.kind = order[i];
+            break;
+        }
+    }
+    if (event.kind == 0u) {
+        k_mutex_unlock(&survey_lock);
+        return;
+    }
+    event.identity = gateway_state.identity;
+    if (event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
+        event.graph = gateway_state.graph;
+    } else if (event.kind == SURVEY_EVENT_SIGNALS) {
+        for (uint8_t ordinal = 0u; ordinal < SURVEY_MAX_SIGNAL_RECORDS;
+             ordinal++) {
+            if (signal_bit_get(gateway_state.signal_received_mask, ordinal)) {
+                event.records.signals[event.signal_count++] =
+                    gateway_state.records.signals[ordinal];
+            }
+        }
+    } else if (event.kind == SURVEY_EVENT_PLAN_ACCEPTED) {
+        event.plan = gateway_state.plan_build.plan;
+        event.batch_index = event.plan.batch_index;
+        event.final_batch = event.plan.final_batch;
+        event.skipped_count = gateway_state.plan_build.skipped_count;
+        memcpy(event.skipped, gateway_state.plan_build.skipped,
+               (size_t)event.skipped_count * sizeof(event.skipped[0]));
+    } else if (event.kind == SURVEY_EVENT_BATCH_COMPLETE) {
+        gateway_build_progress_event_locked(&event, event.kind);
+    } else {
+        event = gateway_state.last_event;
+    }
+    event.partial_reasons = gateway_state.publication_partial[event.kind];
+    event.status = gateway_state.publication_status[event.kind];
+    ops = survey_ops;
+    k_mutex_unlock(&survey_lock);
+
+    ret = ops.emit_event == NULL ? -ENOTSUP : ops.emit_event(&event);
+    k_mutex_lock(&survey_lock, K_FOREVER);
+    if (ret == 0) {
+        gateway_state.publication_pending &= (uint8_t)~bit;
+    }
+    if (gateway_state.publication_pending != 0u) {
+        gateway_publication_schedule_locked(
+            ret == 0 ? 0u : APP_SURVEY_PUBLICATION_RETRY_MS);
+    }
+    k_mutex_unlock(&survey_lock);
+}
+
 static void gateway_terminal_publish(struct survey_event *event)
 {
     struct app_survey_ops ops;
@@ -1345,11 +1467,9 @@ static void gateway_terminal_publish(struct survey_event *event)
     gateway_state.last_event = *event;
     gateway_state.active = false;
     gateway_state.stage = APP_SURVEY_GATEWAY_TERMINAL;
+    gateway_publication_note_locked(event);
     ops = survey_ops;
     k_mutex_unlock(&survey_lock);
-    if (ops.emit_event != NULL) {
-        (void)ops.emit_event(event);
-    }
     if (ops.gateway_terminal != NULL) {
         ops.gateway_terminal();
     }
@@ -1426,7 +1546,6 @@ static void gateway_work_handler(struct k_work *work)
         APP_SURVEY_GATEWAY_IDLE;
     bool queue_abort = false;
     bool publish = false;
-    bool publish_signals = false;
     bool terminal = false;
     int abort_ret = -ENOTSUP;
     int control_ret = -ENOTSUP;
@@ -1569,15 +1688,12 @@ static void gateway_work_handler(struct k_work *work)
             event.status = event.partial_reasons == 0u ?
                 SURVEY_TERMINAL_COMPLETE : SURVEY_TERMINAL_PARTIAL;
             gateway_state.last_event = event;
+            gateway_publication_note_locked(&event);
             gateway_work_reschedule_owned(
                 gateway_state.response_lane_end_ms,
                 "range-lane");
-            publish = true;
         }
         k_mutex_unlock(&survey_lock);
-        if (publish && ops.emit_event != NULL) {
-            (void)ops.emit_event(&event);
-        }
         if (ops.wake_gateway_rx != NULL) {
             ops.wake_gateway_rx();
         }
@@ -1664,8 +1780,13 @@ static void gateway_work_handler(struct k_work *work)
             gateway_state.hard_deadline_ms);
         gateway_work_reschedule_owned(gateway_state.plan_deadline_ms,
                                       "host-plan");
-        publish = true;
-        publish_signals = gateway_state.signal_count > 0u;
+        gateway_publication_note_locked(&event);
+        if (gateway_state.signal_count > 0u) {
+            event.kind = SURVEY_EVENT_SIGNALS;
+            event.status = SURVEY_TERMINAL_COMPLETE;
+            event.partial_reasons = 0u;
+            gateway_publication_note_locked(&event);
+        }
     } else if (gateway_state.stage == APP_SURVEY_GATEWAY_WAIT_PLAN &&
                now_ms >= gateway_state.plan_deadline_ms) {
         gateway_state.partial_reasons |=
@@ -1711,7 +1832,7 @@ static void gateway_work_handler(struct k_work *work)
                 gateway_work_reschedule_owned(
                     gateway_state.plan_deadline_ms,
                     "next-batch-plan");
-                publish = true;
+                gateway_publication_note_locked(&event);
             }
         } else {
             uint32_t stride_ms = survey_wave_stride_ms(
@@ -1780,24 +1901,12 @@ send_abort:
         }
         return;
     }
+    /* Progress is replaceable telemetry; authoritative events have priority. */
     if (publish && ops.emit_event != NULL) {
-        int emit_ret = ops.emit_event(&event);
-
-        if (emit_ret == 0 && publish_signals) {
-            k_mutex_lock(&survey_lock, K_FOREVER);
-            memset(&event, 0, sizeof(event));
-            event.kind = SURVEY_EVENT_SIGNALS;
-            event.identity = gateway_state.identity;
-            event.status = SURVEY_TERMINAL_COMPLETE;
-            for (uint8_t ordinal = 0u;
-                 ordinal < SURVEY_MAX_SIGNAL_RECORDS; ordinal++) {
-                if (signal_bit_get(gateway_state.signal_received_mask,
-                                   ordinal)) {
-                    event.records.signals[event.signal_count++] =
-                        gateway_state.records.signals[ordinal];
-                }
-            }
-            k_mutex_unlock(&survey_lock);
+        k_mutex_lock(&survey_lock, K_FOREVER);
+        bool publication_pending = gateway_state.publication_pending != 0u;
+        k_mutex_unlock(&survey_lock);
+        if (!publication_pending) {
             (void)ops.emit_event(&event);
         }
     }
@@ -1823,6 +1932,8 @@ int app_survey_init(const struct app_survey_ops *ops)
     k_mutex_unlock(&survey_lock);
 #if DEVICE_ROLE == ROLE_GATEWAY
     k_work_init_delayable(&gateway_work, gateway_work_handler);
+    k_work_init_delayable(&gateway_publication_work,
+                          gateway_publication_work_handler);
 #elif DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     k_work_init_delayable(&anchor_work, anchor_work_handler);
@@ -1843,6 +1954,7 @@ int app_survey_gateway_start(
         identity_out == NULL || roster->node_count == 0u ||
         roster->node_count > SURVEY_MAX_ANCHORS ||
         !survey_assignment_identity_valid(&roster->assignment) ||
+        survey_ops.next_generation == NULL ||
         survey_ops.send_control == NULL ||
         survey_ops.control_origin == NULL ||
         survey_ops.control_detach == NULL ||
@@ -1850,13 +1962,14 @@ int app_survey_gateway_start(
         return -EINVAL;
     }
     k_mutex_lock(&survey_lock, K_FOREVER);
-    if (gateway_state.active) {
+    if (gateway_state.active || gateway_state.publication_pending != 0u) {
         k_mutex_unlock(&survey_lock);
         return -EBUSY;
     }
-    generation = gateway_state.identity.generation + 1u;
-    if (generation == 0u) {
-        generation = 1u;
+    ret = survey_ops.next_generation(&generation);
+    if (ret < 0 || generation == 0u) {
+        k_mutex_unlock(&survey_lock);
+        return ret < 0 ? ret : -EIO;
     }
     memset(&gateway_state, 0, sizeof(gateway_state));
     gateway_state.identity.generation = generation;
@@ -1956,7 +2069,7 @@ int app_survey_gateway_submit_plan(
         return -EINVAL;
     }
     k_mutex_lock(&survey_lock, K_FOREVER);
-    if (!gateway_state.active ||
+    if (!gateway_state.active || gateway_state.publication_pending != 0u ||
         gateway_state.stage != APP_SURVEY_GATEWAY_WAIT_PLAN) {
         k_mutex_unlock(&survey_lock);
         return -EBUSY;
@@ -2215,115 +2328,128 @@ int app_survey_gateway_handle_bundle(
     struct survey_response_hop_ack *ack)
 {
     struct enumeration_response_timing timing;
+    struct survey_response_hop_ack accepted_ack;
     int ret = 0;
 
     if (DEVICE_ROLE != ROLE_GATEWAY || bundle == NULL || ack == NULL ||
         bundle->network_id != NETWORK_ID || bundle->parent_id != DEVICE_ID) {
         return -EINVAL;
     }
+    if (survey_response_bundle_make_ack(bundle, &accepted_ack) != PROTO_OK) {
+        return -EBADMSG;
+    }
     k_mutex_lock(&survey_lock, K_FOREVER);
-    if (!gateway_state.active || bundle->generation !=
+    if (!gateway_state.active ||
+        (gateway_state.stage != APP_SURVEY_GATEWAY_NEIGHBORS &&
+         gateway_state.stage != APP_SURVEY_GATEWAY_EXECUTING) ||
+        bundle->generation !=
             gateway_state.identity.generation ||
         bundle->kind != gateway_state.response_kind ||
+        bundle->batch_index != (bundle->kind == SURVEY_RESPONSE_NEIGHBORS ?
+            0u : gateway_state.plan_build.plan.batch_index) ||
         !enumeration_response_timing_at_depth(
             gateway_state.response_lane_start_ms, received_at_ms,
             gateway_state.identity.assignment.max_hop_count, &timing)) {
         ret = -ESTALE;
         goto out;
     }
-    for (uint8_t i = 0u; i < bundle->record_count; i++) {
-        if (bundle->kind == SURVEY_RESPONSE_NEIGHBORS) {
-            if (bundle->records[i].bytes[0] < SURVEY_MAX_ANCHORS) {
-                struct survey_neighbor_report report;
+    /* Preflight the full immutable bundle under the same lock before any
+     * graph/result mutation. The codec has already rejected duplicate keys. */
+    for (unsigned pass = 0u; pass < 2u; pass++) {
+        for (uint8_t i = 0u; i < bundle->record_count; i++) {
+            if (bundle->kind == SURVEY_RESPONSE_NEIGHBORS) {
+                if (bundle->records[i].bytes[0] < SURVEY_MAX_ANCHORS) {
+                    struct survey_neighbor_report report;
 
-                if (survey_neighbor_report_decode(
-                        bundle->records[i].bytes,
-                        sizeof(bundle->records[i].bytes), &report) !=
-                        PROTO_OK ||
-                    survey_graph_note_report(&gateway_state.graph, &report) !=
-                        PROTO_OK) {
-                    ret = -EBADMSG;
-                    goto out;
-                }
-            } else {
-                struct survey_signal_record signal;
-                uint8_t owner;
-                uint8_t base;
-                uint8_t levels[SURVEY_SIGNAL_LEVELS_PER_RECORD];
-                uint8_t ordinal = (uint8_t)(
-                    bundle->records[i].bytes[0] - SURVEY_MAX_ANCHORS);
-
-                memcpy(signal.bytes, bundle->records[i].bytes,
-                       sizeof(signal.bytes));
-                if (ordinal >= SURVEY_MAX_SIGNAL_RECORDS ||
-                    survey_signal_record_decode(&signal, &owner, &base,
-                                                levels) != PROTO_OK ||
-                    (gateway_state.graph.occupied_slot_mask &
-                     (UINT64_C(1) << owner)) == 0u) {
-                    ret = -EBADMSG;
-                    goto out;
-                }
-                if (signal_bit_get(gateway_state.signal_received_mask,
-                                   ordinal)) {
-                    if (memcmp(&gateway_state.records.signals[ordinal],
-                               &signal, sizeof(signal)) != 0) {
-                        ret = -ESTALE;
+                    if (survey_neighbor_report_decode(
+                            bundle->records[i].bytes,
+                            sizeof(bundle->records[i].bytes), &report) !=
+                            PROTO_OK ||
+                        (gateway_state.graph.occupied_slot_mask &
+                         (UINT64_C(1) << report.own_slot)) == 0u ||
+                        ((gateway_state.graph.received_report_mask &
+                          (UINT64_C(1) << report.own_slot)) != 0u &&
+                         memcmp(&gateway_state.graph.reports[report.own_slot],
+                                &report, sizeof(report)) != 0)) {
+                        ret = -EBADMSG;
                         goto out;
                     }
+                    if (pass != 0u) {
+                        (void)survey_graph_note_report(&gateway_state.graph, &report);
+                    }
                 } else {
-                    gateway_state.records.signals[ordinal] = signal;
-                    signal_bit_set(gateway_state.signal_received_mask,
-                                   ordinal);
-                    gateway_state.signal_count++;
-                }
-            }
-        } else {
-            struct survey_range_result result;
-            const struct survey_plan_pair *pair;
+                    struct survey_signal_record signal;
+                    uint8_t owner;
+                    uint8_t base;
+                    uint8_t levels[SURVEY_SIGNAL_LEVELS_PER_RECORD];
+                    uint8_t ordinal = (uint8_t)(
+                        bundle->records[i].bytes[0] - SURVEY_MAX_ANCHORS);
 
-            if (survey_range_result_decode(bundle->records[i].bytes,
-                                           sizeof(bundle->records[i].bytes),
-                                           &result) != PROTO_OK ||
-                result.pair_index >=
-                    gateway_state.plan_build.plan.pair_count) {
-                ret = -EBADMSG;
-                goto out;
-            }
-            pair = &gateway_state.plan_build.plan.pairs[result.pair_index];
-            if (result.responder_slot != pair->responder_slot) {
-                ret = -ESTALE;
-                goto out;
-            }
-            if (response_bit_get(gateway_state.result_received_mask,
-                                 result.pair_index)) {
-                if (memcmp(&gateway_state.records.results[result.pair_index],
-                           &result, sizeof(result)) != 0) {
+                    memcpy(signal.bytes, bundle->records[i].bytes,
+                           sizeof(signal.bytes));
+                    if (ordinal >= SURVEY_MAX_SIGNAL_RECORDS ||
+                        survey_signal_record_decode(&signal, &owner, &base,
+                                                    levels) != PROTO_OK ||
+                        (gateway_state.graph.occupied_slot_mask &
+                         (UINT64_C(1) << owner)) == 0u) {
+                        ret = -EBADMSG;
+                        goto out;
+                    }
+                    if (signal_bit_get(gateway_state.signal_received_mask,
+                                       ordinal)) {
+                        if (memcmp(&gateway_state.records.signals[ordinal],
+                                   &signal, sizeof(signal)) != 0) {
+                            ret = -ESTALE;
+                            goto out;
+                        }
+                    } else if (pass != 0u) {
+                        gateway_state.records.signals[ordinal] = signal;
+                        signal_bit_set(gateway_state.signal_received_mask,
+                                       ordinal);
+                        gateway_state.signal_count++;
+                    }
+                }
+            } else {
+                struct survey_range_result result;
+                const struct survey_plan_pair *pair;
+
+                if (survey_range_result_decode(bundle->records[i].bytes,
+                                               sizeof(bundle->records[i].bytes),
+                                               &result) != PROTO_OK ||
+                    result.pair_index >=
+                        gateway_state.plan_build.plan.pair_count) {
+                    ret = -EBADMSG;
+                    goto out;
+                }
+                pair = &gateway_state.plan_build.plan.pairs[result.pair_index];
+                if (result.responder_slot != pair->responder_slot) {
                     ret = -ESTALE;
                     goto out;
                 }
-            } else {
-                gateway_state.records.results[result.pair_index] = result;
-                response_bit_set(gateway_state.result_received_mask,
-                                 result.pair_index);
-                status_debug_printf(
-                    "DBG_SURVEY_RESULT_RX g=%u p=%u s=%u t=%llu "
-                    "d=%u r=%u ok=%u\n",
-                    gateway_state.identity.generation, result.pair_index,
-                    gateway_state.stride_index,
-                    (unsigned long long)(received_at_ms -
-                        gateway_state.response_lane_start_ms),
-                    timing.depth, timing.round, result.success_count);
+                if (response_bit_get(gateway_state.result_received_mask,
+                                     result.pair_index)) {
+                    if (memcmp(&gateway_state.records.results[result.pair_index],
+                               &result, sizeof(result)) != 0) {
+                        ret = -ESTALE;
+                        goto out;
+                    }
+                } else if (pass != 0u) {
+                    gateway_state.records.results[result.pair_index] = result;
+                    response_bit_set(gateway_state.result_received_mask,
+                                     result.pair_index);
+                    status_debug_printf(
+                        "DBG_SURVEY_RESULT_RX g=%u p=%u s=%u t=%llu "
+                        "d=%u r=%u ok=%u\n",
+                        gateway_state.identity.generation, result.pair_index,
+                        gateway_state.stride_index,
+                        (unsigned long long)(received_at_ms -
+                            gateway_state.response_lane_start_ms),
+                        timing.depth, timing.round, result.success_count);
+                }
             }
         }
     }
-    *ack = (struct survey_response_hop_ack) {
-        .network_id = NETWORK_ID,
-        .generation = gateway_state.identity.generation,
-        .parent_id = DEVICE_ID,
-        .child_id = bundle->sender_id,
-        .kind = bundle->kind,
-        .sequence = bundle->sequence,
-    };
+    *ack = accepted_ack;
 out:
     k_mutex_unlock(&survey_lock);
     return ret;

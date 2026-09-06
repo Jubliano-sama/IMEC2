@@ -1,6 +1,7 @@
 #include "gateway_ble_transport.h"
 
 #include <inttypes.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -291,8 +292,143 @@ static void test_disconnect_retries_same_cursor_chunk(void)
     CHECK_SIZE(retry_len, first_len);
 }
 
+static size_t ingress_frame(uint8_t type, uint16_t seq, uint8_t *frame)
+{
+    const uint8_t payload[] = {1u, 2u, 3u};
+    struct proto_packet value = packet(type, seq, sizeof(payload));
+    size_t len = 0u;
+
+    CHECK_INT(serial_frame_encode_packet(&value, payload, frame,
+                                         SERIAL_FRAME_MAX_LEN, &len), PROTO_OK);
+    return len;
+}
+
+static void test_receipt_reservation_and_command_fifo(void)
+{
+    struct gateway_ble_ingress ingress = {0};
+    struct gateway_ble_ingress_frame selected;
+    uint8_t frames[4][SERIAL_FRAME_MAX_LEN];
+    size_t lens[4];
+    uint8_t receipts = 0u;
+
+    for (uint16_t i = 0u; i < 4u; i++) {
+        lens[i] = ingress_frame(MSG_COMMAND, i + 1u, frames[i]);
+    }
+    for (size_t i = 0u; i < 3u; i++) {
+        CHECK_INT(gateway_ble_ingress_write(&ingress, frames[i], lens[i],
+                                            &receipts), 0);
+        CHECK_INT(receipts, 0);
+    }
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frames[3], lens[3],
+                                        &receipts), -ENOSPC);
+    lens[3] = ingress_frame(MSG_GATEWAY_HOST_RECEIPT, 44u, frames[3]);
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frames[3], lens[3],
+                                        &receipts), 0);
+    CHECK_INT(receipts, 1);
+    CHECK_INT(ingress.count, 4);
+    CHECK_INT(gateway_ble_ingress_take(&ingress, true, &selected), 0);
+    CHECK_SIZE(selected.len, lens[3]);
+    CHECK_TRUE(memcmp(selected.frame, frames[3], lens[3]) == 0);
+    CHECK_INT(gateway_ble_ingress_take(&ingress, true, &selected), -ENOENT);
+    /* A producer arriving after receipt extraction still cannot displace
+     * the reserved slot, and queued command-to-command order is unchanged. */
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frames[0], lens[0], NULL),
+              -ENOSPC);
+    for (size_t i = 0u; i < 3u; i++) {
+        CHECK_INT(gateway_ble_ingress_take(&ingress, false, &selected), 0);
+        CHECK_SIZE(selected.len, lens[i]);
+        CHECK_TRUE(memcmp(selected.frame, frames[i], lens[i]) == 0);
+    }
+    CHECK_INT(ingress.count, 0);
+}
+
+static void test_ingress_write_failure_is_atomic_at_every_chunk_boundary(void)
+{
+    uint8_t command[SERIAL_FRAME_MAX_LEN];
+    uint8_t receipt[SERIAL_FRAME_MAX_LEN];
+    uint8_t write[2u * SERIAL_FRAME_MAX_LEN];
+    size_t command_len = ingress_frame(MSG_COMMAND, 1u, command);
+    size_t receipt_len = ingress_frame(MSG_GATEWAY_HOST_RECEIPT, 2u, receipt);
+
+    for (size_t split = 0u; split < receipt_len; split++) {
+        struct gateway_ble_ingress ingress = {0};
+        struct gateway_ble_ingress saved;
+        struct gateway_ble_ingress_frame selected;
+        uint8_t receipts = 9u;
+        size_t write_len = receipt_len - split;
+
+        for (size_t i = 0u; i < 3u; i++) {
+            CHECK_INT(gateway_ble_ingress_write(&ingress, command,
+                                                command_len, NULL), 0);
+        }
+        CHECK_INT(gateway_ble_ingress_write(&ingress, receipt, split, NULL), 0);
+        saved = ingress;
+        memcpy(write, &receipt[split], write_len);
+        memcpy(&write[write_len], command, command_len);
+        write_len += command_len;
+        /* The receipt prefix must not be admitted if the next frame in the
+         * same ATT write cannot fit. Retrying the identical write is safe. */
+        CHECK_INT(gateway_ble_ingress_write(&ingress, write, write_len,
+                                            &receipts), -ENOSPC);
+        CHECK_INT(receipts, 0);
+        CHECK_TRUE(memcmp(&saved, &ingress, sizeof(saved)) == 0);
+        CHECK_INT(gateway_ble_ingress_take(&ingress, false, &selected), 0);
+        CHECK_INT(gateway_ble_ingress_write(&ingress, write, write_len,
+                                            &receipts), 0);
+        CHECK_INT(receipts, 1);
+        CHECK_INT(ingress.count, 4);
+        CHECK_INT(gateway_ble_ingress_take(&ingress, true, &selected), 0);
+        CHECK_SIZE(selected.len, receipt_len);
+        CHECK_TRUE(memcmp(selected.frame, receipt, receipt_len) == 0);
+    }
+}
+
+static void test_oversized_ingress_does_not_pin_next_frame(void)
+{
+    struct gateway_ble_ingress ingress = {0};
+    struct gateway_ble_ingress_frame selected;
+    uint8_t oversized[SERIAL_FRAME_MAX_LEN + 1u];
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    size_t len = ingress_frame(MSG_COMMAND, 5u, frame);
+
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frame, len, NULL), 0);
+    memset(oversized, 1, sizeof(oversized));
+    CHECK_INT(gateway_ble_ingress_write(&ingress, oversized,
+                                        sizeof(oversized) - 1u, NULL), 0);
+    CHECK_INT(gateway_ble_ingress_write(&ingress, &oversized[0], 1u, NULL),
+              -EMSGSIZE);
+    CHECK_INT(ingress.partial_len, 0);
+    CHECK_INT(ingress.count, 1);
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frame, len, NULL), 0);
+    CHECK_INT(gateway_ble_ingress_take(&ingress, false, &selected), 0);
+    CHECK_TRUE(memcmp(selected.frame, frame, len) == 0);
+    CHECK_INT(gateway_ble_ingress_take(&ingress, false, &selected), 0);
+    CHECK_TRUE(memcmp(selected.frame, frame, len) == 0);
+}
+
+static void test_ingress_reconnect_preserves_completed_frames(void)
+{
+    struct gateway_ble_ingress ingress = {0};
+    struct gateway_ble_ingress_frame selected;
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    size_t len = ingress_frame(MSG_GATEWAY_HOST_RECEIPT, 5u, frame);
+
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frame, len, NULL), 0);
+    CHECK_INT(gateway_ble_ingress_write(&ingress, frame, len / 2u, NULL), 0);
+    gateway_ble_ingress_reset_partial(&ingress);
+    CHECK_INT(ingress.partial_len, 0);
+    CHECK_INT(ingress.count, 1);
+    CHECK_INT(gateway_ble_ingress_take(&ingress, true, &selected), 0);
+    CHECK_SIZE(selected.len, len);
+    CHECK_TRUE(memcmp(selected.frame, frame, len) == 0);
+}
+
 int main(void)
 {
+    test_receipt_reservation_and_command_fifo();
+    test_ingress_write_failure_is_atomic_at_every_chunk_boundary();
+    test_ingress_reconnect_preserves_completed_frames();
+    test_oversized_ingress_does_not_pin_next_frame();
     test_negotiated_att_limits();
     test_serial_stream_arbitrary_boundaries();
     test_tx_cursor_retry_and_mtu_change();

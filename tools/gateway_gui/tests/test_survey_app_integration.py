@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import unittest
+import queue
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,8 @@ from tools.gateway_gui.anchor_geometry import AnchorPairDistance
 from tools.gateway_gui.command_orchestration import GatewayCommandDispatch
 from tools.gateway_gui.delivery_dedup import GatewayPacketDeduplicator
 from tools.gateway_gui.protocol import (
+    CMD_SURVEY_GET_STATUS,
+    CMD_SURVEY_CANCEL,
     CMD_SURVEY_PLAN,
     CMD_SURVEY_START,
     FLAG_GATEWAY_ACK_REQUIRED,
@@ -179,6 +182,117 @@ def gui_model() -> GatewayGui:
 
 
 class SurveyAppIntegrationTests(unittest.TestCase):
+    def recovery_gui(self) -> GatewayGui:
+        gui = gui_model()
+        gui.connected = True
+        gui.gateway_id = GATEWAY_ID
+        gui._survey_gateway_id = GATEWAY_ID
+        gui.host_id_text = FakeVariable(hex(HOST_ID))
+        gui._next_identity = Mock(side_effect=((50, 1), (51, 2), (52, 3)))
+        gui._survey_event_due_at = 0.0
+        gui._clear_scheduled_phase_estimate = Mock()
+        return gui
+
+    def test_lost_events_get_three_owned_status_attempts_then_unknown_failure(self) -> None:
+        gui = self.recovery_gui()
+        gui.survey_model.generation = 9
+        for index in range(3):
+            with patch("tools.gateway_gui.app.time.monotonic", return_value=index * 61.0):
+                gui._reconcile_stalled_survey()
+                pending = gui.survey_command_owner.pending
+                self.assertEqual(pending.command_id, CMD_SURVEY_GET_STATUS)
+                gui._reconcile_stalled_survey()
+                self.assertIs(gui.survey_command_owner.pending, pending)
+                gui._observe_survey_command_result(result_packet(
+                    CMD_SURVEY_GET_STATUS, pending.session_id, pending.sequence, 0,
+                ))
+            self.assertTrue(gui.survey_model.active)
+        with patch("tools.gateway_gui.app.time.monotonic", return_value=183.0):
+            gui._reconcile_stalled_survey()
+        self.assertFalse(gui.survey_model.active)
+        self.assertIsNone(gui.survey_model.terminal_status)
+        self.assertIn("remote outcome is unknown", gui.survey_model.error)
+        self.assertEqual(gui._dispatch_gateway_command.call_count, 3)
+
+    def test_status_result_after_terminal_never_overwrites_terminal_outcome(self) -> None:
+        gui = self.recovery_gui()
+        gui._reconcile_stalled_survey()
+        pending = gui.survey_command_owner.pending
+        gui.survey_model.active = False
+        gui.survey_model.phase = "terminal"
+        gui.survey_model.terminal_status = 1
+        gui._survey_phase = "idle"
+        gui._observe_survey_command_result(result_packet(
+            CMD_SURVEY_GET_STATUS, pending.session_id, pending.sequence, 8,
+        ))
+        self.assertEqual(gui.survey_model.phase, "terminal")
+        self.assertEqual(gui.survey_model.terminal_status, 1)
+        self.assertIsNone(gui.survey_model.error)
+        gui._show_error.assert_not_called()
+
+    def test_status_result_preserves_recovered_long_ranging_schedule(self) -> None:
+        gui = self.recovery_gui()
+        gui._reconcile_stalled_survey()
+        pending = gui.survey_command_owner.pending
+        gui._survey_event_due_at = 1000.0
+        with patch("tools.gateway_gui.app.time.monotonic", return_value=10.0):
+            gui._observe_survey_command_result(result_packet(
+                CMD_SURVEY_GET_STATUS, pending.session_id, pending.sequence, 0,
+            ))
+        self.assertEqual(gui._survey_event_due_at, 1000.0)
+
+    def test_reconnect_to_other_gateway_cannot_query_old_survey_identity(self) -> None:
+        gui = self.recovery_gui()
+        gui.gateway_id += 1
+        gui._reconcile_stalled_survey()
+        self.assertFalse(gui.survey_model.active)
+        gui._dispatch_gateway_command.assert_not_called()
+
+    def test_oversized_plan_is_cancelled_before_dispatch_and_queue_is_retained(self) -> None:
+        gui = gui_model()
+        pairs = tuple((first, second) for first in range(20) for second in range(first + 1, 20))[:100]
+        gui._survey_pair_batches = (pairs,)
+        gui._survey_batch_cursor = 0
+        gui._cancel_survey = Mock()
+        gui._submit_survey_dispatch = Mock()
+        assignment = SurveyAssignmentIdentity(71, 81, bytes((0x5A,)) * 32, 20, 8)
+        gui._submit_next_survey_batch(9, assignment)
+        self.assertEqual(gui._survey_pair_batches, (pairs,))
+        gui._cancel_survey.assert_called_once()
+        gui._submit_survey_dispatch.assert_not_called()
+        self.assertIn("pair queue is retained", gui._show_error.call_args.args[0])
+
+    def test_event_drain_yields_with_backlog_and_does_not_expire_queued_packets(self) -> None:
+        gui = gui_model()
+        gui.root = Mock()
+        gui.events = queue.Queue()
+        for index in range(65):
+            gui.events.put({"kind": "packet", "received_at": 1.0, "index": index})
+        gui._handle_event = Mock()
+        gui._expire_gateway_command = Mock()
+        gui._expire_survey_command = Mock()
+        gui._reconcile_stalled_survey = Mock()
+        gui._update_scheduled_phase_progress = Mock()
+        gui._drain_events()
+        self.assertEqual(gui._handle_event.call_count, 64)
+        gui._expire_gateway_command.assert_not_called()
+        gui._expire_survey_command.assert_not_called()
+        gui.root.after.assert_called_once()
+        gui._drain_events()
+        self.assertEqual(gui._handle_event.call_count, 65)
+        gui._expire_gateway_command.assert_called_once()
+        gui._expire_survey_command.assert_called_once()
+
+    def test_event_callback_failure_propagates_and_next_drain_is_scheduled(self) -> None:
+        gui = gui_model()
+        gui.root = Mock()
+        gui.events = queue.Queue()
+        gui.events.put({"kind": "packet"})
+        gui._handle_event = Mock(side_effect=RuntimeError("semantic apply failed"))
+        with self.assertRaisesRegex(RuntimeError, "semantic apply failed"):
+            gui._drain_events()
+        gui.root.after.assert_called_once_with(50, gui._drain_events)
+
     def test_operator_disabled_edge_is_removed_from_range_and_neighbor_inputs(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         pairs = (
@@ -353,7 +467,7 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         self.assertIn("INTERNAL_ERROR", gui.survey_model.error or "")
         cast(Mock, gui._show_error).assert_called_once()
 
-    def test_survey_command_timeout_releases_controls(self) -> None:
+    def test_survey_command_timeout_keeps_run_for_bounded_reconciliation(self) -> None:
         gui = gui_model()
         gui.survey_command_owner.begin(
             CMD_SURVEY_PLAN,
@@ -369,8 +483,9 @@ class SurveyAppIntegrationTests(unittest.TestCase):
             gui._expire_survey_command()
 
         self.assertIsNone(gui.survey_command_owner.pending)
-        self.assertFalse(gui.survey_model.active)
-        self.assertEqual(gui.survey_model.steps["plan"].state, "failed")
+        self.assertTrue(gui.survey_model.active)
+        self.assertEqual(gui.survey_model.phase, "recovering")
+        self.assertEqual(gui._survey_phase, "recovering")
 
     def test_stale_geometry_completion_restarts_the_newest_pending_solve(self) -> None:
         gui = gui_model()

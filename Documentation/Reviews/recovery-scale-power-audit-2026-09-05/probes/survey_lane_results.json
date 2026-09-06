@@ -1,0 +1,82 @@
+{
+  "head": "474ef8600ef25b50da5c3dbc1dc30241178d166a",
+  "library": "/tmp/imec-recovery-scale-audit-c859cd2e/libcore.a",
+  "library_sha256": "a627d15e85e56bfd746a6faa9851407aaceb04951d4a96edd998dd3693f62f6b",
+  "source_sha256": "865bca8d33086fe823be92cbc98e83531c42322abb8c845a909888cdf267a7f8",
+  "deadline_seconds": 1.0,
+  "cases": [
+    {
+      "case": "compact30",
+      "status": "PASS",
+      "returncode": 0,
+      "stdout": "case=compact30 records=75 bundles=4 seed=265 prepare_enter\nprepare_return=0 offsets=43,0,57,26\n",
+      "stderr": "",
+      "elapsed_seconds": 0.000659
+    },
+    {
+      "case": "sparse30",
+      "status": "TIMEOUT",
+      "returncode": null,
+      "stdout": "case=sparse30 records=118 bundles=6 seed=8 prepare_enter\n",
+      "stderr": "",
+      "elapsed_seconds": 1.001825
+    },
+    {
+      "case": "pairs100_baseline",
+      "status": "PASS",
+      "returncode": 0,
+      "stdout": "case=pairs100_baseline records=100 bundles=5 seed=456 prepare_enter\nprepare_return=0 offsets=55,45,35,67,15\n",
+      "stderr": "",
+      "elapsed_seconds": 0.000834
+    },
+    {
+      "case": "pairs100",
+      "status": "TIMEOUT",
+      "returncode": null,
+      "stdout": "case=pairs100 records=100 bundles=5 seed=265 prepare_enter\n",
+      "stderr": "",
+      "elapsed_seconds": 1.001634
+    },
+    {
+      "case": "full50",
+      "status": "TIMEOUT",
+      "returncode": null,
+      "stdout": "case=full50 records=162 bundles=9 seed=0 prepare_enter\n",
+      "stderr": "",
+      "elapsed_seconds": 1.001109
+    },
+    {
+      "case": "merge_baseline",
+      "status": "PASS",
+      "returncode": 0,
+      "stdout": "case=merge_baseline merge_return=0 added=1 records=1->2 acked=1->0 attempted=1->0 prepared=0->255 all_acked=0\n",
+      "stderr": "",
+      "elapsed_seconds": 0.000788
+    },
+    {
+      "case": "merge_conflict",
+      "status": "FAIL",
+      "returncode": 1,
+      "stdout": "case=merge_conflict merge_return=-9 added=0 records=1->2 acked=1->1 attempted=1->1 prepared=0->255 all_acked=1\nprefix_retry_return=0 added=0 all_acked=1\nnext_round_bundle0_offset=255\nFAIL: rejected bundle changed custody; new record retained old upstream ACK\n",
+      "stderr": "",
+      "elapsed_seconds": 0.000562
+    },
+    {
+      "case": "replay_ack_new_generation",
+      "status": "PASS",
+      "returncode": 0,
+      "stdout": "case=replay_ack_new_generation old_generation=7 new_generation=8 payload_changed=1 prior_ack_accepted=0 all_acked=0\n",
+      "stderr": "",
+      "elapsed_seconds": 0.000651
+    },
+    {
+      "case": "replay_ack_same_generation",
+      "status": "FAIL",
+      "returncode": 1,
+      "stdout": "case=replay_ack_same_generation old_generation=7 new_generation=7 payload_changed=1 prior_ack_accepted=1 all_acked=1\nFAIL: old lane ACK retired changed data in a later lane\n",
+      "stderr": "",
+      "elapsed_seconds": 0.000629
+    }
+  ],
+  "contract_passed": false
+}

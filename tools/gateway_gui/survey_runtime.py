@@ -14,6 +14,7 @@ from .command_telemetry import (
 from .diagnostic_models import anchor_label
 from .protocol import (
     CMD_SURVEY_CANCEL,
+    CMD_SURVEY_GET_STATUS,
     CMD_SURVEY_PLAN,
     CMD_SURVEY_START,
     SURVEY_EVENT_BATCH_COMPLETE,
@@ -96,7 +97,7 @@ class SurveyCommandOwner:
     ) -> bool:
         if self.pending is not None:
             return False
-        if command_id not in (CMD_SURVEY_START, CMD_SURVEY_PLAN, CMD_SURVEY_CANCEL):
+        if command_id not in (CMD_SURVEY_START, CMD_SURVEY_PLAN, CMD_SURVEY_CANCEL, CMD_SURVEY_GET_STATUS):
             raise ValueError("survey command owner received an unrelated command")
         if session_id == 0 or sequence == 0 or timeout_s <= 0.0:
             raise ValueError("survey command identity and timeout must be nonzero")
@@ -209,6 +210,7 @@ class SurveyOperationModel:
         self._clear_run()
 
     def _clear_run(self) -> None:
+        self._applied_events: deque[SurveyEvent] = deque(maxlen=256)
         self.active = False
         self.phase = "idle"
         self.expected_anchor_count = 0
@@ -536,7 +538,9 @@ class SurveyOperationModel:
             self.phase = "ranging"
             return
         step = "neighbors" if command_id == CMD_SURVEY_START else "plan"
-        self.fail(step, "Gateway command result timed out")
+        self.error = "Gateway command result timed out; the remote outcome is unknown"
+        self.phase = "recovering"
+        self._set_step(step, "warning", self.error)
 
     def set_requested_pairs(self, pairs: tuple[tuple[int, int], ...]) -> None:
         normalized = tuple((min(a, b), max(a, b)) for a, b in pairs)
@@ -624,6 +628,8 @@ class SurveyOperationModel:
                 "survey event does not match the active generation and assignment"
             )
 
+        if event in self._applied_events:
+            return False
         self.partial_reasons |= event.partial_reasons
         if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
             self._observe_neighbor_graph(event)
@@ -639,6 +645,7 @@ class SurveyOperationModel:
             self._observe_ranges(event)
         else:  # The decoder rejects this, but the model remains fail closed.
             raise SurveyStateError(f"unsupported survey event kind {event.kind}")
+        self._applied_events.append(event)
         return True
 
     def _observe_signals(self, event: SurveyEvent) -> None:

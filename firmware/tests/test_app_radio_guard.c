@@ -6,6 +6,12 @@
 
 static int64_t test_uptime_ms;
 static uint32_t watchdog_stop_calls;
+static uint32_t restart_calls;
+
+void app_watchdog_schedule_terminal_restart(void)
+{
+    restart_calls++;
+}
 
 int64_t k_uptime_get(void)
 {
@@ -144,5 +150,6 @@ int main(void)
     test_compatibility_stop_cannot_clear_scoped_owner();
     test_scan_admission_reopen_preserves_click_owner();
     test_failed_parking_poison_retains_owner_and_blocks_rearm();
+    assert(restart_calls == 1u);
     return 0;
 }

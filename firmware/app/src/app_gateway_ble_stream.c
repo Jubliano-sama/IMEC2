@@ -275,6 +275,36 @@ bool gateway_ble_should_stream_packet(uint8_t msg_type,
     return priority_for_class(classified) != UINT8_MAX;
 }
 
+bool gateway_ble_stream_requires_host_receipt(const struct proto_packet *packet)
+{
+    if (packet == NULL) {
+        return false;
+    }
+
+    /* Only the durable assignment publisher is command-event host custody.
+     * Generic observability packets are self-addressed best-effort telemetry. */
+    if (packet->msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+        return packet->flags == FLAG_GATEWAY_ACK_REQUIRED;
+    }
+    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_SURVEY_EVENT:
+        return true;
+    case MSG_MESH_DATA:
+        return (packet->flags & FLAG_DIAGNOSTIC) != 0u;
+    default:
+        return false;
+    }
+}
+
 void gateway_ble_stream_init(struct gateway_ble_stream_state *state)
 {
     if (state != NULL) {

@@ -6,6 +6,20 @@
 #define MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS 380u
 #define MESH_RADIO_ACTIVITY_COMPLETION_US 15000u
 #define MESH_RADIO_WAKE_TRAIN_MS 500u
+/* Receiver cadence bound shared by runtime admission and complete-frame tests.
+ * 40 ms covers reset/configure/release; reserve the whole 10 ms RX slice. */
+#define MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS 40u
+#define MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS 10u
+#define MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS \
+    (MESH_RADIO_WAKE_TRAIN_MS - MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS - \
+     MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS - \
+     (MESH_RADIO_ACTIVITY_COMPLETION_US / 1000u))
+#define MESH_RADIO_RECEIVER_SCAN_PERIOD_MAX_MS \
+    (MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS + \
+     MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS + MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS)
+#define MESH_RADIO_UPLINK_WAKE_TRAIN_MS \
+    (2u * (MESH_RADIO_RECEIVER_SCAN_PERIOD_MAX_MS + \
+           MESH_RADIO_ACTIVITY_COMPLETION_US / 1000u))
 /* Here-I-Am is the ordinary 500 ms wake train with an activation suffix;
  * matching CLAIM stays wake-free. The separate malformed-frame listener may
  * remain armed for 1,000 ms, but it must not lengthen the transmitted train. */

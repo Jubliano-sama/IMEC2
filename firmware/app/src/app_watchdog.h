@@ -15,6 +15,7 @@
 #define APP_WATCHDOG_PROGRESS_LEASE_MS 2700000u
 #define APP_WATCHDOG_STARTUP_GRACE_MS 900000u
 #define APP_WATCHDOG_INIT_RETRY_DELAY_MS 1000u
+#define APP_WATCHDOG_TERMINAL_RESTART_DELAY_MS 1000u
 
 struct app_watchdog_health {
     uint32_t feeds;
@@ -53,6 +54,9 @@ uint32_t app_watchdog_clicker_action_begin(void);
 bool app_watchdog_note_clicker_action_progress(uint32_t generation);
 bool app_watchdog_clicker_action_end(uint32_t generation);
 void app_watchdog_stop_feeding(void);
+/* After stopping feeds for an unrecoverable radio fault, reset promptly.
+ * The first request owns the deadline; repeated faults cannot postpone it. */
+void app_watchdog_schedule_terminal_restart(void);
 void app_watchdog_get_health(struct app_watchdog_health *health);
 
 #endif

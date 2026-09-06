@@ -3,6 +3,7 @@
 
 #include "enumeration_response_lane.h"
 #include "survey.h"
+#include "semantic_digest.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,12 +22,13 @@ extern "C" {
      SURVEY_RESPONSE_RECORDS_PER_BUNDLE)
 #define SURVEY_RESPONSE_NO_OFFSET ENUMERATION_RESPONSE_NO_OFFSET
 #define UWB_SURVEY_PRESENCE_LEN 22u
-#define UWB_SURVEY_BUNDLE_BASE_LEN 32u
+#define UWB_SURVEY_BUNDLE_BASE_LEN 34u
 #define UWB_SURVEY_BUNDLE_MAX_LEN \
     (UWB_SURVEY_BUNDLE_BASE_LEN + \
      (SURVEY_RESPONSE_RECORDS_PER_BUNDLE * \
       SURVEY_RESPONSE_RECORD_WIRE_LEN))
-#define UWB_SURVEY_HOP_ACK_LEN 31u
+#define UWB_SURVEY_HOP_ACK_LEN 65u
+#define SURVEY_RESPONSE_WIRE_VERSION 2u
 
 enum survey_response_kind {
     SURVEY_RESPONSE_NEIGHBORS = 1,
@@ -42,6 +44,7 @@ struct survey_response_bundle {
     uint32_t generation;
     uint64_t sender_id;
     uint64_t parent_id;
+    uint8_t batch_index;
     enum survey_response_kind kind;
     uint8_t sequence;
     uint8_t record_count;
@@ -49,10 +52,12 @@ struct survey_response_bundle {
 };
 
 struct survey_response_hop_ack {
+    uint8_t bundle_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t network_id;
     uint32_t generation;
     uint64_t parent_id;
     uint64_t child_id;
+    uint8_t batch_index;
     enum survey_response_kind kind;
     uint8_t sequence;
 };
@@ -74,6 +79,7 @@ struct survey_response_lane {
     uint16_t acked_mask;
     uint16_t attempted_mask;
     uint8_t round_offsets_ms[SURVEY_RESPONSE_MAX_BUNDLES];
+    uint8_t batch_index;
     enum survey_response_kind kind;
     uint8_t hop_count;
     uint8_t max_hop_count;
@@ -89,6 +95,7 @@ int survey_response_lane_begin(
     uint64_t local_id,
     uint64_t parent_id,
     enum survey_response_kind kind,
+    uint8_t batch_index,
     uint8_t hop_count,
     uint8_t max_hop_count,
     uint64_t start_ms);
@@ -124,6 +131,10 @@ uint8_t survey_response_lane_next_offset_ms(
 const struct survey_response_record *survey_response_lane_record(
     const struct survey_response_lane *lane,
     uint8_t index);
+
+int survey_response_bundle_make_ack(
+    const struct survey_response_bundle *bundle,
+    struct survey_response_hop_ack *ack);
 
 int uwb_encode_survey_presence(const struct survey_presence_frame *frame,
                                uint8_t *out,

@@ -29,6 +29,11 @@ LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
 #define DEBUG_CH5_TX_PULSE_MS 400u
 #define DEBUG_TX_BOOT_TEST_MS 600u
 
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(battery_pg), okay)
+static const struct gpio_dt_spec battery_pg =
+    GPIO_DT_SPEC_GET(DT_NODELABEL(battery_pg), gpios);
+#endif
+
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
 static const struct gpio_dt_spec status0_red = GPIO_DT_SPEC_GET(STATUS0_RED_NODE, gpios);
 #endif
@@ -141,6 +146,30 @@ static int configure_output(const struct gpio_dt_spec *gpio)
     return gpio_pin_configure_dt(gpio, GPIO_OUTPUT_INACTIVE);
 }
 
+int battery_usb_power_present(void)
+{
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(battery_pg), okay)
+    int ret;
+    int cleanup_ret;
+
+    if (!gpio_is_ready_dt(&battery_pg)) {
+        return -ENODEV;
+    }
+    ret = gpio_pin_configure_dt(&battery_pg, GPIO_INPUT);
+    if (ret == 0) {
+        /* PG is open-drain; let the temporary pull-up settle before reading. */
+        k_busy_wait(100u);
+        ret = gpio_pin_get_dt(&battery_pg);
+    }
+    /* Use the raw API so DT's pull-up flag cannot survive disconnection. */
+    cleanup_ret = gpio_pin_configure(battery_pg.port, battery_pg.pin,
+                                     GPIO_DISCONNECTED);
+    return cleanup_ret < 0 ? cleanup_ret : ret;
+#else
+    return -ENOTSUP;
+#endif
+}
+
 int battery_adc_divider_disable(void)
 {
 #if DT_NODE_HAS_STATUS(BATTERY_ADC_ENABLE_NODE, okay)
@@ -183,9 +212,8 @@ static int battery_adc_finish(int primary_ret)
         LOG_WRN("battery ADC divider cleanup failed: primary_ret=%d disable_ret=%d",
                 primary_ret,
                 disable_ret);
-        if (primary_ret == 0) {
-            return disable_ret;
-        }
+        /* An unproven off state is more serious than an unavailable sample. */
+        return disable_ret;
     }
     return primary_ret;
 }
@@ -230,7 +258,8 @@ int battery_sample_lithium_mv(uint16_t *battery_mv)
 
     ret = battery_adc_divider_enable();
     if (ret < 0) {
-        return ret;
+        /* Enable may already have driven the pin before a later GPIO error. */
+        return battery_adc_finish(ret);
     }
     k_msleep(6);
 

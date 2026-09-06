@@ -14,7 +14,7 @@ static void test_fixed_schedule_is_shallowest_first_with_forwarding_tails(void)
     struct enumeration_response_timing timing = {0};
     const uint64_t start_ms = 1000u;
 
-    assert(ENUMERATION_RESPONSE_LANE_MS == 19000u);
+    assert(ENUMERATION_RESPONSE_LANE_MS == 27000u);
     assert(!enumeration_response_timing_at(start_ms, start_ms - 1u, &timing));
     assert(enumeration_response_ms_until_lane(start_ms, start_ms - 1u) == 1u);
     assert(enumeration_response_timing_at(start_ms, start_ms, &timing));
@@ -26,7 +26,7 @@ static void test_fixed_schedule_is_shallowest_first_with_forwarding_tails(void)
            timing.round_offset_ms == 0u);
     assert(enumeration_response_timing_at(
         start_ms, start_ms + ENUMERATION_RESPONSE_LANE_MS - 1u, &timing));
-    assert(timing.depth == 8u && timing.round == 25u &&
+    assert(timing.depth == 8u && timing.round == 33u &&
            timing.round_offset_ms == 124u);
     assert(!enumeration_response_timing_at(
         start_ms, start_ms + ENUMERATION_RESPONSE_LANE_MS, &timing));
@@ -39,13 +39,13 @@ static void test_perceived_depth_expands_by_exactly_one_next_hop_band(void)
     struct enumeration_response_timing timing = {0};
     const uint64_t start_ms = 2000u;
 
-    assert(enumeration_response_duration_ms(1u) == 1500u);
-    assert(enumeration_response_duration_ms(2u) == 3250u);
-    assert(enumeration_response_duration_ms(3u) == 5250u);
-    assert(enumeration_response_duration_ms(UWB_ENUM_MAX_HOPS) == 19000u);
-    assert(enumeration_response_depth_duration_ms(1u) == 1500u);
-    assert(enumeration_response_depth_duration_ms(2u) == 1750u);
-    assert(enumeration_response_depth_duration_ms(3u) == 2000u);
+    assert(enumeration_response_duration_ms(1u) == 2500u);
+    assert(enumeration_response_duration_ms(2u) == 5250u);
+    assert(enumeration_response_duration_ms(3u) == 8250u);
+    assert(enumeration_response_duration_ms(UWB_ENUM_MAX_HOPS) == 27000u);
+    assert(enumeration_response_depth_duration_ms(1u) == 2500u);
+    assert(enumeration_response_depth_duration_ms(2u) == 2750u);
+    assert(enumeration_response_depth_duration_ms(3u) == 3000u);
     assert(enumeration_response_duration_ms(0u) == 0u);
     assert(enumeration_response_duration_ms(UWB_ENUM_MAX_HOPS + 1u) == 0u);
 
@@ -65,7 +65,7 @@ static void test_perceived_depth_expands_by_exactly_one_next_hop_band(void)
     assert(enumeration_response_timing_at_depth(
         start_ms, start_ms + enumeration_response_duration_ms(2u) - 1u, 2u,
         &timing));
-    assert(timing.depth == 2u && timing.round == 13u &&
+    assert(timing.depth == 2u && timing.round == 21u &&
            timing.round_offset_ms == 124u);
     assert(!enumeration_response_timing_at_depth(
         start_ms, start_ms + enumeration_response_duration_ms(2u), 2u,
@@ -418,7 +418,7 @@ static void test_last_child_round_leaves_parent_forward_and_retry_margin(void)
         start_ms + enumeration_response_duration_ms(2u) - 1u,
         2u,
         &timing));
-    assert(timing.depth == 2u && timing.round == 13u &&
+    assert(timing.depth == 2u && timing.round == 21u &&
            timing.round_offset_ms == 124u);
     assert(!enumeration_response_timing_at_depth(
         start_ms,
@@ -553,7 +553,7 @@ static void test_bundle_custody_and_uniform_retry_offsets(void)
     assert(enumeration_response_lane_prepare_round(&lane, 1u, 9u) == PROTO_OK);
     assert(enumeration_response_lane_round_offset_ms(&lane, 0u) ==
            ENUMERATION_RESPONSE_NO_OFFSET);
-    assert(enumeration_response_lane_round_offset_ms(&lane, 1u) == 9u);
+    assert(!enumeration_response_lane_all_acked(&lane));
     ack.sequence = 1u;
     assert(enumeration_response_lane_note_ack(&lane, &ack));
     assert(enumeration_response_lane_all_acked(&lane));
@@ -639,8 +639,50 @@ static void test_ack_reserve_bounds_every_source_offset_without_widening_round(v
     }
 }
 
+static void test_retry_admission_retains_custody_and_forwarding_capacity(void)
+{
+    unsigned deferred = 0u;
+    for (uint32_t seed = 0u; seed < 128u; seed++) {
+        struct enumeration_response_lane lane;
+        assert(enumeration_response_lane_begin(
+            &lane, 1u, 1u, 0x200u + seed, 0x100u, 1u, 1000u) == PROTO_OK);
+        lane.record_count = MESH_CONNECTED_MAX_ANCHORS;
+        for (uint8_t round = 0u;
+             round < ENUMERATION_RESPONSE_MAX_ROUNDS_PER_DEPTH; round++) {
+            assert(enumeration_response_lane_prepare_round(
+                &lane, round, seed) == PROTO_OK);
+            uint8_t first = enumeration_response_lane_round_offset_ms(&lane, 0u);
+            if (first == ENUMERATION_RESPONSE_NO_OFFSET) {
+                struct enumeration_response_timing timing = {1u, round, 0u};
+                struct uwb_enumeration_bundle_frame bundle;
+                deferred++;
+                assert(round > 0u && round < 12u);
+                assert(enumeration_response_lane_bundle_for_offset(
+                    &lane, &timing, &bundle) == PROTO_ERR_NOT_FOUND);
+                assert(enumeration_response_lane_next_offset_ms(
+                    &lane, &timing) == ENUMERATION_RESPONSE_NO_OFFSET);
+                assert(lane.acked_mask == 0u && lane.attempted_mask == 0u);
+                assert(!enumeration_response_lane_all_acked(&lane));
+            } else {
+                /* Every final source round and every forwarding round
+                 * retains space for the full five-bundle roster. */
+                for (uint8_t sequence = 0u;
+                     sequence < ENUMERATION_RESPONSE_MAX_BUNDLES; sequence++) {
+                    assert(enumeration_response_lane_round_offset_ms(
+                        &lane, sequence) < ENUMERATION_RESPONSE_TX_WINDOW_MS);
+                }
+            }
+            assert(enumeration_response_lane_prepare_round(
+                &lane, round, seed + 99u) == PROTO_OK);
+            assert(enumeration_response_lane_round_offset_ms(&lane, 0u) == first);
+        }
+    }
+    assert(deferred > 0u);
+}
+
 int main(void)
 {
+    test_retry_admission_retains_custody_and_forwarding_capacity();
     test_fixed_schedule_is_shallowest_first_with_forwarding_tails();
     test_perceived_depth_expands_by_exactly_one_next_hop_band();
     test_hia_pipeline_is_gateway_relative_and_two_depths_behind();

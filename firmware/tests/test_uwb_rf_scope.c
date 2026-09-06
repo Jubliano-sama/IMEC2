@@ -1,4 +1,5 @@
 #include "uwb_rf_scope.h"
+#include "mesh.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -49,7 +50,9 @@ static void test_roles_map_to_physical_layers(void)
     assert(uwb_rf_scope_build(UWB_RF_SCOPE_ROLE_ANCHOR,
                               UWB_RF_SCOPE_MAX_FORCED_RELAY_HOPS,
                               &scope) == 0);
-    assert(scope.layer == UWB_RF_SCOPE_MAX_FORCED_RELAY_HOPS + 1u);
+    assert(scope.layer == MESH_NETWORK_MAX_HOPS);
+    assert(uwb_rf_scope_build(UWB_RF_SCOPE_ROLE_ANCHOR, 8u, &scope) != 0);
+    assert(uwb_rf_scope_decode(0xc9u, &scope) != 0);
     assert(uwb_rf_scope_build(
                UWB_RF_SCOPE_ROLE_ANCHOR,
                (uint8_t)(UWB_RF_SCOPE_MAX_FORCED_RELAY_HOPS + 1u),

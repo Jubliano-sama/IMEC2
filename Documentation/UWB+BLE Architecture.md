@@ -213,18 +213,27 @@ Self-test traffic uses diagnostic flags and never sets the normal click flag. An
 | Blue chase | Self-test running |
 | Green solid for 2 seconds | Self-test passed or click accepted |
 | Amber blink once | Low battery warning |
-| Amber slow blink | Charging |
-| Green slow blink | Charged and idle on dock |
+| 100 ms battery-color pulse every second | Valid USB power; charging indication described below |
 | Red blink code repeated 3 times | Self-test failure, click failure, or module failure |
 
 The exact production anchor replaces the connected-routing debug lights and
 steady power LED with one 50 ms battery pulse every five seconds. It is red
 below 33%, blue from 33% through 66%, and green above 66%. The production
-clicker emits one 50 ms pulse every ten seconds: red below 20%, blue from 20%
-through 60%, and green above 60%. These thresholds linearly map the documented
-3.2-4.2 V cell range; ADC failures emit no possibly misleading color, and
-runtime samples remain in RAM. Forced-hop and synthetic test builds retain the
-channel-5 and channel-9 activity lights.
+clicker emits one pulse every five seconds: 15 ms red below 20%, 25 ms blue
+from 20% through 60%, and 25 ms green above 60%. It caches battery voltage in
+RAM, sampling hourly and once after returning to idle from a click/action
+burst. A sample enables the divider for 6 ms settling plus ADC setup and
+conversion, then disables it before lighting the LED.
+
+Valid USB power is detected from the charger's power-good pin on the existing
+indicator wake. On USB, the clicker samples every 30 seconds and emits a
+100 ms pulse every second: red below 20%, blue through 80%, one green above
+80%, and both green above 95%. Plug/unplug detection refreshes the sample.
+These thresholds linearly map the documented 3.2–4.2 V cell range and are
+voltage proxies, not a measured state of charge. The charger CHG signal is
+not sufficient to establish full charge independently. ADC failures emit no
+possibly misleading color, and runtime samples remain in RAM. Forced-hop
+and synthetic test builds retain the channel-5 and channel-9 activity lights.
 
 Self-test failure codes:
 
@@ -359,9 +368,13 @@ Assumptions:
 The production anchor battery pulse itself costs approximately 0.07 mAh/day
 for green or blue and 0.24 mAh/day for red, using the fitted low-current RGB
 LED, 1.2 kΩ series resistance, and the 50 ms / 5 s duty cycle. The production
-clicker's worst-case red pulse costs about 0.12 mAh/day at 50 ms / 10 s. ADC
-and MCU wake overhead is separate and must be confirmed in the production
-power profile.
+clicker's battery-only red pulse estimate is about 0.072 mAh/day at 15 ms /
+5 s, down from 0.12 mAh/day at 50 ms / 10 s; green/blue remains about
+0.035 mAh/day. These use the documented LED-current assumptions, not a current
+measurement. Hourly ADC sampling replaces the old ten-second sampling;
+ADC, temporary power-good sensing and MCU wake overhead are separate and
+must be confirmed in the production power profile. USB-powered indication
+uses the longer, faster pulses described above.
 
 The Stage 1 rxproof build now uses the same 380 ms / 5 ms scan setting as the normal anchor. Any future continuous-RX or over-budget debug profile is useful for proving the wake/discovery/range protocol path, but it must not be used for production battery sizing.
 

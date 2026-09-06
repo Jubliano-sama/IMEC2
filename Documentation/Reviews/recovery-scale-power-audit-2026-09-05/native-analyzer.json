@@ -1,0 +1,632 @@
+[
+  {
+    "file": "firmware/src/battery_status.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/debug_log.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/clicker_rtt_command.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/device_identity.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/discovery_assignment.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/dwm3000_runtime.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/dwm3000_timing.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/enumeration_response_lane.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/firmware_events.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/firmware_delivery_loss.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/firmware_state_click.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/firmware_state_control.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/firmware_state_mesh.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/firmware_state_radio.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/gateway_ble_transport.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/protocol.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/protocol_rx_lifecycle.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/gateway_membership.c",
+    "returncode": 0,
+    "output": "firmware/src/gateway_membership.c:831:36: warning: Array access (from variable 'out_node_ids') results in a null pointer dereference [core.NullDereference]\n  831 |             out_node_ids[cursor++] = roster->node_ids[slot];\n      |             ~~~~~~~~~~~~           ^\nfirmware/src/gateway_membership.c:810:9: note: Assuming 'out_count' is not equal to NULL\n  810 |     if (out_count == NULL || (out_node_ids == NULL && out_cap != 0u)) {\n      |         ^~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:810:9: note: Left side of '||' is false\nfirmware/src/gateway_membership.c:810:31: note: Assuming 'out_node_ids' is equal to NULL\n  810 |     if (out_count == NULL || (out_node_ids == NULL && out_cap != 0u)) {\n      |                               ^~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:810:31: note: Left side of '&&' is true\nfirmware/src/gateway_membership.c:810:55: note: Assuming 'out_cap' is equal to 0\n  810 |     if (out_count == NULL || (out_node_ids == NULL && out_cap != 0u)) {\n      |                                                       ^~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:810:5: note: Taking false branch\n  810 |     if (out_count == NULL || (out_node_ids == NULL && out_cap != 0u)) {\n      |     ^\nfirmware/src/gateway_membership.c:815:9: note: Assuming 'ret' is equal to PROTO_OK\n  815 |     if (ret != PROTO_OK) {\n      |         ^~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:815:5: note: Taking false branch\n  815 |     if (ret != PROTO_OK) {\n      |     ^\nfirmware/src/gateway_membership.c:818:9: note: Assuming 'membership_epoch' is not equal to 0\n  818 |     if (membership_epoch == 0u) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:818:5: note: Taking false branch\n  818 |     if (membership_epoch == 0u) {\n      |     ^\nfirmware/src/gateway_membership.c:821:9: note: Assuming 'membership_epoch' is equal to field 'membership_epoch'\n  821 |     if (roster->membership_epoch != membership_epoch) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:821:5: note: Taking false branch\n  821 |     if (roster->membership_epoch != membership_epoch) {\n      |     ^\nfirmware/src/gateway_membership.c:826:9: note: Assuming 'out_cap' is >= field 'node_count'\n  826 |     if (out_cap < roster->node_count) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:826:5: note: Taking false branch\n  826 |     if (out_cap < roster->node_count) {\n      |     ^\nfirmware/src/gateway_membership.c:829:28: note: Assuming 'slot' is < field 'slot_span'\n  829 |     for (size_t slot = 0u; slot < roster->slot_span; slot++) {\n      |                            ^~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:829:5: note: Loop condition is true.  Entering loop body\n  829 |     for (size_t slot = 0u; slot < roster->slot_span; slot++) {\n      |     ^\nfirmware/src/gateway_membership.c:830:13: note: Assuming the condition is true\n  830 |         if (roster->node_ids[slot] != 0u) {\n      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:830:9: note: Taking true branch\n  830 |         if (roster->node_ids[slot] != 0u) {\n      |         ^\nfirmware/src/gateway_membership.c:831:36: note: Array access (from variable 'out_node_ids') results in a null pointer dereference\n  831 |             out_node_ids[cursor++] = roster->node_ids[slot];\n      |             ~~~~~~~~~~~~           ^\nfirmware/src/gateway_membership.c:871:34: warning: Array access (from variable 'out_node_ids') results in a null pointer dereference [core.NullDereference]\n  871 |             out_node_ids[cursor] = roster->node_ids[slot];\n      |             ~~~~~~~~~~~~         ^\nfirmware/src/gateway_membership.c:849:9: note: Assuming 'out_count' is not equal to NULL\n  849 |     if (out_count == NULL ||\n      |         ^~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:849:9: note: Left side of '||' is false\nfirmware/src/gateway_membership.c:850:11: note: Assuming 'out_node_ids' is equal to NULL\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |           ^~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:850:32: note: Left side of '||' is true\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |                                ^\nfirmware/src/gateway_membership.c:850:57: note: Assuming 'out_cap' is equal to 0\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |                                                         ^~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:849:5: note: Taking false branch\n  849 |     if (out_count == NULL ||\n      |     ^\nfirmware/src/gateway_membership.c:855:9: note: Assuming 'ret' is equal to PROTO_OK\n  855 |     if (ret != PROTO_OK) {\n      |         ^~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:855:5: note: Taking false branch\n  855 |     if (ret != PROTO_OK) {\n      |     ^\nfirmware/src/gateway_membership.c:858:9: note: Assuming 'membership_epoch' is not equal to 0\n  858 |     if (membership_epoch == 0u) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:858:5: note: Taking false branch\n  858 |     if (membership_epoch == 0u) {\n      |     ^\nfirmware/src/gateway_membership.c:861:9: note: Assuming 'membership_epoch' is equal to field 'membership_epoch'\n  861 |     if (roster->membership_epoch != membership_epoch) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:861:5: note: Taking false branch\n  861 |     if (roster->membership_epoch != membership_epoch) {\n      |     ^\nfirmware/src/gateway_membership.c:866:9: note: Assuming 'out_cap' is >= field 'node_count'\n  866 |     if (out_cap < roster->node_count) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:866:5: note: Taking false branch\n  866 |     if (out_cap < roster->node_count) {\n      |     ^\nfirmware/src/gateway_membership.c:869:28: note: Assuming 'slot' is < field 'slot_span'\n  869 |     for (size_t slot = 0u; slot < roster->slot_span; slot++) {\n      |                            ^~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:869:5: note: Loop condition is true.  Entering loop body\n  869 |     for (size_t slot = 0u; slot < roster->slot_span; slot++) {\n      |     ^\nfirmware/src/gateway_membership.c:870:13: note: Assuming the condition is true\n  870 |         if (roster->node_ids[slot] != 0u) {\n      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:870:9: note: Taking true branch\n  870 |         if (roster->node_ids[slot] != 0u) {\n      |         ^\nfirmware/src/gateway_membership.c:871:34: note: Array access (from variable 'out_node_ids') results in a null pointer dereference\n  871 |             out_node_ids[cursor] = roster->node_ids[slot];\n      |             ~~~~~~~~~~~~         ^\nfirmware/src/gateway_membership.c:872:31: warning: Array access (from variable 'out_slots') results in a null pointer dereference [core.NullDereference]\n  872 |             out_slots[cursor] = (uint8_t)slot;\n      |             ~~~~~~~~~         ^\nfirmware/src/gateway_membership.c:849:9: note: Assuming 'out_count' is not equal to NULL\n  849 |     if (out_count == NULL ||\n      |         ^~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:849:9: note: Left side of '||' is false\nfirmware/src/gateway_membership.c:850:11: note: Assuming 'out_node_ids' is not equal to NULL\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |           ^~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:850:11: note: Left side of '||' is false\nfirmware/src/gateway_membership.c:850:35: note: Assuming 'out_slots' is equal to NULL\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |                                   ^~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:850:10: note: Left side of '&&' is true\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |          ^\nfirmware/src/gateway_membership.c:850:57: note: Assuming 'out_cap' is equal to 0\n  850 |         ((out_node_ids == NULL || out_slots == NULL) && out_cap != 0u)) {\n      |                                                         ^~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:849:5: note: Taking false branch\n  849 |     if (out_count == NULL ||\n      |     ^\nfirmware/src/gateway_membership.c:855:9: note: Assuming 'ret' is equal to PROTO_OK\n  855 |     if (ret != PROTO_OK) {\n      |         ^~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:855:5: note: Taking false branch\n  855 |     if (ret != PROTO_OK) {\n      |     ^\nfirmware/src/gateway_membership.c:858:9: note: Assuming 'membership_epoch' is not equal to 0\n  858 |     if (membership_epoch == 0u) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:858:5: note: Taking false branch\n  858 |     if (membership_epoch == 0u) {\n      |     ^\nfirmware/src/gateway_membership.c:861:9: note: Assuming 'membership_epoch' is equal to field 'membership_epoch'\n  861 |     if (roster->membership_epoch != membership_epoch) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:861:5: note: Taking false branch\n  861 |     if (roster->membership_epoch != membership_epoch) {\n      |     ^\nfirmware/src/gateway_membership.c:866:9: note: Assuming 'out_cap' is >= field 'node_count'\n  866 |     if (out_cap < roster->node_count) {\n      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:866:5: note: Taking false branch\n  866 |     if (out_cap < roster->node_count) {\n      |     ^\nfirmware/src/gateway_membership.c:869:28: note: Assuming 'slot' is < field 'slot_span'\n  869 |     for (size_t slot = 0u; slot < roster->slot_span; slot++) {\n      |                            ^~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:869:5: note: Loop condition is true.  Entering loop body\n  869 |     for (size_t slot = 0u; slot < roster->slot_span; slot++) {\n      |     ^\nfirmware/src/gateway_membership.c:870:13: note: Assuming the condition is true\n  870 |         if (roster->node_ids[slot] != 0u) {\n      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~\nfirmware/src/gateway_membership.c:870:9: note: Taking true branch\n  870 |         if (roster->node_ids[slot] != 0u) {\n      |         ^\nfirmware/src/gateway_membership.c:872:31: note: Array access (from variable 'out_slots') results in a null pointer dereference\n  872 |             out_slots[cursor] = (uint8_t)slot;\n      |             ~~~~~~~~~         ^\n3 warnings generated.\n"
+  },
+  {
+    "file": "firmware/src/gateway_command.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/uwb.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/uwb_rf_scope.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/uwb_ble_courtesy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/uwb_session.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_event_owner.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_event_owner_registry.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_packet_age.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_route_path.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/node_comm.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/node_transaction.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/operation_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/watchdog_adoption.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_preemption.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_runtime.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_relay.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/mesh_relay_channel9.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/report.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/serial_frame.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/stack_diag_transport.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/stack_budget.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/status.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/survey.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/survey_protocol.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/survey_response_lane.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/route.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/src/semantic_digest.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_clicker_event_runtime.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_anchor_click_event_runtime.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_operation_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_radio_guard.c",
+    "returncode": 0,
+    "output": "firmware/app/src/app_radio_guard.c:92:9: warning: Value stored to 'owner_reason' is never read [deadcode.DeadStores]\n   92 |         owner_reason = uwb_rf_owner_reason;\n      |         ^              ~~~~~~~~~~~~~~~~~~~\nfirmware/app/src/app_radio_guard.c:92:9: note: Value stored to 'owner_reason' is never read\n   92 |         owner_reason = uwb_rf_owner_reason;\n      |         ^              ~~~~~~~~~~~~~~~~~~~\nfirmware/app/src/app_radio_guard.c:93:9: warning: Value stored to 'owner_client' is never read [deadcode.DeadStores]\n   93 |         owner_client = uwb_rf_owner.client;\n      |         ^              ~~~~~~~~~~~~~~~~~~~\nfirmware/app/src/app_radio_guard.c:93:9: note: Value stored to 'owner_client' is never read\n   93 |         owner_client = uwb_rf_owner.client;\n      |         ^              ~~~~~~~~~~~~~~~~~~~\nfirmware/app/src/app_radio_guard.c:94:9: warning: Value stored to 'owner_since_ms' is never read [deadcode.DeadStores]\n   94 |         owner_since_ms = uwb_rf_owner_since_ms;\n      |         ^                ~~~~~~~~~~~~~~~~~~~~~\nfirmware/app/src/app_radio_guard.c:94:9: note: Value stored to 'owner_since_ms' is never read\n   94 |         owner_since_ms = uwb_rf_owner_since_ms;\n      |         ^                ~~~~~~~~~~~~~~~~~~~~~\n3 warnings generated.\n"
+  },
+  {
+    "file": "firmware/app/src/app_click_event_sequence.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_control_sequence.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_durable_state.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_durable_state.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm_sync.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm_sync.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm_sync.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm_sync.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_node_comm_gateway_route_refresh.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_flood.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_c5_priority.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_request_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_ingress.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_lifecycle.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_eack_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_collection_eack.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_collection_recovery.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_eack_retry.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_rf_retry.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_wake_train_politeness.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_ble_stream.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_observability.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_result.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_anchor_command_completion.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_anchor_command_completion.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_assignment_publisher.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_stack_workload_diag.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_stack_workload_diag.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_stack_diag_record.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_stack_diag_record.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_smoke_fast.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_c5_priority.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_request_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_async_route_request.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_gateway_command_flow.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_flood.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_direct_gateway_retry.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_event_retry.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_wake_train_politeness.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_ch9_ack.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_observability.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_ble_stream.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_flood.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_rx_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_preemption.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_collection_deferral.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_tx_handoff_gate.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_ready_handoff.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_reply_ack.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_wait_tx.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_gateway_ack_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_ch9_ack.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_ingress.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_lifecycle.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_observability.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_flood.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_rx_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_c5_priority.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_ch9_ack.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_request_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_ble_stream.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/dwm3000_driver_handler_contract.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/dwm3000_driver_test_seam.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_c5_priority.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_route_request_policy.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_ch9_ack.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_command_orchestrator.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_arbitration_zephyr.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_ingress.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_gateway_command_lifecycle.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_gateway_command_flow.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_preemption.c",
+    "returncode": 0,
+    "output": ""
+  },
+  {
+    "file": "firmware/app/src/app_mesh_flood.c",
+    "returncode": 0,
+    "output": ""
+  }
+]

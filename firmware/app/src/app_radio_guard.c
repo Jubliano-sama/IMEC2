@@ -187,6 +187,7 @@ int radio_guard_uwb_release_finish(struct radio_guard_uwb_lease *lease,
             ret);
         /* No unrelated progress may keep an unknown RF state alive. */
         app_watchdog_stop_feeding();
+        app_watchdog_schedule_terminal_restart();
     }
 #if defined(CONFIG_IMEC_GATEWAY_BLE)
     if (exit_quiet) {

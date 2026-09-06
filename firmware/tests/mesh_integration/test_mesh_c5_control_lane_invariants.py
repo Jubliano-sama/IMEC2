@@ -540,7 +540,7 @@ def main() -> None:
     assert "mesh_uplink_wake_train_ms()" in tracked_tx[
         train : tracked_tx.index("DBG_UPLINK_WAKE", train)
     ]
-    assert "MESH_UPLINK_WAKE_TRAIN_MS_FOR_INTERVAL(anchor_uwb_scan_interval_ms)" \
+    assert "return MESH_UPLINK_WAKE_TRAIN_MS;" \
         in source
 
     # --- Parent hop ACK: fixed channel-5 guard, then the causal response ---

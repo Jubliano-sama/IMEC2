@@ -313,6 +313,10 @@ void app_watchdog_stop_feeding(void)
     watchdog_stop_calls++;
 }
 
+void app_watchdog_schedule_terminal_restart(void)
+{
+}
+
 int dwm3000_driver_configure_wake_mode(void)
 {
     return 0;

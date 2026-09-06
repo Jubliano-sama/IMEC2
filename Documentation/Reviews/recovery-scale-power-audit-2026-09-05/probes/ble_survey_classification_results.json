@@ -1,0 +1,11 @@
+{
+  "head": "474ef8600ef25b50da5c3dbc1dc30241178d166a",
+  "source": "firmware/app/src/app_gateway_ble.c",
+  "source_line": 987,
+  "source_sha256": "e9ae426678c3e0f642f782623b4fac55d4543a449e9d90e535054e9be5547e01",
+  "function_sha256": "d4ea16279946ca3cf435bffe2d065cf6eb096b8f112acde567c6d8e800905a81",
+  "extracted_sha256": "3c63824cccf3f5b7854ea59644191991a36293dddc28e15211854cca8d773811",
+  "returncode": 0,
+  "stdout": "ACK-required MSG_SURVEY_EVENT: 0\nACK-required MSG_COMMAND_RESULT: 1\n",
+  "stderr": ""
+}

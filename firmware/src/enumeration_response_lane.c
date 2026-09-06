@@ -4,18 +4,20 @@
 
 #include <string.h>
 
+#define ENUMERATION_CONTENTION_ROUNDS 12u
+
 _Static_assert(MESH_CONNECTED_MAX_ANCHORS == 50u,
                "the qualified lane carries exactly fifty anchors");
 _Static_assert(UWB_ENUM_MAX_HOPS == 8u,
                "the qualified lane covers every production mesh hop depth");
-_Static_assert(ENUMERATION_RESPONSE_DEPTH_MS == 1500u,
-               "one-hop source responses must occupy 1500 ms");
+_Static_assert(ENUMERATION_RESPONSE_DEPTH_MS == 2500u,
+               "one-hop source responses must occupy 2500 ms");
 _Static_assert(MESH_ENUMERATION_CLAIM_RELAY_HOP_MAX_MS == 365u,
                "compact CLAIM relay bound changed");
 _Static_assert(ENUMERATION_RESPONSE_START_DELAY_MS == 4510u,
                "response edge must follow every compact CLAIM relay");
-_Static_assert(ENUMERATION_RESPONSE_LANE_MS == 19000u,
-               "eight response depths plus ordered relay tails occupy 19 s");
+_Static_assert(ENUMERATION_RESPONSE_LANE_MS == 27000u,
+               "eight response depths plus ordered relay tails occupy 27 s");
 _Static_assert(ENUMERATION_RESPONSE_HIA_CLOCK_GUARD_MS <= 100u,
                "HIA pipeline drift margin must stay within 100 ms");
 _Static_assert(MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS %
@@ -25,6 +27,13 @@ _Static_assert(ENUMERATION_RESPONSE_HIA_FIRST_DEPTH_START_DELAY_MS == 13600u,
                "H1 compact identity must trail HIA by two hop depths");
 _Static_assert(ENUMERATION_RESPONSE_HIA_LOCAL_START_DELAY_MS == 9100u,
                "each anchor starts compact identity two depth blocks later");
+_Static_assert(ENUMERATION_RESPONSE_MAX_ROUNDS_PER_DEPTH *
+                   ENUMERATION_RESPONSE_ROUND_MS + 250u <=
+                   MESH_GATEWAY_ROUTE_DEPTH_BLOCK_MS,
+               "source retries and forwarding tails must leave 250 ms HIA slack");
+_Static_assert(ENUMERATION_RESPONSE_SOURCE_ROUNDS_PER_DEPTH >
+                   ENUMERATION_CONTENTION_ROUNDS,
+               "every source must retain unthinned final retry rounds");
 _Static_assert(sizeof(struct enumeration_response_lane) == 456u,
                "the persistent response lane must remain compact");
 
@@ -452,7 +461,28 @@ int enumeration_response_lane_prepare_round(
         return PROTO_OK;
     }
 
+    /* The temporary discovery slot is deliberately not an identity. Two
+     * anchors can share it, so use the unique source ID to decorrelate every
+     * retry. Round zero retains the caller's random draw; later rounds add
+     * the identity and round so a repeated slot draw cannot replay a failed
+     * pair indefinitely. */
     random_state = random_value;
+    if (round != 0u) {
+        uint64_t retry_key = discovery_assignment_hash(
+            lane->record_ids[0] ^ ((uint64_t)round << 32u));
+
+        random_state ^= (uint32_t)retry_key ^ (uint32_t)(retry_key >> 32u);
+    }
+    /* A dense star can offer more frames than the parent can ACK in 75 ms.
+     * Thin the first retry rounds, then let every remaining owner use the
+     * final rounds. Forwarding tails are never thinned. The first attempt
+     * stays prompt for a small deployment. Use different random bits for
+     * admission and the offset so admission does not create shared slots. */
+    if (round > 0u && round < ENUMERATION_CONTENTION_ROUNDS &&
+        ((random_state >> 16u) % 3u) != 0u) {
+        lane->prepared_round = round;
+        return PROTO_OK;
+    }
     for (uint8_t i = 0u; i < pending_count; i++) {
         bool assigned = false;
 

@@ -342,8 +342,9 @@ uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t 
     return 0u;
 }
 
-int route_upsert_candidate(struct route_table *table,
-                                const struct route_candidate *candidate)
+static int upsert_candidate(struct route_table *table,
+                            const struct route_candidate *candidate,
+                            bool passive_hint)
 {
     struct route_candidate stored;
     struct route_candidate previous = {0};
@@ -360,6 +361,9 @@ int route_upsert_candidate(struct route_table *table,
         candidate->hop_count == UINT8_MAX ||
         candidate->link_quality > 100u) {
         return PROTO_ERR_ARG;
+    }
+    if (passive_hint && candidate->route_epoch != table->current_epoch) {
+        return PROTO_ERR_STALE;
     }
     if (candidate->route_epoch != table->current_epoch &&
         !route_epoch_strictly_newer(candidate->route_epoch,
@@ -395,9 +399,28 @@ int route_upsert_candidate(struct route_table *table,
 
     if (updating_existing) {
         stored.last_success_ms = previous.last_success_ms;
-        stored.failure_count = 0u;
-        stored.hold_down_until_ms = 0u;
-        stored.hold_down_valid = false;
+        stored.failure_count = passive_hint ? previous.failure_count : 0u;
+        stored.hold_down_until_ms = passive_hint ?
+            previous.hold_down_until_ms : 0u;
+        stored.hold_down_valid = passive_hint && previous.hold_down_valid;
+        if (passive_hint) {
+            /* A downlink is not proof of reverse delivery or recovery from
+             * an explicit dead end. Missing PHY telemetry cannot erase a
+             * measured weak link or its current-wave selection wait. */
+            if (!stored.link_rsl_valid && previous.link_rsl_valid) {
+                stored.link_rsl_dbm = previous.link_rsl_dbm;
+                stored.link_rsl_valid = true;
+                stored.link_quality = previous.link_quality;
+            }
+            if (previous.hop_count == UINT8_MAX) {
+                stored.hop_count = UINT8_MAX;
+            }
+            if (!candidate_link_immediately_usable(&stored) &&
+                previous.provisional_valid) {
+                stored.provisional_until_ms = previous.provisional_until_ms;
+                stored.provisional_valid = true;
+            }
+        }
         stored.channel9_timing_valid = stored.channel9_timing_valid ||
                                        previous.channel9_timing_valid;
     } else {
@@ -432,6 +455,18 @@ int route_upsert_candidate(struct route_table *table,
      * is selectable yet. */
     (void)route_select_best_at(table, now_ms);
     return PROTO_OK;
+}
+
+int route_upsert_candidate(struct route_table *table,
+                           const struct route_candidate *candidate)
+{
+    return upsert_candidate(table, candidate, false);
+}
+
+int route_note_candidate_hint(struct route_table *table,
+                              const struct route_candidate *candidate)
+{
+    return upsert_candidate(table, candidate, true);
 }
 
 const struct route_candidate *route_selected(const struct route_table *table)

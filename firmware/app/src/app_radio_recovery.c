@@ -103,6 +103,7 @@ static int radio_transition_with_bounded_recovery(
             recovery_ret,
             retry_ret);
     app_watchdog_stop_feeding();
+    app_watchdog_schedule_terminal_restart();
     return recovery_ret < 0 ? recovery_ret : retry_ret;
 }
 

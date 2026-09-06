@@ -134,6 +134,7 @@ from .protocol import (
     build_here_i_am_command,
     build_reboot_command,
     build_survey_cancel_command,
+    build_survey_get_status_command,
     build_survey_plan_command,
     build_survey_start_command,
     click_samples,
@@ -147,6 +148,8 @@ from .survey_timing import (
     PhaseTimingCalibration,
     ROUTE_REFRESH_SCHEDULED_MS,
     SURVEY_MAX_HOPS,
+    SURVEY_HARD_CAP_MS,
+    survey_batch_queue_budget_ms,
     ScheduledPhaseEstimate,
     ScheduledPhaseSnapshot,
     survey_enumeration_phase_ms,
@@ -1432,6 +1435,26 @@ class GatewayGui(GatewayDiagnosticsMixin):
         try:
             if self._survey_batch_cursor >= len(self._survey_pair_batches):
                 raise SurveyStateError("survey firmware requested an extra pair batch")
+            remaining_batches = self._survey_pair_batches[self._survey_batch_cursor:]
+            started_at = self.survey_model.start_dispatched_at
+            elapsed_ms = max(0, int((time.monotonic() - started_at) * 1000)) if started_at is not None else 0
+            required_ms = survey_batch_queue_budget_ms(
+                assignment.max_hop_count, tuple(len(batch) for batch in remaining_batches),
+            )
+            if elapsed_ms + required_ms > SURVEY_HARD_CAP_MS:
+                self._survey_auto_all = False
+                # Retain the exact unsent pair queue for inspection. A fresh
+                # START must own any future continuation, because RAM batches
+                # share this generation's single firmware hard deadline.
+                self._cancel_survey()
+                self._show_error(
+                    f"The {sum(map(len, remaining_batches))} pending pairs need up to "
+                    f"{required_ms / 60000:.1f} minutes under the firmware schedule, "
+                    f"but this generation has at most {max(0, SURVEY_HARD_CAP_MS - elapsed_ms) / 60000:.1f} minutes left. "
+                    "Aborting before submitting the pending plan; its pair queue is retained. "
+                    "A smaller plan or continuation under a fresh survey generation is required."
+                )
+                return
             pairs = self._survey_pair_batches[self._survey_batch_cursor]
             final_batch = (
                 self._survey_batch_cursor + 1 == len(self._survey_pair_batches)
@@ -1509,6 +1532,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return False
         self._survey_pending_dispatch = dispatch
         self.survey_model.note_command_dispatched(dispatch.command_id)
+        if dispatch.command_id == CMD_SURVEY_START:
+            self._survey_gateway_id = getattr(self, "gateway_id", None)
+        if dispatch.command_id != CMD_SURVEY_GET_STATUS:
+            self._survey_reconcile_attempts = 0
+            self._survey_event_due_at = time.monotonic() + dispatch.timeout_s
         self._dispatch_gateway_command(dispatch)
         self._refresh_survey_view()
         self._update_command_state()
@@ -1531,11 +1559,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
             event = decode_survey_event(packet)
         except Exception as exc:
             self._show_error(f"Malformed survey event: {exc}")
-            return True
+            return False
         observed_at = time.monotonic() if received_at is None else received_at
         created_at = observed_at - max(packet.age_ms, 0) / 1000.0
         try:
-            self.survey_model.observe_survey_event(
+            changed = self.survey_model.observe_survey_event(
                 event,
                 created_at=created_at,
             )
@@ -1596,7 +1624,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 "error",
                 f"Ignored stale survey generation {event.generation}: {exc}",
             )
-            return True
+            return self.survey_model.phase != "failed"
         except SurveyStateError as exc:
             step = {
                 SURVEY_EVENT_NEIGHBOR_GRAPH: "neighbors",
@@ -1608,8 +1636,20 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._survey_phase = "idle"
             self._show_error(f"Survey state conflict: {exc}")
             self._refresh_survey_view()
-            return True
+            return False
 
+        if not changed:
+            return True
+        self._survey_reconcile_attempts = 0
+        self._survey_event_due_at = (
+            max(getattr(self, "_survey_event_due_at", 0.0), observed_at + 60.0)
+            if event.kind in (SURVEY_EVENT_RANGE_PROGRESS, SURVEY_EVENT_SIGNALS)
+            else observed_at + 60.0
+        )
+        if event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
+            self._survey_event_due_at = created_at + survey_ranging_phase_ms(
+                event.assignment.max_hop_count, event.wave_count
+            ) / 1000.0 + 60.0
         self._survey_generation = self.survey_model.generation
         self._survey_assignment = self.survey_model.assignment
         self._survey_results = dict(self.survey_model.results)
@@ -1850,8 +1890,26 @@ class GatewayGui(GatewayDiagnosticsMixin):
         if not transition.matched or transition.request is None:
             return
         self._survey_pending_dispatch = None
+        if command_id == CMD_SURVEY_GET_STATUS:
+            # The replayed event may precede this result and already finish the
+            # run. A status command result alone is never terminal evidence.
+            if self.survey_model.active:
+                self._survey_event_due_at = max(
+                    getattr(self, "_survey_event_due_at", 0.0), time.monotonic() + 60.0,
+                )
+            self._dispatch_deferred_survey_command()
+            self._refresh_survey_view()
+            self._update_command_state()
+            return
         if transition.outcome == "accepted":
             self.survey_model.note_command_accepted(command_id)
+            if command_id == CMD_SURVEY_START:
+                model = self.survey_model
+                depth = max(model.slot_hops.values(), default=SURVEY_MAX_HOPS)
+                span = max(model.slot_to_anchor, default=49) + 1
+                self._survey_event_due_at = time.monotonic() + (
+                    survey_neighbor_phase_ms(depth, span) / 1000.0 + 60.0
+                )
             if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
                 self._drain_buffered_survey_events()
             self._dispatch_deferred_survey_command()
@@ -1860,6 +1918,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             status_name = COMMAND_STATUS_NAMES.get(status, str(status))
             self.survey_model.note_command_rejected(command_id, status_name)
             if command_id == CMD_SURVEY_CANCEL:
+                self._survey_event_due_at = time.monotonic()
                 self._survey_phase = "ranging"
             else:
                 self._survey_chain_pending = False
@@ -1928,15 +1987,29 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._expected_gateway_reboot_identity = None
         return True
 
-    def _expire_survey_command(self) -> None:
-        transition = self.survey_command_owner.expire()
+    def _expire_survey_command(self, *, now: float | None = None) -> None:
+        transition = self.survey_command_owner.expire(now=now)
         if not transition.matched or transition.request is None:
             return
         command_id = transition.request.command_id
         self._survey_pending_dispatch = None
+        if command_id == CMD_SURVEY_GET_STATUS:
+            if self.survey_model.active:
+                self._survey_event_due_at = time.monotonic()
+            self._dispatch_deferred_survey_command()
+            return
         self._clear_scheduled_phase_estimate()
         self.survey_model.note_command_timeout(command_id)
+        if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
+            self._survey_event_due_at = time.monotonic()
+            self._survey_phase = "recovering"
+            self._survey_deferred_dispatch = None
+            self._show_error("Survey command result was lost; checking gateway state before releasing the run")
+            self._refresh_survey_view()
+            self._update_command_state()
+            return
         if command_id == CMD_SURVEY_CANCEL:
+            self._survey_event_due_at = time.monotonic()
             self._survey_phase = "ranging"
         else:
             self._survey_chain_pending = False
@@ -2244,23 +2317,66 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         )
 
+    def _reconcile_stalled_survey(self) -> None:
+        model = getattr(self, "survey_model", None)
+        if (model is None or not model.active or not getattr(self, "connected", False)
+                or not getattr(self, "gateway_id", None)
+                or self.survey_command_owner.pending is not None
+                or getattr(self, "_survey_event_due_at", float("inf")) > time.monotonic()):
+            return
+        previous_gateway = getattr(self, "_survey_gateway_id", None)
+        if previous_gateway is not None and previous_gateway != self.gateway_id:
+            model.fail("ranging", "Reconnected gateway differs from the survey owner; remote outcome is unknown")
+            self._survey_phase = "idle"
+            self._survey_auto_all = False
+            self._refresh_survey_view()
+            return
+        attempts = getattr(self, "_survey_reconcile_attempts", 0)
+        if attempts >= 3:
+            model.fail("ranging", "Survey state could not be recovered after three status requests; remote outcome is unknown")
+            self._survey_auto_all = False
+            self._survey_phase = "idle"
+            self._survey_deferred_dispatch = None
+            self._clear_scheduled_phase_estimate()
+            self._show_error(model.error)
+            self._refresh_survey_view()
+            return
+        host_id = self._parse_int("Host ID", self.host_id_text.get())
+        session_id, seq = self._next_identity()
+        command = build_survey_get_status_command(
+            host_id=host_id, gateway_id=self.gateway_id,
+            session_id=session_id, seq=seq, generation=model.generation,
+        )
+        self._survey_reconcile_attempts = attempts + 1
+        self._survey_event_due_at = time.monotonic() + 60.0
+        self._submit_survey_dispatch(GatewayCommandDispatch(
+            command_kind=2, command_id=command.command_id,
+            session_id=session_id, sequence=seq, frame=command.frame,
+            label=command.label, timeout_s=60.0,
+            status_text="Recovering the exact survey state from the gateway...",
+        ))
+
     def _drain_events(self) -> None:
         try:
-            while True:
-                event = self.events.get_nowait()
+            for _ in range(64):
+                try:
+                    event = self.events.get_nowait()
+                except queue.Empty:
+                    break
                 self._handle_event(event)
-        except queue.Empty:
-            pass
-        # A packet completed by the BLE worker before its deadline remains
-        # eligible even if Tk did not service the queue until just after it.
-        # Each packet carries its immutable worker-side receive timestamp; only
-        # expire against wall time after all already-received events are seen.
-        self._expire_gateway_command()
-        self._expire_survey_command()
-        self._update_scheduled_phase_progress()
-        self._update_command_state()
-        if self.root.winfo_exists():
-            self.root.after(50, self._drain_events)
+            # Keep packets received before a deadline eligible across bounded
+            # Tk drains. Expiry waits until this FIFO backlog has been applied.
+            if self.events.empty():
+                self._expire_gateway_command()
+                self._expire_survey_command()
+                self._reconcile_stalled_survey()
+            self._update_scheduled_phase_progress()
+            self._update_command_state()
+        finally:
+            # Tk reports callback exceptions; semantic failures must remain
+            # visible and must not disable all subsequent transport processing.
+            if self.root.winfo_exists():
+                self.root.after(50, self._drain_events)
 
     def _handle_event(self, event: dict[str, Any]) -> None:
         if self._handle_diagnostic_event(event):
@@ -2371,6 +2487,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _set_connection_state(self, state: str) -> None:
         self.connection_state = state
         self.connected = state == "connected"
+        if self.connected and getattr(getattr(self, "survey_model", None), "active", False):
+            self._survey_event_due_at = time.monotonic()
         expected_reboot = getattr(
             self, "_expected_gateway_reboot_identity", None
         )
@@ -2420,11 +2538,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     ),
                     "ranging",
                 )
-                survey_model.fail(
-                    running_step,
-                    "BLE disconnected before the survey reached a terminal event",
+                survey_model.steps[running_step].state = "warning"
+                survey_model.steps[running_step].detail = (
+                    "BLE disconnected; the remote survey outcome is unknown. Reconnect to recover its exact state."
                 )
-                self._survey_phase = "idle"
+                self._survey_event_due_at = time.monotonic()
                 self._refresh_survey_view()
         if not self.connected and state != "connecting":
             self._clear_gateway_identity("Connect to read the gateway firmware DEVICE_ID.")

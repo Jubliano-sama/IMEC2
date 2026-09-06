@@ -54,13 +54,13 @@ static void test_timing_contract(void)
     assert(survey_neighbor_beacon_offset_ms(5u) == UINT32_MAX);
     assert(survey_range_attempt_offset_ms(0u) == 100u);
     assert(survey_range_attempt_offset_ms(4u) == 420u);
-    assert(survey_wave_stride_ms(1u) == 2200u);
-    assert(survey_wave_stride_ms(3u) == 5950u);
-    assert(survey_wave_stride_ms(5u) == 10700u);
-    assert(survey_execution_duration_ms(2u, 3u) == 23800u);
+    assert(survey_wave_stride_ms(1u) == 3200u);
+    assert(survey_wave_stride_ms(3u) == 8950u);
+    assert(survey_wave_stride_ms(5u) == 15700u);
+    assert(survey_execution_duration_ms(2u, 3u) == 35800u);
     assert(survey_plan_fits_hard_cap(60000u, 100u, 5u));
-    assert(survey_plan_fits_hard_cap(708600u, 100u, 5u));
-    assert(!survey_plan_fits_hard_cap(708601u, 100u, 5u));
+    assert(survey_plan_fits_hard_cap(198600u, 100u, 5u));
+    assert(!survey_plan_fits_hard_cap(198601u, 100u, 5u));
 }
 
 static void test_gateway_cleanup_timing_contract(void)
@@ -91,10 +91,10 @@ static void test_gateway_cleanup_timing_contract(void)
         SURVEY_RANGE_WAVE_MS + SURVEY_RESULT_PREPARE_MS +
         survey_result_lane_duration_ms(max_hop_count);
 
-    assert(wait_plan_timeout_ms == 72120u);
-    assert(abort_release_ms == 75950u);
-    assert(final_result_lane_edge_ms == 45640u);
-    assert(plan_self_stop_ms == 45700u);
+    assert(wait_plan_timeout_ms == 75120u);
+    assert(abort_release_ms == 78950u);
+    assert(final_result_lane_edge_ms == 63640u);
+    assert(plan_self_stop_ms == 63700u);
 
     /* A queued ABORT has no all-anchor delivery quorum. Its flood deadline
      * lets receivers stop early, but cleanup remains owned until self-stop. */

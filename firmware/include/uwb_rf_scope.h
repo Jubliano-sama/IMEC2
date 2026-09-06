@@ -4,8 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+
 #define UWB_RF_SCOPE_WIRE_LEN 1u
-#define UWB_RF_SCOPE_MAX_FORCED_RELAY_HOPS 8u
+#define UWB_RF_SCOPE_MAX_FORCED_RELAY_HOPS 7u
 
 enum uwb_rf_scope_role {
     UWB_RF_SCOPE_ROLE_GATEWAY = 0,

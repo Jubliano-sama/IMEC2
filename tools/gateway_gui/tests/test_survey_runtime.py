@@ -425,6 +425,22 @@ class SurveyOperationModelTests(unittest.TestCase):
         self.assertEqual(model.slot_to_anchor, dict(enumerate(ANCHORS)))
         return model
 
+    def test_status_replays_do_not_reapply_plan_or_roll_back_later_progress(self) -> None:
+        model = self.model_after_enumeration()
+        model.note_command_dispatched(CMD_SURVEY_START, now=10.0)
+        model.note_command_accepted(CMD_SURVEY_START)
+        model.observe_survey_event(neighbor_event(), created_at=12.0)
+        model.set_requested_pairs(((0, 1), (0, 2), (1, 2)))
+        model.note_command_dispatched(CMD_SURVEY_PLAN)
+        model.note_command_accepted(CMD_SURVEY_PLAN)
+        model.observe_survey_event(plan_event())
+        revision = model.geometry_revision
+        self.assertFalse(model.observe_survey_event(plan_event()))
+        self.assertFalse(model.observe_survey_event(neighbor_event()))
+        self.assertEqual(len(model.plan_pairs), 3)
+        self.assertEqual(model.geometry_revision, revision)
+        self.assertEqual(model.phase, "ranging")
+
     def test_full_operation_binds_generation_and_solves_geometry(self) -> None:
         model = self.model_after_enumeration()
         model.note_command_dispatched(CMD_SURVEY_START, now=10.0)

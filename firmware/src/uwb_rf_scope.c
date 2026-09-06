@@ -1,4 +1,8 @@
 #include "uwb_rf_scope.h"
+#include "mesh.h"
+
+_Static_assert(UWB_RF_SCOPE_MAX_FORCED_RELAY_HOPS + 1u == MESH_NETWORK_MAX_HOPS,
+               "forced RF layers must fit the network hop limit");
 
 #include <errno.h>
 #include <stddef.h>

@@ -1284,6 +1284,51 @@ static void test_host_receipt_phase_retains_exact_stream_head(void)
     gateway_ble_stream_mark_sent(&state, 126u);
 }
 
+static void test_survey_notification_keeps_custody_until_host_apply(void)
+{
+    struct gateway_ble_stream_state state;
+    struct proto_packet survey = packet(MSG_SURVEY_EVENT,
+                                         FLAG_GATEWAY_ACK_REQUIRED, 100u);
+    struct proto_packet next = packet(MSG_COMMAND_RESULT,
+                                       FLAG_GATEWAY_ACK_REQUIRED, 101u);
+    const uint8_t payload[] = {1u, 2u, 3u};
+    const uint8_t *record;
+    size_t record_len;
+    uint8_t original[GATEWAY_BLE_STREAM_RECORD_MAX_LEN];
+    size_t original_len;
+
+    assert(gateway_ble_stream_requires_host_receipt(&survey));
+    assert(gateway_ble_stream_requires_host_receipt(&next));
+    survey.flags = 0u;
+    assert(!gateway_ble_stream_requires_host_receipt(&survey));
+    survey.flags = FLAG_GATEWAY_ACK_REQUIRED;
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_retained_packet(
+        &state, &survey, payload, sizeof(payload), 10u, 10u, true) == 1);
+    assert(gateway_ble_stream_enqueue_retained_packet(
+        &state, &next, payload, sizeof(payload), 11u, 11u, true) == 1);
+    assert(gateway_ble_stream_begin_send_view(&state, &record, &record_len) == 0);
+    original_len = record_len;
+    memcpy(original, record, record_len);
+    /* This is the same predicate used by the production ATT completion.
+     * Deferred GUI application leaves the record and all later output owned. */
+    assert(gateway_ble_stream_requires_host_receipt(&state.items[0].packet));
+    assert(gateway_ble_stream_mark_host_notified(&state) == 0);
+    assert(gateway_ble_stream_depth(&state) == 2u);
+    assert(gateway_ble_stream_begin_send_view(&state, &record, &record_len) == -EBUSY);
+    /* Reconnect replays exactly the same survey bytes until the host applies
+     * them; ATT completion alone cannot retire or replace the head. */
+    gateway_ble_stream_cancel_send(&state);
+    assert(gateway_ble_stream_rewind_host_notification(&state) == 0);
+    assert(gateway_ble_stream_begin_send_view(&state, &record, &record_len) == 0);
+    assert(record_len == original_len && memcmp(record, original, record_len) == 0);
+    assert(gateway_ble_stream_mark_host_notified(&state) == 0);
+    assert(gateway_ble_stream_accept_host_receipt(&state) == 0);
+    gateway_ble_stream_mark_sent(&state, 100u);
+    assert(gateway_ble_stream_depth(&state) == 1u);
+    assert(state.items[0].packet.seq == next.seq);
+}
+
 static void test_reservation_rejects_crc16_collision(void)
 {
     struct gateway_ble_stream_state state;
@@ -1548,6 +1593,7 @@ int main(void)
     test_reservation_protects_capacity_and_cancel_releases_it();
     test_reservation_commit_is_exact_and_single_use();
     test_host_receipt_phase_retains_exact_stream_head();
+    test_survey_notification_keeps_custody_until_host_apply();
     test_reservation_rejects_crc16_collision();
     test_reservation_uses_priority_eviction_and_survives_drain();
     test_ble_recovery_backoff_is_random_exponential_and_capped();

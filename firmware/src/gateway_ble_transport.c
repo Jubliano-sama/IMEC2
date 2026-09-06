@@ -1,6 +1,132 @@
 #include "gateway_ble_transport.h"
 
+#include <errno.h>
 #include <string.h>
+
+static bool ingress_is_receipt(const uint8_t *frame, size_t len)
+{
+    struct proto_packet packet;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len;
+
+    /* Classification only: dispatch still validates the entire receipt and
+     * matches its digest against the retained stream head before retiring it. */
+    return serial_frame_decode_packet(frame, len, &packet, payload,
+                                      sizeof(payload), &payload_len) == PROTO_OK &&
+           packet.msg_type == MSG_GATEWAY_HOST_RECEIPT;
+}
+
+static int ingress_write_pass(struct gateway_ble_ingress *ingress,
+                               const uint8_t *bytes, size_t len,
+                               bool commit, uint8_t *receipts_added)
+{
+    uint8_t partial[SERIAL_FRAME_MAX_LEN];
+    size_t partial_len = ingress->partial_len;
+    uint8_t count = ingress->count;
+    uint8_t commands = 0u;
+    uint8_t receipts = 0u;
+
+    memcpy(partial, ingress->partial, partial_len);
+    for (uint8_t i = 0u; i < count; i++) {
+        commands += !ingress->frames[i].receipt;
+    }
+    for (size_t i = 0u; i < len; i++) {
+        bool receipt;
+
+        if (partial_len >= sizeof(partial)) {
+            return -EMSGSIZE;
+        }
+        partial[partial_len++] = bytes[i];
+        if (bytes[i] != SERIAL_FRAME_DELIMITER) {
+            continue;
+        }
+        if (partial_len == 1u) {
+            partial_len = 0u;
+            continue;
+        }
+        receipt = ingress_is_receipt(partial, partial_len);
+        if (count == GATEWAY_BLE_INGRESS_DEPTH ||
+            (!receipt && commands == GATEWAY_BLE_INGRESS_DEPTH - 1u)) {
+            return -ENOSPC;
+        }
+        if (commit) {
+            struct gateway_ble_ingress_frame *frame = &ingress->frames[count];
+
+            memcpy(frame->frame, partial, partial_len);
+            frame->len = (uint16_t)partial_len;
+            frame->receipt = receipt;
+        }
+        count++;
+        commands += !receipt;
+        receipts += receipt;
+        partial_len = 0u;
+    }
+    if (commit) {
+        memcpy(ingress->partial, partial, partial_len);
+        ingress->partial_len = (uint16_t)partial_len;
+        ingress->count = count;
+        if (receipts_added != NULL) {
+            *receipts_added = receipts;
+        }
+    }
+    return 0;
+}
+
+int gateway_ble_ingress_write(struct gateway_ble_ingress *ingress,
+                              const uint8_t *bytes, size_t len,
+                              uint8_t *receipts_added)
+{
+    int ret;
+
+    if (receipts_added != NULL) {
+        *receipts_added = 0u;
+    }
+    if (ingress == NULL || (bytes == NULL && len != 0u) ||
+        ingress->count > GATEWAY_BLE_INGRESS_DEPTH ||
+        ingress->partial_len > SERIAL_FRAME_MAX_LEN) {
+        return -EINVAL;
+    }
+    /* A rejected ATT write must preserve both queued frames and the partial
+     * COBS prefix so the host can retry exactly the same chunk. No dequeue or
+     * other producer may interleave these two bounded passes. */
+    ret = ingress_write_pass(ingress, bytes, len, false, NULL);
+    if (ret == -EMSGSIZE) {
+        /* An oversized frame cannot become valid by retrying its suffix.
+         * Drop only that partial prefix so a fresh complete frame can recover;
+         * already admitted queue entries remain unchanged. */
+        gateway_ble_ingress_reset_partial(ingress);
+    }
+    return ret < 0 ? ret :
+           ingress_write_pass(ingress, bytes, len, true, receipts_added);
+}
+
+int gateway_ble_ingress_take(struct gateway_ble_ingress *ingress,
+                             bool receipt,
+                             struct gateway_ble_ingress_frame *frame)
+{
+    if (ingress == NULL || frame == NULL ||
+        ingress->count > GATEWAY_BLE_INGRESS_DEPTH) {
+        return -EINVAL;
+    }
+    for (uint8_t i = 0u; i < ingress->count; i++) {
+        if (ingress->frames[i].receipt != receipt) {
+            continue;
+        }
+        *frame = ingress->frames[i];
+        ingress->count--;
+        memmove(&ingress->frames[i], &ingress->frames[i + 1u],
+                (ingress->count - i) * sizeof(ingress->frames[0]));
+        return 0;
+    }
+    return -ENOENT;
+}
+
+void gateway_ble_ingress_reset_partial(struct gateway_ble_ingress *ingress)
+{
+    if (ingress != NULL) {
+        ingress->partial_len = 0u;
+    }
+}
 
 uint16_t gateway_ble_att_payload_max(uint16_t negotiated_mtu)
 {

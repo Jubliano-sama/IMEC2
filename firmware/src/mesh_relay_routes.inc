@@ -193,16 +193,13 @@ int mesh_relay_note_gateway_control_reverse_route(
     const struct proto_packet *packet,
     uint64_t previous_hop_id,
     uint8_t link_quality,
+    int8_t link_rsl_dbm,
+    bool link_rsl_valid,
     uint8_t origin_ttl,
     uint32_t now_ms)
 {
     struct route_candidate candidate;
-    struct route_candidate *stored_candidate = NULL;
-    uint32_t preserved_hold_down_until_ms = 0u;
     uint8_t gateway_hop_count;
-    uint8_t preserved_failure_count = 0u;
-    bool preserve_failure_state = false;
-    bool preserved_hold_down_valid = false;
     bool destination_valid;
     int ret;
 
@@ -241,53 +238,13 @@ int mesh_relay_note_gateway_control_reverse_route(
         .last_seen_ms = now_ms,
         .hop_count = gateway_hop_count,
         .link_quality = link_quality,
+        .link_rsl_dbm = link_rsl_dbm,
+        .link_rsl_valid = link_rsl_valid,
         .relay_capacity_state = RELAY_CAP_UNKNOWN,
         .valid = true,
     };
-    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
-        struct route_candidate *existing = &relay->upstream.candidates[i];
-
-        if (existing->valid &&
-            existing->route_epoch == relay->upstream.current_epoch &&
-            existing->next_hop_id == previous_hop_id &&
-            existing->gateway_id == relay->gateway_id) {
-            preserved_failure_count = existing->failure_count;
-            preserved_hold_down_until_ms = existing->hold_down_until_ms;
-            preserved_hold_down_valid = existing->hold_down_valid;
-            preserve_failure_state = true;
-            break;
-        }
-    }
-    ret = route_upsert_candidate(&relay->upstream, &candidate);
+    ret = route_note_candidate_hint(&relay->upstream, &candidate);
     if (ret == PROTO_OK) {
-        if (preserve_failure_state) {
-            for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
-                struct route_candidate *existing =
-                    &relay->upstream.candidates[i];
-
-                if (existing->valid &&
-                    existing->route_epoch == relay->upstream.current_epoch &&
-                    existing->next_hop_id == previous_hop_id &&
-                    existing->gateway_id == relay->gateway_id) {
-                    stored_candidate = existing;
-                    break;
-                }
-            }
-            if (stored_candidate == NULL) {
-                return PROTO_ERR_NOT_FOUND;
-            }
-            stored_candidate->failure_count = preserved_failure_count;
-            stored_candidate->hold_down_until_ms =
-                preserved_hold_down_until_ms;
-            stored_candidate->hold_down_valid = preserved_hold_down_valid;
-            ret = route_select_best_at(&relay->upstream, now_ms);
-            if (ret != PROTO_OK && preserved_hold_down_valid) {
-                /* A valid passive refresh may leave every known parent held.
-                 * Keep the route evidence and let discovery run; absence of a
-                 * currently selectable parent is not a malformed control. */
-                ret = PROTO_OK;
-            }
-        }
         if (previous_hop_id == relay->gateway_id) {
             const struct route_candidate *stored = find_upstream_candidate(
                 relay, previous_hop_id, relay->upstream.current_epoch);

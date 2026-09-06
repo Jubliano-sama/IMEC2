@@ -1,0 +1,48 @@
+{
+  "source_commit": "474ef8600ef25b50da5c3dbc1dc30241178d166a",
+  "native": {
+    "passed": 201,
+    "failed": 0,
+    "seconds": 26.03,
+    "mesh_integration": 165,
+    "hardware_models": 157,
+    "labels_overlap": true
+  },
+  "gui": {
+    "passed": 282,
+    "seconds": 17.032
+  },
+  "native_analyzer": {
+    "translation_units_or_configurations": 126,
+    "compile_errors": 0,
+    "files_with_diagnostics": 2
+  },
+  "hardware_actions": false,
+  "production_source_changed": false,
+  "logs": {
+    "final-ctest": {
+      "path": "/tmp/imec-recovery-scale-audit-final-ctest.log",
+      "sha256": "2945f413e4414ca934f33a4d8765f027696380e3b5ee446052fbd46c6fcca4f6"
+    },
+    "gui": {
+      "path": "/tmp/imec-recovery-scale-audit-gui.log",
+      "sha256": "6f94c8f168b7ae1d67211b1d0133f4a7747393e7e3ea780c82feaf325cea3ee7"
+    },
+    "models": {
+      "path": "/tmp/imec-recovery-scale-audit-models.log",
+      "sha256": "2f2f7d2205750f8b6d73fdf634e7d30cde485afe720b4ffb726d628d98abcadb"
+    },
+    "seam-rerun": {
+      "path": "/tmp/imec-recovery-scale-audit-seam-rerun.log",
+      "sha256": "24bcd0f6fde565bc3e7cdfa6a70c372bcf598a9170cdcd6cf51347211ffa5d1e"
+    },
+    "build": {
+      "path": "/tmp/imec-recovery-scale-audit-build.log",
+      "sha256": "2c5345a00653c003193ab5595533373aaec16ad90af0729349cab5cfea5acc73"
+    },
+    "configure": {
+      "path": "/tmp/imec-recovery-scale-audit-configure.log",
+      "sha256": "94e173de7c135f25887111d0f8ea964c32e58e7648a9bec3c5ea30c72979fc66"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "commit": "474ef8600ef25b50da5c3dbc1dc30241178d166a",
+  "library_sha256": "a627d15e85e56bfd746a6faa9851407aaceb04951d4a96edd998dd3693f62f6b",
+  "method": "Existing production seams with fake clocks, locks, queues and radio; observations are not hardware qualification.",
+  "cases": [
+    {
+      "name": "anchor_restart",
+      "source_sha256": "5808f52649ddf2fa4e7fda3a4977618803cb92d27db11fe63706e1367d271f03",
+      "returncode": 0,
+      "stdout": "new_hia=0 new_table_roster=-16 old_survey_active=1 old_stop=11000 now=1100\nafter_old_lease_expiry new_table_roster=0\n",
+      "stderr": ""
+    },
+    {
+      "name": "c5_bank_recovery",
+      "source_sha256": "7a7648fc35e36340e0b0e284afac0452044a61a2649cdf3e8a57be72030fa9df",
+      "returncode": 0,
+      "stdout": "after_core_expiry_s=86400 bank=1 bank_seq=99 queued_local=1 local_seq=100 sent_seq=99\n",
+      "stderr": ""
+    },
+    {
+      "name": "survey_scale",
+      "source_sha256": "73077c298514e6f40ac8794a7169f0b8e72c058b50f277caaa557bfeaf1ecad0",
+      "returncode": 0,
+      "stdout": "nodes=30 depth=1 requests=60 ret=0 pairs=60 waves=60 stride_ms=2200 stop_ms=139150\nnodes=30 depth=3 requests=60 ret=0 pairs=60 waves=60 stride_ms=5950 stop_ms=372730\nnodes=30 depth=8 requests=60 ret=0 pairs=60 waves=60 stride_ms=19700 stop_ms=1227930\nnodes=30 depth=3 requests=100 ret=0 pairs=100 waves=100 stride_ms=5950 stop_ms=610730\nnodes=30 depth=8 requests=100 ret=-2 pairs=0 waves=0 stride_ms=19700 stop_ms=0\nnodes=50 depth=8 requests=100 ret=-2 pairs=0 waves=0 stride_ms=19700 stop_ms=0\n",
+      "stderr": ""
+    }
+  ]
+}

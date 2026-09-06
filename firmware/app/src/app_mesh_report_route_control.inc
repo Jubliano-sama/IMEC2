@@ -2959,6 +2959,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         &parsed.packet,
                         parsed.previous_hop_id,
                         quality,
+                        rsl_dbm,
+                        rsl_valid,
                         control_origin_ttl,
                         k_uptime_get_32()) : PROTO_OK;
                 if (reverse_route_ret != PROTO_OK &&

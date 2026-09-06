@@ -411,6 +411,100 @@ static void test_discovery_collision_sweep_and_old_spacing_sensitivity(void)
 
 
 
+/* Unlike preamble extension, this model requires every decoded byte to be
+ * inside RX. Sweep independent frame and scan phases at the longest supported
+ * receiver cadence, with either of its first two scan opportunities lost. */
+static bool complete_wake_received(uint64_t scan_period_us,
+                                  uint64_t scan_phase_us,
+                                  uint64_t tx_phase_us,
+                                  uint64_t train_us,
+                                  int lost_scan)
+{
+    const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE, UWB_WAKE_CLAIM_LEN);
+    const uint64_t cadence_us = airtime_us +
+        MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+        UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US;
+
+    for (int scan = -1; scan < 3; scan++) {
+        const int64_t start = (int64_t)scan_phase_us +
+            (int64_t)scan * (int64_t)scan_period_us;
+        int64_t end = start + MESH_RADIO_ANCHOR_SCAN_RX_US;
+        int64_t rearmed = start;
+        bool extended = false;
+
+        if (scan == lost_scan) {
+            continue;
+        }
+        for (uint64_t tx = tx_phase_us; tx < train_us; tx += cadence_us) {
+            const int64_t frame_end = (int64_t)(tx + airtime_us);
+            const int64_t preamble_end = (int64_t)tx + (int64_t)
+                dwm3000_timing_rctu_to_us_ceil(dwm3000_timing_preamble_rctu(
+                    DWM3000_TIMING_PHY_CH5_WAKE));
+            /* Activity only prolongs RX; it never certifies this frame.
+             * Budget 1 ms to notice activity and another 1 ms to rearm after
+             * a clipped frame. The production low-duty hunt holds for 1 s;
+             * this uses only its first 15 ms completion interval. */
+            if (!extended && preamble_end >= rearmed + 1000 &&
+                (int64_t)tx + 1000 <= end) {
+                const int64_t activity = (int64_t)tx > rearmed ?
+                    (int64_t)tx + 1000 : rearmed + 1000;
+                end = activity + MESH_RADIO_ACTIVITY_COMPLETION_US;
+                extended = true;
+            }
+            if ((int64_t)tx >= rearmed && frame_end <= end) {
+                return true;
+            }
+            if ((int64_t)tx < rearmed && frame_end > rearmed) {
+                rearmed = frame_end + 1000;
+            }
+        }
+    }
+    return false;
+}
+
+static void test_mixed_receiver_cadence_complete_frame_sweep(void)
+{
+    static const uint32_t intervals_ms[] = {
+        MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS,
+        MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS,
+    };
+    bool old_sender_local_train_missed = false;
+
+    CHECK(MESH_RADIO_ANCHOR_SCAN_INTERVAL_MAX_MS == 435u,
+          "maximum receiver interval must reserve rearm and full RX");
+    CHECK(MESH_RADIO_UPLINK_WAKE_TRAIN_MS <= UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
+          "two receiver scans exceed the wire duration limit");
+    for (size_t i = 0u; i < ARRAY_SIZE(intervals_ms); i++) {
+        const uint64_t period = (uint64_t)(intervals_ms[i] +
+            MESH_RADIO_ANCHOR_SCAN_REARM_MAX_MS +
+            MESH_RADIO_ANCHOR_SCAN_RX_MAX_MS) * 1000u;
+        for (uint64_t phase = 0u; phase < period; phase += PHASE_STEP_US) {
+            const uint64_t tx_cadence = dwm3000_timing_airtime_us_ceil(
+                DWM3000_TIMING_PHY_CH5_WAKE, UWB_WAKE_CLAIM_LEN) +
+                MESH_RADIO_WAKE_TX_HOST_GAP_MAX_US +
+                UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US;
+            for (uint64_t tx_phase = 0u; tx_phase < tx_cadence;
+                 tx_phase += PHASE_STEP_US) {
+                for (int lost = -1; lost <= 1; lost++) {
+                    CHECK(complete_wake_received(period, phase, tx_phase,
+                        (uint64_t)MESH_RADIO_UPLINK_WAKE_TRAIN_MS * 1000u, lost),
+                        "uplink missed a complete frame after one lost scan");
+                    if (!complete_wake_received(period, phase, tx_phase,
+                                                860000u, lost)) {
+                        old_sender_local_train_missed = true;
+                    }
+                }
+                CHECK(complete_wake_received(period, phase, tx_phase,
+                    (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u, -2),
+                    "ordinary click wake missed a complete receiver frame");
+            }
+        }
+    }
+    CHECK(old_sender_local_train_missed,
+          "mixed receiver sweep must detect the sender-local 860 ms defect");
+}
+
 static void test_claim_phase_sweep(void)
 {
     static const int32_t drifts[] = {
@@ -767,6 +861,7 @@ int main(void)
     test_maintained_normal_click_phy_and_capacity_contract();
     test_channel9_hil_phase_skew_is_inside_receiver_window();
     test_claim_phase_sweep();
+    test_mixed_receiver_cadence_complete_frame_sweep();
     test_enumeration_activation_phase_sweep();
     test_depth_aware_enumeration_control_listener();
     test_depth_aware_survey_control_schedule();
