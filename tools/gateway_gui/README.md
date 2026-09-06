@@ -90,9 +90,11 @@ Right-click an anchor in **Click Location** or **Survey & Geometry** and choose 
 
 ## Failure recovery
 
-A restarted anchor can lose its RAM-only survey assignment. A stale-assignment battery failure says **Failed: enumerate again**; other targets still run, and cached voltage remains available. Re-enumerate before retrying.
+Fresh blink and battery commands work after an anchor reset using its permanent hardware ID and the GUI/gateway enumeration context. The restored local assignment epoch may differ or be zero; it is response metadata. Older firmware can still reject that mismatch with **Failed: enumerate again**. Other targets continue after individual failures and cached voltage remains available.
 
 Shared command deadlines remain absolute through contention and host event backlogs. The GUI drains a finite snapshot of queued events before checking expiry, preserving timely replies across Tk ticks without allowing new traffic to defer expiry forever. Bad events are reported individually. Late results or receipt notifications cannot launch a follow-up after its deadline, and completed owners are retired before rendering feedback. Setup failures release the complete local survey state. After START, lost controls/events retain the existing bounded, exact-survey status recovery so unrelated commands cannot interrupt remote survey ownership.
+
+Survey recovery begins only after START has been dispatched. A new enumeration resets the previous run's recovery timer; validated obsolete survey events are receipted and discarded even after a failed run, so they cannot clog the gateway BLE FIFO. GET_STATUS checks the requested generation and preserves its command-result reservation while publication is backpressured.
 
 ## Test
 

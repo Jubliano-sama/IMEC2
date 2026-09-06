@@ -86,6 +86,21 @@ struct app_mesh_c5_control_route_history {
     uint8_t next_index;
 };
 
+struct uwb_wake_claim_frame;
+struct app_mesh_c5_control_wake_history {
+    struct {
+        uint64_t source_id;
+        uint32_t event_id;
+    } entries[MESH_NETWORK_MAX_HOPS + 1u];
+    uint8_t count;
+};
+
+bool app_mesh_c5_control_wake_renew(
+    struct app_mesh_c5_control_wake_history *history,
+    const struct uwb_wake_claim_frame *claim, uint32_t network_id,
+    uint32_t now_ms, uint32_t window_ms, uint32_t hard_deadline_ms,
+    uint32_t *deadline_ms);
+
 enum app_mesh_c5_connected_gap_rx_action {
     APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE = 0,
     APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK,

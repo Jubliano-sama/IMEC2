@@ -34,10 +34,12 @@ class AnchorActionTests(unittest.TestCase):
                                   command_id=command_id, session_id=100, sequence=7)
 
     def reply(self, *, status=0, command_id=CMD_READ_ANCHOR_BATTERY,
-              omit=None, duplicate=None, **overrides):
+              omit=None, duplicate=None, epoch=33, anchor_id=2, boot_counter=10,
+              epoch_width=4, **overrides):
         fields = [(TLV_COMMAND_ID, command_id, 2), (TLV_COMMAND_STATUS, status, 2),
-                  (TLV_ANCHOR_ID, 2, 8), (TLV_DISCOVERY_ASSIGNMENT_EPOCH, 33, 4),
-                  (TLV_NODE_BOOT_COUNTER, 10, 4), (TLV_TIMESTAMP_MS, 1234, 8)]
+                  (TLV_ANCHOR_ID, anchor_id, 8),
+                  (TLV_DISCOVERY_ASSIGNMENT_EPOCH, epoch, epoch_width),
+                  (TLV_NODE_BOOT_COUNTER, boot_counter, 4), (TLV_TIMESTAMP_MS, 1234, 8)]
         fields += [(TLV_BATTERY_MV, 3712, 2)] if command_id == CMD_READ_ANCHOR_BATTERY else [(TLV_DURATION_MS, 10000, 4)]
         payload = bytearray()
         for tag, value, width in fields:
@@ -150,6 +152,53 @@ class AnchorActionTests(unittest.TestCase):
         reply = self.model.observe(self.reply(command_id=CMD_IDENTIFY_ANCHOR))
         self.assertEqual(reply.status, 0)
         self.assertIn("10-second", reply.text)
+
+    def test_actions_accept_rebooted_anchor_without_replacing_saved_route(self):
+        self.model.remember_enumeration(1, *enumeration(3))
+        for command_id in (CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY):
+            for epoch in (0, 12, 0xFFFFFFFF):
+                with self.subTest(command_id=command_id, epoch=epoch):
+                    self.model.pending = None
+                    command = self.prepare(command_id)
+                    self.assertEqual(command.packet.value(TLV_DISCOVERY_ASSIGNMENT_EPOCH), 33)
+                    self.assertEqual(command.packet.value(TLV_HOP_COUNT), 3)
+                    reply = self.model.observe(self.reply(
+                        command_id=command_id, epoch=epoch, boot_counter=11))
+                    self.assertEqual(reply.status, 0)
+                    self.assertEqual(reply.boot_counter, 11)
+                    self.assertEqual(self.model.epoch, 33)
+                    self.assertEqual(self.model.anchors[2].hop_count, 3)
+                    if command_id == CMD_READ_ANCHOR_BATTERY:
+                        self.assertEqual(reply.battery_mv, 3712)
+                        self.assertIs(self.model.batteries[2], reply)
+                    else:
+                        self.assertIn("10-second", reply.text)
+
+    def test_reboot_tolerance_still_requires_exact_reply_identity_and_schema(self):
+        for command_id in (CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY):
+            with self.subTest(command_id=command_id):
+                self.model.reset()
+                self.model.remember_enumeration(1, *enumeration())
+                self.prepare(command_id)
+                for changes in (dict(src_id=3), dict(src_id=1),
+                                dict(session_id=101), dict(seq=8)):
+                    self.assertIsNone(self.model.observe(self.reply(
+                        command_id=command_id, epoch=0, **changes)))
+                other_command = (CMD_IDENTIFY_ANCHOR if command_id == CMD_READ_ANCHOR_BATTERY
+                                 else CMD_READ_ANCHOR_BATTERY)
+                self.assertIsNone(self.model.observe(self.reply(
+                    command_id=other_command, epoch=0)))
+                for changes in (dict(anchor_id=3), dict(anchor_id=0),
+                                dict(boot_counter=0), dict(epoch_width=3),
+                                dict(epoch_width=5),
+                                dict(omit=TLV_DISCOVERY_ASSIGNMENT_EPOCH),
+                                dict(duplicate=TLV_DISCOVERY_ASSIGNMENT_EPOCH)):
+                    with self.subTest(changes=changes), self.assertRaises(ValueError):
+                        self.model.observe(self.reply(command_id=command_id,
+                                                      epoch=0, **changes))
+                self.assertFalse(self.model.replies)
+                self.assertFalse(self.model.batteries)
+                self.assertIsNotNone(self.model.pending)
 
     def test_no_hia_and_no_completion_from_unvalidated_result(self):
         target = dispatch(CMD_IDENTIFY_ANCHOR, 2, 100, 7)

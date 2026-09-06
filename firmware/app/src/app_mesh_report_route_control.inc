@@ -215,6 +215,9 @@ static int mesh_probe_standard_wake_claim(
             candidate.flags,
             IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ),
             IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL))) {
+        *click_claim = candidate;
+        *click_quality = quality;
+        *click_observed_ms = k_uptime_get_32();
         ret = dwm3000_driver_configure_wake_mesh_control_mode();
         if (ret < 0) {
             mesh_log_standard_click_probe_done(started_ms, "fail", ret);
@@ -2351,7 +2354,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     bool yielded_to_competing_route_request = false;
     bool hold_post_rx_response_contact = false;
     bool click_captured = false;
-    bool gateway_control_followup_wake_seen = false;
+    struct app_mesh_c5_control_wake_history control_wake_history = {0};
+    uint32_t control_hard_deadline_ms = 0u;
     bool yielded_to_channel9_receive = false;
     bool yielded_to_gateway_priority_control = false;
     bool gateway_operation_retained = false;
@@ -2393,6 +2397,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     if (window_ms == 0u) {
         window_ms = MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS;
     }
+    if (MAX(window_ms, discovery_assignment_control_listener_duration_ms(
+                           MESH_NETWORK_MAX_HOPS)) > INT32_MAX / 2u) {
+        return -EINVAL;
+    }
     route_ready_generation = atomic_get(&mesh_route_ready_generation);
     if (!mesh_coordinator_mesh_work_allowed(reason == NULL ? "route-reply-listen" : reason)) {
         return -EBUSY;
@@ -2433,6 +2441,12 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     }
     if (ret == 0) {
         deadline_ms = k_uptime_get_32() + window_ms;
+        /* Keep the old maximum-depth listener plus one follow-up as an
+         * immutable ceiling. New control work can renew a shorter local
+         * window, while replay/noise cannot retain the radio indefinitely. */
+        control_hard_deadline_ms = deadline_ms - window_ms +
+            2u * MAX(window_ms, discovery_assignment_control_listener_duration_ms(
+                                   MESH_NETWORK_MAX_HOPS));
         while (capture_count < MESH_ROUTE_TEST_REPLY_CAPTURE_MAX) {
             enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
             uint32_t captured_flood_epoch_id = 0u;
@@ -2557,18 +2571,14 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     }
                     if (probe_ret ==
                         MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL) {
-                        if (!gateway_control_followup_wake_seen) {
-                            gateway_control_followup_wake_seen = true;
-                            /*
-                             * This wake begins the next relay's exchange.
-                             * It can arrive at the end of the listener opened
-                             * by the previous hop, so give its payload one
-                             * complete bounded follow-up window of its own.
-                             */
-                            deadline_ms = k_uptime_get_32() + window_ms;
+                        if (app_mesh_c5_control_wake_renew(
+                                &control_wake_history, &click_claim, NETWORK_ID,
+                                click_observed_ms, window_ms,
+                                control_hard_deadline_ms, &deadline_ms)) {
                             status_debug_printf(
-                                "DBG_C5_CONTROL_DEEPER_RELAY_LISTEN deadline=%u\n",
-                                deadline_ms);
+                                "DBG_C5_CONTROL_DEEPER_RELAY_LISTEN evt=%u deadline=%u hard=%u\n",
+                                click_claim.click_event_id, deadline_ms,
+                                control_hard_deadline_ms);
                         }
                         continue;
                     }
@@ -2664,6 +2674,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         contact_purpose,
                         app_mesh_c5_wake_claim_preempts_mesh(
                             click_claim.flags))) {
+                    (void)app_mesh_c5_control_wake_renew(
+                        &control_wake_history, &click_claim, NETWORK_ID,
+                        k_uptime_get_32(), window_ms,
+                        control_hard_deadline_ms, &deadline_ms);
                     status_debug_note(
                         "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED\n");
                     continue;

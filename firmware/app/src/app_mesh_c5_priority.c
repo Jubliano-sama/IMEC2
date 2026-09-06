@@ -1,6 +1,7 @@
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_route_request_policy.h"
 #include "gateway_command.h"
+#include "uwb.h"
 
 #include <errno.h>
 #include <stddef.h>
@@ -525,6 +526,53 @@ bool app_mesh_c5_command_followup_holds_same_train_wake(
 {
     return contact_purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD &&
            !click_priority;
+}
+
+bool app_mesh_c5_control_wake_renew(
+    struct app_mesh_c5_control_wake_history *history,
+    const struct uwb_wake_claim_frame *claim, uint32_t network_id,
+    uint32_t now_ms, uint32_t window_ms, uint32_t hard_deadline_ms,
+    uint32_t *deadline_ms)
+{
+    uint8_t index;
+    uint32_t next;
+    const size_t capacity = sizeof(history->entries) / sizeof(history->entries[0]);
+
+    if (history == NULL || claim == NULL || deadline_ms == NULL ||
+        history->count > capacity || window_ms == 0u || window_ms > INT32_MAX ||
+        uwb_validate_wake_claim(claim) != PROTO_OK ||
+        claim->network_id != network_id ||
+        !app_mesh_c5_wake_followup_is_control(claim->flags) ||
+        app_mesh_c5_wake_claim_preempts_mesh(claim->flags) ||
+        (int32_t)(now_ms - *deadline_ms) >= 0 ||
+        (int32_t)(now_ms - hard_deadline_ms) >= 0) {
+        return false;
+    }
+    for (index = 0u; index < history->count; index++) {
+        if (history->entries[index].source_id == claim->clicker_id) {
+            if ((int32_t)(claim->click_event_id -
+                          history->entries[index].event_id) <= 0) {
+                return false;
+            }
+            break;
+        }
+    }
+    if (index == capacity) {
+        return false;
+    }
+    if (index == history->count) {
+        history->count++;
+    }
+    history->entries[index].source_id = claim->clicker_id;
+    history->entries[index].event_id = claim->click_event_id;
+    next = now_ms + window_ms;
+    if ((int32_t)(next - hard_deadline_ms) > 0) {
+        next = hard_deadline_ms;
+    }
+    if ((int32_t)(next - *deadline_ms) > 0) {
+        *deadline_ms = next;
+    }
+    return true;
 }
 
 uint32_t app_mesh_c5_route_reply_listen_window_ms(

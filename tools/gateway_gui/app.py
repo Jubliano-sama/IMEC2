@@ -1592,6 +1592,11 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         except Exception as exc:
             self._show_error(f"Malformed survey event: {exc}")
             return False
+        if getattr(self, "_survey_chain_pending", False):
+            # A validated record from an earlier run cannot belong to this
+            # enumeration: START has not been sent. Retire its BLE custody.
+            self._append_log("event", f"Retired prior survey event {event.generation} during setup")
+            return True
         observed_at = time.monotonic() if received_at is None else received_at
         created_at = observed_at - max(packet.age_ms, 0) / 1000.0
         try:
@@ -1656,7 +1661,9 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 "error",
                 f"Ignored stale survey generation {event.generation}: {exc}",
             )
-            return self.survey_model.phase != "failed"
+            # Valid obsolete telemetry has no remaining model work. Its host
+            # receipt must drain the FIFO even after the local run failed.
+            return True
         except SurveyStateError as exc:
             step = {
                 SURVEY_EVENT_NEIGHBOR_GRAPH: "neighbors",
@@ -2294,6 +2301,9 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 self._survey_auto_all = False
             self._show_error(str(exc))
             return
+        self._survey_event_due_at = float("inf")
+        self._survey_reconcile_attempts = 0
+        self._survey_gateway_id = None
         self._survey_chain_pending = True
         self._survey_phase = "enumerating"
         self._survey_pass_mode = pass_mode
@@ -2369,7 +2379,10 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
     def _reconcile_stalled_survey(self) -> None:
         gateway_id = getattr(self, "gateway_id", None)
         model = getattr(self, "survey_model", None)
-        if (model is None or not model.active or not getattr(self, "connected", False)
+        if (model is None or not model.active
+                or (model.start_dispatched_at is None and model.generation is None)
+                or getattr(self, "_survey_chain_pending", False)
+                or not getattr(self, "connected", False)
                 or not gateway_id
                 or self.survey_command_owner.pending is not None
                 or getattr(self, "_survey_event_due_at", float("inf")) > time.monotonic()):

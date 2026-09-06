@@ -102,7 +102,6 @@ int app_anchor_action_result_payload(enum command_id command_id,
 int app_anchor_action_execute(struct app_anchor_actions *state,
     const struct proto_packet *command, const uint8_t *payload, size_t payload_len,
     uint64_t anchor_id, uint64_t gateway_id, uint32_t boot_counter,
-    uint32_t assignment_epoch,
     uint64_t now_ms, const struct app_anchor_action_ops *ops,
     struct app_anchor_action_result *result)
 {
@@ -140,11 +139,9 @@ int app_anchor_action_execute(struct app_anchor_actions *state,
                                   &hop_count) < 0) {
         return 0;
     }
-    if (assignment_epoch == 0u || requested_epoch != assignment_epoch) {
-        result->status = COMMAND_INVALID_STATE;
-        result->reason = ESTALE;
-        return 0;
-    }
+    /* Enumeration admission belongs to the gateway's current roster.
+     * These stable-ID service actions do not consume a local ranging slot;
+     * reset may restore an older assignment without invalidating the target. */
     if (command->message_age_ms >= app_anchor_action_delivery_ms(hop_count)) {
         result->status = COMMAND_TIMEOUT;
         result->reason = ETIMEDOUT;

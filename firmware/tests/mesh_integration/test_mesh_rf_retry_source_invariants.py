@@ -3240,36 +3240,22 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         relayed = listener.index(
             "MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL", click_break
         )
-        wake_seen_gate = listener.index(
-            "if (!gateway_control_followup_wake_seen)", relayed
-        )
-        wake_seen = listener.index(
-            "gateway_control_followup_wake_seen = true", wake_seen_gate
-        )
-        renewed_deadline = listener.index(
-            "deadline_ms = k_uptime_get_32() +", wake_seen
-        )
-        full_relay_window = listener.index(
-            "window_ms", renewed_deadline
-        )
-        hold = listener.index(
-            "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED", full_relay_window
-        )
+        renewal = listener.index("app_mesh_c5_control_wake_renew(", relayed)
+        hold = listener.index("DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED", renewal)
 
         self.assertLess(activity, control_gate)
         self.assertLess(control_gate, probe)
         self.assertLess(probe, click)
         self.assertLess(click, click_break)
         self.assertLess(click_break, relayed)
-        self.assertLess(relayed, wake_seen_gate)
-        self.assertLess(probe, wake_seen)
-        self.assertLess(wake_seen, renewed_deadline)
-        self.assertLess(renewed_deadline, full_relay_window)
-        self.assertLess(full_relay_window, hold)
-        self.assertIn(
-            "!gateway_control_followup_wake_seen",
-            listener[relayed:wake_seen],
-        )
+        self.assertLess(relayed, renewal)
+        self.assertLess(renewal, hold)
+        self.assertIn("&control_wake_history, &click_claim, NETWORK_ID",
+                      listener[renewal:hold])
+        self.assertIn("click_observed_ms, window_ms", listener[renewal:hold])
+        self.assertIn("control_hard_deadline_ms, &deadline_ms",
+                      listener[renewal:hold])
+        self.assertNotIn("gateway_control_followup_wake_seen", listener)
         self.assertNotIn(
             "gateway_control_relay_shortfall", listener[control_gate:probe]
         )
@@ -3284,6 +3270,26 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "contact_purpose ==",
             listener[control_gate:hold],
         )
+
+    def test_control_wake_renewal_uses_decoded_identity_and_immutable_cap(self):
+        listener = function_body(REPORT, "mesh_listen_for_route_reply")
+        probe = function_body(REPORT, "mesh_probe_standard_wake_claim")
+        decode = probe.index("uwb_decode_wake_claim(")
+        copy = probe.index("*click_claim = candidate", decode)
+        control = probe.index("MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL",
+                              copy)
+        self.assertLess(decode, copy)
+        self.assertLess(copy, control)
+        self.assertIn("*click_observed_ms = k_uptime_get_32()", probe[copy:control])
+        # Both standard-PHR probe and already-decoded wake ingress use the
+        # native-tested policy; neither can reset the immutable outer cap.
+        self.assertEqual(listener.count("app_mesh_c5_control_wake_renew("), 2)
+        self.assertEqual(listener.count("control_hard_deadline_ms = deadline_ms"), 1)
+        cap = listener.index("control_hard_deadline_ms = deadline_ms")
+        self.assertIn("discovery_assignment_control_listener_duration_ms(",
+                      listener[cap:cap + 300])
+        self.assertIn("MESH_NETWORK_MAX_HOPS", listener[cap:cap + 300])
+        self.assertLess(cap, listener.index("app_mesh_c5_control_wake_renew("))
 
     def test_gateway_control_listener_uses_here_i_am_route_depth(self):
         handoff = function_body(REPORT, "mesh_anchor_handoff_route_wake_frame")

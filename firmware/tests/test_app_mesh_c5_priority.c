@@ -1,5 +1,6 @@
 #include "app_mesh_c5_priority.h"
 #include "gateway_command.h"
+#include "uwb.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -1001,6 +1002,188 @@ static void test_contact_expiry_uses_state_across_uptime_wrap(void)
         UINT32_MAX));
 }
 
+static struct uwb_wake_claim_frame control_wake(uint64_t source,
+                                                 uint32_t event)
+{
+    const struct uwb_wake_claim_frame claim = {
+        .network_id = 1u,
+        .clicker_id = source,
+        .click_event_id = event,
+        .attempt_index = 1u,
+        .priority_id = source,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .wake_train_ends_in_ms = 400u,
+        .discovery_starts_in_ms = 445u,
+        .claimed_duration_ms = 1000u,
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .nonce = 1u,
+        .flags = FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                 FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+    };
+
+    assert(uwb_validate_wake_claim(&claim) == PROTO_OK);
+    return claim;
+}
+
+static void test_sequential_control_trains_each_keep_their_payload_window(void)
+{
+    struct app_mesh_c5_control_wake_history history = {0};
+    struct uwb_wake_claim_frame claim = control_wake(10u, 100u);
+    uint32_t deadline = 1000u;
+
+    /* Three commands share an already-open listener. The second wake at
+     * 1600 ms must renew the old one-renewal deadline of 1900 ms, allowing
+     * its payload and the following command to complete. */
+    for (uint32_t train = 0u; train < 3u; train++) {
+        uint32_t now = 900u + train * 700u;
+
+        claim.click_event_id = 100u + train;
+        assert(app_mesh_c5_control_wake_renew(
+            &history, &claim, 1u, now, 1000u, 6000u, &deadline));
+        assert(deadline == now + 1000u);
+        for (uint32_t copy = 1u; copy <= 10u; copy++) {
+            assert(!app_mesh_c5_control_wake_renew(
+                &history, &claim, 1u, now + copy * 20u,
+                1000u, 6000u, &deadline));
+            assert(deadline == now + 1000u);
+        }
+    }
+    assert(deadline > 2400u);
+    assert(history.count == 1u);
+}
+
+static void test_control_wake_replay_is_inert_across_interleaved_sources(void)
+{
+    struct app_mesh_c5_control_wake_history history = {0};
+    struct uwb_wake_claim_frame claim = control_wake(10u, 100u);
+    uint32_t deadline = 1000u;
+
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 100u, 1000u, 6000u, &deadline));
+    claim = control_wake(20u, 200u);
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 200u, 1000u, 6000u, &deadline));
+    claim = control_wake(10u, 100u);
+    claim.nonce++;
+    claim.attempt_index++;
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 300u, 1000u, 6000u, &deadline));
+    claim.click_event_id--;
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 400u, 1000u, 6000u, &deadline));
+    claim.click_event_id = 100u + 0x80000000u;
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 500u, 1000u, 6000u, &deadline));
+    assert(deadline == 1200u);
+    assert(history.count == 2u);
+    assert(history.entries[0].event_id == 100u);
+}
+
+static void test_control_wake_validation_precedes_watermark_and_deadline(void)
+{
+    struct app_mesh_c5_control_wake_history history = {0};
+    const struct uwb_wake_claim_frame valid = control_wake(10u, 100u);
+    struct uwb_wake_claim_frame claim;
+    uint32_t deadline = 1000u;
+
+    for (unsigned int fault = 0u; fault < 7u; fault++) {
+        claim = valid;
+        switch (fault) {
+        case 0u: claim.network_id = 2u; break;
+        case 1u: claim.nonce = 0u; break;
+        case 2u: claim.wake_train_ends_in_ms = 0u; break;
+        case 3u: claim.click_event_id = 0u; break;
+        case 4u: claim.flags &= (uint8_t)~FLAG_CONTROL_FOLLOWUP; break;
+        case 5u: claim.flags &= (uint8_t)~FLAG_RANGE_ONLY; break;
+        default: claim.clicker_id = 0u; break;
+        }
+        assert(!app_mesh_c5_control_wake_renew(
+            &history, &claim, 1u, 500u, 1000u, 6000u, &deadline));
+        assert(deadline == 1000u);
+        assert(history.count == 0u);
+    }
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &valid, 1u, 500u, 1000u, 6000u, &deadline));
+    assert(deadline == 1500u);
+}
+
+static void test_control_wake_capacity_never_evicts_replay_history(void)
+{
+    struct app_mesh_c5_control_wake_history history = {0};
+    uint32_t deadline = 1000u;
+
+    for (uint32_t peer = 0u; peer <= MESH_NETWORK_MAX_HOPS; peer++) {
+        struct uwb_wake_claim_frame claim = control_wake(peer + 1u, 100u);
+
+        assert(app_mesh_c5_control_wake_renew(
+            &history, &claim, 1u, 100u + peer,
+            1000u, 6000u, &deadline));
+    }
+    const uint32_t retained_deadline = deadline;
+    struct uwb_wake_claim_frame claim = control_wake(1000u, 100u);
+
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 200u, 1000u, 6000u, &deadline));
+    claim = control_wake(1u, 100u);
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 300u, 1000u, 6000u, &deadline));
+    assert(deadline == retained_deadline);
+    assert(history.count == MESH_NETWORK_MAX_HOPS + 1u);
+    claim.click_event_id++;
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 400u, 1000u, 6000u, &deadline));
+    assert(deadline == 1400u);
+}
+
+static void test_control_wake_fresh_traffic_cannot_outlive_hard_deadline(void)
+{
+    struct app_mesh_c5_control_wake_history history = {0};
+    struct uwb_wake_claim_frame claim = control_wake(10u, 100u);
+    uint32_t deadline = 1000u;
+
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 900u, 1000u, 1500u, &deadline));
+    assert(deadline == 1500u);
+    claim.click_event_id++;
+    (void)app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 1499u, 1000u, 1500u, &deadline);
+    assert(deadline == 1500u);
+    claim.click_event_id++;
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 1500u, 1000u, 1500u, &deadline));
+    assert(deadline == 1500u);
+    /* An elapsed soft deadline cannot be resurrected even before the cap. */
+    deadline = 1400u;
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 1400u, 1000u, 1500u, &deadline));
+    assert(deadline == 1400u);
+}
+
+static void test_control_wake_wrap_and_shorter_window_preserve_deadline(void)
+{
+    struct app_mesh_c5_control_wake_history history = {0};
+    struct uwb_wake_claim_frame claim = control_wake(10u, UINT32_MAX - 1u);
+    uint32_t deadline = 500u;
+
+    /* Both source event IDs and receiver uptime can wrap independently. */
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, UINT32_MAX - 99u, 1000u, 2000u, &deadline));
+    assert(deadline == 900u);
+    claim.click_event_id = 1u;
+    assert(app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 100u, 1000u, 2000u, &deadline));
+    assert(deadline == 1100u);
+    claim.click_event_id = UINT32_MAX;
+    assert(!app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 200u, 1000u, 2000u, &deadline));
+    claim.click_event_id = 2u;
+    (void)app_mesh_c5_control_wake_renew(
+        &history, &claim, 1u, 300u, 100u, 2000u, &deadline);
+    assert(deadline == 1100u);
+}
+
 int main(void)
 {
     test_passive_gateway_preempt_defers_background_flood();
@@ -1040,5 +1223,11 @@ int main(void)
     test_connected_gap_window_uses_channel5_until_retune_guard();
     test_connected_gap_reschedules_immediate_c5_until_ch9_is_close();
     test_contact_expiry_uses_state_across_uptime_wrap();
+    test_sequential_control_trains_each_keep_their_payload_window();
+    test_control_wake_replay_is_inert_across_interleaved_sources();
+    test_control_wake_validation_precedes_watermark_and_deadline();
+    test_control_wake_capacity_never_evicts_replay_history();
+    test_control_wake_fresh_traffic_cannot_outlive_hard_deadline();
+    test_control_wake_wrap_and_shorter_window_preserve_deadline();
     return 0;
 }

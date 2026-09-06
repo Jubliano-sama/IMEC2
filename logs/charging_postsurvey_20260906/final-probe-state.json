@@ -1,0 +1,18 @@
+{
+  "gateway": {
+    "probe": "E4645C15CB0F3B37",
+    "state": "State.RUNNING"
+  },
+  "anchor_a": {
+    "probe": "E46070D247233537",
+    "state": "State.SLEEPING"
+  },
+  "anchor_b": {
+    "probe": "E46070D247394D36",
+    "state": "State.SLEEPING"
+  },
+  "anchor_c": {
+    "probe": "E4645C15CB365D30",
+    "state": "State.SLEEPING"
+  }
+}

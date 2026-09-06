@@ -33,11 +33,11 @@ static void request(enum command_id id, uint32_t epoch, uint8_t hops)
     command.payload_len = (uint16_t)length;
 }
 
-static struct app_anchor_action_result run(uint32_t boot, uint32_t epoch, uint64_t now)
+static struct app_anchor_action_result run(uint32_t boot, uint64_t now)
 {
     struct app_anchor_action_result result;
     assert(app_anchor_action_execute(&state, &command, payload, length,
-        2u, 1u, boot, epoch, now, &ops, &result) == 0);
+        2u, 1u, boot, now, &ops, &result) == 0);
     return result;
 }
 
@@ -45,34 +45,32 @@ static void test_deadline_and_replay(void)
 {
     uint64_t now = UINT64_C(0xffffffff) - 5000u;
     request(CMD_IDENTIFY_ANCHOR, 40u, 1u);
-    assert(run(10u, 0u, now).status == COMMAND_INVALID_STATE);
-    assert(run(10u, 41u, now).status == COMMAND_INVALID_STATE);
     assert(identifies == 0u);
-    struct app_anchor_action_result first = run(10u, 40u, now);
+    struct app_anchor_action_result first = run(10u, now);
     assert(first.status == COMMAND_OK && identifies == 1u);
     for (unsigned i = 0; i < 1000u; i++) {
-        struct app_anchor_action_result retry = run(10u, 40u, now + i * 20u);
+        struct app_anchor_action_result retry = run(10u, now + i * 20u);
         assert(retry.sampled_at_ms == first.sampled_at_ms && identifies == 1u);
     }
     request(CMD_READ_ANCHOR_BATTERY, 40u, 1u);
-    assert(run(10u, 40u, now + 21000u).status == COMMAND_DENIED && samples == 0u);
+    assert(run(10u, now + 21000u).status == COMMAND_DENIED && samples == 0u);
     command.session_id++; command.seq++;
-    assert(run(10u, 40u, now + 22000u).status == COMMAND_OK && samples == 1u);
-    assert(run(10u, 40u, now + 23000u).status == COMMAND_OK && samples == 1u);
+    assert(run(10u, now + 22000u).status == COMMAND_OK && samples == 1u);
+    assert(run(10u, now + 23000u).status == COMMAND_OK && samples == 1u);
     command.session_id--; command.seq--;
     request(CMD_IDENTIFY_ANCHOR, 40u, 1u);
-    assert(run(10u, 40u, now + 24000u).status == COMMAND_INVALID_STATE && identifies == 1u);
+    assert(run(10u, now + 24000u).status == COMMAND_INVALID_STATE && identifies == 1u);
     command.session_id += 2u; command.seq += 2u;
     command.message_age_ms = ANCHOR_ACTION_PER_HOP_MS;
-    assert(run(10u, 40u, now + 25000u).status == COMMAND_TIMEOUT && identifies == 1u);
+    assert(run(10u, now + 25000u).status == COMMAND_TIMEOUT && identifies == 1u);
     command.message_age_ms = 0u;
     command.session_id = UINT32_MAX;
     memset(&state, 0, sizeof(state));
-    assert(run(10u, 40u, now).status == COMMAND_OK);
+    assert(run(10u, now).status == COMMAND_OK);
     command.session_id = 1u;
-    assert(run(10u, 40u, now + 20u).status == COMMAND_OK);
+    assert(run(10u, now + 20u).status == COMMAND_OK);
     /* A reset has a new volatile result identity. No cross-reset exactly-once claim. */
-    assert(run(11u, 40u, now + 30u).boot_counter == 11u);
+    assert(run(11u, now + 30u).boot_counter == 11u);
 }
 
 static void test_schema_and_failures(void)
@@ -83,16 +81,16 @@ static void test_schema_and_failures(void)
     memset(&state, 0, sizeof(state));
     request(CMD_READ_ANCHOR_BATTERY, 40u, 8u);
     hardware_error = -EIO;
-    result = run(12u, 40u, 100u);
+    result = run(12u, 100u);
     assert(result.status == COMMAND_INTERNAL_ERROR);
     unsigned previous_samples = samples;
     hardware_error = 0;
-    assert(run(12u, 40u, 200u).status == COMMAND_INTERNAL_ERROR && samples == previous_samples);
+    assert(run(12u, 200u).status == COMMAND_INTERNAL_ERROR && samples == previous_samples);
     assert(app_anchor_action_result_payload(CMD_READ_ANCHOR_BATTERY, 2u, 40u,
         &result, response, sizeof(response), &response_len) == 0);
     assert(tlv_find_unique(response, response_len, TLV_BATTERY_MV, &value, &value_len) == PROTO_ERR_NOT_FOUND);
     command.session_id++; command.seq++;
-    result = run(12u, 40u, 300u);
+    result = run(12u, 300u);
     assert(result.status == COMMAND_OK && result.battery_mv == 3712u);
     assert(app_anchor_action_result_payload(CMD_READ_ANCHOR_BATTERY, 2u, 40u,
         &result, response, sizeof(response), &response_len) == 0);
@@ -106,7 +104,7 @@ static void test_schema_and_failures(void)
     previous_samples = samples;
     for (size_t truncated = 0u; truncated < ANCHOR_ACTION_REQUEST_MAX_LEN; truncated++) {
         length = truncated; command.payload_len = (uint16_t)length;
-        assert(run(12u, 40u, 400u).status == COMMAND_MALFORMED_PAYLOAD);
+        assert(run(12u, 400u).status == COMMAND_MALFORMED_PAYLOAD);
     }
     for (unsigned hops = 0u; hops < 256u; hops++) {
         request(CMD_READ_ANCHOR_BATTERY, 40u, (uint8_t)hops);
@@ -115,11 +113,13 @@ static void test_schema_and_failures(void)
         assert((app_anchor_action_request(payload, length, &epoch, &decoded_hops) == 0) == valid);
         if (valid) assert(app_anchor_action_delivery_ms(decoded_hops) == hops * GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
     }
+    request(CMD_READ_ANCHOR_BATTERY, 0u, 1u);
+    assert(run(12u, 500u).status == COMMAND_MALFORMED_PAYLOAD);
     request(CMD_READ_ANCHOR_BATTERY, 40u, 1u);
     command.src_id = 9u;
-    assert(run(12u, 40u, 500u).status == COMMAND_MALFORMED_PAYLOAD);
+    assert(run(12u, 500u).status == COMMAND_MALFORMED_PAYLOAD);
     command.src_id = 1u; command.dst_id = UINT64_MAX;
-    assert(run(12u, 40u, 500u).status == COMMAND_MALFORMED_PAYLOAD);
+    assert(run(12u, 500u).status == COMMAND_MALFORMED_PAYLOAD);
     command.dst_id = 2u;
     assert(samples == previous_samples);
 }
@@ -185,6 +185,50 @@ static size_t action_result_payload(enum command_id id, enum command_status stat
     assert(app_anchor_action_result_payload(id, result_anchor, 40u, &result,
                response, capacity, &response_len) == PROTO_OK);
     return response_len;
+}
+
+static void test_reset_preserves_action_access_and_retry_identity(void)
+{
+    const enum command_id ids[] = {CMD_IDENTIFY_ANCHOR, CMD_READ_ANCHOR_BATTERY};
+    /* The request retains the GUI's known route epoch. The anchor may restore
+     * an older durable epoch or have no assignment after RAM is cleared. */
+    const uint32_t observed_epochs[] = {40u, 12u, 0u};
+
+    hardware_error = 0;
+    command.message_age_ms = 0u;
+    for (size_t action = 0u; action < 2u; action++) {
+        for (size_t boot = 0u; boot < 3u; boot++) {
+            uint8_t response[128];
+            size_t response_len;
+            const uint8_t *value;
+            uint8_t value_len;
+            unsigned previous = action == 0u ? identifies : samples;
+
+            /* A real reset clears the action cache and restarts uptime. An
+             * exact request can execute once again under a new boot identity. */
+            memset(&state, 0, sizeof(state));
+            request(ids[action], 40u, 2u);
+            struct app_anchor_action_result result = run(20u + (uint32_t)boot, 5u);
+            assert(result.status == COMMAND_OK);
+            assert(result.boot_counter == 20u + boot);
+            assert((action == 0u ? identifies : samples) == previous + 1u);
+            assert(run(20u + (uint32_t)boot, 6u).sampled_at_ms == 5u);
+            assert((action == 0u ? identifies : samples) == previous + 1u);
+            assert(app_anchor_action_result_payload(ids[action], result_anchor,
+                       observed_epochs[boot], &result, response, sizeof(response),
+                       &response_len) == PROTO_OK);
+            assert(tlv_find_unique(response, response_len,
+                       TLV_DISCOVERY_ASSIGNMENT_EPOCH, &value, &value_len) == PROTO_OK);
+            assert(value_len == 4u && proto_get_u32_le(value) == observed_epochs[boot]);
+            assert_result_rx(response, response_len, PROTO_OK);
+
+            /* Epoch metadata is not a local admission gate, but mutation of
+             * the retained request still cannot replay under the same ID. */
+            request(ids[action], 39u, 2u);
+            assert(run(20u + (uint32_t)boot, 7u).status == COMMAND_DENIED);
+            assert((action == 0u ? identifies : samples) == previous + 1u);
+        }
+    }
 }
 
 static void test_produced_action_results_pass_direct_and_forwarded_rx(void)
@@ -291,7 +335,6 @@ static void test_action_result_identity_and_output_values(void)
     } invalid[] = {
         {TLV_ANCHOR_ID, 0u},
         {TLV_ANCHOR_ID, UINT64_C(0xd000000012345678)},
-        {TLV_DISCOVERY_ASSIGNMENT_EPOCH, 0u},
         {TLV_NODE_BOOT_COUNTER, 0u},
         {TLV_COMMAND_STATUS, COMMAND_INTERNAL_ERROR + 1u},
         {TLV_COMMAND_STATUS, UINT16_MAX},
@@ -505,6 +548,7 @@ int main(void)
     test_deadline_and_replay();
     test_schema_and_failures();
     test_rgb_deadline();
+    test_reset_preserves_action_access_and_retry_identity();
     test_produced_action_results_pass_direct_and_forwarded_rx();
     test_action_result_schema_rejects_malformed_fields();
     test_action_result_identity_and_output_values();

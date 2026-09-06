@@ -474,11 +474,8 @@ static int mesh_anchor_action_result_validate(const struct proto_packet *packet,
     if (proto_get_u64_le(value) != packet->src_id) {
         return PROTO_ERR_MALFORMED;
     }
-    (void)tlv_find_unique(payload, payload_len,
-        TLV_DISCOVERY_ASSIGNMENT_EPOCH, &value, &length);
-    if (proto_get_u32_le(value) == 0u) {
-        return PROTO_ERR_MALFORMED;
-    }
+    /* The epoch is observation metadata for stable-ID service replies.
+     * A reset can restore an older assignment, or no saved assignment. */
     (void)tlv_find_unique(payload, payload_len,
         TLV_NODE_BOOT_COUNTER, &value, &length);
     if (proto_get_u32_le(value) == 0u) {

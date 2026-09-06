@@ -3609,7 +3609,9 @@ static int gateway_submit_survey_plan(const struct proto_packet *packet,
 static int gateway_cancel_survey(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len);
-static int gateway_get_survey_status(const struct proto_packet *packet);
+static int gateway_get_survey_status(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len);
 
 K_MUTEX_DEFINE(gateway_survey_publication_mutex);
 
@@ -3950,18 +3952,44 @@ static int gateway_cancel_survey(
 }
 
 static int gateway_get_survey_status(
-    const struct proto_packet *host_command)
+    const struct proto_packet *host_command,
+    const uint8_t *payload,
+    size_t payload_len)
 {
     struct survey_event event;
-    int ret = app_survey_gateway_status(&event);
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    uint32_t generation = 0u;
+    int ret = tlv_find_unique(payload, payload_len, TLV_SURVEY_GENERATION,
+                              &value, &value_len);
 
+    /* Omission supports recovery of a lost START acceptance. Once the host
+     * knows its generation, an older/newer run cannot satisfy that request. */
+    if (ret == PROTO_OK) {
+        if (value_len != sizeof(uint32_t) ||
+            (generation = proto_get_u32_le(value)) == 0u) {
+            ret = -EINVAL;
+        }
+    } else {
+        ret = ret == PROTO_ERR_NOT_FOUND ? 0 : -EINVAL;
+    }
+    if (ret == 0) {
+        ret = app_survey_gateway_status(&event);
+    }
+    if (ret == 0 && generation != 0u &&
+        event.identity.generation != generation) {
+        ret = -ESTALE;
+    }
     if (ret == 0) {
         ret = gateway_survey_emit_event(&event);
     }
     gateway_emit_host_command_result(
         host_command, CMD_SURVEY_GET_STATUS,
         ret == 0 ? COMMAND_OK :
-        ret == -ENOENT ? COMMAND_INVALID_STATE : COMMAND_INTERNAL_ERROR,
+        app_gateway_command_ingress_contention_retryable(ret) ? COMMAND_BUSY :
+        ret == -ENOENT || ret == -ESTALE ? COMMAND_INVALID_STATE :
+        ret == -EINVAL || ret == -EBADMSG ? COMMAND_MALFORMED_PAYLOAD :
+        COMMAND_INTERNAL_ERROR,
         ret == 0 ? 0u : (uint8_t)(-ret));
     return ret;
 }
@@ -4490,7 +4518,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
             case CMD_SURVEY_CANCEL:
                 return gateway_cancel_survey(packet, payload, payload_len);
             case CMD_SURVEY_GET_STATUS:
-                return gateway_get_survey_status(packet);
+                return gateway_get_survey_status(packet, payload, payload_len);
             default:
                 break;
             }

@@ -175,6 +175,12 @@ add_test(NAME enumeration_rx_lifecycle_source_invariants
 set_tests_properties(enumeration_rx_lifecycle_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;assignment;state;radio;static_analysis")
 
+add_test(NAME gateway_survey_status_recovery
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_survey_status_recovery.py)
+set_tests_properties(gateway_survey_status_recovery PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;state;custody;backpressure")
+
 add_test(NAME protocol_listener_click_preemption_source_invariants
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_protocol_listener_click_preemption_source_invariants.py)

@@ -1,0 +1,32 @@
+[1/13] Building C object CMakeFiles/app.dir/src/app_anchor_actions.c.obj
+[2/13] Building C object CMakeFiles/app.dir/src/app_anchor_action_runtime.c.obj
+[3/13] Building C object CMakeFiles/app.dir/src/app_mesh_c5_priority.c.obj
+[4/13] Building C object CMakeFiles/app.dir/src/app_board.c.obj
+[5/13] Building C object CMakeFiles/app.dir/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/src/mesh.c.obj
+[6/13] Building C object CMakeFiles/app.dir/src/app_anchor.c.obj
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_anchor.c:565:
+CMAKE_SOURCE_DIR/src/app_anchor.c:9289:13: warning: 'anchor_operation_high_duty_boost_begin' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:9067:13: warning: 'anchor_enumeration_rx_matches_table' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:6618:13: warning: 'anchor_relay_tx_active' defined but not used [-Wunused-function]
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_anchor.c:564:
+CMAKE_SOURCE_DIR/src/app_anchor.c:9806:13: warning: 'gateway_route_refresh_observe' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:7794:13: warning: 'gateway_route_refresh_prearm_snapshot' defined but not used [-Wunused-function]
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_anchor.c:563:
+CMAKE_SOURCE_DIR/src/app_anchor.c:3548:12: warning: 'command_find_u16_tlv' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:2795:12: warning: 'anchor_schedule_late_discovery_claim' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:860:12: warning: 'anchor_send_command_result' defined but not used [-Wunused-function]
+[7/13] Building C object CMakeFiles/app.dir/src/app_mesh_report.c.obj
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report.c:1442:
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:2208:12: warning: 'mesh_gateway_preflight_semantic_delivery' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:2102:12: warning: 'mesh_gateway_commit_preflighted_semantic_delivery' defined but not used [-Wunused-function]
+[8/13] Linking C static library app/libapp.a
+[9/13] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[10/13] Generating linker.cmd
+[11/13] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[12/13] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[13/13] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      459852 B       488 KB     92.02%
+             RAM:        122 KB       128 KB     95.31%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/build/scan-production-anchor/zephyr/zephyr.elf for board: nrf52833dk

@@ -1,0 +1,393 @@
+.!frame.!label IMEC2 Gateway BLE Console
+.!frame.!label2 TOKYO GRID // LIVE RF · SURVEY · GEOMETRY
+.!frame.!label3 Connected
+.!frame2.!label Survey routes timeout; start a new survey to retry.
+.!frame3.!label Gateway
+.!panedwindow.!frame.!labelframe.!label Anchor count hint
+.!panedwindow.!frame.!labelframe.!label2 Survey max degree
+.!panedwindow.!frame.!labelframe.!label3 Ready for a gateway command.
+.!panedwindow.!frame.!labelframe.!label4 Topology: 3 anchors, max hop 1, slot span 3. Enumeration up to 15:28.
+.!panedwindow.!frame.!labelframe.!label5 Scheduled phase timing appears while an operation is active.
+.!panedwindow.!frame2.!labelframe.!label A successful enumeration enables these commands.
+.!panedwindow.!frame2.!labelframe.!toplevel.!label Read all batteries to refresh voltages; hover an anchor for its latest reading.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame.!frame.!label Live packet stream
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame2.!frame.!label GUI transport events
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame2.!text TEXT
+22:36:22.023  BLE state: connecting E4:16:B7:C7:E6:95
+22:36:24.179  BLE state: connected E4:16:B7:C7:E6:95
+22:36:33.000  BLE write complete for Survey Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:36:33.102  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:33.203  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:37.572  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:55.686  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:55.789  BLE write complete for Assign discovery slots: 53 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:36:55.889  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:55.990  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:56.092  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:56.193  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:56.294  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:56.396  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:56.497  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.100  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.201  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.303  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.406  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.508  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.609  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.712  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:36:57.763  BLE write complete for Start neighbor survey: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:36:57.965  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:06.445  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:06.497  BLE write complete for Submit survey ranging plan: 102 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:37:06.598  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:06.700  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:06.803  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:12.629  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:15.846  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:18.961  Solving with Neighbor intervals (radio interval 7-15 m) from 3/3 ranges (distance weight power 0)...
+22:37:19.064  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:19.842  Geometry re-solve complete: Neighbor intervals (7-15 m); seed Visibility branching; RMSE 0.011 m, max residual 0.011 m.
+22:37:22.251  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:25.412  Survey complete: 3/3 pairs have usable median ranges
+22:37:25.514  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:27.271  BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:37:27.875  Anchor c1c2306a5138ab2d: Battery: 2.946 V · just received
+22:37:27.976  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:28.076  BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:37:28.680  Anchor 0f6d3a3bdac0f858: Battery: 3.722 V · just received
+22:37:28.831  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:28.931  BLE write complete for Read anchor battery: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:37:29.534  Anchor 9699122bd60a64e3: Battery: 3.166 V · just received
+22:37:29.635  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:42.232  BLE write complete for Identify anchor: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:37:43.789  Anchor c1c2306a5138ab2d: 10-second RGB identification accepted
+22:37:43.840  Suppressed exact replay of command result src=0xc1c2306a5138ab2d session=221191442 seq=8; host delivery is at-least-once
+22:37:43.890  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:43.940  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:37:54.179  Solving with Neighbor intervals (radio interval 7-15 m) from 3/3 ranges (distance weight power 0)...
+22:37:54.481  Geometry re-solve complete: Neighbor intervals (7-15 m); seed Visibility branching; RMSE 0.011 m, max residual 0.011 m.
+22:38:07.831  BLE write complete for Identify anchor: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:38:08.435  Anchor c1c2306a5138ab2d: 10-second RGB identification accepted
+22:38:08.535  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:38:27.854  BLE write complete for Identify anchor: 49 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:38:52.097  Anchor 9999888877776666: Command failed: TIMEOUT
+22:38:52.198  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:39:20.251  BLE write complete for Survey Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:39:20.353  BLE write complete for Retrieve survey status: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:39:20.454  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:39:20.555  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:39:24.522  BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+22:40:20.296  BLE write complete for Retrieve survey status: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:41:20.340  BLE write complete for Retrieve survey status: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+22:41:25.162  Survey routes timeout; start a new survey to retry.
+22:41:25.563  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:26.566  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:27.570  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:28.573  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:29.526  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:30.579  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:31.583  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:32.536  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:33.539  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:34.593  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:35.596  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:36.548  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:37.551  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:38.604  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:39.557  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:40.560  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:41.563  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:42.565  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:43.568  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:44.571  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:45.574  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:46.528  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:47.581  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:48.585  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:49.588  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:50.542  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:51.596  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:52.599  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:53.553  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:54.556  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:55.560  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:56.563  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:57.567  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:58.570  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:41:59.574  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:00.578  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:01.581  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:02.585  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:03.539  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:04.593  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:05.596  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:06.599  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:07.553  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:08.558  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:09.612  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:10.564  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:11.567  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:12.570  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:13.573  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:14.576  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:15.581  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:16.584  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:17.587  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:18.590  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:19.592  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:20.595  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:21.548  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:22.602  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:23.605  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:24.558  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:25.562  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:26.615  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:27.568  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:28.570  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:29.573  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:30.626  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:31.579  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:32.582  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:33.584  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:34.587  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:35.590  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:36.593  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:37.597  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:38.550  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:39.603  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:40.608  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:41.611  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:42.563  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:43.616  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:44.619  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:45.571  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:46.574  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:47.577  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:48.630  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:49.582  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:50.585  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:51.588  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:52.591  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:53.595  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:54.599  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:55.602  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:56.606  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:57.609  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:58.611  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:42:59.564  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:00.617  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:01.622  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:02.625  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:03.578  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:04.581  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:05.634  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:06.588  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:07.591  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:08.594  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:09.648  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:10.601  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:11.606  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:12.609  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:13.613  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:14.616  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:15.619  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:16.573  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:17.575  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:18.629  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:19.633  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:20.588  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:21.592  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:22.645  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:23.598  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:24.600  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:25.605  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:26.658  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:27.611  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:28.614  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:29.617  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:30.569  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:31.622  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:32.626  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:33.629  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:34.581  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:35.634  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:36.637  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:37.591  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:38.595  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:39.649  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:40.652  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:41.605  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:42.608  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:43.611  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:44.614  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:45.617  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:46.620  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:47.623  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:48.625  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:50.280  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:50.632  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:51.585  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:52.638  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:53.641  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:54.645  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:55.598  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:56.601  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:57.654  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:58.608  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:43:59.612  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:00.616  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:01.619  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:02.622  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:03.625  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:04.630  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:05.633  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:06.636  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:07.640  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:08.594  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:09.598  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:10.652  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:11.656  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:12.610  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:13.614  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:14.668  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:15.621  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:16.624  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:17.627  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:18.632  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:19.636  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:20.640  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:21.643  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:22.597  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:23.650  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:24.654  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:25.607  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:26.610  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:27.663  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:28.666  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:29.619  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:30.622  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:31.676  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:32.629  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:33.632  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:34.635  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:35.638  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:36.641  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:37.644  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:38.647  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:39.599  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:40.652  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:41.655  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:42.658  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:43.611  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:44.664  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:45.667  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:46.619  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:47.622  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:48.625  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:49.678  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:50.631  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:51.634  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:52.637  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:53.640  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:54.643  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:55.645  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:56.649  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:57.652  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:58.654  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:44:59.658  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:00.661  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:01.615  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:02.670  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:03.673  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:04.626  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:05.629  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:06.681  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:07.634  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:08.637  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:09.640  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:10.693  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:11.646  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:12.649  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:13.652  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:14.654  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:15.657  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:16.660  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:17.663  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:18.615  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:19.669  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:20.672  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:21.675  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:22.628  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:23.681  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:24.684  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:25.637  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:26.641  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:27.643  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:28.697  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:29.649  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:30.653  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:31.656  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:32.710  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:33.665  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:34.670  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:35.673  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:36.676  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:37.679  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:38.683  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:39.637  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:40.690  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:41.694  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:42.647  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:43.650  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:44.654  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:45.707  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:46.660  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:47.664  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:48.667  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+22:45:49.672  Ignored stale survey generation 38535410: survey event arrived without an active GUI run
+
+
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!frame.!label No click event
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!frame.!label2 Stale  •  Waiting for a new click event.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!frame.!label3 [?] Detection attempt unavailable
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!frame.!label4 Drag an anchor to edit it; press L to lock / unlock the selection.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame.!layoutregistrationcontrols.!label Move frame
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame.!layoutregistrationcontrols.!frame2.!label Rotate
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame.!layoutregistrationcontrols.!label2 Shift-drag / middle-drag: move · right-drag: rotate · wheel: scale · Ctrl: fine
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame.!layoutregistrationcontrols.!label3 Frame: scale 1.000, offset (0.000, 0.000) m
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame2.!blueprintcontrols.!label Load a raster blueprint, then enter its exact size in metres.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame2.!blueprintcontrols.!label2 Blueprint width (m)
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame3.!clickdiagnosticsview.!toplevel.!notebook.!frame2.!blueprintcontrols.!label3 Height (m)
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame.!label Solver
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame.!label2 Seed
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame2.!label Radio min (m)
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame2.!label2 Neighbor max (m)
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame3.!label Distance weight power
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame3.!label2 0 = off; 1 / 2 = half / quarter weight at twice the distance
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame4.!label Select an anchor · 0 locked
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame.!frame.!frame5.!label Closest ranges / anchor (0=all)
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame2.!layoutregistrationcontrols.!label Move frame
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame2.!layoutregistrationcontrols.!frame2.!label Rotate
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame2.!layoutregistrationcontrols.!label2 Shift-drag / middle-drag: move · right-drag: rotate · wheel: scale · Ctrl: fine
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame2.!layoutregistrationcontrols.!label3 Frame: scale 1.000, offset (0.000, 0.000) m
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame3.!frame.!label Select a measured connection to disable or adjust it.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!toplevel.!notebook.!frame3.!frame.!label2 Distance (m)
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!frame.!label Survey routes timeout; start a new survey to retry.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!frame.!label2 Fresh enumeration: 0 anchor slot(s) mapped
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!frame.!label3 Scheduled phase timing appears when a survey is active.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!frame.!label4 Overall survey workflow
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame4.!surveygeometryview.!frame2.!frame.!label Need usable ranges connecting at least three anchors
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame5.!meshdiagnosticsview.!frame.!label Running: Broadcast attempt 1 sent.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame5.!meshdiagnosticsview.!frame.!label2 Select a command run to see its chronological steps.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame5.!meshdiagnosticsview.!frame2.!frame.!label Topology changed: 3 new anchor(s), 4 expected anchor(s) missing.
+.!panedwindow.!frame2.!panedwindow.!notebook.!frame5.!meshdiagnosticsview.!frame2.!label Complete: 3 of 3 anchors reported and were assigned.
+.!panedwindow.!frame2.!panedwindow.!notebook2.!frame2.!label Select a click report to inspect aligned samples.
+.!panedwindow.!frame2.!panedwindow.!notebook2.!frame3.!label Select a CIR diagnostic fragment to inspect its assembly.
+.!panedwindow.!frame2.!panedwindow.!notebook2.!frame4.!text TEXT
+
+
+.!panedwindow.!frame2.!panedwindow.!notebook2.!frame6.!text TEXT
+
+
+.!frame4.!label Received SURVEY_EVENT seq=47
+.!frame4.!label2 No simulated transport results

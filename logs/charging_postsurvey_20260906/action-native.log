@@ -1,0 +1,12 @@
+Test project /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/build
+    Start 1: app_anchor_actions
+1/1 Test #1: app_anchor_actions ...............   Passed    0.00 sec
+
+100% tests passed out of 1
+
+Label Time Summary:
+commands            =   0.00 sec*proc (1 test)
+hardware_models     =   0.00 sec*proc (1 test)
+mesh_integration    =   0.00 sec*proc (1 test)
+
+Total Test time (real) =   0.00 sec

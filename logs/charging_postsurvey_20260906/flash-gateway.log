@@ -1,0 +1,12 @@
+-- west flash: rebuilding
+ninja: no work to do.
+-- west flash: using runner pyocd
+-- runners.pyocd: Flashing file: build/scan-production-gateway/zephyr/zephyr.hex
+0000705 I Loading /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/build/scan-production-gateway/zephyr/zephyr.hex [load_cmd]
+0000901 I Erasing... [loader]
+[---|---|---|---|---|---|---|---|---|----]
+[========================================]
+0011953 I Programming... [loader]
+[---|---|---|---|---|---|---|---|---|----]
+[========================================]
+0017451 I Erased 454656 bytes (111 sectors), programmed 454656 bytes (111 pages), skipped 24576 bytes (6 pages) at 28.28 kB/s [loader]

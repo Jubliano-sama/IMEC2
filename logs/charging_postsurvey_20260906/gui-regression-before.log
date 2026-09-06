@@ -1,0 +1,32 @@
+..........FF............F
+======================================================================
+FAIL: test_next_survey_setup_does_not_recover_the_previous_run (tools.gateway_gui.tests.test_survey_app_integration.SurveyAppIntegrationTests.test_next_survey_setup_does_not_recover_the_previous_run)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_survey_app_integration.py", line 205, in test_next_survey_setup_does_not_recover_the_previous_run
+    self.assertIsNone(gui.survey_command_owner.pending)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: SurveyCommandRequest(command_id=264, session_id=50, sequence=1, label='Retrieve survey status', started_at=221933.703114841, timeout_s=60.0) is not None
+
+======================================================================
+FAIL: test_old_survey_event_during_next_enumeration_is_retired_without_buffering (tools.gateway_gui.tests.test_survey_app_integration.SurveyAppIntegrationTests.test_old_survey_event_during_next_enumeration_is_retired_without_buffering)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_survey_app_integration.py", line 213, in test_old_survey_event_during_next_enumeration_is_retired_without_buffering
+    self.assertTrue(gui._observe_survey_event_packet(neighbor_packet()))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_valid_stale_event_after_failure_releases_transport_custody (tools.gateway_gui.tests.test_survey_app_integration.SurveyAppIntegrationTests.test_valid_stale_event_after_failure_releases_transport_custody)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/tools/gateway_gui/tests/test_survey_app_integration.py", line 222, in test_valid_stale_event_after_failure_releases_transport_custody
+    self.assertTrue(gui._observe_survey_event_packet(neighbor_packet()))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.011s
+
+FAILED (failures=3)

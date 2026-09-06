@@ -1,0 +1,63 @@
+[1/13] Building C object CMakeFiles/app.dir/src/app_anchor_actions.c.obj
+[2/13] Building C object CMakeFiles/app.dir/src/app_anchor_action_runtime.c.obj
+[3/13] Building C object CMakeFiles/app.dir/src/app_mesh_c5_priority.c.obj
+[4/13] Building C object CMakeFiles/app.dir/src/app_board.c.obj
+/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_board.c:242:12: warning: 'battery_adc_divider_enable' defined but not used [-Wunused-function]
+  242 | static int battery_adc_divider_enable(void)
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_board.c:228:12: warning: 'battery_adc_finish' defined but not used [-Wunused-function]
+  228 | static int battery_adc_finish(int primary_ret)
+      |            ^~~~~~~~~~~~~~~~~~
+[5/13] Building C object CMakeFiles/app.dir/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/src/mesh.c.obj
+[6/13] Building C object CMakeFiles/app.dir/src/app_anchor.c.obj
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_anchor.c:565:
+CMAKE_SOURCE_DIR/src/app_anchor.c:10913:12: warning: 'anchor_delivery_gateway_confirmed' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:10905:12: warning: 'anchor_delivery_gateway_accepted' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:9602:12: warning: 'anchor_compact_enumeration_handle_raw' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:9554:12: warning: 'anchor_compact_enumeration_try_tx' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:9289:13: warning: 'anchor_operation_high_duty_boost_begin' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:9223:12: warning: 'anchor_enumeration_rx_consume_survey_handoff' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:9067:13: warning: 'anchor_enumeration_rx_matches_table' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:8696:12: warning: 'anchor_enumeration_rx_prearm' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:8331:13: warning: 'anchor_handle_mesh_click_wake_claim' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:6618:13: warning: 'anchor_relay_tx_active' defined but not used [-Wunused-function]
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_anchor.c:564:
+CMAKE_SOURCE_DIR/src/app_anchor.c:5590:17: warning: 'gateway_discovery_assignment_arm_claim_ack_settle_locked' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:5367:13: warning: 'gateway_discovery_assignment_refresh_adaptive_deadline_locked' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:4549:12: warning: 'gateway_discovery_assignment_wake_now' defined but not used [-Wunused-function]
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_anchor.c:563:
+CMAKE_SOURCE_DIR/src/app_anchor.c:5185:12: warning: 'anchor_handle_local_command' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:3548:12: warning: 'command_find_u16_tlv' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:2795:12: warning: 'anchor_schedule_late_discovery_claim' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:2764:12: warning: 'anchor_survey_upstream' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:860:12: warning: 'anchor_send_command_result' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_anchor.c:554:12: warning: 'anchor_checked_work_reschedule' defined but not used [-Wunused-function]
+[7/13] Building C object CMakeFiles/app.dir/src/app_mesh_report.c.obj
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report.c:1449:
+/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report_c5_batch.inc:658:13: warning: 'mesh_report_delivery_active' defined but not used [-Wunused-function]
+  658 | static bool mesh_report_delivery_active(void) { return false; }
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report_c5_batch.inc:657:12: warning: 'mesh_report_delivery_step' defined but not used [-Wunused-function]
+  657 | static int mesh_report_delivery_step(void) { return -ENOTSUP; }
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report.c:1447:
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:14619:12: warning: 'mesh_complete_terminal_release' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:14488:12: warning: 'mesh_complete_gateway_ack_confirm' defined but not used [-Wunused-function]
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report.c:1446:
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:12650:13: warning: 'mesh_channel9_peer_timing_exists' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:12298:12: warning: 'mesh_try_close_channel9_connection' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:10561:13: warning: 'mesh_outbound_is_topology_ack_confirm' defined but not used [-Wunused-function]
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:9989:12: warning: 'mesh_send_event_control' defined but not used [-Wunused-function]
+In file included from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/app/src/app_mesh_report.c:1442:
+CMAKE_SOURCE_DIR/src/app_mesh_report.c:2020:12: warning: 'mesh_report_anchor_handle_local_command' defined but not used [-Wunused-function]
+[8/13] Linking C static library app/libapp.a
+[9/13] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[10/13] Generating linker.cmd
+[11/13] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[12/13] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[13/13] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      475160 B       488 KB     95.09%
+             RAM:      125824 B       128 KB     96.00%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/build/scan-production-gateway/zephyr/zephyr.elf for board: nrf52833dk

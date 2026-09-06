@@ -1,0 +1,4 @@
+gateway attached
+anchor_a ATTACH_ERROR SWD/JTAG communication failure (No ACK); check USB cable, reduce debugger clock
+anchor_b attached
+anchor_c attached

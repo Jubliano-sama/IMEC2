@@ -48,7 +48,6 @@ uint8_t app_anchor_identify_color(uint32_t elapsed_ms, uint32_t *next_ms);
 int app_anchor_action_execute(struct app_anchor_actions *state,
     const struct proto_packet *command, const uint8_t *payload, size_t payload_len,
     uint64_t anchor_id, uint64_t gateway_id, uint32_t boot_counter,
-    uint32_t assignment_epoch,
     uint64_t now_ms, const struct app_anchor_action_ops *ops,
     struct app_anchor_action_result *result);
 

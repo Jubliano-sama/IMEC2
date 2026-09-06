@@ -58,7 +58,7 @@ int app_anchor_action_handle(const struct proto_packet *command,
         return ret;
     }
     ret = app_anchor_action_execute(&actions, command, payload, payload_len,
-        DEVICE_ID, GATEWAY_ID, boot, epoch, now, &ops, &result);
+        DEVICE_ID, GATEWAY_ID, boot, now, &ops, &result);
     if (ret < 0) {
         return ret;
     }

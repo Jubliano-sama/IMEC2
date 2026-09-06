@@ -1,0 +1,28 @@
+[0/1] Re-running CMake...
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/tommie/.t3/worktrees/IMEC2/t3code-256367ad/firmware/build
+[1/25] Building C object CMakeFiles/test_app_terminal_restart.dir/tests/test_app_terminal_restart.c.o
+[2/25] Building C object CMakeFiles/test_dwm3000_port_spi_model.dir/app/src/dwm3000_port.c.o
+[3/25] Building C object CMakeFiles/test_app_gateway_ble_rx.dir/tests/test_app_gateway_ble_rx.c.o
+[4/25] Building C object CMakeFiles/test_dwm3000_receive_error_boundary.dir/tests/test_dwm3000_receive_error_boundary.c.o
+[5/25] Linking C executable test_app_terminal_restart
+[6/25] Building C object CMakeFiles/test_gateway_compact_rx_recovery.dir/tests/mesh_integration/test_gateway_compact_rx_recovery.c.o
+[7/25] Linking C executable test_dwm3000_port_spi_model
+[8/25] Building C object CMakeFiles/test_app_mesh_enumeration_scan_handoff.dir/tests/test_app_mesh_enumeration_scan_handoff.c.o
+[9/25] Linking C executable test_dwm3000_receive_error_boundary
+[10/25] Linking C executable test_app_gateway_ble_rx
+[11/25] Linking C executable test_gateway_compact_rx_recovery
+[12/25] Building C object CMakeFiles/test_app_mesh_direct_probe_click_preempt.dir/tests/test_app_mesh_direct_probe_click_preempt.c.o
+[13/25] Building C object CMakeFiles/test_app_mesh_c5_priority.dir/tests/test_app_mesh_c5_priority.c.o
+[14/25] Linking C executable test_app_mesh_enumeration_scan_handoff
+[15/25] Building C object CMakeFiles/test_dwm3000_range_receive_filter.dir/tests/test_dwm3000_range_receive_filter.c.o
+[16/25] Building C object CMakeFiles/test_app_survey_publication.dir/tests/test_app_survey_publication.c.o
+[17/25] Linking C executable test_app_mesh_direct_probe_click_preempt
+[18/25] Linking C executable test_app_mesh_c5_priority
+[19/25] Building C object CMakeFiles/test_app_hia_table_survey.dir/tests/test_app_hia_table_survey.c.o
+[20/25] Linking C executable test_dwm3000_range_receive_filter
+[21/25] Linking C executable test_app_survey_publication
+[22/25] Linking C executable test_app_hia_table_survey
+[23/25] Building C object CMakeFiles/test_app_mesh_c5_batch.dir/tests/test_app_mesh_c5_batch.c.o
+[24/25] Linking C executable test_app_mesh_c5_batch

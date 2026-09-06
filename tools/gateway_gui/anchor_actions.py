@@ -190,8 +190,8 @@ class AnchorActions:
         else:
             if packet.src_id != request.anchor.node_id:
                 return None  # Gateway admission cannot stand in for the anchor's result.
-            if (scalar(TLV_ANCHOR_ID) != request.anchor.node_id or
-                scalar(TLV_DISCOVERY_ASSIGNMENT_EPOCH) != request.epoch):
+            scalar(TLV_DISCOVERY_ASSIGNMENT_EPOCH)  # Observed state may change across reset.
+            if scalar(TLV_ANCHOR_ID) != request.anchor.node_id:
                 raise ValueError("Anchor reply does not match the selected enumerated anchor.")
             boot, sampled = scalar(TLV_NODE_BOOT_COUNTER), scalar(TLV_TIMESTAMP_MS)
             if not boot:

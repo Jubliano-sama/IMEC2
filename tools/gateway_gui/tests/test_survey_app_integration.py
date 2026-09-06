@@ -190,8 +190,39 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         gui.host_id_text = FakeVariable(hex(HOST_ID))
         gui._next_identity = Mock(side_effect=((50, 1), (51, 2), (52, 3)))
         gui._survey_event_due_at = 0.0
+        gui.survey_model.note_command_dispatched(CMD_SURVEY_START, now=0.0)
         gui._clear_scheduled_phase_estimate = Mock()
         return gui
+
+    def test_next_survey_setup_does_not_recover_the_previous_run(self) -> None:
+        gui = self.recovery_gui()
+        gui.survey_model.begin(expected_anchor_count=3)
+        gui._survey_chain_pending = True
+        gui._survey_phase = "enumerating"
+        # Simulate the expired timer left by a completed previous survey.
+        gui._survey_event_due_at = 0.0
+        gui._reconcile_stalled_survey()
+        self.assertIsNone(gui.survey_command_owner.pending)
+        gui._dispatch_gateway_command.assert_not_called()
+
+    def test_old_survey_event_during_next_enumeration_is_retired_without_buffering(self) -> None:
+        gui = self.recovery_gui()
+        gui.survey_model.begin(expected_anchor_count=3)
+        gui._survey_chain_pending = True
+        gui._append_log = Mock()
+        self.assertTrue(gui._observe_survey_event_packet(neighbor_packet()))
+        self.assertEqual(gui._survey_event_buffer, [])
+        self.assertIsNone(gui.survey_model.generation)
+        self.assertEqual(gui.survey_model.phase, "routes")
+
+    def test_valid_stale_event_after_failure_releases_transport_custody(self) -> None:
+        gui = self.recovery_gui()
+        gui.survey_model.fail("routes", "injected timeout")
+        gui._append_log = Mock()
+        self.assertTrue(gui._observe_survey_event_packet(neighbor_packet()))
+        self.assertEqual(gui.survey_model.phase, "failed")
+        self.assertIsNone(gui.survey_model.generation)
+        self.assertEqual(gui._survey_event_buffer, [])
 
     def test_all_survey_controls_expire_before_applying_a_late_result(self) -> None:
         for command in (CMD_SURVEY_START, CMD_SURVEY_PLAN, CMD_SURVEY_CANCEL, CMD_SURVEY_GET_STATUS):
