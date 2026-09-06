@@ -154,6 +154,7 @@ initialise = function_body("initialise_radio")
 wake_configured = function_body("wake_configured_radio")
 probe = function_body("dwm3000_driver_probe")
 configure_default = function_body("dwm3000_driver_configure_default")
+apply_config = function_body("apply_radio_config")
 idle = function_body("dwm3000_driver_idle")
 standby = function_body("dwm3000_driver_standby")
 ensure_current = function_body("ensure_current_phy_or_range")
@@ -421,6 +422,18 @@ for begin, end in (
 assert "configure_radio_from_reset(DWM3000_PHY_RANGE)" in configure_default, (
     "default configuration must invalidate stale software state at its reset "
     "boundary and share the checked full-reset path"
+)
+
+# The compiled retained-PHY fixture exercises the validator against physical
+# register corruption. Fresh configuration must pass that same validator
+# before publishing a usable cached radio state.
+assert_order(
+    apply_config,
+    "dwt_configure((dwt_config_t *)config)",
+    "ret = validate_retained_phy(phy_mode)",
+    "if (ret < 0)",
+    "return ret",
+    "radio_configured = true",
 )
 
 for low_power_entry in (idle, standby):

@@ -1,5 +1,6 @@
 #include "app_mesh_c5_priority.h"
 #include "gateway_command.h"
+#include "discovery_assignment.h"
 #include "uwb.h"
 
 #include <assert.h>
@@ -1184,6 +1185,64 @@ static void test_control_wake_wrap_and_shorter_window_preserve_deadline(void)
     assert(deadline == 1100u);
 }
 
+static void test_short_route_listener_can_receive_new_gateway_control(void)
+{
+    const uint32_t route_deadline = 1000u;
+    const uint32_t observed = route_deadline - 1u;
+    const uint32_t hard_deadline = 2u *
+        discovery_assignment_control_listener_duration_ms(MESH_NETWORK_MAX_HOPS);
+
+    for (uint8_t depth = 1u; depth <= MESH_NETWORK_MAX_HOPS; depth++) {
+        struct app_mesh_c5_control_wake_history history = {0};
+        struct uwb_wake_claim_frame claim = control_wake(10u, 100u);
+        const uint32_t control_window =
+            discovery_assignment_control_listener_duration_ms(depth);
+        uint32_t deadline = route_deadline;
+
+        assert(control_window > route_deadline);
+        /* A foreign wake cannot promote routing custody or consume the
+         * event watermark needed by a later valid wake with the same ID. */
+        claim.network_id = 2u;
+        assert(!app_mesh_c5_control_wake_renew(
+            &history, &claim, 1u, observed, control_window,
+            hard_deadline, &deadline));
+        assert(deadline == route_deadline && history.count == 0u);
+
+        claim.network_id = 1u;
+        assert(app_mesh_c5_control_wake_renew(
+            &history, &claim, 1u, observed, control_window,
+            hard_deadline, &deadline));
+        assert(deadline == observed + control_window);
+        /* The advertised payload follows the wake after the route listener
+         * would have expired. It must fit the newly admitted control window. */
+        assert(observed + claim.discovery_starts_in_ms > route_deadline);
+        assert(observed + claim.discovery_starts_in_ms < deadline);
+        assert(deadline <= hard_deadline);
+        const uint32_t first_deadline = deadline;
+        for (uint32_t copy_time = observed + 1u;
+             copy_time < first_deadline; copy_time += 100u) {
+            assert(!app_mesh_c5_control_wake_renew(
+                &history, &claim, 1u, copy_time, control_window,
+                hard_deadline, &deadline));
+            assert(deadline == first_deadline);
+        }
+        /* A fresh event can extend only until the original outer deadline. */
+        for (uint32_t renewals = 0u;
+             deadline < hard_deadline && renewals < hard_deadline; renewals++) {
+            claim.click_event_id++;
+            assert(app_mesh_c5_control_wake_renew(
+                &history, &claim, 1u, deadline - 1u,
+                control_window, hard_deadline, &deadline));
+            assert(deadline <= hard_deadline);
+        }
+        assert(deadline == hard_deadline);
+        claim.click_event_id++;
+        assert(!app_mesh_c5_control_wake_renew(
+            &history, &claim, 1u, hard_deadline,
+            control_window, hard_deadline, &deadline));
+    }
+}
+
 int main(void)
 {
     test_passive_gateway_preempt_defers_background_flood();
@@ -1229,5 +1288,6 @@ int main(void)
     test_control_wake_capacity_never_evicts_replay_history();
     test_control_wake_fresh_traffic_cannot_outlive_hard_deadline();
     test_control_wake_wrap_and_shorter_window_preserve_deadline();
+    test_short_route_listener_can_receive_new_gateway_control();
     return 0;
 }

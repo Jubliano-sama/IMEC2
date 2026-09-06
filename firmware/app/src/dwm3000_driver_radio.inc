@@ -1,5 +1,6 @@
 #line 487 __BASE_FILE__
 static void clear_all_events(void);
+static int validate_retained_phy(enum dwm3000_phy_mode phy_mode);
 
 static uint32_t radio_transition_trace_next(void)
 {
@@ -531,6 +532,10 @@ static int apply_radio_config(const dwt_config_t *config,
         }
     }
 
+    ret = validate_retained_phy(phy_mode);
+    if (ret < 0) {
+        return ret;
+    }
     radio_configured = true;
     radio_awake = true;
     radio_restored_from_sleep = false;
@@ -598,6 +603,73 @@ static const dwt_config_t *config_for_phy(enum dwm3000_phy_mode phy_mode)
     default:
         return &default_config;
     }
+}
+
+/* The nRF can survive a power transition that loses DW configuration. A
+ * readable device ID and successful PLL/RX calibration do not prove that
+ * AON restored the selected PHY. Check only stable configuration fields;
+ * frame length, RX timeouts and status legitimately change between users. */
+static int validate_retained_phy(enum dwm3000_phy_mode phy_mode)
+{
+    const dwt_config_t *config = config_for_phy(phy_mode);
+    const struct {
+        uint32_t id;
+        uint32_t mask;
+        uint32_t expected;
+    } checks[] = {
+        {
+            CHAN_CTRL_ID,
+            CHAN_CTRL_RF_CHAN_BIT_MASK | CHAN_CTRL_RX_PCODE_BIT_MASK |
+                CHAN_CTRL_TX_PCODE_BIT_MASK | CHAN_CTRL_SFD_TYPE_BIT_MASK,
+            (config->chan == 9u ? CHAN_CTRL_RF_CHAN_BIT_MASK : 0u) |
+                ((uint32_t)config->rxCode << CHAN_CTRL_RX_PCODE_BIT_OFFSET) |
+                ((uint32_t)config->txCode << CHAN_CTRL_TX_PCODE_BIT_OFFSET) |
+                ((uint32_t)config->sfdType << CHAN_CTRL_SFD_TYPE_BIT_OFFSET),
+        },
+        {
+            DTUNE0_ID,
+            DTUNE0_PRE_PAC_SYM_BIT_MASK | DTUNE0_RX_SFD_TOC_BIT_MASK,
+            config->rxPAC | ((uint32_t)effective_sfd_timeout(config) <<
+                            DTUNE0_RX_SFD_TOC_BIT_OFFSET),
+        },
+        {
+            SYS_CFG_ID,
+            SYS_CFG_PHR_MODE_BIT_MASK | SYS_CFG_PHR_6M8_BIT_MASK |
+                SYS_CFG_CP_SPC_BIT_MASK | SYS_CFG_CP_SDC_BIT_MASK |
+                SYS_CFG_PDOA_MODE_BIT_MASK,
+            ((uint32_t)config->phrMode << SYS_CFG_PHR_MODE_BIT_OFFSET) |
+                ((uint32_t)config->phrRate << SYS_CFG_PHR_6M8_BIT_OFFSET) |
+                ((uint32_t)(config->stsMode & DWT_STS_CONFIG_MASK) <<
+                 SYS_CFG_CP_SPC_BIT_OFFSET) |
+                ((uint32_t)config->pdoaMode << SYS_CFG_PDOA_MODE_BIT_OFFSET),
+        },
+        {
+            TX_FCTRL_ID,
+            TX_FCTRL_TXBR_BIT_MASK | TX_FCTRL_TXPSR_BIT_MASK,
+            ((uint32_t)config->dataRate << TX_FCTRL_TXBR_BIT_OFFSET) |
+                ((uint32_t)config->txPreambLength << TX_FCTRL_TXPSR_BIT_OFFSET),
+        },
+    };
+
+    for (size_t i = 0u; i < ARRAY_SIZE(checks); ++i) {
+        uint32_t actual = dwt_read32bitreg(checks[i].id);
+        int ret = take_port_error("validate-retained-phy");
+
+        if (ret < 0) {
+            return ret;
+        }
+        if ((actual & checks[i].mask) !=
+            (checks[i].expected & checks[i].mask)) {
+            status_debug_printf(
+                "DBG_DWM_PHY_LOST phy=%u reg=%08x actual=%08x expected=%08x mask=%08x\n",
+                (unsigned int)phy_mode, (unsigned int)checks[i].id,
+                (unsigned int)actual, (unsigned int)checks[i].expected,
+                (unsigned int)checks[i].mask);
+            invalidate_radio_state_tagged(__func__);
+            return -EIO;
+        }
+    }
+    return 0;
 }
 
 /*
@@ -816,6 +888,11 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
             status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
         }
+        return ret;
+    }
+    ret = validate_retained_phy(active_phy_mode);
+    if (ret < 0) {
+        driver_stats.sleep_wake_failures++;
         return ret;
     }
     dwt_restore_common();

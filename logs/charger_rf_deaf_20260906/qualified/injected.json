@@ -1,0 +1,44 @@
+{
+  "anchor_a": {
+    "CHAN_CTRL": {
+      "before": "0x94c",
+      "injected": "0x94e"
+    },
+    "DTUNE0": {
+      "before": "0x1001101d",
+      "injected": "0x41101c"
+    },
+    "TX_FCTRL": {
+      "before": "0x380c",
+      "injected": "0x1c0c"
+    }
+  },
+  "anchor_b": {
+    "CHAN_CTRL": {
+      "before": "0x94c",
+      "injected": "0x94e"
+    },
+    "DTUNE0": {
+      "before": "0x1001101d",
+      "injected": "0x41101c"
+    },
+    "TX_FCTRL": {
+      "before": "0x380c",
+      "injected": "0x1c0c"
+    }
+  },
+  "anchor_c": {
+    "CHAN_CTRL": {
+      "before": "0x94c",
+      "injected": "0x94e"
+    },
+    "DTUNE0": {
+      "before": "0x1001101d",
+      "injected": "0x41101c"
+    },
+    "TX_FCTRL": {
+      "before": "0x380c",
+      "injected": "0x1c0c"
+    }
+  }
+}

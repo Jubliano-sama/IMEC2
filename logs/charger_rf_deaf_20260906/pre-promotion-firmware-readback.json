@@ -1,0 +1,126 @@
+{
+  "anchor_a": {
+    "probe": "E46070D247233537",
+    "segments": [
+      {
+        "start": 0,
+        "end": 377076,
+        "sha256": "85b414063d70e72fc530bebae70cc45131f639ec6d22125e7d83f89519feed16",
+        "match": true
+      },
+      {
+        "start": 377088,
+        "end": 458868,
+        "sha256": "c2244183572b84b3e19e689a93cecaea06b11e8ed9a0ba3779679d77e798addb",
+        "match": true
+      },
+      {
+        "start": 458876,
+        "end": 459427,
+        "sha256": "f53e34faee9fc6d75d9f512ce946d2983bffd70db561620b917ff6fd25c0c006",
+        "match": true
+      },
+      {
+        "start": 459428,
+        "end": 460256,
+        "sha256": "27270702ebb7ad3d7e9bcf627ab9c08e0f1037b83d1f7493a5409e6784f28532",
+        "match": true
+      }
+    ],
+    "matched": true,
+    "state": "State.SLEEPING"
+  },
+  "anchor_b": {
+    "probe": "E46070D247394D36",
+    "segments": [
+      {
+        "start": 0,
+        "end": 377076,
+        "sha256": "85b414063d70e72fc530bebae70cc45131f639ec6d22125e7d83f89519feed16",
+        "match": true
+      },
+      {
+        "start": 377088,
+        "end": 458868,
+        "sha256": "c2244183572b84b3e19e689a93cecaea06b11e8ed9a0ba3779679d77e798addb",
+        "match": true
+      },
+      {
+        "start": 458876,
+        "end": 459427,
+        "sha256": "f53e34faee9fc6d75d9f512ce946d2983bffd70db561620b917ff6fd25c0c006",
+        "match": true
+      },
+      {
+        "start": 459428,
+        "end": 460256,
+        "sha256": "27270702ebb7ad3d7e9bcf627ab9c08e0f1037b83d1f7493a5409e6784f28532",
+        "match": true
+      }
+    ],
+    "matched": true,
+    "state": "State.SLEEPING"
+  },
+  "anchor_c": {
+    "probe": "E4645C15CB365D30",
+    "segments": [
+      {
+        "start": 0,
+        "end": 377076,
+        "sha256": "85b414063d70e72fc530bebae70cc45131f639ec6d22125e7d83f89519feed16",
+        "match": true
+      },
+      {
+        "start": 377088,
+        "end": 458868,
+        "sha256": "c2244183572b84b3e19e689a93cecaea06b11e8ed9a0ba3779679d77e798addb",
+        "match": true
+      },
+      {
+        "start": 458876,
+        "end": 459427,
+        "sha256": "f53e34faee9fc6d75d9f512ce946d2983bffd70db561620b917ff6fd25c0c006",
+        "match": true
+      },
+      {
+        "start": 459428,
+        "end": 460256,
+        "sha256": "27270702ebb7ad3d7e9bcf627ab9c08e0f1037b83d1f7493a5409e6784f28532",
+        "match": true
+      }
+    ],
+    "matched": true,
+    "state": "State.SLEEPING"
+  },
+  "gateway": {
+    "probe": "E4645C15CB0F3B37",
+    "segments": [
+      {
+        "start": 0,
+        "end": 416676,
+        "sha256": "460c44e5e75be1ba14945a5725473e03d851e25b8357d05beff3ff07e6373101",
+        "match": true
+      },
+      {
+        "start": 416688,
+        "end": 472564,
+        "sha256": "d627f928d216d04c42731f0f629e89d634e688dd846a81430a6036d53e9cb4b5",
+        "match": true
+      },
+      {
+        "start": 472572,
+        "end": 474289,
+        "sha256": "f3295efc4b8f14064d2b8be1b8df3ab37d91cfcd400a70700c6e0e59cef3a3af",
+        "match": true
+      },
+      {
+        "start": 474292,
+        "end": 475564,
+        "sha256": "980f12a875d01e080acb80c471fa5d64feca55e119353a38410bd565b8be9efe",
+        "match": true
+      }
+    ],
+    "matched": true,
+    "state": "State.RUNNING"
+  }
+}

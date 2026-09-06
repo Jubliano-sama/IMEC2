@@ -3281,15 +3281,49 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(decode, copy)
         self.assertLess(copy, control)
         self.assertIn("*click_observed_ms = k_uptime_get_32()", probe[copy:control])
-        # Both standard-PHR probe and already-decoded wake ingress use the
+        # Both standard-PHR probe branches and already-decoded wake ingress use the
         # native-tested policy; neither can reset the immutable outer cap.
-        self.assertEqual(listener.count("app_mesh_c5_control_wake_renew("), 2)
+        self.assertEqual(listener.count("app_mesh_c5_control_wake_renew("), 3)
         self.assertEqual(listener.count("control_hard_deadline_ms = deadline_ms"), 1)
         cap = listener.index("control_hard_deadline_ms = deadline_ms")
         self.assertIn("discovery_assignment_control_listener_duration_ms(",
                       listener[cap:cap + 300])
         self.assertIn("MESH_NETWORK_MAX_HOPS", listener[cap:cap + 300])
         self.assertLess(cap, listener.index("app_mesh_c5_control_wake_renew("))
+
+    def test_route_listener_promotes_only_an_admitted_gateway_wake(self):
+        listener = function_body(REPORT, "mesh_listen_for_route_reply")
+        generic = braced_block_after(
+            listener,
+            "contact_purpose !=\n"
+            "                        C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD",
+        )
+        probe = generic.index("mesh_probe_standard_wake_claim(")
+        click = generic.index("MESH_STANDARD_WAKE_PROBE_CLICK", probe)
+        self.assertIn("true, INT64_MAX", generic[probe:click])
+        promotion = braced_block_after(
+            generic, "MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL"
+        )
+        self.assertIn("MAX(\n                            window_ms,", promotion)
+        self.assertIn("discovery_assignment_control_listener_duration_ms(", promotion)
+        self.assertIn("app_mesh_report_selected_gateway_hop_count()", promotion)
+        admitted = braced_block_after(promotion, "if (app_mesh_c5_control_wake_renew(")
+        self.assertIn("click_observed_ms, control_window_ms", promotion)
+        self.assertIn("control_hard_deadline_ms, &deadline_ms", promotion)
+        # Foreign, malformed, duplicate, and expired claims fail the native
+        # policy before either listener ownership or the contact is changed.
+        for mutation in (
+            "window_ms = control_window_ms",
+            "contact_purpose =",
+            "mesh_c5_contact_exchange(",
+        ):
+            self.assertIn(mutation, admitted)
+            self.assertEqual(promotion.count(mutation), 1)
+        self.assertIn("C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD", admitted)
+        self.assertIn("target_id, contact_purpose, deadline_ms", admitted)
+        self.assertNotIn("control_hard_deadline_ms =", promotion)
+        self.assertNotIn("target_id =", promotion)
+        self.assertNotIn("identity =", promotion)
 
     def test_gateway_control_listener_uses_here_i_am_route_depth(self):
         handoff = function_body(REPORT, "mesh_anchor_handoff_route_wake_frame")

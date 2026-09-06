@@ -1,0 +1,77 @@
+{
+  "anchor_a": {
+    "cpu_state": "State.SLEEPING",
+    "spi_frequency": "0x20000000",
+    "radio_configured": {
+      "address": 536933580,
+      "size": 1,
+      "hex": "01"
+    },
+    "radio_awake": {
+      "address": 536933579,
+      "size": 1,
+      "hex": "00"
+    },
+    "radio_state_unknown": {
+      "address": 536872662,
+      "size": 1,
+      "hex": "00"
+    },
+    "active_phy_mode": {
+      "address": 536933577,
+      "size": 1,
+      "hex": "02"
+    },
+    "intended_wake_config_hex": "05030109090200000000011000010000"
+  },
+  "anchor_b": {
+    "cpu_state": "State.SLEEPING",
+    "spi_frequency": "0x20000000",
+    "radio_configured": {
+      "address": 536933580,
+      "size": 1,
+      "hex": "01"
+    },
+    "radio_awake": {
+      "address": 536933579,
+      "size": 1,
+      "hex": "00"
+    },
+    "radio_state_unknown": {
+      "address": 536872662,
+      "size": 1,
+      "hex": "00"
+    },
+    "active_phy_mode": {
+      "address": 536933577,
+      "size": 1,
+      "hex": "02"
+    },
+    "intended_wake_config_hex": "05030109090200000000011000010000"
+  },
+  "anchor_c": {
+    "cpu_state": "State.SLEEPING",
+    "spi_frequency": "0x20000000",
+    "radio_configured": {
+      "address": 536933580,
+      "size": 1,
+      "hex": "01"
+    },
+    "radio_awake": {
+      "address": 536933579,
+      "size": 1,
+      "hex": "00"
+    },
+    "radio_state_unknown": {
+      "address": 536872662,
+      "size": 1,
+      "hex": "00"
+    },
+    "active_phy_mode": {
+      "address": 536933577,
+      "size": 1,
+      "hex": "02"
+    },
+    "intended_wake_config_hex": "05030109090200000000011000010000"
+  }
+}

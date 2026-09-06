@@ -1827,6 +1827,25 @@ add_test(NAME dwm3000_receive_error_boundary COMMAND test_dwm3000_receive_error_
 set_tests_properties(dwm3000_receive_error_boundary PROPERTIES
     LABELS "mesh_integration;hardware_models;radio;production_seam")
 
+# Keep cached desired PHY and physical register contents independent while
+# exercising the real retained-wake validation and full-reset fallback.
+hia_test_extract_span("${rx_error_radio}"
+    "static uint16_t effective_sfd_timeout("
+    "static int configure_radio_from_reset(" retained_config_helpers)
+hia_test_extract_span("${rx_error_radio}"
+    "static int wake_configured_radio("
+    "static int ensure_current_phy_or_range(" retained_config_recovery)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/dwm3000_retained_config_production.inc"
+    "${retained_config_helpers}\n${retained_config_recovery}")
+add_executable(test_dwm3000_retained_config tests/test_dwm3000_retained_config.c)
+target_include_directories(test_dwm3000_retained_config PRIVATE
+    app/src include ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(test_dwm3000_retained_config SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../dwm3000 examples and sdk/decadriver")
+add_test(NAME dwm3000_retained_config COMMAND test_dwm3000_retained_config)
+set_tests_properties(dwm3000_retained_config PROPERTIES
+    LABELS "mesh_integration;hardware_models;radio;production_seam;power")
+
 # Exercise the actual DS-TWR filtering loops, including the responder's fixed
 # delayed RESPONSE edge. Stop after FINAL acceptance, before ranging math and
 # diagnostic/report transmission; only physical RX and SPI are faked.

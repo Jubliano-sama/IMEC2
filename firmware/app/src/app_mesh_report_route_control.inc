@@ -2521,13 +2521,41 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         &click_claim,
                         &click_quality,
                         &click_observed_ms,
-                        false, INT64_MAX);
+                        true, INT64_MAX);
 
                     if (probe_ret == MESH_STANDARD_WAKE_PROBE_CLICK) {
                         click_captured = true;
                         last_ret = -EAGAIN;
                         status_debug_note("DBG_ROUTE_REPLY_CLICK_PREEMPT_PROBE\n");
                         break;
+                    }
+                    if (probe_ret ==
+                        MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL) {
+                        uint32_t control_window_ms = MAX(
+                            window_ms,
+                            discovery_assignment_control_listener_duration_ms(
+                                app_mesh_report_selected_gateway_hop_count()));
+
+                        /* A routing/uplink listener can hear a fresh gateway
+                         * wake near its own expiry. Keep the payload window
+                         * that an idle scanner would have granted, using the
+                         * same immutable ceiling and replay validation. */
+                        if (app_mesh_c5_control_wake_renew(
+                                &control_wake_history, &click_claim, NETWORK_ID,
+                                click_observed_ms, control_window_ms,
+                                control_hard_deadline_ms, &deadline_ms)) {
+                            window_ms = control_window_ms;
+                            contact_purpose =
+                                C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
+                            mesh_c5_contact_exchange(
+                                target_id, contact_purpose, deadline_ms,
+                                "route-listener-gateway-wake");
+                            status_debug_printf(
+                                "DBG_ROUTE_REPLY_CONTROL_PROMOTE evt=%u deadline=%u hard=%u\n",
+                                click_claim.click_event_id, deadline_ms,
+                                control_hard_deadline_ms);
+                        }
+                        continue;
                     }
                     if (probe_ret ==
                         MESH_STANDARD_WAKE_PROBE_ROUTE_ACTIVATION) {
