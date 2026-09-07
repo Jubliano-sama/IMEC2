@@ -317,6 +317,15 @@ and distance weight power 1, preferably on merged `Survey All Neighbors` data.
 The GUI remembers weight power separately for each algorithm during the session.
 The solver needs no wall map, CIR, or additional measurements and honors anchor
 locks. Its Auto search uses spring and graph-MDS seeds plus perturbations.
+For dense graphs (more than twice as many measured pairs as anchors), Auto also
+tries those seeds with a weak temporary penalty on large positive range biases.
+This keeps otherwise saturated ranges contributing during the search and can
+escape folded layouts. It then restores the original loss, refines the candidate,
+and replaces the incumbent only if the original objective improves. Survey
+measurements, final scoring, explicit seed choices and sparse-plan search retain
+their existing meaning. A numerical failure in the additional search retains the
+incumbent and adds a diagnostic warning. The extra search costs time; it runs in
+the existing background solver. See the [paired accuracy and runtime results](artifacts/nlos-search-2026-09-07/README.md).
 Richer merged surveys use exact derivatives to accelerate the same scoring and
 reflection search; degree-four-sized inputs retain the numerical calculation.
 The [longer-reach experiments](../../Documentation/Reviews/nlos-recovery-2026-09-05/shared-offset/README.md)

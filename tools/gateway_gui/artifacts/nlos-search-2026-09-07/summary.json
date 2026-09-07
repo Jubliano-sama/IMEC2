@@ -1,0 +1,274 @@
+{
+  "small": {
+    "scenes": 72,
+    "original_objective_max_increase": 0.0,
+    "added_target_flips": 0,
+    "fixed_target_flips": 0,
+    "target_flip_applicable_cases": 44,
+    "target_flips_before": 12,
+    "target_flips_after": 12,
+    "rms_regressions_over_1mm": 0,
+    "changed_cases": [
+      {
+        "scene": "unequal/651000",
+        "rms_before_m": 1.5891720274161034,
+        "rms_after_m": 1.5864525307516975,
+        "max_before_m": 3.3421780405026835,
+        "max_after_m": 2.4846399541646647
+      }
+    ],
+    "runtime_median_before_s": 1.4279099140003382,
+    "runtime_median_after_s": 1.4242113909967884
+  },
+  "large": {
+    "baseline": {
+      "scenes": 9,
+      "solved": 9,
+      "failed": 0,
+      "scored_anchors": 270,
+      "total_anchors": 270,
+      "anchor_median_m": 1.3982466112030592,
+      "anchor_p95_m": 3.6177461736460157,
+      "anchor_max_m": 7.7086882069769915,
+      "anchors_over_1m": 172,
+      "anchors_over_2m": 71,
+      "scenes_over_1m": 7,
+      "scenes_over_2m": 7,
+      "scene_rms_median_m": 1.958851806963236,
+      "scene_rms_max_m": 2.549612287295347,
+      "runtime_median_s": 28.699352925999847,
+      "orientation_reversed_triangles": 110,
+      "orientation_eligible_triangles": 5026,
+      "orientation_collapsed_triangles": 65
+    },
+    "production": {
+      "scenes": 9,
+      "solved": 9,
+      "failed": 0,
+      "scored_anchors": 270,
+      "total_anchors": 270,
+      "anchor_median_m": 1.3177677834292234,
+      "anchor_p95_m": 3.3526440096890195,
+      "anchor_max_m": 5.614961758420549,
+      "anchors_over_1m": 168,
+      "anchors_over_2m": 70,
+      "scenes_over_1m": 7,
+      "scenes_over_2m": 7,
+      "scene_rms_median_m": 1.8542854318671353,
+      "scene_rms_max_m": 2.3371800694908536,
+      "runtime_median_s": 37.921708100002434,
+      "orientation_reversed_triangles": 91,
+      "orientation_eligible_triangles": 5026,
+      "orientation_collapsed_triangles": 65
+    }
+  },
+  "large_cases": [
+    {
+      "scene": "office/n35/554500",
+      "anchor_count": 35,
+      "kind": "office",
+      "baseline": {
+        "scene_rms_m": 1.8700187617965123,
+        "anchor_p95_m": 3.5497756805954013,
+        "anchor_max_m": 4.33849103535121,
+        "anchors_over_2m": 8,
+        "orientation_reversed_triangles": 30,
+        "orientation_eligible_triangles": 588,
+        "runtime_s": 74.57658081999398
+      },
+      "production": {
+        "scene_rms_m": 1.7387724912097957,
+        "anchor_p95_m": 2.835046196849968,
+        "anchor_max_m": 3.3998638422401104,
+        "anchors_over_2m": 7,
+        "orientation_reversed_triangles": 31,
+        "orientation_eligible_triangles": 588,
+        "runtime_s": 88.63180967400694
+      }
+    },
+    {
+      "scene": "office/n35/454500",
+      "anchor_count": 35,
+      "kind": "office",
+      "baseline": {
+        "scene_rms_m": 1.958851806963236,
+        "anchor_p95_m": 3.3307528963218878,
+        "anchor_max_m": 3.9578623559775,
+        "anchors_over_2m": 11,
+        "orientation_reversed_triangles": 17,
+        "orientation_eligible_triangles": 469,
+        "runtime_s": 100.1972582610033
+      },
+      "production": {
+        "scene_rms_m": 1.689251596688034,
+        "anchor_p95_m": 2.699338744826922,
+        "anchor_max_m": 3.813712731253253,
+        "anchors_over_2m": 9,
+        "orientation_reversed_triangles": 8,
+        "orientation_eligible_triangles": 469,
+        "runtime_s": 100.95206100400537
+      }
+    },
+    {
+      "scene": "office/n20/453000",
+      "anchor_count": 20,
+      "kind": "office",
+      "baseline": {
+        "scene_rms_m": 1.8542854318671353,
+        "anchor_p95_m": 3.5508851133980244,
+        "anchor_max_m": 4.240877793431083,
+        "anchors_over_2m": 5,
+        "orientation_reversed_triangles": 5,
+        "orientation_eligible_triangles": 180,
+        "runtime_s": 18.137781595003617
+      },
+      "production": {
+        "scene_rms_m": 1.8542854318671353,
+        "anchor_p95_m": 3.5508851133980244,
+        "anchor_max_m": 4.240877793431083,
+        "anchors_over_2m": 5,
+        "orientation_reversed_triangles": 5,
+        "orientation_eligible_triangles": 180,
+        "runtime_s": 23.012699103994237
+      }
+    },
+    {
+      "scene": "office/n20/553000",
+      "anchor_count": 20,
+      "kind": "office",
+      "baseline": {
+        "scene_rms_m": 1.9813639473067883,
+        "anchor_p95_m": 3.1062522735168767,
+        "anchor_max_m": 4.008429744005738,
+        "anchors_over_2m": 5,
+        "orientation_reversed_triangles": 7,
+        "orientation_eligible_triangles": 171,
+        "runtime_s": 27.223327031002555
+      },
+      "production": {
+        "scene_rms_m": 1.9813639473067883,
+        "anchor_p95_m": 3.1062522735168767,
+        "anchor_max_m": 4.008429744005738,
+        "anchors_over_2m": 5,
+        "orientation_reversed_triangles": 7,
+        "orientation_eligible_triangles": 171,
+        "runtime_s": 35.13845465800114
+      }
+    },
+    {
+      "scene": "irregular/n20/553000",
+      "anchor_count": 20,
+      "kind": "irregular",
+      "baseline": {
+        "scene_rms_m": 2.3371800694908536,
+        "anchor_p95_m": 4.764054956168814,
+        "anchor_max_m": 5.614961758420549,
+        "anchors_over_2m": 6,
+        "orientation_reversed_triangles": 7,
+        "orientation_eligible_triangles": 181,
+        "runtime_s": 23.19679008700041
+      },
+      "production": {
+        "scene_rms_m": 2.3371800694908536,
+        "anchor_p95_m": 4.764054956168814,
+        "anchor_max_m": 5.614961758420549,
+        "anchors_over_2m": 6,
+        "orientation_reversed_triangles": 7,
+        "orientation_eligible_triangles": 181,
+        "runtime_s": 26.19600409099803
+      }
+    },
+    {
+      "scene": "irregular/n35/554500",
+      "anchor_count": 35,
+      "kind": "irregular",
+      "baseline": {
+        "scene_rms_m": 2.549612287295347,
+        "anchor_p95_m": 4.1570585188269735,
+        "anchor_max_m": 7.7086882069769915,
+        "anchors_over_2m": 13,
+        "orientation_reversed_triangles": 21,
+        "orientation_eligible_triangles": 467,
+        "runtime_s": 57.03758595199906
+      },
+      "production": {
+        "scene_rms_m": 2.2844947787169456,
+        "anchor_p95_m": 4.220592258954221,
+        "anchor_max_m": 4.708776570234836,
+        "anchors_over_2m": 15,
+        "orientation_reversed_triangles": 10,
+        "orientation_eligible_triangles": 467,
+        "runtime_s": 99.54362765199767
+      }
+    },
+    {
+      "scene": "clean/n20/553000",
+      "anchor_count": 20,
+      "kind": "clean",
+      "baseline": {
+        "scene_rms_m": 0.023163095164541764,
+        "anchor_p95_m": 0.037569428565653235,
+        "anchor_max_m": 0.0376444634758632,
+        "anchors_over_2m": 0,
+        "orientation_reversed_triangles": 0,
+        "orientation_eligible_triangles": 367,
+        "runtime_s": 6.037173415003053
+      },
+      "production": {
+        "scene_rms_m": 0.023163095164541764,
+        "anchor_p95_m": 0.037569428565653235,
+        "anchor_max_m": 0.0376444634758632,
+        "anchors_over_2m": 0,
+        "orientation_reversed_triangles": 0,
+        "orientation_eligible_triangles": 367,
+        "runtime_s": 5.757570385998406
+      }
+    },
+    {
+      "scene": "clean/n35/554500",
+      "anchor_count": 35,
+      "kind": "clean",
+      "baseline": {
+        "scene_rms_m": 0.015740104233621703,
+        "anchor_p95_m": 0.024374831991679755,
+        "anchor_max_m": 0.03395518523051619,
+        "anchors_over_2m": 0,
+        "orientation_reversed_triangles": 0,
+        "orientation_eligible_triangles": 1837,
+        "runtime_s": 28.699352925999847
+      },
+      "production": {
+        "scene_rms_m": 0.015740104233621703,
+        "anchor_p95_m": 0.024374831991679755,
+        "anchor_max_m": 0.03395518523051619,
+        "anchors_over_2m": 0,
+        "orientation_reversed_triangles": 0,
+        "orientation_eligible_triangles": 1837,
+        "runtime_s": 37.921708100002434
+      }
+    },
+    {
+      "scene": "office/n50/456000",
+      "anchor_count": 50,
+      "kind": "office",
+      "baseline": {
+        "scene_rms_m": 2.145383497760847,
+        "anchor_p95_m": 3.2133453478812717,
+        "anchor_max_m": 3.8741673614413967,
+        "anchors_over_2m": 23,
+        "orientation_reversed_triangles": 23,
+        "orientation_eligible_triangles": 766,
+        "runtime_s": 209.12616480100405
+      },
+      "production": {
+        "scene_rms_m": 2.145383497760847,
+        "anchor_p95_m": 3.2133453478812717,
+        "anchor_max_m": 3.8741673614413967,
+        "anchors_over_2m": 23,
+        "orientation_reversed_triangles": 23,
+        "orientation_eligible_triangles": 766,
+        "runtime_s": 257.92550625999866
+      }
+    }
+  ]
+}

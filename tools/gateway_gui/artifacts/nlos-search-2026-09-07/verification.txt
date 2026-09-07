@@ -1,0 +1,21 @@
+Final validation, 2026-09-07
+
+Python: /home/tommie/Projects/IMEC2/.venv/bin/python
+OPENBLAS_NUM_THREADS=1
+Display: isolated Xvfb, 1600x1000x24, Openbox window manager
+Xvfb and Openbox used temporary extracted packages; no OS package installation.
+Both temporary display processes were terminated after the run.
+
+python -m unittest discover -s tools/gateway_gui/tests -v
+Ran 355 tests in 28.147s
+OK
+
+python -m mypy --explicit-package-bases --exclude 'tools/gateway_gui/tests/' tools/gateway_gui
+Success: no issues found in 41 source files
+Two existing notes in recovered_nlos_probe.py concern unchecked untyped bodies.
+
+git diff --check
+Passed.
+
+All production_sha256 entries in manifest.json match current source files.
+The final 72 small and nine large comparisons use those source versions.

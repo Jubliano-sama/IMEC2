@@ -56,6 +56,7 @@ DEFAULT_PLATEAU = 16.0
 DEFAULT_DISTANCE_WEIGHT_POWER = 1.0
 DEFAULT_BIAS_CAP_M = 8.0
 NLOS_SUSPECT_SIGMAS = 3.0
+_SEARCH_BIAS_TAIL_PER_M = 0.25
 
 
 def one_sided_residual(
@@ -121,6 +122,8 @@ class _OneSidedProblem:
         self.interval_sigma_m = interval_sigma_m
         self.plateau = plateau
         self.bias_cap_m = bias_cap_m
+        # A temporary search aid, always zero when scoring the final result.
+        self._search_bias_tail_per_m = 0.0
         self._fixed_points = np.asarray(list(self.parameterization.to_positions(
             [0.0] * self.parameterization.dimension,
         ).values()))
@@ -188,6 +191,13 @@ class _OneSidedProblem:
                 bias_cap_m=self.bias_cap_m,
             )
         ]
+        if self._search_bias_tail_per_m:
+            tail = np.maximum(self.measured - model - NLOS_SUSPECT_SIGMAS * self.sigma, 0.0)
+            active = tail > 0.0
+            terms[0][active] = -np.sqrt(
+                terms[0][active] ** 2
+                + self._search_bias_tail_per_m * self.sqrt_weights[active] ** 2 * tail[active]
+            )
         if self.neighbor_a.size:
             neighbor_distance = np.linalg.norm(points[self.neighbor_a] - points[self.neighbor_b], axis=1)
             terms.append(np.maximum(0.0, neighbor_distance - self.neighbor_max_m) / self.interval_sigma_m)
@@ -227,6 +237,19 @@ class _OneSidedProblem:
         over = np.maximum(0, excess - self.bias_cap_m)
         cost = -self.plateau * np.expm1(-excess**2 / (self.plateau * sigma**2)) + (over / sigma)**2
         derivative[negative] = (excess * exponent + over) / (sigma**2 * np.sqrt(cost))
+        if self._search_bias_tail_per_m:
+            active = residual < -NLOS_SUSPECT_SIGMAS * self.sigma
+            excess, sigma = -residual[active], self.sigma[active]
+            over = np.maximum(0.0, excess - self.bias_cap_m)
+            exponent = np.exp(-excess**2 / (self.plateau * sigma**2))
+            cost = (
+                -self.plateau * np.expm1(-excess**2 / (self.plateau * sigma**2))
+                + (over / sigma)**2
+                + self._search_bias_tail_per_m * (excess - NLOS_SUSPECT_SIGMAS * sigma)
+            )
+            derivative[active] = (
+                (excess * exponent + over) / sigma**2 + self._search_bias_tail_per_m / 2
+            ) / np.sqrt(cost)
         blocks = [jacobian * (derivative * self.sqrt_weights)[:, None]]
         if self.neighbor_a.size:
             distances, jacobian = self._distance_jacobian(points, self.neighbor_a, self.neighbor_b)
@@ -266,6 +289,12 @@ class _OneSidedProblem:
             method="trf",
             x_scale="jac",
             max_nfev=max(1, max_nfev),
+            # Trial basins need coarse convergence; final scoring and polishing
+            # use the original strict tolerances. Weak tails otherwise spend
+            # hundreds of iterations on insignificant changes in every trial.
+            ftol=1e-5 if self._search_bias_tail_per_m else 1e-8,
+            xtol=1e-6 if self._search_bias_tail_per_m else 1e-8,
+            gtol=1e-6 if self._search_bias_tail_per_m else 1e-8,
         )
         solved = np.asarray(result.x, dtype=float)
         return solved, self.objective(solved)
@@ -311,6 +340,29 @@ class _OneSidedProblem:
             if not improved:
                 break
         return best_params, best_objective, accepted
+
+    def bias_tail_search(
+        self, starts: list[tuple[str, np.ndarray]], *, max_nfev: int,
+    ) -> tuple[np.ndarray, float, str, int]:
+        """Cross flat NLOS basins, then restore and optimize the original loss.
+
+        Reuse the same seeds: rebuilding the spring seed dominates large solves.
+        A weak temporary bias penalty keeps saturated ranges pulling during this
+        search only. Its winner must still beat the incumbent under the original
+        objective; using the temporary loss for final selection added errors.
+        """
+        self._search_bias_tail_per_m = _SEARCH_BIAS_TAIL_PER_M
+        try:
+            candidates = []
+            for name, start in starts:
+                params, value = self.local_solve(start, max_nfev=max_nfev)
+                candidates.append((value, name, params))
+            value, name, params = min(candidates, key=lambda item: item[0])
+            params, value, accepted = self.reflection_search(params, value)
+        finally:
+            self._search_bias_tail_per_m = 0.0
+        params, value = self.local_solve(params, max_nfev=max_nfev)
+        return params, value, name, accepted
 
 
 def solve_nlos_one_sided_layout(
@@ -390,6 +442,7 @@ def solve_nlos_one_sided_layout(
     rng = random.Random(7)
     scale = float(np.median(problem.measured))
     candidates: list[tuple[float, str, np.ndarray]] = []
+    search_starts: list[tuple[str, np.ndarray]] = []
     for seed_name, base_positions in base_seeds:
         oriented = base_positions if fixed_positions_m else rotate_layout_to_level(
             base_positions, anchor_ids[0], anchor_ids[1],
@@ -400,10 +453,27 @@ def solve_nlos_one_sided_layout(
             for _ in range(3):
                 starts.append(first + np.asarray([rng.gauss(0.0, 0.08 * scale) for _ in first]))
         for start in starts:
+            search_starts.append((seed_name, start))
             params, objective = problem.local_solve(start, max_nfev=max_nfev)
             candidates.append((objective, seed_name, params))
     objective, selected_seed, params = min(candidates, key=lambda item: item[0])
     params, objective, accepted_reflections = problem.reflection_search(params, objective)
+    seed_count = len(candidates)
+    search_warning: str | None = None
+    # Sparse plans keep their established search, and explicit seed choices
+    # retain their meaning. Clean fits have no saturated ranges to release.
+    if seed == SEED_AUTO and problem._use_analytic_jacobian and params.size:
+        points = problem.positions_array(params)
+        excess = problem.measured - np.linalg.norm(points[problem.pair_a] - points[problem.pair_b], axis=1)
+        if np.any(excess > NLOS_SUSPECT_SIGMAS * problem.sigma):
+            seed_count += len(search_starts)
+            try:
+                alternate, value, name, hops = problem.bias_tail_search(search_starts, max_nfev=max_nfev)
+                if value < objective - 1e-6:
+                    params, objective, selected_seed = alternate, value, name
+                    accepted_reflections += hops
+            except (ValueError, FloatingPointError, np.linalg.LinAlgError):
+                search_warning = "Additional NLOS search failed; retained the original solution."
 
     positions = problem.positions(params)
     if not fixed_positions_m:
@@ -414,6 +484,8 @@ def solve_nlos_one_sided_layout(
     rmse = _rmse(residual_map.values())
     max_residual = max((abs(value) for value in residual_map.values()), default=0.0)
     warnings = list(_layout_warnings(anchor_ids, processed, rmse, max_residual))
+    if search_warning:
+        warnings.append(search_warning)
     neighbor_violations = sum(
         1 for a, b in neighbors if math.dist(positions[a], positions[b]) > neighbor_max_m + 1e-6
     )
@@ -454,6 +526,6 @@ def solve_nlos_one_sided_layout(
         processed_pairs=tuple(processed),
         residuals_m=residual_map,
         warnings=tuple(warnings),
-        seed_count=len(candidates),
+        seed_count=seed_count,
         basin_hop_count=accepted_reflections,
     )
