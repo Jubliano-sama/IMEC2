@@ -49,10 +49,27 @@ static const uint8_t unscoped[] = {
     CMD_SURVEY_GET_STATUS & 0xffu, CMD_SURVEY_GET_STATUS >> 8,
 };
 static struct survey_event current;
-static int status_error, publish_error;
-static unsigned snapshots, publications, terminals;
+static int status_error, acceptance_error, publish_error;
+static unsigned snapshots, acceptances, publications, terminals;
 static enum command_status terminal_status;
 static uint32_t published_generation;
+static bool plan_available;
+static enum survey_event_kind blocked_kind, published_kinds[128];
+
+static int app_survey_gateway_acceptance(enum survey_event_kind kind,
+    struct survey_event *event)
+{
+    acceptances++;
+    assert(kind == SURVEY_EVENT_STARTED || kind == SURVEY_EVENT_PLAN_ACCEPTED);
+    if (acceptance_error != 0) return acceptance_error;
+    if (kind == SURVEY_EVENT_PLAN_ACCEPTED && !plan_available) return -ENOENT;
+    memset(event, 0, sizeof(*event));
+    event->identity = current.identity;
+    event->kind = kind;
+    event->host_session_id = UINT32_C(0x10203040);
+    event->host_sequence = kind == SURVEY_EVENT_STARTED ? 31u : 32u;
+    return 0;
+}
 
 static int app_survey_gateway_status(struct survey_event *event)
 {
@@ -65,9 +82,15 @@ static int app_survey_gateway_status(struct survey_event *event)
 
 static int gateway_survey_emit_event(const struct survey_event *event)
 {
+    assert(publications < sizeof(published_kinds) / sizeof(published_kinds[0]));
+    published_kinds[publications] = event->kind;
     publications++;
     published_generation = event->identity.generation;
-    return publish_error;
+    if (event->kind == SURVEY_EVENT_STARTED || event->kind == SURVEY_EVENT_PLAN_ACCEPTED) {
+        assert(event->host_session_id == UINT32_C(0x10203040));
+        assert(event->host_sequence == (event->kind == SURVEY_EVENT_STARTED ? 31u : 32u));
+    }
+    return blocked_kind == 0 || blocked_kind == event->kind ? publish_error : 0;
 }
 
 static void gateway_emit_host_command_result_reserved(
@@ -117,8 +140,11 @@ static void reset(void)
     };
     memset(&current, 0, sizeof(current));
     current.identity.generation = UINT32_C(0x82135791);
-    status_error = publish_error = 0;
-    snapshots = publications = terminals = 0u;
+    current.kind = SURVEY_EVENT_STARTED;
+    status_error = acceptance_error = publish_error = 0;
+    snapshots = acceptances = publications = terminals = 0u;
+    plan_available = false;
+    blocked_kind = 0;
     published_generation = 0u;
     assert(app_gateway_command_result_reserve(
         &results, &gateway_command_result_dispatch_token) == 0);
@@ -184,7 +210,7 @@ static void generation_validation(void)
         case 4u: payload[len++] = 0xeeu; break; /* Truncated trailing TLV. */
         }
         assert(gateway_get_survey_status(&command, payload, len) == -EINVAL);
-        assert(snapshots == 0u && publications == 0u);
+        assert(snapshots == 0u && acceptances == 0u && publications == 0u);
         expect_terminal(COMMAND_MALFORMED_PAYLOAD);
     }
 }
@@ -208,7 +234,7 @@ static void publication_backpressure(void)
     }
     publish_error = 0;
     assert(gateway_get_survey_status(&command, payload, len) == 0);
-    assert(publications == 31u && snapshots == 31u);
+    assert(publications == 31u && snapshots == 1u);
     expect_terminal(COMMAND_OK);
 
     /* If a newer operation replaces the snapshot between retries, the old
@@ -235,7 +261,7 @@ static void publication_backpressure(void)
 static void terminal_failures(void)
 {
     reset();
-    status_error = -ENOENT;
+    acceptance_error = -ENOENT;
     assert(gateway_get_survey_status(&command, unscoped, sizeof(unscoped)) == -ENOENT);
     assert(publications == 0u);
     expect_terminal(COMMAND_INVALID_STATE);
@@ -246,11 +272,43 @@ static void terminal_failures(void)
     expect_terminal(COMMAND_INTERNAL_ERROR);
 }
 
+static void acceptance_replay_precedes_latest_status(void)
+{
+    reset();
+    plan_available = true;
+    current.kind = SURVEY_EVENT_RANGE_PROGRESS;
+    blocked_kind = SURVEY_EVENT_PLAN_ACCEPTED;
+    publish_error = -ENOSPC;
+    assert(gateway_get_survey_status(&command, unscoped, sizeof(unscoped)) == -ENOSPC);
+    assert(publications == 2u && snapshots == 0u && terminals == 0u);
+    assert(published_kinds[0] == SURVEY_EVENT_STARTED);
+    assert(published_kinds[1] == SURVEY_EVENT_PLAN_ACCEPTED);
+    assert(app_gateway_command_result_reservation_depth(&results) == 1u);
+
+    publish_error = 0;
+    assert(gateway_get_survey_status(&command, unscoped, sizeof(unscoped)) == 0);
+    assert(publications == 5u && snapshots == 1u);
+    assert(published_kinds[2] == SURVEY_EVENT_STARTED);
+    assert(published_kinds[3] == SURVEY_EVENT_PLAN_ACCEPTED);
+    assert(published_kinds[4] == SURVEY_EVENT_RANGE_PROGRESS);
+    expect_terminal(COMMAND_OK);
+
+    /* An acceptance that is also the latest event is emitted once; retaining
+     * its host command identity makes replay safe after lost notifications. */
+    reset();
+    plan_available = true;
+    current.kind = SURVEY_EVENT_PLAN_ACCEPTED;
+    assert(gateway_get_survey_status(&command, unscoped, sizeof(unscoped)) == 0);
+    assert(publications == 2u && snapshots == 1u);
+    expect_terminal(COMMAND_OK);
+}
+
 int main(void)
 {
     generation_validation();
     publication_backpressure();
     terminal_failures();
+    acceptance_replay_precedes_latest_status();
     puts("survey GET_STATUS: exact identity, malformed rejection, retry custody and terminal recovery passed");
 }
 '''

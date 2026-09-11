@@ -17,6 +17,12 @@
 extern "C" {
 #endif
 
+struct mesh_relay;
+/* Read-only command preflight shared with an active survey radio owner. */
+bool mesh_relay_command_packet_envelope_valid(
+    const struct mesh_relay *relay, const struct proto_packet *packet,
+    const uint8_t *payload, size_t payload_len, uint64_t previous_hop_id);
+
 struct uwb_wake_claim_frame;
 
 #define MESH_BROADCAST_ID 0u
@@ -1271,6 +1277,17 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
                                              uint32_t now_ms,
                                              uint32_t random_value,
                                              struct mesh_outbound *out);
+/* Reply after a probe recovered a route for an immutable locally built
+ * forward. Its queue clock and the original owner's deadline remain binding;
+ * this does not admit local-containing paths received over RF. */
+int mesh_relay_build_route_reply_for_forwarded_request(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *request,
+    uint64_t previous_hop_id,
+    uint32_t reply_deadline_ms,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_outbound *out);
 void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
                                            uint64_t target_id);
 void mesh_relay_reset_route_discovery(struct mesh_relay *relay);

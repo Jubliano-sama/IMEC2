@@ -377,11 +377,55 @@ static int ensure_local_data(void)
     return dwt_setlocaldataptr(0) == DWT_SUCCESS ? 0 : -EINVAL;
 }
 
+static int wait_for_idle_rc(const char *operation, bool *expired)
+{
+    uint32_t start_cycles = k_cycle_get_32();
+
+    if (expired != NULL) {
+        *expired = false;
+    }
+    while (true) {
+        uint32_t elapsed_us = k_cyc_to_us_floor32(
+            k_cycle_get_32() - start_cycles);
+        bool ready;
+        int ret;
+
+        if (elapsed_us >= DWM3000_WAKE_IDLE_RC_TIMEOUT_US) {
+            if (expired != NULL) {
+                *expired = true;
+            }
+            return -ETIMEDOUT;
+        }
+        ready = dwt_checkidlerc() != 0u;
+        ret = take_port_error(operation);
+
+        /* A ready-looking value from a failed transfer proves nothing. */
+        if (ret < 0) {
+            return ret;
+        }
+        elapsed_us = k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles);
+        if (elapsed_us >= DWM3000_WAKE_IDLE_RC_TIMEOUT_US) {
+            if (expired != NULL) {
+                *expired = true;
+            }
+            return -ETIMEDOUT;
+        }
+        if (ready) {
+            return 0;
+        }
+        uint32_t remaining_us = DWM3000_WAKE_IDLE_RC_TIMEOUT_US - elapsed_us;
+
+        k_busy_wait(remaining_us < DWM3000_STATUS_POLL_INTERVAL_US ?
+                       remaining_us : DWM3000_STATUS_POLL_INTERVAL_US);
+    }
+}
+
 static int initialise_radio(bool idle_after_init)
 {
     uint32_t trace_id = radio_transition_trace_next();
     int initialise_ret;
     int ret;
+    bool idle_rc_expired;
     int mode = idle_after_init ? DWT_DW_IDLE : DWT_DW_INIT;
 
     DWM3000_TRANSITION_TRACE(
@@ -409,6 +453,33 @@ static int initialise_radio(bool idle_after_init)
         "DBG_DWM_INIT id=%u step=slow_spi ret=%d spi=%u\n",
         trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
+        return ret;
+    }
+    /* dwt_initialise() reads OTP and sets SDK state; its mode is an OTP
+     * selection mask, not a request to await IDLE_RC. Reset/wake settle
+     * delays alone cannot prove that register access is ready. */
+    ret = wait_for_idle_rc("initialise-idle-check", &idle_rc_expired);
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_INIT id=%u step=idle_rc ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
+    if (idle_rc_expired) {
+        /* GPIO reset can reload retained AON configuration. The SDK reset
+         * clears that configuration before resetting the radio domains.
+         * Try it once at slow SPI, then require a new readiness proof. */
+        dwt_softreset();
+        ret = take_port_error("initialise-soft-reset");
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_INIT id=%u step=soft_reset ret=%d spi=%u\n",
+            trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
+        if (ret == 0) {
+            ret = wait_for_idle_rc("initialise-soft-reset-idle-check", NULL);
+        }
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_INIT id=%u step=soft_reset_idle_rc ret=%d spi=%u\n",
+            trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
+    }
+    if (ret < 0) {
+        invalidate_radio_state_tagged(__func__);
         return ret;
     }
     DWM3000_TRANSITION_TRACE(
@@ -852,19 +923,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     }
 
     dwm3000_port_clear_error();
-    for (uint32_t waited_us = 0u; waited_us <= DWM3000_WAKE_IDLE_RC_TIMEOUT_US;
-         waited_us += DWM3000_STATUS_POLL_INTERVAL_US) {
-        if (dwt_checkidlerc()) {
-            ret = 0;
-            break;
-        }
-        ret = take_port_error("wake-idle-check");
-        if (ret < 0) {
-            break;
-        }
-        k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US);
-        ret = -ETIMEDOUT;
-    }
+    ret = wait_for_idle_rc("wake-idle-check", NULL);
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
         invalidate_radio_state_tagged(__func__);
@@ -1109,7 +1168,8 @@ static int wait_status_internal(uint32_t mask,
                                 uint32_t timeout_ms,
                                 uint32_t *status,
                                 bool log_events,
-                                uint64_t *observed_at_ms)
+                                uint64_t *observed_at_ms,
+                                uint64_t absolute_deadline_ms)
 {
     /* Keep a full acquisition interval even when RX starts just before a
      * millisecond boundary. The nRF RTC provides 64-bit uptime ticks, but
@@ -1138,6 +1198,10 @@ static int wait_status_internal(uint32_t mask,
     if (log_events) {
     }
     do {
+        if (absolute_deadline_ms != 0u &&
+            (uint64_t)k_uptime_get() >= absolute_deadline_ms) {
+            goto absolute_deadline_expired;
+        }
         uint32_t poll_cycles = k_cycle_get_32();
         if (poll_loops > 0u) {
             uint32_t gap_us = (uint32_t)k_cyc_to_us_floor64(
@@ -1158,6 +1222,9 @@ static int wait_status_internal(uint32_t mask,
                 }
                 return ret;
             }
+        }
+        if (absolute_deadline_ms != 0u && sampled_at_ms >= absolute_deadline_ms) {
+            goto absolute_deadline_expired;
         }
         if ((read_status & mask) != 0u) {
             uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
@@ -1254,6 +1321,9 @@ receive_abort_not_requested:
             return ret;
         }
     }
+    if (absolute_deadline_ms != 0u && sampled_at_ms >= absolute_deadline_ms) {
+        goto absolute_deadline_expired;
+    }
     if (status != NULL) {
         *status = read_status;
     }
@@ -1293,6 +1363,13 @@ receive_abort_not_requested:
             return ret;
         }
     }
+    goto status_timeout;
+
+absolute_deadline_expired:
+    if (status != NULL) {
+        *status = 0u;
+    }
+status_timeout:
     driver_stats.sys_status_poll_loops += poll_loops;
     driver_stats.sys_status_poll_timeouts++;
     {
@@ -1309,7 +1386,8 @@ receive_abort_not_requested:
 }
 
 static int capture_completed_tx_timestamp(uint32_t timeout_ms,
-                                          uint64_t *tx_timestamp)
+                                          uint64_t *tx_timestamp,
+                                          uint64_t absolute_deadline_ms)
 {
     uint32_t status = 0u;
     int ret;
@@ -1327,7 +1405,8 @@ static int capture_completed_tx_timestamp(uint32_t timeout_ms,
                                timeout_ms,
                                &status,
                                false,
-                               NULL);
+                               NULL,
+                               absolute_deadline_ms);
     if (ret < 0) {
         return ret;
     }
@@ -1341,7 +1420,8 @@ static int capture_completed_tx_timestamp(uint32_t timeout_ms,
 }
 
 static int wait_tx_complete_observed(uint32_t timeout_ms,
-                                     uint64_t *completed_at_ms)
+                                     uint64_t *completed_at_ms,
+                                     uint64_t absolute_deadline_ms)
 {
     uint32_t status = 0u;
     int ret;
@@ -1350,7 +1430,8 @@ static int wait_tx_complete_observed(uint32_t timeout_ms,
                                timeout_ms,
                                &status,
                                true,
-                               completed_at_ms);
+                               completed_at_ms,
+                               absolute_deadline_ms);
     if (ret < 0) {
         driver_stats.tx_failures++;
         return ret;
@@ -1368,7 +1449,7 @@ static int wait_tx_complete_observed(uint32_t timeout_ms,
 
 static int wait_tx_complete(uint32_t timeout_ms)
 {
-    return wait_tx_complete_observed(timeout_ms, NULL);
+    return wait_tx_complete_observed(timeout_ms, NULL, 0u);
 }
 
 static enum range_status status_to_range_status(uint32_t status)

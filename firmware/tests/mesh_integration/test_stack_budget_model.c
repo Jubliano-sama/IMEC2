@@ -376,6 +376,36 @@ static void test_anchor_route_hardware_watermark_rebalances_existing_ram(void)
     CHECK_U32(result.required_free_bytes, 1076u);
 }
 
+static void test_clicker_cold_route_capture_retains_stack_and_static_reserves(void)
+{
+    struct stack_budget_role_config clicker;
+    struct stack_budget_result result;
+
+    /* Linked ARM bound includes the cold request/reply capture chain,
+     * queue-full logging, TLS and exception context; this is not a measured
+     * hardware watermark. The old route allocation violated the 20% reserve. */
+    CHECK_INT(stack_budget_evaluate(
+                  6784u, STACK_BUDGET_CLICKER_ROUTE_CAPTURE_BOUND_BYTES, 0u,
+                  STACK_BUDGET_OWNER_MESH_ROUTE, &result),
+              PROTO_OK);
+    CHECK_TRUE(!result.passes);
+    CHECK_U32(result.remaining_bytes, 852u);
+    CHECK_U32(result.required_free_bytes, 1357u);
+
+    CHECK_INT(stack_budget_role_baseline(STACK_BUDGET_ROLE_CLICKER, &clicker),
+              PROTO_OK);
+    CHECK_U32(clicker.mesh_route_bytes, 8064u);
+    CHECK_U32(clicker.minimum_static_ram_headroom_bytes, 24576u);
+    CHECK_INT(stack_budget_evaluate(
+                  clicker.mesh_route_bytes,
+                  STACK_BUDGET_CLICKER_ROUTE_CAPTURE_BOUND_BYTES, 0u,
+                  STACK_BUDGET_OWNER_MESH_ROUTE, &result),
+              PROTO_OK);
+    CHECK_TRUE(result.passes);
+    CHECK_U32(result.remaining_bytes, 2132u);
+    CHECK_U32(result.required_free_bytes, 1613u);
+}
+
 static void test_worst_combined_scenario(void)
 {
     const struct stack_budget_combined_scenario scenario = {
@@ -433,6 +463,7 @@ int main(void)
     test_anchor_delivery_restore_hardware_watermark();
     test_anchor_scan_ddd_runtime_watermark();
     test_anchor_route_hardware_watermark_rebalances_existing_ram();
+    test_clicker_cold_route_capture_retains_stack_and_static_reserves();
     test_worst_combined_scenario();
 
     if (failures != 0u) {

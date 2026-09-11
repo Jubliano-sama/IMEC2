@@ -803,9 +803,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_failed_direct_probe_ack_remains_sender_retry_owned(self):
         delivery = function_body(REPORT, "mesh_handle_result_actions")
-        route_probe = delivery.index(
-            "rx->packet.msg_type == MSG_GATEWAY_ROUTE_REQ"
-        )
+        route_probe = delivery.index("if (route_probe)")
         retry_owned = delivery.index(
             "DBG_GATEWAY_ROUTE_PROBE_ACK_RETRY_OWNED", route_probe
         )
@@ -821,16 +819,17 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertNotIn("app_node_comm_submit", narrow_path)
         self.assertNotIn("*gateway_ack_handed_off = true", narrow_path)
 
-    def test_direct_gateway_probe_checks_control_lane_before_channel9(self):
+    def test_direct_gateway_probe_checks_control_lane_before_extended_c5(self):
         body = function_body(
             REPORT, "mesh_send_direct_gateway_probe_and_wait"
         )
         control_sniff = body.index("mesh_route_wake_sniff_activity(")
-        channel9_config = body.index(
-            "dwm3000_driver_configure_mesh_payload_mode()"
+        control_config = body.index(
+            "dwm3000_driver_configure_wake_mesh_control_mode()"
         )
 
-        self.assertLess(control_sniff, channel9_config)
+        self.assertLess(control_sniff, control_config)
+        self.assertNotIn("dwm3000_driver_configure_mesh_payload_mode()", body)
         self.assertIn('if (ret < 0 || c5_activity)', body)
         self.assertIn('ret = -EBUSY', body)
         self.assertIn(

@@ -138,10 +138,13 @@ struct app_mesh_outbound_view {
 
 struct app_mesh_tx_observation {
     uint64_t rf_started_at_ms;
+    /* Local clock represented by message age, once a flood reached RF. */
+    uint64_t message_origin_at_ms;
     uint64_t tx_completed_at_ms;
     uint64_t gateway_confirmed_at_ms;
     uint64_t result_at_ms;
     bool rf_started;
+    bool message_origin_valid;
     bool tx_completed;
     bool gateway_confirmed;
 };
@@ -353,6 +356,11 @@ bool mesh_queue_from_frame(const uint8_t *frame,
                            uint8_t radio_channel,
                            bool *valid_mesh_frame,
                            uint64_t *previous_hop_id);
+/* Preserve original receipt time across a bounded deferred admission. */
+bool mesh_queue_from_frame_received_at(const uint8_t *frame, size_t frame_len,
+                                       uint8_t link_quality,
+                                       uint8_t radio_channel,
+                                       uint32_t received_at_ms);
 bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                     size_t frame_len,
                                     uint8_t link_quality,

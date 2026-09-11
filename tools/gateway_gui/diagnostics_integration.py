@@ -305,6 +305,9 @@ class GatewayDiagnosticsMixin:
             self._refresh_wake_row(key)
             if key == wake.key:
                 diagnostic = update
+        retained = self.wake_monitor.retained_keys | self._wake_row_iids.keys()
+        for key in self._wake_by_packet_key.keys() - retained:
+            self._wake_by_packet_key.pop(key)
         state = self.click_location_model.observe(packet, diagnostic)
         if state is not None:
             self.click_diagnostics_view.show(
@@ -369,7 +372,22 @@ class GatewayDiagnosticsMixin:
 
     def _forget_diagnostic_packet_row(self, packet: Packet) -> None:
         if packet.msg_type == MSG_CLICK_REPORT:
-            self._wake_row_iids.pop(self._wake_evidence(packet).key, None)
+            key = self._wake_evidence(packet).key
+            # An exact replay may have another visible row with this key.
+            if self._wake_row_iids.get(key) not in self.packet_by_iid:
+                self._wake_row_iids.pop(key, None)
+                self._wake_by_packet_key.pop(key, None)
+        cir_keys = getattr(self, "cir_key_by_packet_id", {})
+        cir_key = cir_keys.get(id(packet))
+        if cir_key is not None and not any(
+            packet_id != id(packet) and other_key == cir_key
+            for packet_id, other_key in cir_keys.items()
+        ):
+            self.cir_reassembler.discard(cir_key)
+
+    def _clear_diagnostic_packet_rows(self) -> None:
+        self._wake_row_iids.clear()
+        getattr(self, "_wake_by_packet_key", {}).clear()
 
     def _refresh_wake_row(self, key: tuple[object, ...]) -> None:
         iid = self._wake_row_iids.get(key)

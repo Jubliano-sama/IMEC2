@@ -99,20 +99,10 @@ static int extract_chunks(const uint8_t *payload,
     return written == 0u ? PROTO_ERR_NOT_FOUND : PROTO_OK;
 }
 
-int survey_control_append_tlvs(uint8_t *payload,
-                               size_t payload_cap,
-                               size_t *payload_len,
-                               const struct survey_control *control)
+static int survey_control_shape_validate(const struct survey_control *control)
 {
-    uint8_t assignment[SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN];
-    uint8_t encoded_plan[SURVEY_PLAN_MAX_WIRE_LEN];
-    size_t encoded_plan_len = 0u;
-    int ret;
-
-    if (payload == NULL || payload_len == NULL || control == NULL ||
-        !phase_valid(control->phase) || control->identity.generation == 0u ||
-        survey_assignment_identity_encode(&control->identity.assignment,
-                                          assignment) != sizeof(assignment)) {
+    if (control == NULL || !phase_valid(control->phase) ||
+        control->identity.generation == 0u) {
         return PROTO_ERR_ARG;
     }
     if (control->phase == SURVEY_PHASE_NEIGHBOR_START &&
@@ -129,6 +119,28 @@ int survey_control_append_tlvs(uint8_t *payload,
         (control->plan_present || control->start_delay_present ||
          control->self_stop_delay_present)) {
         return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
+int survey_control_append_tlvs(uint8_t *payload,
+                               size_t payload_cap,
+                               size_t *payload_len,
+                               const struct survey_control *control)
+{
+    uint8_t assignment[SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN];
+    uint8_t encoded_plan[SURVEY_PLAN_MAX_WIRE_LEN];
+    size_t encoded_plan_len = 0u;
+    int ret;
+
+    if (payload == NULL || payload_len == NULL || control == NULL ||
+        survey_assignment_identity_encode(&control->identity.assignment,
+                                          assignment) != sizeof(assignment)) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_control_shape_validate(control);
+    if (ret != PROTO_OK) {
+        return ret;
     }
     if (control->plan_present) {
         encoded_plan_len = survey_plan_encode(&control->plan,
@@ -170,14 +182,36 @@ int survey_control_append_tlvs(uint8_t *payload,
     return ret;
 }
 
+/* Keep PLAN-sized scratch out of START/CANCEL receive call chains. This is
+ * deliberately a stack boundary, including in optimized embedded builds. */
+static __attribute__((noinline)) int survey_control_extract_plan(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct survey_control *control)
+{
+    uint8_t encoded_plan[SURVEY_PLAN_MAX_WIRE_LEN];
+    size_t encoded_plan_len = 0u;
+    int ret = extract_chunks(payload, payload_len, TLV_SURVEY_PLAN,
+                              encoded_plan, sizeof(encoded_plan),
+                              &encoded_plan_len);
+
+    if (ret != PROTO_OK) {
+        return ret == PROTO_ERR_NOT_FOUND ? PROTO_ERR_MALFORMED : ret;
+    }
+    ret = survey_plan_decode(encoded_plan, encoded_plan_len, &control->plan);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return survey_identity_equal(&control->identity, &control->plan.identity) ?
+           PROTO_OK : PROTO_ERR_STALE;
+}
+
 int survey_control_extract_tlvs(const uint8_t *payload,
                                 size_t payload_len,
                                 struct survey_control *control)
 {
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
-    uint8_t encoded_plan[SURVEY_PLAN_MAX_WIRE_LEN];
-    size_t encoded_plan_len = 0u;
     int ret;
 
     if ((payload == NULL && payload_len != 0u) || control == NULL) {
@@ -225,33 +259,17 @@ int survey_control_extract_tlvs(const uint8_t *payload,
         control->self_stop_delay_ms = proto_get_u32_le(value);
         control->self_stop_delay_present = true;
     }
-    ret = extract_chunks(payload, payload_len, TLV_SURVEY_PLAN,
-                         encoded_plan, sizeof(encoded_plan),
-                         &encoded_plan_len);
-    if (ret == PROTO_OK) {
-        ret = survey_plan_decode(encoded_plan, encoded_plan_len,
-                                 &control->plan);
-        if (ret != PROTO_OK ||
-            !survey_identity_equal(&control->identity,
-                                   &control->plan.identity)) {
-            return ret == PROTO_OK ? PROTO_ERR_STALE : ret;
-        }
-        control->plan_present = true;
-    } else if (ret != PROTO_ERR_NOT_FOUND) {
+    ret = tlv_find(payload, payload_len, TLV_SURVEY_PLAN, &value, &value_len);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
         return ret;
     }
-    {
-        uint8_t scratch[PACKET_EXT_MAX_PAYLOAD_LEN];
-        size_t scratch_len = 0u;
-        struct survey_control canonical = *control;
-
-        memset(scratch, 0, sizeof(scratch));
-        if (survey_control_append_tlvs(scratch, sizeof(scratch),
-                                       &scratch_len, &canonical) != PROTO_OK) {
-            return PROTO_ERR_MALFORMED;
-        }
+    control->plan_present = ret == PROTO_OK;
+    ret = survey_control_shape_validate(control);
+    if (ret != PROTO_OK) {
+        return ret;
     }
-    return PROTO_OK;
+    return control->plan_present ?
+           survey_control_extract_plan(payload, payload_len, control) : PROTO_OK;
 }
 
 int survey_host_plan_request_append_tlvs(
@@ -361,7 +379,7 @@ static bool event_shape_valid(const struct survey_event *event)
     if (event == NULL || event->identity.generation == 0u ||
         !survey_assignment_identity_valid(&event->identity.assignment) ||
         event->kind < SURVEY_EVENT_NEIGHBOR_GRAPH ||
-        event->kind > SURVEY_EVENT_SIGNALS ||
+        event->kind > SURVEY_EVENT_STARTED ||
         event->status > SURVEY_TERMINAL_BUSY ||
         event->result_count > SURVEY_MAX_PAIRS ||
         event->skipped_count > SURVEY_MAX_PAIRS ||
@@ -369,10 +387,19 @@ static bool event_shape_valid(const struct survey_event *event)
         return false;
     }
     switch (event->kind) {
+    case SURVEY_EVENT_STARTED:
+        return event->status == SURVEY_TERMINAL_COMPLETE &&
+               event->host_session_id != 0u && event->host_sequence != 0u &&
+               event->result_count == 0u && event->skipped_count == 0u &&
+               event->signal_count == 0u && event->batch_index == 0u &&
+               !event->final_batch && event->partial_reasons == 0u;
     case SURVEY_EVENT_NEIGHBOR_GRAPH:
         return event->result_count == 0u && event->skipped_count == 0u;
     case SURVEY_EVENT_PLAN_ACCEPTED:
-        return event->result_count == 0u &&
+        return event->status <= SURVEY_TERMINAL_PARTIAL &&
+               (event->host_session_id == 0u) ==
+                   (event->host_sequence == 0u) &&
+               event->result_count == 0u &&
                event->plan.pair_count <= SURVEY_MAX_PAIRS &&
                event->batch_index == event->plan.batch_index &&
                event->final_batch == event->plan.final_batch &&
@@ -457,10 +484,16 @@ size_t survey_event_encode(const struct survey_event *event,
         event->plan.wave_count : 0u;
     out[13] = event->skipped_count;
     memcpy(&out[14], assignment, sizeof(assignment));
-    proto_put_u64_le(&out[56], event->graph.occupied_slot_mask);
-    proto_put_u64_le(&out[64], event->graph.received_report_mask);
-    if (event->kind != SURVEY_EVENT_NEIGHBOR_GRAPH) {
+    if (event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
+        proto_put_u64_le(&out[56], event->graph.occupied_slot_mask);
+        proto_put_u64_le(&out[64], event->graph.received_report_mask);
+    } else {
         out[64] = event->final_batch ? 1u : 0u;
+    }
+    if (event->kind == SURVEY_EVENT_STARTED ||
+        event->kind == SURVEY_EVENT_PLAN_ACCEPTED) {
+        proto_put_u32_le(&out[56], event->host_session_id);
+        proto_put_u16_le(&out[60], event->host_sequence);
     }
 
     if (event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
@@ -577,8 +610,30 @@ int survey_event_decode(const uint8_t *data,
     if (ret != PROTO_OK) {
         return ret;
     }
-    event->graph.occupied_slot_mask = proto_get_u64_le(&data[56]);
+    if (event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
+        event->graph.occupied_slot_mask = proto_get_u64_le(&data[56]);
+    }
     encoded_received_report_mask = proto_get_u64_le(&data[64]);
+    if (event->kind == SURVEY_EVENT_STARTED ||
+        event->kind == SURVEY_EVENT_PLAN_ACCEPTED) {
+        event->host_session_id = proto_get_u32_le(&data[56]);
+        event->host_sequence = proto_get_u16_le(&data[60]);
+        if ((event->host_session_id == 0u) !=
+                (event->host_sequence == 0u) ||
+            data[62] != 0u || data[63] != 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t i = 65u; i < SURVEY_EVENT_HEADER_WIRE_LEN; i++) {
+            if (data[i] != 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+    }
+    if (event->kind == SURVEY_EVENT_STARTED) {
+        return data_len == SURVEY_EVENT_HEADER_WIRE_LEN &&
+               pair_count == 0u && event->plan.wave_count == 0u &&
+               event_shape_valid(event) ? PROTO_OK : PROTO_ERR_MALFORMED;
+    }
     if (event->kind == SURVEY_EVENT_NEIGHBOR_GRAPH) {
         if (graph_count > SURVEY_MAX_ANCHORS || pair_count != 0u ||
             event->result_count != 0u || event->skipped_count != 0u ||
@@ -608,7 +663,8 @@ int survey_event_decode(const uint8_t *data,
             return PROTO_ERR_MALFORMED;
         }
     } else if (event->kind == SURVEY_EVENT_PLAN_ACCEPTED) {
-        if (pair_count > SURVEY_MAX_PAIRS ||
+        if (event->status > SURVEY_TERMINAL_PARTIAL ||
+            pair_count > SURVEY_MAX_PAIRS ||
             event->skipped_count > SURVEY_MAX_PAIRS || graph_count != 0u ||
             event->result_count != 0u) {
             return PROTO_ERR_MALFORMED;

@@ -36,6 +36,12 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         return -EINVAL;
     }
 
+    ret = range_request_check_deadline(request);
+    if (ret < 0) {
+        result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+        return ret == -ETIMEDOUT ? -ESTALE : ret;
+    }
+
     ret = ensure_phy_mode(DWM3000_PHY_RANGE);
     if (ret < 0) {
         result->status = RANGE_INTERNAL_ERROR;
@@ -96,9 +102,10 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     }
 
     clear_all_events();
-    ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+    ret = range_request_send_frame(request, tx_buffer, tx_len,
+        DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
     if (ret < 0) {
-        result->status = RANGE_INTERNAL_ERROR;
+        result->status = ret == -ESTALE ? RANGE_RX_TIMEOUT : RANGE_INTERNAL_ERROR;
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_INIT stage=poll-tx ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
                                 ret,
@@ -113,12 +120,19 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     result->exchange_start_ms = k_uptime_get();
     result->exchange_started = true;
 
-    ret = capture_completed_tx_timestamp(
-        ds_twr_rx_wait_timeout_ms(reply_delay_uus),
-        &poll_tx_ts);
+    ret = range_request_check_deadline(request);
+    if (ret == 0) {
+        ret = capture_completed_tx_timestamp(range_request_timeout_ms(request,
+            ds_twr_rx_wait_timeout_ms(reply_delay_uus)), &poll_tx_ts,
+            request->absolute_deadline_ms);
+    }
+    if (ret == 0) {
+        ret = range_request_check_deadline(request);
+    }
     if (ret < 0) {
         dwt_forcetrxoff();
-        result->status = RANGE_INTERNAL_ERROR;
+        result->status = request->absolute_deadline_ms != 0u && ret == -ETIMEDOUT ?
+                         RANGE_RX_TIMEOUT : RANGE_INTERNAL_ERROR;
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_INIT stage=poll-complete ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
                                 ret,
@@ -236,18 +250,19 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         return ret;
     }
     if (request->skip_responder_report) {
-        dwt_setdelayedtrxtime(final_tx_time);
-        ret = start_prepared_range_frame(tx_len, DWT_START_TX_DELAYED);
+        ret = range_request_start_prepared_frame(request, tx_len,
+            DWT_START_TX_DELAYED, final_tx_time);
     } else {
         dwt_setrxaftertxdelay(0u);
         dwt_setrxtimeout(REPORT_RX_TIMEOUT_UUS);
 
-        dwt_setdelayedtrxtime(final_tx_time);
-        ret = start_prepared_range_frame(
-            tx_len,
-            DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+        ret = range_request_start_prepared_frame(request, tx_len,
+            DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED, final_tx_time);
     }
     if (ret < 0) {
+        bool deadline_timeout = request->absolute_deadline_ms != 0u &&
+                                ret == -ETIMEDOUT;
+
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_INIT stage=final-tx ret=%d sys=0x%08x now=%u seq=%u round=%u tx_time=0x%08x\n",
                                 ret,
@@ -270,8 +285,9 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
             result->rsl_sampled = false;
-            result->status = RANGE_DELAYED_TX_MISSED;
-            return -ETIME;
+            result->status = deadline_timeout ? RANGE_RX_TIMEOUT :
+                                                RANGE_DELAYED_TX_MISSED;
+            return deadline_timeout ? ret : -ETIME;
     }
 
     /*
@@ -366,7 +382,15 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 #endif
 
     if (request->skip_responder_report) {
-        ret = wait_tx_complete(ds_twr_rx_wait_timeout_ms(reply_delay_uus));
+        ret = range_request_check_deadline(request);
+        if (ret == 0) {
+            ret = wait_tx_complete_observed(range_request_timeout_ms(request,
+                ds_twr_rx_wait_timeout_ms(reply_delay_uus)), NULL,
+                request->absolute_deadline_ms);
+        }
+        if (ret == 0) {
+            ret = range_request_check_deadline(request);
+        }
         if (ret < 0) {
             if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
                 status_debug_printf("DBG_DS_INIT stage=final-complete ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
@@ -389,7 +413,8 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             result->responder_id = request->responder_id;
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
-            result->status = RANGE_INTERNAL_ERROR;
+            result->status = request->absolute_deadline_ms != 0u && ret == -ETIMEDOUT ?
+                             RANGE_RX_TIMEOUT : RANGE_INTERNAL_ERROR;
             return ret;
         }
 #if defined(CONFIG_IMEC_ML_CLICKER)
@@ -584,6 +609,14 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -EINVAL;
     }
 
+    ret = range_request_check_deadline(expected);
+    if (ret < 0) {
+        if (result != NULL) {
+            result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+        }
+        return ret == -ETIMEDOUT ? -ESTALE : ret;
+    }
+
     ret = ensure_phy_mode(DWM3000_PHY_RANGE);
     if (ret < 0) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
@@ -643,11 +676,18 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return ret;
     }
 
-    poll_deadline_ms = k_uptime_get() +
-        (timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms);
+    poll_deadline_ms = range_request_deadline_ms(expected,
+        timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms);
     dwt_setpreambledetecttimeout(0u);
     dwt_setrxtimeout(0u);
     clear_all_events();
+    ret = range_request_check_deadline(expected);
+    if (ret < 0) {
+        if (result != NULL) {
+            result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+        }
+        return ret == -ETIMEDOUT ? -ESTALE : ret;
+    }
     ret = start_immediate_rx();
     if (ret < 0) {
         return ret;
@@ -655,10 +695,18 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
 receive_poll_again:
     remaining_ms = remaining_timeout_ms(poll_deadline_ms);
+    if (remaining_ms == 0u) {
+        dwt_forcetrxoff();
+    }
     ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
                         &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, false);
+                        NULL, NULL, NULL, NULL, NULL, false,
+                        expected->absolute_deadline_ms == 0u ? 0u :
+                            (uint64_t)poll_deadline_ms);
+    if (ret == 0) {
+        ret = range_request_check_deadline(expected);
+    }
     if (ret == -EMSGSIZE) {
         goto ignore_poll;
     }
@@ -792,12 +840,15 @@ poll_accepted:
     dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
     dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
-    dwt_setdelayedtrxtime(resp_tx_time);
-    ret = start_prepared_range_frame(
-        tx_len, DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+    ret = range_request_start_prepared_frame(expected, tx_len,
+        DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED, resp_tx_time);
     if (ret < 0) {
+        bool deadline_timeout = expected->absolute_deadline_ms != 0u &&
+                                ret == -ETIMEDOUT;
+
         if (result != NULL) {
-            result->status = RANGE_DELAYED_TX_MISSED;
+            result->status = deadline_timeout ? RANGE_RX_TIMEOUT :
+                                                RANGE_DELAYED_TX_MISSED;
         }
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=resp-tx ret=%d sys=0x%08x now=%u seq=%u round=%u tx_time=0x%08x\n",
@@ -808,7 +859,7 @@ poll_accepted:
                                 poll.header.round_index,
                                 resp_tx_time);
         }
-        return -ETIME;
+        return deadline_timeout ? ret : -ETIME;
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=resp-armed now=%u seq=%u round=%u tx_time=0x%08x resp_tx=0x%08x\n",
@@ -825,9 +876,13 @@ poll_accepted:
 
 
     capture_final_rsl = expected->capture_rsl;
-    final_deadline_ms = k_uptime_get() + ds_twr_rx_wait_timeout_ms(reply_delay_uus);
+    final_deadline_ms = range_request_deadline_ms(expected,
+        ds_twr_rx_wait_timeout_ms(reply_delay_uus));
 receive_final_again:
     remaining_ms = remaining_timeout_ms(final_deadline_ms);
+    if (remaining_ms == 0u) {
+        dwt_forcetrxoff();
+    }
     ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len,
                         &final_rx_ts, &quality, &rsl_dbm,
@@ -838,7 +893,12 @@ receive_final_again:
                         result != NULL ? &final_carrier_integrator_sampled : NULL,
                         DWM3000_DS_TWR_RTT_DEBUG_ENABLED ?
                             &final_ipatov_rx_ts : NULL,
-                        capture_final_rsl);
+                        capture_final_rsl,
+                        expected->absolute_deadline_ms == 0u ? 0u :
+                            (uint64_t)final_deadline_ms);
+    if (ret == 0) {
+        ret = range_request_check_deadline(expected);
+    }
     if (ret == -EMSGSIZE) {
         goto ignore_final;
     }
@@ -1022,7 +1082,8 @@ final_accepted:
     }
 
     clear_status(SYS_STATUS_TXFRS_BIT_MASK);
-    ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
+    ret = range_request_send_frame(expected, tx_buffer, tx_len,
+                                   DWT_START_TX_IMMEDIATE);
     if (ret < 0) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=report-tx ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
@@ -1041,7 +1102,14 @@ final_accepted:
                             poll.header.round_index);
     }
 
-    ret = wait_tx_complete(REPORT_RX_TIMEOUT_MS);
+    ret = range_request_check_deadline(expected);
+    if (ret == 0) {
+        ret = wait_tx_complete_observed(range_request_timeout_ms(expected,
+            REPORT_RX_TIMEOUT_MS), NULL, expected->absolute_deadline_ms);
+    }
+    if (ret == 0) {
+        ret = range_request_check_deadline(expected);
+    }
     if (ret < 0) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=report-complete ret=%d sys=0x%08x now=%u seq=%u round=%u\n",

@@ -39,9 +39,11 @@ static enum dwm3000_phy_mode active_phy_mode;
 static struct dwm3000_driver_stats driver_stats;
 static uint32_t hardware_channel, hardware_tune, hardware_system, hardware_tx;
 static uint32_t now_us, spi_hz;
+static uint32_t idle_ready_after_us, idle_read_cost_us, wake_completed_us;
 static unsigned int resets, restores, txrx_restores, reads;
+static unsigned int idle_polls, fast_changes;
 static unsigned int fail_read;
-static int port_error, reset_error;
+static int port_error, reset_error, idle_error;
 static bool wake_pin, idle_confirmed;
 
 static uint32_t k_cycle_get_32(void) { return now_us; }
@@ -92,6 +94,7 @@ static int dwm3000_port_set_slow_spi(void) { spi_hz = 2000000u; return 0; }
 static int dwm3000_port_set_fast_spi(void)
 {
     assert(idle_confirmed);
+    fast_changes++;
     spi_hz = 32000000u;
     return 0;
 }
@@ -100,14 +103,20 @@ static int dwm3000_port_wakeup(void)
     assert(spi_hz == 2000000u);
     wake_pin = true;
     now_us += 2500u;
+    wake_completed_us = now_us;
     return 0;
 }
 static void dwm3000_port_clear_error(void) { port_error = 0; }
 uint8_t dwt_checkidlerc(void)
 {
     assert(spi_hz == 2000000u && wake_pin);
-    idle_confirmed = true;
-    return 1u;
+    idle_polls++;
+    now_us += idle_read_cost_us;
+    port_error = idle_error;
+    bool ready = now_us - wake_completed_us >= idle_ready_after_us;
+
+    idle_confirmed = ready && idle_error == 0;
+    return ready ? 1u : 0u;
 }
 void dwt_restore_common(void)
 {
@@ -177,8 +186,11 @@ static void fixture(bool control)
     hardware_system = control ? 0x30u : 0u;
     hardware_tx = control ? 0x280cu : 0x380cu;
     now_us = spi_hz = 0u;
+    idle_ready_after_us = wake_completed_us = 0u;
+    idle_read_cost_us = 24u;
     resets = restores = txrx_restores = reads = fail_read = 0u;
-    port_error = reset_error = 0;
+    idle_polls = fast_changes = 0u;
+    port_error = reset_error = idle_error = 0;
     wake_pin = idle_confirmed = false;
 }
 
@@ -268,12 +280,45 @@ static void mutable_frame_fields_do_not_invalidate_retention(void)
     assert(resets == 0u && restores == 1u);
 }
 
+static void unproven_wake_never_restores_retention(void)
+{
+    for (unsigned int fault = 0u; fault < 3u; fault++) {
+        for (unsigned int recover = 0u; recover < 3u; recover++) {
+            fixture(false);
+            if (fault == 0u) idle_ready_after_us = UINT32_MAX;
+            if (fault == 1u) idle_error = -EIO; /* A ready-looking failed read. */
+            if (fault == 2u) idle_read_cost_us = DWM3000_WAKE_IDLE_RC_TIMEOUT_US;
+            const int expected_error = fault == 1u ? -EIO : -ETIMEDOUT;
+
+            if (recover == 0u) {
+                assert(wake_configured_radio(DWM3000_PHY_WAKE) == expected_error);
+                assert(resets == 0u);
+            } else {
+                reset_error = recover == 2u ? -EHOSTDOWN : 0;
+                assert(ensure_phy_mode(DWM3000_PHY_WAKE) == reset_error);
+                assert(resets == 1u);
+            }
+            assert(idle_polls > 0u && fast_changes == 0u);
+            assert(reads == 0u && restores == 0u && txrx_restores == 0u);
+            assert(driver_stats.sleep_wake_failures == 1u);
+            if (recover != 1u) {
+                assert(!radio_configured && !radio_awake && radio_state_unknown);
+                assert(active_phy_mode == DWM3000_PHY_NONE);
+            } else {
+                assert(radio_configured && radio_awake && !radio_state_unknown);
+                assert(active_phy_mode == DWM3000_PHY_WAKE);
+            }
+        }
+    }
+}
+
 int main(void)
 {
     valid_retention_preserves_phy_without_reset();
     bad_retention_recovers_before_any_restore();
     every_read_error_requires_recovery_and_failed_reset_stays_closed();
     mutable_frame_fields_do_not_invalidate_retention();
+    unproven_wake_never_restores_retention();
     puts("DWM3000 production retained-PHY recovery passed");
     return 0;
 }

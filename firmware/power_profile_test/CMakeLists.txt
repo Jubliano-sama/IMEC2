@@ -89,6 +89,7 @@ target_sources(app PRIVATE
     "${DWM3000_SDK_DIR}/decadriver/deca_device.c"
     ../src/debug_log.c
     ../src/protocol.c
+    ../src/dwm3000_timing.c
     ../src/uwb.c
     ../src/uwb_session.c
 )

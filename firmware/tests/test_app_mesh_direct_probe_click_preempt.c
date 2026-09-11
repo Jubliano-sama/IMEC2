@@ -211,9 +211,12 @@ static bool mesh_click_preempt_service_queued_route_owned(void)
 
 static bool mesh_send_route_reply_outbound_action(const struct mesh_outbound *reply,
                                                  bool backup, uint64_t backup_hop,
-                                                 const char *reason)
+                                                 const char *reason,
+                                                 const uint32_t *owner_deadline_ms)
 {
     (void)reason;
+    assert(owner_deadline_ms != NULL &&
+           !uptime_deadline_reached(now_ms, *owner_deadline_ms));
     assert(!backup && backup_hop == 0u);
     assert(reply->packet.msg_type == MSG_ROUTE_REPLY && reply->next_hop_id == CHILD_ID);
     assert(!mesh_click_preempt_boundary_requested());
@@ -382,9 +385,19 @@ static void test_stale_wake_and_expired_click_do_not_shorten_backoff(void)
 static void prepare_rebroadcast(uint32_t lifetime_ms)
 {
     static struct mesh_relay child;
+    static struct mesh_relay_result received;
+    struct mesh_outbound request;
     mesh_relay_init(&child, MESH_RELAY_ROLE_ANCHOR, CHILD_ID, GATEWAY_ID, 1u);
     assert(mesh_relay_prepare_route_request(&child, GATEWAY_ID, now_ms,
-        17u, &mesh_route_request_action_tx) == PROTO_OK);
+        17u, &request) == PROTO_OK);
+    now_ms = child.route_discovery.next_request_ms;
+    assert(mesh_relay_prepare_route_request(&child, GATEWAY_ID, now_ms,
+        17u, &request) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&mesh_runtime, &request.packet,
+        request.payload, request.payload_len, CHILD_ID, 90u, now_ms,
+        &received) == PROTO_OK);
+    assert(received.actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ);
+    mesh_route_request_action_tx = received.route_request;
     mesh_route_request_action_tx.earliest_tx_ms = now_ms;
     mesh_route_request_action_tx.earliest_tx_valid = true;
     mesh_route_request_action_tx.packet.message_age_ms = 19u;
@@ -415,11 +428,12 @@ static void test_worker_releases_scratch_retains_exact_action_and_resumes(void)
     prepare_rebroadcast(10000u);
     const struct mesh_outbound before = mesh_route_request_action_tx;
     const uint32_t deadline = mesh_route_request_action_reply_deadline_ms;
+    const uint32_t started = now_ms;
     busy_streak(100u);
     click_after(17u);
     mesh_route_request_action_work_handler(&mesh_route_request_action_work.work);
     assert(lock_count == 0u && !radio_owned && service_count == 1u);
-    assert(serviced_at_ms == 1017u && send_count == 1u && rf_count == 0u);
+    assert(serviced_at_ms == started + 17u && send_count == 1u && rf_count == 0u);
     assert(mesh_route_request_action_pending && reschedules == 1u);
     assert(scheduled_at_ms == serviced_at_ms + REPORT_TX_RETRY_DELAY_MS);
     assert(mesh_route_request_action_reply_deadline_ms == deadline);

@@ -384,7 +384,11 @@ class ControlFailureClickServiceabilitySourceTests(unittest.TestCase):
             cleanup,
         )
         self.assertIn("gateway_state.cleanup_abort_pending = true", abort_cleanup)
-        self.assertIn('gateway_work_reschedule_owned(now_ms, "cleanup-abort")', abort_cleanup)
+        self.assertIn("gateway_cancel_control_boundary_locked(now_ms)", abort_cleanup)
+        self.assertIn("gateway_state.cleanup_abort_due_ms = MIN(", abort_cleanup)
+        self.assertIn("gateway_state.cleanup_abort_until_ms = MIN(", abort_cleanup)
+        self.assertIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", abort_cleanup)
+        self.assertIn("gateway_work_reschedule_owned(gateway_state.cleanup_abort_due_ms", abort_cleanup)
         self.assertIn("SURVEY_INITIAL_SELF_EXPIRY_MS", remote_bound)
         self.assertIn("self_stop_delay_ms", remote_bound)
         self.assertIn("MAX(gateway_state.self_stop_ms", remote_bound)

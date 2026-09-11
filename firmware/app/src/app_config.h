@@ -8,6 +8,7 @@
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "operation_policy.h"
+#include "stack_budget.h"
 #include "status.h"
 #include "uwb.h"
 
@@ -389,13 +390,14 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
 #define MESH_TEST_WORKQUEUE_STACK_SIZE 8192u
 #define MESH_TEST_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
 #if IS_ENABLED(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-/*
- * The current clicker route owner reaches 5392 bytes synchronously; the
- * verifier's 20% free-space rule requires more than 6724 bytes, so 6784 is
- * the smallest reviewed 32-byte-aligned queue with additional rounding room.
- */
 #if DEVICE_ROLE == ROLE_CLICKER
-#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 6784u
+/* Cold route discovery retains the request, reply listener and queued frame
+ * through canonical ingress validation. That nested capture path needs its
+ * own margin even when a warm-route click uses much less of this stack. */
+#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8064u
+BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >=
+             (STACK_BUDGET_CLICKER_ROUTE_CAPTURE_BOUND_BYTES * 5u + 3u) / 4u,
+             "clicker cold reply capture needs its complete stack reserve");
 #elif DEVICE_ROLE == ROLE_GATEWAY
 /* Survey status emission reaches a 6688-byte synchronous chain. 8384 keeps
  * the verifier's 20% free-space floor without consuming avoidable gateway

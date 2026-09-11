@@ -716,12 +716,37 @@ static void make_direct_probe(struct mesh_outbound *probe, uint64_t source_id)
     probe->packet.seq = 1u;
     probe->packet.ttl = MESH_DEFAULT_TTL;
     probe->next_hop_id = GATEWAY_ID;
-    probe->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    probe->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+}
+
+enum direct_probe_ack_case {
+    DIRECT_PROBE_ACK_EXACT,
+    DIRECT_PROBE_ACK_LOST,
+    DIRECT_PROBE_ACK_PARTIAL,
+    DIRECT_PROBE_ACK_OTHER_PACKET,
+};
+
+static bool direct_probe_window_is_c5(const struct mesh_sim_world *world,
+                                      uint16_t transmission_index,
+                                      const struct route_reception *received)
+{
+    const struct mesh_sim_transmission *tx =
+        &world->transmissions[transmission_index];
+    const struct mesh_sim_rx_window *window =
+        &world->rx_windows[received->window_index];
+
+    return tx->channel == UWB_CHANNEL_WAKE_CONTACT &&
+           tx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+           window->channel == UWB_CHANNEL_WAKE_CONTACT &&
+           window->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+           window->start_us <= received->radio.start_us &&
+           window->end_us >= received->radio.end_us;
 }
 
 static int run_direct_probe_for_route(struct mesh_sim_world *world,
                                       uint8_t sender,
-                                      uint8_t gateway)
+                                      uint8_t gateway,
+                                      enum direct_probe_ack_case ack_case)
 {
     struct mesh_outbound probe;
     struct mesh_outbound gateway_ack;
@@ -731,8 +756,12 @@ static int run_direct_probe_for_route(struct mesh_sim_world *world,
     uint16_t ack_tx;
     int ack_queue_index = -1;
     uint64_t start_us;
+    bool contains = false;
     int ret;
 
+    if (route_selected(&world->roles[sender].relay.upstream) != NULL) {
+        return MESH_SIM_ERR_PROTOCOL;
+    }
     make_direct_probe(&probe, world->roles[sender].id);
     start_us = world->now_us + DIRECT_PROBE_TX_PREPARE_US;
     ret = transmit_route_outbound(world,
@@ -744,7 +773,8 @@ static int run_direct_probe_for_route(struct mesh_sim_world *world,
                                   &reception,
                                   &probe_tx);
     if (ret != MESH_SIM_OK || reception.radio.outcome != MESH_SIM_RX_DECODED ||
-        reception.radio.packet.msg_type != MSG_GATEWAY_ROUTE_REQ) {
+        reception.radio.packet.msg_type != MSG_GATEWAY_ROUTE_REQ ||
+        !direct_probe_window_is_c5(world, probe_tx, &reception)) {
         return ret == MESH_SIM_OK ? MESH_SIM_ERR_PROTOCOL : ret;
     }
 
@@ -765,23 +795,114 @@ static int run_direct_probe_for_route(struct mesh_sim_world *world,
     gateway_ack = world->roles[gateway].tx_queue[ack_queue_index].outbound;
     remove_queued_entry_for_test(&world->roles[gateway],
                                  (size_t)ack_queue_index);
-    gateway_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    gateway_ack.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    /* The request alone must never manufacture a usable upstream route. */
+    if (route_selected(&world->roles[sender].relay.upstream) != NULL) {
+        return MESH_SIM_ERR_PROTOCOL;
+    }
+    if (ack_case == DIRECT_PROBE_ACK_OTHER_PACKET) {
+        struct proto_packet other_probe = probe.packet;
+        size_t length = 0u;
+
+        other_probe.seq++;
+        ret = mesh_append_requested_seq(gateway_ack.payload,
+                                         sizeof(gateway_ack.payload),
+                                         &length, other_probe.seq);
+        if (ret == PROTO_OK) {
+            ret = mesh_append_ack_semantic_identity(
+                gateway_ack.payload, sizeof(gateway_ack.payload), &length,
+                &other_probe, probe.payload, probe.payload_len);
+        }
+        if (ret != PROTO_OK) {
+            return MESH_SIM_ERR_PROTOCOL;
+        }
+        gateway_ack.payload_len = (uint16_t)length;
+        gateway_ack.packet.payload_len = (uint16_t)length;
+    }
     start_us = world->now_us + DIRECT_PROBE_ACK_GUARD_US;
+    if (ack_case == DIRECT_PROBE_ACK_LOST) {
+        /* The gateway sends the ACK, but the cold sender misses its RX turn. */
+        ret = mesh_sim_schedule_outbound_tx(world, gateway, start_us,
+                                            &gateway_ack, &ack_tx);
+        if (ret == MESH_SIM_OK) {
+            ret = mesh_sim_run_until(world,
+                transmission_evaluation_us(world, ack_tx));
+        }
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_PROTOCOL : ret;
+    }
     ret = transmit_route_outbound(world,
                                   gateway,
                                   sender,
                                   &gateway_ack,
                                   start_us,
-                                  true,
+                                  ack_case != DIRECT_PROBE_ACK_PARTIAL,
                                   &ack_reception,
                                   &ack_tx);
     if (ret != MESH_SIM_OK || ack_reception.radio.outcome != MESH_SIM_RX_DECODED ||
-        ack_reception.radio.packet.msg_type != MSG_GATEWAY_ACK) {
+        ack_reception.radio.packet.msg_type != MSG_GATEWAY_ACK ||
+        !direct_probe_window_is_c5(world, ack_tx, &ack_reception) ||
+        ack_reception.radio.source_id != world->roles[gateway].id ||
+        ack_reception.radio.packet.src_id != world->roles[gateway].id ||
+        ack_reception.radio.packet.dst_id != world->roles[sender].id ||
+        mesh_ack_payload_contains_packet(
+            &ack_reception.radio.packet, ack_reception.radio.payload,
+            ack_reception.radio.payload_len, &probe.packet,
+            probe.payload, probe.payload_len, &contains) != PROTO_OK ||
+        !contains) {
         return ret == MESH_SIM_OK ? MESH_SIM_ERR_PROTOCOL : ret;
     }
     return mesh_relay_note_direct_gateway_route(
         &world->roles[sender].relay,
         mesh_sim_time_ms(world->now_us));
+}
+
+static int run_unseeded_direct_probe_ack_cases(void)
+{
+    for (enum direct_probe_ack_case ack_case = DIRECT_PROBE_ACK_EXACT;
+         ack_case <= DIRECT_PROBE_ACK_OTHER_PACKET; ack_case++) {
+        static struct mesh_sim_world world;
+        uint8_t sender;
+        uint8_t gateway;
+        uint64_t next_hop_id = 0u;
+        int ret;
+
+        set_test_phase("unseeded_direct_probe_requires_complete_matching_c5_ack");
+        mesh_sim_init(&world, SCENARIO_SEED ^ (uint32_t)ack_case);
+        CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                RELAY_2_ID, GATEWAY_ID, ROUTE_EPOCH,
+                                &sender) == MESH_SIM_OK);
+        CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                                GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
+                                &gateway) == MESH_SIM_OK);
+        CHECK(mesh_sim_set_link(&world, sender, gateway, 99u, 5u) == MESH_SIM_OK);
+        ret = run_direct_probe_for_route(&world, sender, gateway, ack_case);
+        CHECK(world.transmission_count == 2u);
+        for (size_t i = 0u; i < world.transmission_count; i++) {
+            CHECK(world.transmissions[i].channel == UWB_CHANNEL_WAKE_CONTACT);
+            CHECK(world.transmissions[i].phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL);
+        }
+        if (ack_case == DIRECT_PROBE_ACK_LOST) {
+            CHECK(world.reception_count == 1u);
+        } else {
+            CHECK(world.reception_count == 2u);
+            CHECK(world.receptions[1].outcome ==
+                  (ack_case == DIRECT_PROBE_ACK_PARTIAL ?
+                       MESH_SIM_RX_FRAME_TIMEOUT : MESH_SIM_RX_DECODED));
+        }
+        if (ack_case == DIRECT_PROBE_ACK_EXACT) {
+            CHECK(ret == MESH_SIM_OK);
+            CHECK(assert_selected_hop(&world.roles[sender].relay,
+                                      GATEWAY_ID, GATEWAY_ID) == 0);
+        } else {
+            CHECK(ret == MESH_SIM_ERR_PROTOCOL);
+            CHECK(route_selected(&world.roles[sender].relay.upstream) == NULL);
+            CHECK(mesh_relay_select_next_hop(&world.roles[sender].relay,
+                                             GATEWAY_ID, &next_hop_id) ==
+                  PROTO_ERR_NOT_FOUND);
+        }
+        CHECK(world.last_error == MESH_SIM_OK);
+    }
+    return 0;
 }
 
 static int build_unseeded_click(struct proto_packet *packet,
@@ -2107,7 +2228,8 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
     /* Only the last relay has direct gateway contact, learned from a real
      * probe/ACK exchange rather than a simulator route fixture. */
     set_test_phase("unseeded_click_direct_probe");
-    CHECK(run_direct_probe_for_route(&world, relay_2, gateway) == MESH_SIM_OK);
+    CHECK(run_direct_probe_for_route(&world, relay_2, gateway,
+                                     DIRECT_PROBE_ACK_EXACT) == MESH_SIM_OK);
     CHECK(assert_selected_hop(&world.roles[relay_2].relay,
                               GATEWAY_ID, GATEWAY_ID) == 0);
     CHECK(route_selected(&world.roles[relay_1].relay.upstream) == NULL);
@@ -2951,6 +3073,7 @@ int main(void)
                                      0u) == 8u);
 
     if (run_exact_hop_multi_responder_case() != 0 ||
+        run_unseeded_direct_probe_ack_cases() != 0 ||
         run_ttl_ladder_data_case() != 0 ||
         run_blank_anchor_retains_local_click_until_route_case() != 0 ||
         run_route_collision_case() != 0 ||

@@ -2445,6 +2445,126 @@ static int anchor_survey_upstream(uint64_t *parent_id, uint8_t *hop_count)
 
 #if DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+/* Only the survey workqueue reads/writes this single admitted control. The
+ * frame survives the deep response-lane stack until ordinary RX can enqueue it. */
+#define ANCHOR_SURVEY_CANCEL_PAYLOAD_MAX 192u
+static struct {
+    uint8_t frame[UWB_MESH_FRAME_HEADER_LEN + PACKET_EXT_HEADER_LEN +
+                  ANCHOR_SURVEY_CANCEL_PAYLOAD_MAX + PACKET_CRC_LEN +
+                  UWB_FRAME_CRC_LEN];
+    size_t frame_len;
+    uint32_t received_at_ms;
+} anchor_survey_pending_cancel;
+static struct k_work_delayable anchor_survey_cancel_forward_work;
+
+/* Called only by the survey radio owner. Use the normal envelope validator
+ * before admitting the single control that can release its current lease. */
+static bool anchor_broadcast_command_targets_local(
+    enum command_id command_id, const struct gateway_command_options *options);
+
+static bool anchor_survey_receive_cancel(const uint8_t *frame, size_t frame_len)
+{
+    struct proto_packet packet;
+    struct survey_control control;
+    struct gateway_command_options options;
+    uint8_t payload[ANCHOR_SURVEY_CANCEL_PAYLOAD_MAX];
+    size_t payload_len = 0u;
+    uint64_t previous_hop = 0u;
+    uint32_t received_at_ms = k_uptime_get_32();
+    const uint8_t *phase = NULL;
+    uint8_t phase_len = 0u;
+    enum command_id command_id;
+
+    if (frame_len > sizeof(anchor_survey_pending_cancel.frame) ||
+        uwb_mesh_frame_decode(frame, frame_len, NETWORK_ID, DEVICE_ID,
+            &previous_hop, &packet, payload, sizeof(payload), &payload_len) !=
+                PROTO_OK ||
+        mesh_packet_rx_envelope_validate(&packet, payload, payload_len,
+            previous_hop, DEVICE_ID, GATEWAY_ID, MESH_EVENT_CHANNEL,
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) != PROTO_OK ||
+        !mesh_relay_command_packet_envelope_valid(
+            &mesh_runtime, &packet, payload, payload_len, previous_hop) ||
+        (packet.dst_id != DEVICE_ID && packet.dst_id != MESH_BROADCAST_ID) ||
+        gateway_command_extract_options(payload, payload_len, &options) !=
+            PROTO_OK || gateway_command_receive_expired(&packet, &options) ||
+        gateway_command_execute_delay_remaining_ms(&packet, &options) != 0u ||
+        (packet.dst_id == MESH_BROADCAST_ID &&
+         !anchor_broadcast_command_targets_local(CMD_SURVEY_CANCEL, &options)) ||
+        !app_mesh_c5_gateway_control_rx_allowed(
+            packet.msg_type, packet.ttl, payload, payload_len,
+            packet.src_id, previous_hop, GATEWAY_ID,
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL),
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+            CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS
+#else
+            0u
+#endif
+            ) ||
+        gateway_command_extract_id(payload, payload_len, &command_id) !=
+                PROTO_OK || command_id != CMD_SURVEY_CANCEL ||
+        tlv_find_unique(payload, payload_len, TLV_SURVEY_PHASE,
+                        &phase, &phase_len) != PROTO_OK ||
+        phase_len != 1u || phase[0] != SURVEY_PHASE_ABORT ||
+        survey_control_extract_tlvs(payload, payload_len, &control) !=
+                PROTO_OK || control.phase != SURVEY_PHASE_ABORT) {
+        return false;
+    }
+    /* Apply checks active ownership, full identity and the retained roster
+     * under survey_lock; avoid parsing the identical control a second time. */
+    if (app_survey_anchor_apply_control(&packet, &control) != 0) {
+        return false;
+    }
+    memcpy(anchor_survey_pending_cancel.frame, frame, frame_len);
+    anchor_survey_pending_cancel.frame_len = frame_len;
+    anchor_survey_pending_cancel.received_at_ms = received_at_ms;
+    /* The same queue cannot run forwarding until this survey callback and its
+     * radio sequence have unwound. Retries have their own work item so they
+     * cannot postpone a newly accepted survey's absolute start edge. */
+    if (k_work_reschedule_for_queue(&anchor_uwb_scan_work_q,
+            &anchor_survey_cancel_forward_work, K_NO_WAIT) < 0) {
+        app_watchdog_stop_feeding();
+    }
+    status_debug_printf("DBG_SURVEY_CANCEL_RX g=%u t=%llu\n",
+                        control.identity.generation,
+                        (unsigned long long)k_uptime_get());
+    return true;
+}
+
+static int anchor_survey_forward_cancel(void)
+{
+    if (anchor_survey_pending_cancel.frame_len == 0u) {
+        return 0;
+    }
+    if ((uint32_t)(k_uptime_get_32() -
+                   anchor_survey_pending_cancel.received_at_ms) >=
+            SURVEY_CONTROL_ORIGIN_BUDGET_MS) {
+        status_debug_printf("DBG_SURVEY_CANCEL_FORWARD_EXPIRED\n");
+        anchor_survey_pending_cancel.frame_len = 0u;
+        return 0;
+    }
+    if (!mesh_queue_from_frame_received_at(
+            anchor_survey_pending_cancel.frame,
+            anchor_survey_pending_cancel.frame_len, 0u, MESH_EVENT_CHANNEL,
+            anchor_survey_pending_cancel.received_at_ms)) {
+        return -EAGAIN;
+    }
+    anchor_survey_pending_cancel.frame_len = 0u;
+    return 0;
+}
+
+static void anchor_survey_cancel_forward_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    if (anchor_survey_forward_cancel() == -EAGAIN &&
+        k_work_reschedule_for_queue(&anchor_uwb_scan_work_q,
+            &anchor_survey_cancel_forward_work, K_MSEC(250u)) < 0) {
+        app_watchdog_stop_feeding();
+    }
+}
+#endif /* survey CANCEL ingress */
+
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
 static int anchor_survey_work_reschedule(struct k_work_delayable *work,
                                          uint32_t delay_ms)
 {

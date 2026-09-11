@@ -1559,39 +1559,21 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
     return ret;
 }
 
-int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
-                                             const struct proto_packet *packet,
-                                             const uint8_t *payload,
-                                             size_t payload_len,
-                                             uint64_t previous_hop_id,
-                                             uint32_t now_ms,
-                                             uint32_t random_value,
-                                             struct mesh_outbound *out)
+static int build_route_reply_for_validated_request(
+    struct mesh_relay *relay,
+    struct route_discovery_fields *fields,
+    uint64_t previous_hop_id,
+    uint32_t session_id,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_outbound *out)
 {
-    struct route_discovery_fields fields = {0};
     const struct route_candidate *selected = NULL;
     const struct mesh_route_path *selected_path = NULL;
     struct mesh_route_path direct_selected_path = {0};
     uint32_t reply_earliest_tx_ms;
     uint32_t reply_epoch;
     int ret;
-
-    if (relay == NULL || packet == NULL || out == NULL ||
-        (payload_len > 0u && payload == NULL) ||
-        packet->msg_type != MSG_ROUTE_REQ) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = validate_route_request_packet(relay,
-                                        packet,
-                                        payload,
-                                        payload_len,
-                                        previous_hop_id,
-                                        now_ms,
-                                        &fields);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
 
     selected = route_selected(&relay->upstream);
     if (selected != NULL) {
@@ -1606,24 +1588,24 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
             selected_path = &direct_selected_path;
         }
     }
-    if (fields.target_id != relay->local_id &&
-        !(fields.target_id == relay->gateway_id && selected != NULL)) {
+    if (fields->target_id != relay->local_id &&
+        !(fields->target_id == relay->gateway_id && selected != NULL)) {
         return PROTO_ERR_NOT_FOUND;
     }
-    if (fields.target_id == relay->gateway_id && selected != NULL &&
+    if (fields->target_id == relay->gateway_id && selected != NULL &&
         (selected->next_hop_id == previous_hop_id ||
          selected_path == NULL ||
-         mesh_route_paths_intersect(selected_path, &fields.path))) {
+         mesh_route_paths_intersect(selected_path, &fields->path))) {
         return PROTO_ERR_NOT_FOUND;
     }
     if (!route_request_reply_hops_allowed(
-            &fields,
-            fields.target_id == relay->gateway_id && selected != NULL ?
+            fields,
+            fields->target_id == relay->gateway_id && selected != NULL ?
                 (uint8_t)(selected->hop_count + 1u) : 0u)) {
         return PROTO_ERR_NOT_FOUND;
     }
 
-    reply_epoch = fields.route_epoch;
+    reply_epoch = fields->route_epoch;
     ret = route_epoch_select_newer(reply_epoch,
                                    relay->upstream.current_epoch,
                                    &reply_epoch);
@@ -1638,20 +1620,20 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
 
     reply_earliest_tx_ms = route_reply_earliest_tx_ms(
         now_ms,
-        fields.route_reply_rx_delay_ms,
+        fields->route_reply_rx_delay_ms,
         random_value);
-    if (fields.proposed_channel9_timing_valid) {
+    if (fields->proposed_channel9_timing_valid) {
         /* Keep the compact delay anchored to the scheduled RF reply, not to
          * the earlier request decode that precedes responder-slot jitter. */
-        fields.timing_reference_ms = reply_earliest_tx_ms;
+        fields->timing_reference_ms = reply_earliest_tx_ms;
     }
 
     ret = build_route_reply(relay,
-                            &fields,
-                            fields.target_id == relay->gateway_id ? selected : NULL,
-                            fields.target_id == relay->gateway_id ? selected_path : NULL,
+                            fields,
+                            fields->target_id == relay->gateway_id ? selected : NULL,
+                            fields->target_id == relay->gateway_id ? selected_path : NULL,
                             previous_hop_id,
-                            packet->session_id,
+                            session_id,
                             reply_epoch,
                             out);
     if (ret == PROTO_OK) {
@@ -1659,6 +1641,110 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
         out->earliest_tx_valid = true;
     }
     return ret;
+}
+
+int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
+                                             const struct proto_packet *packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             uint32_t now_ms,
+                                             uint32_t random_value,
+                                             struct mesh_outbound *out)
+{
+    struct route_discovery_fields fields = {0};
+    int ret;
+
+    if (relay == NULL || packet == NULL || out == NULL ||
+        (payload_len > 0u && payload == NULL) ||
+        packet->msg_type != MSG_ROUTE_REQ) {
+        return PROTO_ERR_ARG;
+    }
+    ret = validate_route_request_packet(relay,
+                                        packet,
+                                        payload,
+                                        payload_len,
+                                        previous_hop_id,
+                                        now_ms,
+                                        &fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return build_route_reply_for_validated_request(relay,
+                                                    &fields,
+                                                    previous_hop_id,
+                                                    packet->session_id,
+                                                    now_ms,
+                                                    random_value,
+                                                    out);
+}
+
+int mesh_relay_build_route_reply_for_forwarded_request(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *request,
+    uint64_t previous_hop_id,
+    uint32_t reply_deadline_ms,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_outbound *out)
+{
+    struct route_discovery_fields fields = {0};
+    uint32_t elapsed_ms;
+    uint32_t reply_earliest_tx_ms;
+    int ret;
+
+    if (relay == NULL || request == NULL || out == NULL || request == out) {
+        return PROTO_ERR_ARG;
+    }
+    if (!request->queued_at_valid ||
+        request->radio_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        request->next_hop_id != MESH_BROADCAST_ID ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((int32_t)(now_ms - request->queued_at_ms) < 0 ||
+        deadline_reached(now_ms, reply_deadline_ms)) {
+        return PROTO_ERR_STALE;
+    }
+    /* This owner retains the already-built forward, not an incoming frame.
+     * Decode its compact timing at the original queue instant: re-decoding at
+     * probe completion would restart its delay and move its proposed window. */
+    ret = parse_valid_route_request_packet(&request->packet,
+                                           request->payload,
+                                           request->payload_len,
+                                           relay->local_id,
+                                           request->queued_at_ms,
+                                           &fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (fields.hop_count == 0u || fields.path.count < 2u ||
+        fields.path.node_ids[fields.path.count - 2u] != previous_hop_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    /* The canonical unique path ends in this owner. Restore only the received
+     * prefix for split-horizon and forced-hop checks; never admit this local
+     * tail through the RF validator or alter the retained packet/age. */
+    fields.path.count--;
+    fields.path.node_ids[fields.path.count] = 0u;
+    fields.hop_count--;
+    elapsed_ms = now_ms - request->queued_at_ms;
+    fields.route_reply_rx_delay_ms =
+        elapsed_ms < fields.route_reply_rx_delay_ms ?
+            (uint16_t)(fields.route_reply_rx_delay_ms - elapsed_ms) : 0u;
+    reply_earliest_tx_ms = route_reply_earliest_tx_ms(
+        now_ms, fields.route_reply_rx_delay_ms, random_value);
+    if (deadline_reached(reply_earliest_tx_ms, reply_deadline_ms)) {
+        return PROTO_ERR_STALE;
+    }
+    return build_route_reply_for_validated_request(relay,
+                                                    &fields,
+                                                    previous_hop_id,
+                                                    request->packet.session_id,
+                                                    now_ms,
+                                                    random_value,
+                                                    out);
 }
 
 static uint8_t relay_duplicate_count(const struct mesh_relay *relay)

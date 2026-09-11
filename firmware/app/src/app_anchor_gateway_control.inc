@@ -17,6 +17,13 @@ BUILD_ASSERT(DISCOVERY_ASSIGNMENT_PREARM_RESERVATION_MS >=
 static uint32_t gateway_discovery_assignment_rf_event_handle;
 static uint8_t gateway_discovery_assignment_adaptive_observed_hop_count;
 
+/* The assignment keeps its host result reservation while the existing HIA
+ * worker establishes current-wave parents. Do not admit a successor until
+ * that worker has returned its exact terminal, even after a local RX error. */
+static bool gateway_assignment_hia_pending;
+static int gateway_assignment_hia_error;
+static struct proto_packet gateway_route_refresh_host_command;
+
 /* While the assignment owner is inactive, its otherwise-unused identity,
  * policy, and deadline fields retain the exact HIA-to-CLAIM reservation. A
  * zero CLAIM identity distinguishes this prearm state from every completed
@@ -74,7 +81,9 @@ static int gateway_enumeration_prearm_prepare(
     }
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
     gateway_enumeration_prearm_expire_locked(k_uptime_get_32());
-    if (gateway_discovery_assignment_state.active ||
+    if (gateway_assignment_hia_pending ||
+        gateway_route_refresh_result_token != 0u ||
+        gateway_discovery_assignment_state.active ||
         gateway_enumeration_prearm_valid_locked()) {
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return -EBUSY;
@@ -127,7 +136,11 @@ static bool gateway_route_refresh_prearm_snapshot(uint32_t *epoch,
     *survey_follows = false;
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
     gateway_enumeration_prearm_expire_locked(k_uptime_get_32());
-    if (gateway_enumeration_prearm_valid_locked()) {
+    if (gateway_enumeration_prearm_valid_locked() ||
+        (gateway_assignment_hia_pending &&
+         gateway_discovery_assignment_state.active &&
+         gateway_discovery_assignment_state.stage ==
+             GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS)) {
         *epoch = gateway_discovery_assignment_state.epoch;
         *hold_ms = DISCOVERY_ASSIGNMENT_PREARM_HOLD_MS;
         policy->assignment = (struct operation_policy_assignment) {
@@ -188,8 +201,28 @@ static void gateway_enumeration_pipeline_start(
 
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
     gateway_enumeration_prearm_expire_locked(now_ms_32);
-    if (!gateway_enumeration_prearm_valid_locked() ||
+    if ((!gateway_enumeration_prearm_valid_locked() &&
+         !(gateway_assignment_hia_pending &&
+           gateway_discovery_assignment_state.active &&
+           gateway_discovery_assignment_state.stage ==
+               GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS)) ||
         gateway_discovery_assignment_state.epoch != epoch) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return;
+    }
+    if (gateway_assignment_hia_pending &&
+        (gateway_assignment_hia_error != 0 ||
+         (gateway_discovery_assignment_state.response_lane_hia_pipeline &&
+          gateway_discovery_assignment_state.response_lane_start_ms !=
+              gateway_wake_start_64 +
+                  ENUMERATION_RESPONSE_HIA_FIRST_DEPTH_START_DELAY_MS))) {
+        /* A later outer HIA attempt cannot rebase a CLAIM identity that some
+         * anchors may already own. Retain the original clock and fail this
+         * assignment after the route worker becomes quiet. */
+        if (gateway_assignment_hia_error == 0) {
+            gateway_assignment_hia_error = -ESTALE;
+        }
+        gateway_discovery_assignment_state.response_lane_active = false;
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return;
     }
@@ -218,14 +251,16 @@ static void gateway_enumeration_pipeline_start(
     k_mutex_unlock(&gateway_discovery_assignment_mutex);
     ret = mesh_start_uwb_rx("enumeration-hia-pipeline");
     if (ret < 0) {
-        /*
-         * This callback owns only the inactive HIA prearm.  A failed RX
-         * start must not leave a response lane that later host admission
-         * mistakes for a live listener.  Clear only the exact still-prearmed
-         * epoch; a concurrently admitted assignment is a different owner.
-         */
+        /* Keep an automatic HIA's assignment owner until its RF terminal;
+         * the worker can still send the activation after this callback. */
         k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
-        if (gateway_enumeration_prearm_valid_locked() &&
+        if (gateway_assignment_hia_pending &&
+            gateway_discovery_assignment_state.active &&
+            gateway_discovery_assignment_state.epoch == epoch &&
+            gateway_discovery_assignment_state.response_lane_hia_pipeline) {
+            gateway_assignment_hia_error = ret;
+            gateway_discovery_assignment_state.response_lane_active = false;
+        } else if (gateway_enumeration_prearm_valid_locked() &&
             gateway_discovery_assignment_state.epoch == epoch &&
             gateway_discovery_assignment_state.response_lane_hia_pipeline) {
             LOG_ERR("gateway enumeration HIA RX start failed: epoch=%u ret=%d",
@@ -871,7 +906,8 @@ static int gateway_discovery_assignment_submit_control_flood_locked(
         remaining_ms = remaining_64 > UINT32_MAX ?
                        UINT32_MAX : (uint32_t)remaining_64;
     }
-    if (remaining_ms == 0u) {
+    if (remaining_ms == 0u &&
+        kind != GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT) {
         return -ETIMEDOUT;
     }
     absolute_deadline_ms = kind ==
@@ -1441,7 +1477,8 @@ static int gateway_discovery_assignment_publish_abort_locked(void)
     int ret;
 
     if (!gateway_discovery_assignment_state.active ||
-        !gateway_discovery_assignment_state.claim_rf_started ||
+        (!gateway_discovery_assignment_state.claim_rf_started &&
+         !gateway_discovery_assignment_state.response_lane_hia_pipeline) ||
         gateway_discovery_assignment_state.claim_command_seq == 0u) {
         return -EINVAL;
     }
@@ -1510,7 +1547,11 @@ static void gateway_discovery_assignment_fail_locked(
             GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM)) {
         gateway_discovery_assignment_state.claim_rf_started = true;
     }
-    if (!gateway_discovery_assignment_state.claim_rf_started) {
+    /* A prepared HIA may have delivered its combined activation wake even
+     * when no short advertisement completed. Attempt exact cleanup without
+     * pretending that the missing short-frame evidence proves RF success. */
+    if (!gateway_discovery_assignment_state.claim_rf_started &&
+        !gateway_discovery_assignment_state.response_lane_hia_pipeline) {
         gateway_discovery_assignment_finish_failure_locked(status, reason);
         return;
     }
@@ -1692,6 +1733,14 @@ static int gateway_start_discovery_assignment(
                                          COMMAND_MALFORMED_PAYLOAD,
                                          EINVAL);
         GATEWAY_ASSIGNMENT_START_RETURN(ret);
+    }
+    if (gateway_assignment_hia_pending ||
+        gateway_route_refresh_result_token != 0u) {
+        gateway_emit_host_command_result(host_command,
+                                         CMD_ASSIGN_DISCOVERY_SLOTS,
+                                         COMMAND_BUSY,
+                                         EBUSY);
+        GATEWAY_ASSIGNMENT_START_RETURN(-EBUSY);
     }
     ret = app_operation_policy_prepare_payload(payload,
                                                payload_len,
@@ -1945,6 +1994,37 @@ static int gateway_start_discovery_assignment(
         (void)gateway_observe_command_event(&event, false);
     }
 
+    if (!prearm_consumed) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+        uint64_t remaining_ms =
+            gateway_discovery_assignment_state.operation_deadline_ms > now_ms ?
+                gateway_discovery_assignment_state.operation_deadline_ms -
+                    now_ms : 0u;
+
+        /* A CLAIM alone cannot prove current-wave ancestry. Use the same
+         * activation and response pipeline as the host's explicit preflight,
+         * retaining this assignment's identity, policy and absolute budget. */
+        gateway_assignment_hia_error = 0;
+        gateway_assignment_hia_pending = true;
+        ret = remaining_ms == 0u ? -ETIMEDOUT :
+            app_node_comm_request_route_refresh_correlated_bounded(
+                0u,
+                "assignment-hia",
+                &gateway_discovery_assignment_state.host_command,
+                (uint32_t)MIN(
+                    remaining_ms,
+                    (uint64_t)APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS));
+        if (ret < 0) {
+            gateway_assignment_hia_pending = false;
+            gateway_discovery_assignment_finish_failure_locked(
+                COMMAND_RADIO_ERROR, (uint8_t)(-ret));
+            GATEWAY_ASSIGNMENT_START_RETURN(0);
+        }
+        /* The correlated HIA terminal schedules collection. Its own bounded
+         * worker owns progress until then, including inline completion. */
+        GATEWAY_ASSIGNMENT_START_RETURN(0);
+    }
+
     /*
      * The host-command worker has a deliberately small stack.  Publish the
      * first CLAIM through the existing assignment work boundary so packet
@@ -1971,6 +2051,97 @@ static int gateway_start_discovery_assignment(
         (unsigned int)gateway_discovery_assignment_state.claim_count);
     GATEWAY_ASSIGNMENT_START_RETURN(0);
 #undef GATEWAY_ASSIGNMENT_START_RETURN
+}
+
+static bool gateway_discovery_assignment_observe_hia(
+    const struct app_node_comm_route_refresh_event *refresh)
+{
+    const struct proto_packet *host;
+    int result;
+
+    if (refresh == NULL || !refresh->correlated) {
+        return false;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    if (!gateway_assignment_hia_pending) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return false;
+    }
+    host = &gateway_discovery_assignment_state.host_command;
+    if (refresh->correlation.src_id != host->src_id ||
+        refresh->correlation.dst_id != host->dst_id ||
+        refresh->correlation.session_id != host->session_id ||
+        refresh->correlation.seq != host->seq ||
+        refresh->correlation.msg_type != host->msg_type) {
+        /* Admission keeps prior route-refresh result custody separate. A
+         * foreign callback remains with its actual route-refresh owner. */
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return false;
+    }
+    if (refresh->sent_count != 0u) {
+        gateway_discovery_assignment_state.claim_rf_started = true;
+    }
+    if (refresh->kind != APP_NODE_COMM_ROUTE_REFRESH_COMPLETE) {
+        if ((refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT &&
+             refresh->sent_count != 0u) ||
+            refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_BACKOFF) {
+            struct gateway_command_event event = gateway_observability_event(
+                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+                refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_BACKOFF ?
+                    GATEWAY_COMMAND_EVENT_STAGE_BACKOFF :
+                    GATEWAY_COMMAND_EVENT_STAGE_FLOOD_ATTEMPT,
+                CMD_ASSIGN_DISCOVERY_SLOTS,
+                host,
+                gateway_discovery_assignment_state.epoch);
+
+            event.attempt = refresh->attempt;
+            event.progress_count = (uint16_t)
+                gateway_discovery_assignment_current_claim_count_locked();
+            event.duplicate_count =
+                gateway_discovery_assignment_state.duplicate_count;
+            if (refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_BACKOFF) {
+                event.status = COMMAND_RADIO_ERROR;
+                event.reason = GATEWAY_COMMAND_EVENT_REASON_RADIO;
+            }
+            (void)gateway_observe_command_event(&event, false);
+        }
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return true;
+    }
+    gateway_assignment_hia_pending = false;
+    if (!gateway_discovery_assignment_state.active) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return true;
+    }
+    result = gateway_assignment_hia_error != 0 ?
+        gateway_assignment_hia_error : refresh->result;
+    if (result == 0 &&
+        (!gateway_discovery_assignment_state.claim_rf_started ||
+         !gateway_discovery_assignment_state.response_lane_active ||
+         !gateway_discovery_assignment_state.response_lane_hia_pipeline)) {
+        result = -EIO;
+    }
+    if (result == 0 && app_discovery_assignment_operation_expired(
+            (uint64_t)k_uptime_get(),
+            gateway_discovery_assignment_state.operation_deadline_ms)) {
+        result = -ETIMEDOUT;
+    }
+    if (result < 0) {
+        gateway_discovery_assignment_fail_locked(
+            result == -ETIMEDOUT ? COMMAND_TIMEOUT : COMMAND_RADIO_ERROR,
+            (uint8_t)(-result));
+    } else {
+        /* HIA supplied the CLAIM identity and already collected early
+         * responses. Preserve both the records and their original clock. */
+        gateway_discovery_assignment_state.claim_delivery_succeeded = true;
+        gateway_discovery_assignment_state.claim_round =
+            DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS;
+        gateway_discovery_assignment_state.round_open = false;
+        (void)gateway_discovery_assignment_reschedule(
+            K_NO_WAIT, "assignment-hia-complete");
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return true;
 }
 
 static bool gateway_enumeration_collection_live_locked(void)
@@ -3045,6 +3216,9 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
         !current_generation) {
         GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
     }
+    if (gateway_assignment_hia_pending) {
+        GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+    }
     if (app_discovery_assignment_operation_expired(
             (uint64_t)k_uptime_get(),
             gateway_discovery_assignment_state.operation_deadline_ms)) {
@@ -3227,6 +3401,9 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         return;                                                              \
     } while (false)
     if (!gateway_discovery_assignment_state.active) {
+        GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
+    }
+    if (gateway_assignment_hia_pending) {
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     app_stack_workload_diag_gateway_control_admit(
@@ -3617,6 +3794,8 @@ K_MUTEX_DEFINE(gateway_survey_publication_mutex);
 
 static int gateway_survey_emit_event(const struct survey_event *event)
 {
+    static bool encode_rejection_reported;
+    static bool envelope_rejection_reported;
     uint8_t payload[SURVEY_EVENT_MAX_WIRE_LEN];
     struct proto_packet packet = {0};
     size_t payload_len;
@@ -3625,11 +3804,18 @@ static int gateway_survey_emit_event(const struct survey_event *event)
     if (event == NULL) {
         return -EINVAL;
     }
+    k_mutex_lock(&gateway_survey_publication_mutex, K_FOREVER);
     payload_len = survey_event_encode(event, payload, sizeof(payload));
     if (payload_len == 0u) {
+        if (!encode_rejection_reported) {
+            encode_rejection_reported = true;
+            LOG_ERR("survey publication encode rejected: kind=%u gen=%u host=%u/%u",
+                    (unsigned int)event->kind, event->identity.generation,
+                    event->host_session_id, event->host_sequence);
+        }
+        k_mutex_unlock(&gateway_survey_publication_mutex);
         return -EBADMSG;
     }
-    k_mutex_lock(&gateway_survey_publication_mutex, K_FOREVER);
     packet.seq = gateway_survey_event_seq + 1u;
     if (packet.seq == 0u) {
         packet.seq = 1u;
@@ -3643,6 +3829,12 @@ static int gateway_survey_emit_event(const struct survey_event *event)
     packet.payload_len = (uint16_t)payload_len;
     ret = gateway_ble_stream_packet(&packet, payload, payload_len,
                                     k_uptime_get_32());
+    if (ret == -EBADMSG && !envelope_rejection_reported) {
+        envelope_rejection_reported = true;
+        LOG_ERR("survey publication BLE envelope rejected: kind=%u gen=%u bytes=%u",
+                (unsigned int)event->kind, event->identity.generation,
+                (unsigned int)payload_len);
+    }
     /* A rejected admission has no observable transport identity. GET_STATUS
      * may consume the next sequence before the same semantic event retries;
      * an admitted item's identity is thereafter owned by the BLE stream. */
@@ -3731,8 +3923,9 @@ static int gateway_survey_send_control(
     }
     admission_ms = (uint64_t)k_uptime_get();
     rf_deadline_ms = admission_ms + NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS;
-    /* This compact control has no wake train. Its packet-age origin is the
-     * first real command transmission, not admission into generic custody. */
+    /* Freeze the message clock at the first radio opportunity that reaches
+     * RF. The transport retains that same origin across all copies/retries;
+     * time waiting for initial admission must not consume the phase delay. */
     outbound.queued_at_ms = 0u;
     outbound.queued_at_valid = false;
     ret = app_node_comm_submit_delivery(
@@ -3760,8 +3953,8 @@ static int gateway_survey_send_control(
 static int gateway_survey_control_origin(uint32_t delivery_handle,
                                          uint64_t *origin_ms)
 {
-    int ret = app_node_comm_delivery_first_rf_started_at(delivery_handle,
-                                                         origin_ms);
+    int ret = app_node_comm_delivery_message_origin_at(delivery_handle,
+                                                       origin_ms);
 
     if (ret == 0) {
         ret = app_node_comm_auto_reap_delivery(delivery_handle);
@@ -3868,6 +4061,8 @@ static int gateway_start_survey(
         return -EINVAL;
     }
     ret = gateway_survey_roster(&roster);
+    roster.host_session_id = host_command->session_id;
+    roster.host_sequence = host_command->seq;
     if (ret == 0) {
         ret = gateway_operation_owner_claim(
             APP_GATEWAY_OPERATION_OWNER_SURVEY,
@@ -3903,6 +4098,8 @@ static int gateway_submit_survey_plan(
         payload, payload_len, &request);
 
     if (ret == PROTO_OK) {
+        request.host_session_id = host_command->session_id;
+        request.host_sequence = host_command->seq;
         ret = app_survey_gateway_submit_plan(&request, NULL);
     } else {
         ret = mesh_errno_from_proto(ret);
@@ -3974,14 +4171,35 @@ static int gateway_get_survey_status(
         ret = ret == PROTO_ERR_NOT_FOUND ? 0 : -EINVAL;
     }
     if (ret == 0) {
-        ret = app_survey_gateway_status(&event);
+        ret = app_survey_gateway_acceptance(SURVEY_EVENT_STARTED, &event);
     }
     if (ret == 0 && generation != 0u &&
         event.identity.generation != generation) {
         ret = -ESTALE;
     }
     if (ret == 0) {
+        generation = event.identity.generation;
         ret = gateway_survey_emit_event(&event);
+    }
+    if (ret == 0) {
+        ret = app_survey_gateway_acceptance(SURVEY_EVENT_PLAN_ACCEPTED,
+                                             &event);
+        if (ret == -ENOENT) {
+            ret = 0;
+        } else if (ret == 0) {
+            ret = event.identity.generation == generation ?
+                gateway_survey_emit_event(&event) : -ESTALE;
+        }
+    }
+    if (ret == 0) {
+        ret = app_survey_gateway_status(&event);
+        if (ret == 0 && event.identity.generation != generation) {
+            ret = -ESTALE;
+        }
+        if (ret == 0 && event.kind != SURVEY_EVENT_STARTED &&
+            event.kind != SURVEY_EVENT_PLAN_ACCEPTED) {
+            ret = gateway_survey_emit_event(&event);
+        }
     }
     gateway_emit_host_command_result(
         host_command, CMD_SURVEY_GET_STATUS,
@@ -4442,8 +4660,18 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
             }
             result_reservation_token =
                 gateway_command_result_get_dispatch_token();
+#if DEVICE_ROLE == ROLE_GATEWAY
+            /* Serialize publication of the two callback owners, not merely
+             * admission into the route worker: it releases its own active
+             * flag before delivering the preceding terminal callback. */
+            k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+#endif
             if (result_reservation_token == 0u) {
                 ret = -EINVAL;
+#if DEVICE_ROLE == ROLE_GATEWAY
+            } else if (gateway_assignment_hia_pending) {
+                ret = -EBUSY;
+#endif
             } else if (gateway_route_refresh_result_token != 0u) {
                 ret = -EBUSY;
             } else {
@@ -4454,6 +4682,9 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                  */
                 gateway_route_refresh_result_token =
                     result_reservation_token;
+#if DEVICE_ROLE == ROLE_GATEWAY
+                gateway_route_refresh_host_command = *packet;
+#endif
                 ret = app_node_comm_request_route_refresh_correlated_bounded(
                     0u,
                     "force-rediscovery-ble",
@@ -4465,6 +4696,9 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                     gateway_route_refresh_result_token = 0u;
                 }
             }
+#if DEVICE_ROLE == ROLE_GATEWAY
+            k_mutex_unlock(&gateway_discovery_assignment_mutex);
+#endif
             if (ret < 0 && prearm_prepared) {
                 gateway_enumeration_prearm_clear();
             }
@@ -5523,11 +5757,36 @@ static void gateway_route_refresh_observe(
 {
     struct gateway_command_event event;
     enum gateway_command_event_stage stage;
+    uint32_t result_reservation_token = 0u;
 
     if (refresh == NULL || !refresh->correlated ||
         DEVICE_ROLE != ROLE_GATEWAY) {
         return;
     }
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (gateway_discovery_assignment_observe_hia(refresh)) {
+        return;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    if (gateway_route_refresh_result_token == 0u ||
+        refresh->correlation.src_id != gateway_route_refresh_host_command.src_id ||
+        refresh->correlation.dst_id != gateway_route_refresh_host_command.dst_id ||
+        refresh->correlation.session_id !=
+            gateway_route_refresh_host_command.session_id ||
+        refresh->correlation.seq != gateway_route_refresh_host_command.seq ||
+        refresh->correlation.msg_type != gateway_route_refresh_host_command.msg_type) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return;
+    }
+    if (refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE) {
+        if (refresh->result < 0) {
+            gateway_enumeration_prearm_clear();
+        }
+        result_reservation_token = gateway_route_refresh_result_token;
+        gateway_route_refresh_result_token = 0u;
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+#endif
     switch (refresh->kind) {
     case APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT:
         stage = GATEWAY_COMMAND_EVENT_STAGE_FLOOD_ATTEMPT;
@@ -5537,9 +5796,11 @@ static void gateway_route_refresh_observe(
         break;
     case APP_NODE_COMM_ROUTE_REFRESH_COMPLETE:
         stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE;
+#if DEVICE_ROLE != ROLE_GATEWAY
         if (refresh->result < 0) {
             gateway_enumeration_prearm_clear();
         }
+#endif
         break;
     default:
         return;
@@ -5555,11 +5816,12 @@ static void gateway_route_refresh_observe(
     event.progress_count = refresh->sent_count;
 
     if (refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE) {
-        uint32_t result_reservation_token =
-            gateway_route_refresh_result_token;
         int result_ret;
 
+#if DEVICE_ROLE != ROLE_GATEWAY
+        result_reservation_token = gateway_route_refresh_result_token;
         gateway_route_refresh_result_token = 0u;
+#endif
         if (refresh->result == 0) {
             event.status = COMMAND_OK;
         } else if (refresh->result == -ETIMEDOUT) {

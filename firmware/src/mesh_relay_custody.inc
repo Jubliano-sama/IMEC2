@@ -2900,6 +2900,17 @@ static bool command_packet_envelope_valid(
     return !options.flood_required;
 }
 
+bool mesh_relay_command_packet_envelope_valid(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id)
+{
+    return command_packet_envelope_valid(relay, packet, payload, payload_len,
+                                          previous_hop_id);
+}
+
 /*
  * Gateway BLE prioritization consults FLAG_COUNT_AS_CLICK before msg_type.
  * Enforce every gateway-bound producer's exact flag shape before a forged

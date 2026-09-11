@@ -58,6 +58,8 @@ BUILD_ASSERT(DWM3000_SLOW_SPI_HZ < DWM3000_FAST_SPI_HZ,
              "DWM3000 slow SPI must be slower than runtime SPI");
 BUILD_ASSERT(DT_PROP_LEN(DWM3000_SPI_DEFAULT_GROUP, psels) == 3,
              "DWM3000 SPI pinctrl must expose SCK, MISO, and MOSI pins");
+BUILD_ASSERT(DT_PROP(DWM3000_SPI_DEFAULT_GROUP, nordic_drive_mode) == NRF_DRIVE_H0H1,
+             "DWM3000 32 MHz SPI pins require high drive");
 static const struct spi_dt_spec dwm_spi =
     SPI_DT_SPEC_GET(DWM3000_NODE, SPI_WORD_SET(8) | SPI_TRANSFER_MSB, 0);
 static const struct gpio_dt_spec dwm_reset =

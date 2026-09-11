@@ -27,6 +27,7 @@ enum survey_event_kind {
     SURVEY_EVENT_TERMINAL = 4,
     SURVEY_EVENT_BATCH_COMPLETE = 5,
     SURVEY_EVENT_SIGNALS = 6,
+    SURVEY_EVENT_STARTED = 7,
 };
 
 struct survey_control {
@@ -42,6 +43,8 @@ struct survey_control {
 
 struct survey_host_plan_request {
     struct survey_identity identity;
+    uint32_t host_session_id;
+    uint16_t host_sequence;
     struct survey_pair_request pairs[SURVEY_MAX_PAIRS];
     uint8_t pair_count;
     uint8_t batch_index;
@@ -52,6 +55,8 @@ struct survey_event {
     enum survey_event_kind kind;
     enum survey_terminal_status status;
     struct survey_identity identity;
+    uint32_t host_session_id;
+    uint16_t host_sequence;
     struct survey_graph graph;
     struct survey_plan plan;
     union {

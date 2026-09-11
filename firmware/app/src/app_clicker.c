@@ -4224,6 +4224,12 @@ static void clicker_action_work_handler(struct k_work *work)
                     "action_watchdog_end", -EIO);
                 return;
             }
+            if (!app_watchdog_clicker_action_checkpoint(
+                    clicker_action_watchdog_generation)) {
+                click_button_recovery_reset(
+                    "action_watchdog_checkpoint", -EIO);
+                return;
+            }
             idle_after_drain =
                 action == BUTTON_ACTION_NORMAL_CLICK ||
                 action == BUTTON_ACTION_SELF_TEST_START ||

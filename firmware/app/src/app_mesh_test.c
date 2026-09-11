@@ -25,11 +25,16 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
 #define MESH_TEST_FLAG_CH5_WAKE_CONTINUOUS  (1u << 2)
 #define MESH_TEST_SUMMARY_INTERVAL_MS 5000u
 #define MESH_TEST_ROUTE_SUMMARY_REPEATS 8u
-#define MESH_TEST_DELIVERY_DEADLINE_MS 60000u
 #define MESH_TEST_RETRY_ADMISSION_MS 100u
 #define MESH_TEST_SOURCE_DELIVERY_CAPACITY \
     (APP_NODE_COMM_MAX_DELIVERIES - \
      APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES)
+#define MESH_TEST_SOURCE_SUMMARY_FORMAT \
+    "DBG_MESH_TEST_SOURCE uptime=%u next=%u admitted=%u drops=%u pending=%u\n"
+
+BUILD_ASSERT(sizeof(MESH_TEST_SOURCE_SUMMARY_FORMAT) - 1u +
+                 5u * (10u - 2u) < 128u,
+             "source summary must fit five maximum-width uint32 fields");
 
 /* Gateway receipt verification and synthetic transmit diagnostics own this. */
 #if DEVICE_ROLE == ROLE_GATEWAY || \
@@ -256,12 +261,23 @@ static bool mesh_test_admission_retryable(int ret)
            ret == -EINPROGRESS || ret == -ENOSPC || ret == -ESHUTDOWN;
 }
 
-static uint64_t mesh_test_delivery_deadline_ms(void)
+static uint64_t mesh_test_delivery_deadline_ms(
+    const struct mesh_outbound *outbound)
 {
     uint64_t now_ms = (uint64_t)k_uptime_get();
+    uint64_t expiry_ms = (uint64_t)mesh_relay_outbox_expiry_s_for_packet(
+        &outbound->packet, outbound->payload, outbound->payload_len) * 1000u;
+    uint64_t age_ms = outbound->packet.message_age_ms;
+    uint64_t remaining_ms;
 
-    return UINT64_MAX - now_ms < MESH_TEST_DELIVERY_DEADLINE_MS ?
-           UINT64_MAX : now_ms + MESH_TEST_DELIVERY_DEADLINE_MS;
+    if (outbound->queued_at_valid) {
+        age_ms += (uint32_t)((uint32_t)now_ms - outbound->queued_at_ms);
+    }
+    /* Match the report bank's age budget, including time before admission.
+     * The caller retains this exact deadline when admission is deferred. */
+    remaining_ms = age_ms < expiry_ms ? expiry_ms - age_ms : 0u;
+    return UINT64_MAX - now_ms < remaining_ms ?
+           UINT64_MAX : now_ms + remaining_ms;
 }
 
 static bool mesh_test_route_telemetry_enabled(uint64_t target_id)
@@ -322,28 +338,40 @@ static void mesh_test_route_summary_print(const char *phase,
 
 static void mesh_test_route_periodic_summary(void)
 {
-    uint32_t now_ms;
+    uint32_t pending = 0u;
+    uint32_t now_ms = k_uptime_get_32();
 
-    if (!mesh_test_route_start_seen) {
-        return;
-    }
-    if (mesh_test_route_ready_logged &&
-        mesh_test_route_summary_repeats >= MESH_TEST_ROUTE_SUMMARY_REPEATS) {
-        return;
-    }
-
-    now_ms = k_uptime_get_32();
     if (mesh_test_route_next_summary_ms != 0u &&
         (int32_t)(now_ms - mesh_test_route_next_summary_ms) < 0) {
         return;
     }
 
-    mesh_test_route_summary_print(mesh_test_route_ready_logged ? "periodic" : "waiting",
-                                  GATEWAY_ID,
-                                  mesh_test_route_next_hop_id);
-    if (mesh_test_route_ready_logged &&
-        mesh_test_route_summary_repeats < UINT8_MAX) {
-        mesh_test_route_summary_repeats++;
+    /* Only the producer calls this boundary, after reaping terminals and
+     * before admitting the next burst. Repeat cumulative ownership without
+     * relying on every best-effort per-packet RTT record being captured.
+     * Keep this proof after startup route details have stopped repeating. */
+    for (size_t i = 0u; i < MESH_TEST_SOURCE_DELIVERY_CAPACITY; i++) {
+        if (mesh_test_deliveries[i].handle != 0u) {
+            pending++;
+        }
+    }
+    status_debug_printf(MESH_TEST_SOURCE_SUMMARY_FORMAT,
+                        now_ms,
+                        mesh_test_next_packet_id,
+                        mesh_test_queued_total,
+                        mesh_test_drop_count,
+                        pending);
+    if (mesh_test_route_start_seen &&
+        (!mesh_test_route_ready_logged ||
+         mesh_test_route_summary_repeats < MESH_TEST_ROUTE_SUMMARY_REPEATS)) {
+        mesh_test_route_summary_print(
+            mesh_test_route_ready_logged ? "periodic" : "waiting",
+            GATEWAY_ID,
+            mesh_test_route_next_hop_id);
+        if (mesh_test_route_ready_logged &&
+            mesh_test_route_summary_repeats < UINT8_MAX) {
+            mesh_test_route_summary_repeats++;
+        }
     }
     mesh_test_route_next_summary_ms = now_ms + MESH_TEST_SUMMARY_INTERVAL_MS;
 }
@@ -492,7 +520,7 @@ static uint32_t mesh_test_tx_once(void)
                         packet_id, attempt, ret, mesh_test_drop_count);
                 return decision.delay_ms;
             }
-            absolute_deadline_ms = mesh_test_delivery_deadline_ms();
+            absolute_deadline_ms = mesh_test_delivery_deadline_ms(&outbound);
         }
 
         handle = 0u;

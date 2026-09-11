@@ -168,14 +168,20 @@ static bool route_request_reply_hops_allowed(
     uint8_t reply_hop_count)
 {
     uint8_t required_hop_count;
+    uint16_t origin_reply_hop_count;
 
     if (request == NULL) {
         return false;
     }
     required_hop_count =
         MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(request->request_flags);
-    return required_hop_count == 0u ||
-           required_hop_count == reply_hop_count;
+    /* The requested depth is what the origin must receive. Each intermediate
+     * already recorded on the incoming request adds one reverse reply hop. */
+    origin_reply_hop_count =
+        (uint16_t)reply_hop_count + request->hop_count;
+    return origin_reply_hop_count <= MESH_NETWORK_MAX_HOPS &&
+           (required_hop_count == 0u ||
+            required_hop_count == origin_reply_hop_count);
 }
 
 static bool route_discovery_required_tlvs_present(const uint8_t *payload,
@@ -751,25 +757,23 @@ static int validate_route_reply_packet(
                                          fields);
 }
 
-static int validate_route_request_packet(
-    const struct mesh_relay *relay,
+static int parse_valid_route_request_packet(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
-    uint64_t previous_hop_id,
+    uint64_t path_tail_id,
     uint32_t now_ms,
     struct route_discovery_fields *fields)
 {
     int ret;
 
-    if (relay == NULL || packet == NULL || payload == NULL || fields == NULL ||
+    if (packet == NULL || payload == NULL || fields == NULL ||
         packet->msg_type != MSG_ROUTE_REQ ||
         packet->payload_len != payload_len ||
         packet->flags != 0u ||
         packet->session_id == 0u ||
         packet->seq == 0u ||
-        !id_is_unicast(previous_hop_id) ||
-        previous_hop_id == relay->local_id ||
+        !id_is_unicast(path_tail_id) ||
         !mesh_route_control_payload_len_valid(packet->msg_type, payload_len)) {
         return PROTO_ERR_MALFORMED;
     }
@@ -820,11 +824,39 @@ static int validate_route_request_packet(
         fields->path.count != (uint8_t)(fields->hop_count + 1u) ||
         mesh_route_path_validate(&fields->path,
                                  fields->origin_id,
-                                 previous_hop_id) != PROTO_OK ||
-        mesh_route_path_contains(&fields->path, relay->local_id)) {
+                                 path_tail_id) != PROTO_OK) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
+}
+
+static int validate_route_request_packet(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint32_t now_ms,
+    struct route_discovery_fields *fields)
+{
+    int ret;
+
+    if (relay == NULL || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = parse_valid_route_request_packet(packet,
+                                           payload,
+                                           payload_len,
+                                           previous_hop_id,
+                                           now_ms,
+                                           fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    /* RF ingress must never contain this receiver, including at the tail.
+     * Only the separate local-forward owner may remove its own appended hop. */
+    return mesh_route_path_contains(&fields->path, relay->local_id) ?
+        PROTO_ERR_MALFORMED : PROTO_OK;
 }
 
 int mesh_relay_validate_route_request(const struct mesh_relay *relay,

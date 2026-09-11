@@ -409,6 +409,95 @@ static void test_clicker_politeness_decodes_relevant_uwb_packets(void)
     assert(wait_ms == 0u);
 }
 
+static void test_clicker_politeness_transport_claims_do_not_reserve_ranging(void)
+{
+    const uint8_t transport_flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    const uint8_t valid_flags[] = {
+        transport_flags,
+        FLAG_COUNT_AS_CLICK,
+        FLAG_DIAGNOSTIC,
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+        transport_flags | FLAG_CONTROL_FOLLOWUP,
+    };
+    const uint16_t durations[] = {1u, 612u, UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS};
+    const uint8_t invalid_flags[] = {
+        0u,
+        FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC,
+        FLAG_CONTROL_FOLLOWUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+        transport_flags | FLAG_COUNT_AS_CLICK,
+        transport_flags | FLAG_GATEWAY_ACK_REQUIRED,
+    };
+    struct uwb_clicker_config config = clicker_config();
+    struct uwb_clicker_session session;
+    struct uwb_wake_claim_frame claim = {
+        .network_id = config.network_id,
+        .clicker_id = config.clicker_id + 1u,
+        .click_event_id = 99u,
+        .attempt_index = 1u,
+        .priority_id = 1u,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .wake_train_ends_in_ms = 1u,
+        .discovery_starts_in_ms = 1u,
+        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+        .nonce = 1u,
+    };
+    uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    size_t frame_len = 0u;
+    uint16_t wait_ms = 0u;
+    uint8_t frame_type = 0u;
+
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    for (size_t mode = 0u; mode < sizeof(valid_flags) / sizeof(valid_flags[0]); mode++) {
+        claim.flags = valid_flags[mode];
+        for (size_t duration = 0u; duration < sizeof(durations) / sizeof(durations[0]); duration++) {
+            claim.claimed_duration_ms = durations[duration];
+            for (unsigned int identity = 0u; identity < 3u; identity++) {
+                claim.network_id = config.network_id + (identity == 1u ? 1u : 0u);
+                claim.clicker_id = config.clicker_id + (identity == 2u ? 0u : 1u);
+                /* Report backlogs may repeat contact claims throughout a click's
+                 * deadline. Only another click/ranging/control owner reserves time. */
+                for (unsigned int repeat = 0u; repeat < 12u; repeat++) {
+                    claim.click_event_id++;
+                    assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+                    wait_ms = UINT16_MAX;
+                    assert(uwb_clicker_decode_politeness_wait(&session, frame, frame_len,
+                                                              250u, &wait_ms, &frame_type) == PROTO_OK);
+                    assert(frame_type == MSG_UWB_WAKE_CLAIM);
+                    assert(wait_ms == (identity == 0u && claim.flags != transport_flags ?
+                                       claim.claimed_duration_ms : 0u));
+                }
+            }
+        }
+    }
+
+    claim.network_id = config.network_id;
+    claim.clicker_id = config.clicker_id + 1u;
+    claim.flags = transport_flags;
+    for (size_t i = 0u; i < sizeof(invalid_flags) / sizeof(invalid_flags[0]); i++) {
+        assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+        frame[46] = invalid_flags[i];
+        proto_put_u16_le(&frame[frame_len - UWB_FRAME_CRC_LEN],
+                         proto_crc16_ccitt_false(frame, frame_len - UWB_FRAME_CRC_LEN));
+        wait_ms = UINT16_MAX;
+        assert(uwb_clicker_decode_politeness_wait(&session, frame, frame_len,
+                                                  250u, &wait_ms, NULL) == PROTO_ERR_MALFORMED);
+        assert(wait_ms == 0u);
+    }
+
+    assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    wait_ms = UINT16_MAX;
+    assert(uwb_clicker_decode_politeness_wait(&session, frame, frame_len - 1u,
+                                              250u, &wait_ms, NULL) == PROTO_ERR_BAD_LENGTH);
+    assert(wait_ms == 0u);
+    frame[frame_len - 1u] ^= 1u;
+    wait_ms = UINT16_MAX;
+    assert(uwb_clicker_decode_politeness_wait(&session, frame, frame_len,
+                                              250u, &wait_ms, NULL) == PROTO_ERR_BAD_CRC);
+    assert(wait_ms == 0u);
+}
+
 static void test_clicker_discovers_50_and_schedules_best_8_only(void)
 {
     struct uwb_clicker_session session;
@@ -3260,6 +3349,7 @@ int main(void)
     test_clicker_builds_wake_claim_and_rejects_bad_timing();
     test_clicker_contention_delay_bounds_and_diagnostics();
     test_clicker_politeness_decodes_relevant_uwb_packets();
+    test_clicker_politeness_transport_claims_do_not_reserve_ranging();
     test_clicker_discovers_50_and_schedules_best_8_only();
     test_clicker_orders_schedule_by_gateway_depth_then_slot();
     test_clicker_discovers_sparse_50_slots_with_6_present_and_schedules_all_6();

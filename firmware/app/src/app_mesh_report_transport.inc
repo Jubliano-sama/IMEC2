@@ -2400,6 +2400,7 @@ static uint32_t mesh_c5_flood_random_u32(void *ctx)
 static int mesh_c5_flood_send_cb(const struct mesh_outbound *out, void *ctx)
 {
     struct mesh_c5_flood_tx_context *flood_ctx = ctx;
+    struct app_mesh_tx_observation copy_observation = {0};
     bool rf_started = false;
     int ret;
 
@@ -2409,7 +2410,7 @@ static int mesh_c5_flood_send_cb(const struct mesh_outbound *out, void *ctx)
         MESH_RADIO_RELEASE_STANDBY,
         &rf_started,
         flood_ctx == NULL ? 0u : flood_ctx->absolute_deadline_ms,
-        flood_ctx == NULL ? NULL : flood_ctx->observation,
+        &copy_observation,
         0u,
         NULL,
         flood_ctx == NULL ? FW_C5_TX_INTENT_BACKGROUND :
@@ -2417,6 +2418,23 @@ static int mesh_c5_flood_send_cb(const struct mesh_outbound *out, void *ctx)
     if (rf_started && flood_ctx != NULL &&
         flood_ctx->rf_started_out != NULL) {
         *flood_ctx->rf_started_out = true;
+    }
+    if (flood_ctx != NULL && flood_ctx->observation != NULL) {
+        struct app_mesh_tx_observation *aggregate = flood_ctx->observation;
+
+        /* A later deferred or failed copy cannot erase earlier physical work. */
+        if (copy_observation.rf_started &&
+            (!aggregate->rf_started || copy_observation.rf_started_at_ms <
+                                          aggregate->rf_started_at_ms)) {
+            aggregate->rf_started_at_ms = copy_observation.rf_started_at_ms;
+            aggregate->rf_started = true;
+        }
+        if (copy_observation.tx_completed &&
+            (!aggregate->tx_completed || copy_observation.tx_completed_at_ms >
+                                            aggregate->tx_completed_at_ms)) {
+            aggregate->tx_completed_at_ms = copy_observation.tx_completed_at_ms;
+            aggregate->tx_completed = true;
+        }
     }
     return ret;
 }
@@ -2856,9 +2874,10 @@ static int mesh_send_c5_flood_now_until(
 {
     struct mesh_outbound tx;
     struct app_mesh_flood_result aggregate_result = {0};
+    struct app_mesh_tx_observation aggregate_observation = {0};
     struct mesh_c5_flood_tx_context flood_ctx = {
         .rf_started_out = rf_started_out,
-        .observation = observation,
+        .observation = &aggregate_observation,
         .absolute_deadline_ms = absolute_deadline_ms,
         .response_priority = response_priority,
         .c5_tx_intent = (uint8_t)c5_tx_intent,
@@ -2927,11 +2946,14 @@ static int mesh_send_c5_flood_now_until(
         (uint64_t)k_uptime_get() >= absolute_deadline_ms) {
         return -ETIMEDOUT;
     }
-    if (gateway_enumeration_quick_copies || compact_primary_control) {
-        /* Admission observes the logical deadline. Once admitted, the tiny
-         * three-copy burst completes atomically instead of expiring midway. */
+    if (gateway_enumeration_quick_copies || enumeration_control) {
+        /* Enumeration admission owns its complete short publication burst. */
         flood_ctx.absolute_deadline_ms = 0u;
     }
+    /* A claimed survey backend can outlive cancellation. Keep its immutable
+     * physical cutoff through every START/PLAN copy, including radio handoff
+     * and SPI staging, so no new origin can appear after that cutoff. A partial
+     * burst retains its first RF observation and clock for safe cleanup. */
     atomic_gateway_control =
         purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
     flood_ctx.atomic_gateway_control = atomic_gateway_control;
@@ -3147,6 +3169,26 @@ static int mesh_send_c5_flood_now_until(
             aggregate_result.first_due_ms = attempt_result.first_due_ms;
         }
         aggregate_result.last_due_ms = attempt_result.last_due_ms;
+        if (aggregate_observation.rf_started &&
+            !aggregate_observation.message_origin_valid) {
+            uint64_t age_at_first_rf_ms;
+
+            /* Independent send opportunities share the first emitted copy's
+             * clock. Changing only earliest_tx_ms must never restart its age. */
+            if (!tx.queued_at_valid) {
+                tx.queued_at_ms = attempt_result.first_due_ms;
+                tx.queued_at_valid = true;
+            }
+            age_at_first_rf_ms =
+                (uint32_t)((uint32_t)aggregate_observation.rf_started_at_ms -
+                           tx.queued_at_ms) +
+                (uint64_t)tx.packet.message_age_ms;
+            if (age_at_first_rf_ms <= aggregate_observation.rf_started_at_ms) {
+                aggregate_observation.message_origin_at_ms =
+                    aggregate_observation.rf_started_at_ms - age_at_first_rf_ms;
+                aggregate_observation.message_origin_valid = true;
+            }
+        }
         if (gateway_route_adv && ret == -ETIMEDOUT) {
             ret = 0;
             continue;
@@ -3201,6 +3243,9 @@ static int mesh_send_c5_flood_now_until(
     }
 
 out:
+    if (observation != NULL) {
+        *observation = aggregate_observation;
+    }
     if (result != NULL) {
         *result = aggregate_result;
     }

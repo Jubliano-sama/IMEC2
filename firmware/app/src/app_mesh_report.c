@@ -1292,6 +1292,7 @@ static bool mesh_c5_gateway_enumeration_quick_copy_burst(
     const struct mesh_outbound *out);
 static void mesh_c5_flood_work_handler(struct k_work *work);
 struct mesh_route_capture_identity {
+    uint64_t origin_id;
     uint32_t session_id;
     uint32_t flood_epoch_id;
     uint16_t reply_nonce;

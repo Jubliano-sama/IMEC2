@@ -43,6 +43,8 @@ extern NRF_SPIM_Type model_spim;
 #define MODEL_DT_PROP_fast_spi_frequency MODEL_FAST_HZ
 #define MODEL_DT_PROP_spi_max_frequency MODEL_FAST_HZ
 #define MODEL_DT_PROP_max_frequency MODEL_FAST_HZ
+#define NRF_DRIVE_H0H1 3u
+#define MODEL_DT_PROP_nordic_drive_mode NRF_DRIVE_H0H1
 #define DT_PROP_LEN(node, prop) 3
 #define DT_PROP_BY_IDX(node, prop, index) (20u + (index))
 #define MODEL_CAT_(left, right) left##right

@@ -1,12 +1,14 @@
 # Channel 5 report delivery
 
-Current implementation reference, 2026-09-06. This replaces the mixed proposal/implementation text from the September 3 redesign. Radio ownership, wake timing and survey exclusivity are defined in the [Mesh contract](<Mesh Connected Routing Contract.md>).
+Current implementation reference, 2026-09-07. This replaces the mixed proposal/implementation text from the September 3 redesign. Radio ownership, wake timing and survey exclusivity are defined in the [Mesh contract](<Mesh Connected Routing Contract.md>).
 
 ## Custody and admission
 
 Queued local and forwarded gateway-bound reports use one bounded four-packet Channel-5 delivery bank in `firmware/app/src/app_mesh_report_delivery.inc`. A singleton uses that same bank. Admission publishes bank custody under the admission lock before removing the queue entry; retained-bank identities participate in duplicate checks. An idle relay, a busy relay and a source without a current route must preserve the same ownership guarantee.
 
 Each retained packet has an immutable semantic identity. An exact ACK completes only identities actually sent in the current exchange. Partial ACKs leave all unaccepted bytes owned by the bank. Failure to complete local retirement retains the terminal proof without sending the already accepted packet again. Retry selection re-evaluates each packet's next hop; absent routes retain bytes rather than manufacturing a direct-gateway path.
+
+Duplicate history is not custody evidence. An exact returning report passes through application admission again: bytes still held in the queue or bank deduplicate there, while bytes released after an earlier hop ACK must be reacquired before another ACK is permitted. Full capacity, an exhausted TTL or an absent forward path cannot produce a history-only custody ACK. This remains necessary when stale parent information temporarily creates a routing loop.
 
 A hop ACK transfers custody to the immediate receiver. The gateway's ACK follows bounded RAM/BLE-stream admission, independently of whether the GUI has already displayed the packet. Production C5 bank completion has no ACK_CONFIRM handshake and no periodic Channel-9 turn. This RAM custody is not a promise to survive power loss. The user-facing host records and any explicitly durable configuration have separate owners.
 

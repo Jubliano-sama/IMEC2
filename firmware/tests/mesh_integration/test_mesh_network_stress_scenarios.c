@@ -2817,6 +2817,15 @@ static int test_airtime_ack_loss_and_custody(void)
                                world.roles[relay].id,
                                packet.session_id,
                                packet.seq));
+    CHECK(world.roles[relay].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(queued_packet_type_count_for(&world.roles[relay],
+                                       packet.msg_type,
+                                       packet.src_id,
+                                       packet.session_id,
+                                       packet.seq) == 0u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay].id) == 1u);
 
     set_phase("ack-airtime-source-timeout");
     CHECK(mesh_sim_override_next_relay_random(&world, origin, 0u) ==
@@ -2874,15 +2883,15 @@ static int test_airtime_ack_loss_and_custody(void)
     CHECK(packet_identity_matches(&tx->outbound.packet, &packet));
     CHECK(tx->outbound.payload_len == payload_len);
     CHECK(memcmp(tx->outbound.payload, payload, payload_len) == 0);
-    CHECK(packet_identity_matches(
-              &world.roles[relay].relay.pending.packet, &packet));
-    CHECK(world.roles[relay].relay.pending.packet.msg_type ==
-          packet.msg_type);
+    /* The earlier gateway ACK retired the relay's original bytes. Duplicate
+     * history cannot accept custody: the returned report must own one fresh
+     * queue slot before the child-facing hop ACK becomes eligible. */
+    CHECK(world.roles[relay].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(queued_packet_type_count_for(&world.roles[relay],
                                        packet.msg_type,
                                        packet.src_id,
                                        packet.session_id,
-                                       packet.seq) == 0u);
+                                       packet.seq) == 1u);
 
     set_phase("ack-airtime-second-hop-ack");
     tx = NULL;
@@ -2911,7 +2920,7 @@ static int test_airtime_ack_loss_and_custody(void)
                                        packet.msg_type,
                                        packet.src_id,
                                        packet.session_id,
-                                       packet.seq) == 0u);
+                                       packet.seq) == 1u);
     CHECK(route_selected(&world.roles[origin].relay.upstream) != NULL);
     CHECK(route_selected(&world.roles[origin].relay.upstream)->failure_count ==
           0u);
@@ -2950,9 +2959,11 @@ static int test_airtime_ack_loss_and_custody(void)
         (uint32_t)(world.now_us / 1000u)));
     CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[relay].relay.pending.state == MESH_RELAY_TX_IDLE);
+    /* Both custody admissions terminalized, but the gateway applied the
+     * original report only once. Its retained ACK closes the returned copy. */
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay].id) == 1u);
+                                     world.roles[relay].id) == 2u);
     CHECK(network_idle(&world));
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_ROUTE_REQUIRED,

@@ -82,6 +82,61 @@ static void test_chunked_plan_control(void)
                                        &decoded) == PROTO_ERR_MALFORMED);
 }
 
+static void test_small_controls_reject_plan_and_foreign_phase_fields(void)
+{
+    struct survey_control control = {
+        .phase = SURVEY_PHASE_ABORT,
+        .identity = identity(),
+    };
+    struct survey_control decoded;
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN] = {0};
+    size_t base_len = 0u;
+
+    assert(survey_control_append_tlvs(payload, sizeof(payload), &base_len,
+                                      &control) == PROTO_OK);
+    assert(survey_control_extract_tlvs(payload, base_len, &decoded) == PROTO_OK);
+    assert(decoded.phase == SURVEY_PHASE_ABORT && !decoded.plan_present);
+    /* A malformed small control must fail its phase envelope before entering
+     * the PLAN decoder, including a zero-length PLAN and repeated chunks. */
+    for (uint16_t length = 0u; length <= SURVEY_TLV_CHUNK_MAX_LEN; length++) {
+        uint8_t bytes[SURVEY_TLV_CHUNK_MAX_LEN] = {0};
+        size_t payload_len = base_len;
+
+        assert(tlv_append_bytes(payload, sizeof(payload), &payload_len,
+                                TLV_SURVEY_PLAN, bytes, (uint8_t)length) == PROTO_OK);
+        assert(survey_control_extract_tlvs(payload, payload_len, &decoded) ==
+               PROTO_ERR_MALFORMED);
+        assert(tlv_append_bytes(payload, sizeof(payload), &payload_len,
+                                TLV_SURVEY_PLAN, bytes, (uint8_t)length) == PROTO_OK);
+        assert(survey_control_extract_tlvs(payload, payload_len, &decoded) ==
+               PROTO_ERR_MALFORMED);
+    }
+    for (unsigned which = 0u; which < 2u; which++) {
+        size_t payload_len = base_len;
+
+        assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                              which == 0u ? TLV_SURVEY_START_DELAY_MS :
+                                            TLV_SURVEY_SELF_STOP_DELAY_MS,
+                              1000u) == PROTO_OK);
+        assert(survey_control_extract_tlvs(payload, payload_len, &decoded) ==
+               PROTO_ERR_MALFORMED);
+    }
+    control.phase = SURVEY_PHASE_NEIGHBOR_START;
+    control.start_delay_present = true;
+    control.self_stop_delay_present = true;
+    control.start_delay_ms = 3000u;
+    control.self_stop_delay_ms = 10000u;
+    base_len = 0u;
+    assert(survey_control_append_tlvs(payload, sizeof(payload), &base_len,
+                                      &control) == PROTO_OK);
+    assert(survey_control_extract_tlvs(payload, base_len, &decoded) == PROTO_OK);
+    assert(decoded.start_delay_ms == 3000u && decoded.self_stop_delay_ms == 10000u);
+    assert(tlv_append_bytes(payload, sizeof(payload), &base_len,
+                            TLV_SURVEY_PLAN, NULL, 0u) == PROTO_OK);
+    assert(survey_control_extract_tlvs(payload, base_len, &decoded) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_host_plan_and_event_round_trip(void)
 {
     struct survey_host_plan_request request = {
@@ -165,6 +220,82 @@ static void test_all_results_fit_one_event(void)
     assert(decoded.records.results[99].pair_index == 99u);
 }
 
+static void test_acceptance_event_identity_and_closed_header(void)
+{
+    const enum survey_event_kind kinds[] = {
+        SURVEY_EVENT_STARTED, SURVEY_EVENT_PLAN_ACCEPTED,
+    };
+    for (size_t kind = 0u; kind < sizeof(kinds) / sizeof(kinds[0]); kind++) {
+        struct survey_event event = {
+            .kind = kinds[kind], .identity = identity(),
+            .status = SURVEY_TERMINAL_COMPLETE,
+            .host_session_id = UINT32_C(0xfedcba98), .host_sequence = UINT16_MAX,
+        };
+        struct survey_event decoded;
+        uint8_t wire[SURVEY_EVENT_MAX_WIRE_LEN];
+        if (event.kind == SURVEY_EVENT_PLAN_ACCEPTED) {
+            event.plan = maximum_plan();
+            event.batch_index = event.plan.batch_index;
+            event.final_batch = event.plan.final_batch;
+        }
+        /* Host identity shares header storage with graph masks. Stale graph
+         * fields must not enter acceptance wire data or the decoded graph. */
+        event.graph.occupied_slot_mask = UINT64_MAX;
+        event.graph.received_report_mask = UINT64_MAX;
+        size_t length = survey_event_encode(&event, wire, sizeof(wire));
+        assert(length == SURVEY_EVENT_HEADER_WIRE_LEN +
+            (event.kind == SURVEY_EVENT_STARTED ? 0u :
+                SURVEY_MAX_PAIRS * SURVEY_PLAN_PAIR_WIRE_LEN));
+        assert(proto_get_u32_le(&wire[56]) == event.host_session_id);
+        assert(proto_get_u16_le(&wire[60]) == event.host_sequence);
+        assert(survey_event_decode(wire, length, &decoded) == PROTO_OK);
+        assert(decoded.host_session_id == event.host_session_id);
+        assert(decoded.host_sequence == event.host_sequence);
+        assert(decoded.graph.occupied_slot_mask == 0u);
+        assert(decoded.graph.received_report_mask == 0u);
+        assert(survey_identity_equal(&decoded.identity, &event.identity));
+
+        for (size_t offset = 62u; offset < SURVEY_EVENT_HEADER_WIRE_LEN; offset++) {
+            if (offset == 64u) continue; /* The final-batch flag is defined. */
+            assert(wire[offset] == 0u);
+            wire[offset] = 1u;
+            assert(survey_event_decode(wire, length, &decoded) == PROTO_ERR_MALFORMED);
+            wire[offset] = 0u;
+        }
+        for (unsigned zero = 0u; zero < 2u; zero++) {
+            struct survey_event missing = event;
+            uint8_t candidate[SURVEY_EVENT_MAX_WIRE_LEN];
+            if (zero == 0u) {
+                missing.host_session_id = 0u;
+                proto_put_u32_le(&wire[56], 0u);
+            } else {
+                missing.host_sequence = 0u;
+                proto_put_u16_le(&wire[60], 0u);
+            }
+            assert(survey_event_encode(&missing, candidate, sizeof(candidate)) == 0u);
+            assert(survey_event_decode(wire, length, &decoded) == PROTO_ERR_MALFORMED);
+            assert(survey_event_encode(&event, wire, sizeof(wire)) == length);
+        }
+        for (int status = -1; status <= SURVEY_TERMINAL_BUSY; status++) {
+            event.status = (enum survey_terminal_status)status;
+            bool allowed = status >= 0 &&
+                (event.kind == SURVEY_EVENT_STARTED ? status == 0 : status <= 1);
+            uint8_t candidate[SURVEY_EVENT_MAX_WIRE_LEN];
+            assert((survey_event_encode(&event, candidate, sizeof(candidate)) != 0u) == allowed);
+            wire[2] = (uint8_t)status;
+            assert((survey_event_decode(wire, length, &decoded) == PROTO_OK) == allowed);
+        }
+        if (event.kind == SURVEY_EVENT_STARTED) {
+            wire[2] = SURVEY_TERMINAL_COMPLETE;
+            wire[64] = 1u;
+            assert(survey_event_decode(wire, length, &decoded) == PROTO_ERR_MALFORMED);
+            wire[64] = 0u;
+            wire[length] = 0u;
+            assert(survey_event_decode(wire, length + 1u, &decoded) != PROTO_OK);
+        }
+    }
+}
+
 static void test_all_signal_records_fit_one_event(void)
 {
     struct survey_event event = {
@@ -204,8 +335,10 @@ static void test_all_signal_records_fit_one_event(void)
 int main(void)
 {
     test_chunked_plan_control();
+    test_small_controls_reject_plan_and_foreign_phase_fields();
     test_host_plan_and_event_round_trip();
     test_all_results_fit_one_event();
+    test_acceptance_event_identity_and_closed_header();
     test_all_signal_records_fit_one_event();
     puts("survey protocol tests passed");
     return 0;

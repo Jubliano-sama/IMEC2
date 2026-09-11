@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 #define DWM3000_RSL_INVALID_DBM INT8_MIN
+/* Shared with callers reserving complete airtime before an absolute end. */
+#define DWM3000_DEADLINE_TX_LEAD_UUS 5000u
 
 #include "uwb.h"
 
@@ -32,6 +34,9 @@ struct dwm3000_range_request {
     uint8_t round_index;
     uint8_t flags;
     uint32_t timeout_ms;
+    /* POLL/RESP/FINAL/REPORT end in uptime ms; zero keeps legacy phase budgets.
+     * Optional diagnostic transfers are separate from this core exchange. */
+    uint64_t absolute_deadline_ms;
     uint16_t reply_delay_uus;
     uint32_t click_timestamp_ms;
     /* Responder-side FINAL diagnostics; initiator RSL comes from its report. */
@@ -298,6 +303,8 @@ void dwm3000_driver_request_receive_abort(uint32_t owner_mask);
 void dwm3000_driver_clear_receive_abort(uint32_t owner_mask);
 bool dwm3000_driver_receive_abort_pending(void);
 int dwm3000_driver_last_rx_host_uptime(uint32_t *received_at_ms);
+/* An initial attempt whose absolute deadline already expired returns -ESTALE;
+ * callers must not count that skipped operation as completed RF progress. */
 int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                    struct dwm3000_range_result *result);
 int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,

@@ -25,6 +25,7 @@ struct app_mesh_c5_route_capture_state {
     uint64_t route_request_target_id;
     uint64_t local_id;
     uint64_t control_origin_id;
+    uint64_t expected_origin_id;
     uint32_t expected_session_id;
     uint32_t expected_flood_epoch_id;
     uint16_t expected_reply_nonce;

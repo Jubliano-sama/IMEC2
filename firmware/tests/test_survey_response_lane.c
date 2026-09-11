@@ -291,6 +291,62 @@ static void test_deferred_bundle_custody_and_same_round_idempotence(void)
     }
 }
 
+static void test_one_attempt_per_bundle_per_round(void)
+{
+    struct survey_response_lane full;
+
+    fill_neighbor_lane(&full, 0u, SURVEY_MAX_ANCHORS);
+    for (uint8_t count = 1u; count <= full.record_count; count++) {
+        for (uint32_t seed = 0u; seed < 16u; seed++) {
+            struct survey_response_lane lane = full;
+
+            lane.record_count = count;
+            for (uint8_t round = 0u; round < 2u; round++) {
+                struct enumeration_response_timing timing = {
+                    .depth = 2u, .round = round,
+                };
+                uint16_t attempted = 0u;
+                uint16_t scheduled;
+
+                assert(survey_response_lane_prepare_round(&lane, round,
+                                                           seed) == PROTO_OK);
+                scheduled = assert_round_schedule(&lane);
+                for (uint8_t offset = 0u;
+                     offset < ENUMERATION_RESPONSE_TX_WINDOW_MS; offset++) {
+                    timing.round_offset_ms = offset;
+                    /* An unrelated receive can return in the same uptime
+                     * millisecond or anywhere inside the late guard. Neither
+                     * that return nor preparing the same round grants a TX. */
+                    for (unsigned wake = 0u; wake < 2u; wake++) {
+                        struct survey_response_bundle bundle;
+                        int ret;
+
+                        assert(survey_response_lane_prepare_round(
+                                   &lane, round, seed + offset + wake) ==
+                               PROTO_OK);
+                        ret = survey_response_lane_bundle_for_offset(
+                            &lane, &timing, &bundle);
+                        if (ret == PROTO_OK) {
+                            uint16_t bit = (uint16_t)(
+                                UINT16_C(1) << bundle.sequence);
+
+                            assert((attempted & bit) == 0u);
+                            attempted |= bit;
+                        } else {
+                            assert(ret == PROTO_ERR_NOT_FOUND);
+                        }
+                    }
+                }
+                assert(attempted == scheduled);
+                assert(lane.attempted_mask == attempted);
+                /* No ACK was received: the next round must retry its full
+                 * schedule, including bundles attempted in this round. */
+                assert(lane.acked_mask == 0u);
+            }
+        }
+    }
+}
+
 static void fill_acked_range_lane(struct survey_response_lane *lane,
                                   uint8_t count)
 {
@@ -516,6 +572,7 @@ int main(void)
     test_max_neighbor_and_signal_bundles();
     test_all_counts_seeds_and_partial_ack_schedules();
     test_deferred_bundle_custody_and_same_round_idempotence();
+    test_one_attempt_per_bundle_per_round();
     test_rejected_merge_preserves_all_custody();
     test_merge_invalidates_only_changed_bundles();
     test_raw_codecs_and_generation_binding();

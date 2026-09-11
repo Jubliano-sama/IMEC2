@@ -382,7 +382,7 @@ int dwm3000_driver_send_frame_tracked_until(
 
     ret = wait_tx_complete_observed(
         timeout_ms == 0u ? REPORT_RX_TIMEOUT_MS : timeout_ms,
-        &result.tx_completed_at_ms);
+        &result.tx_completed_at_ms, 0u);
     result.tx_completed = ret == 0;
     if (observation != NULL) {
         *observation = result;
@@ -479,7 +479,24 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                         NULL,
                         NULL,
                         NULL,
-                        rsl_dbm != NULL);
+                        rsl_dbm != NULL, 0u);
+    {
+        int port_ret = take_port_error("receive-frame-cleanup");
+
+        if (port_ret < 0) {
+            ret = port_ret;
+        }
+        /* Optional diagnostics can invalidate the radio after a decoded
+         * frame without changing receive_frame's result. An unproven radio
+         * cannot publish success, a quiet timeout, or a harmless abort. */
+        if ((radio_state_unknown || !radio_configured || !radio_awake) &&
+            (ret == 0 || ret == -ETIMEDOUT || ret == -ECANCELED)) {
+            ret = -EIO;
+        }
+        if (ret < 0) {
+            last_rx_host_uptime_valid = false;
+        }
+    }
     {
         const dwt_config_t *config = config_for_phy(active_phy_mode);
 
@@ -505,6 +522,13 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
         atomic_set(&receive_abort_enabled, 0);
     }
     if (ret < 0) {
+        /* A fatal status or failed cleanup invalidates the radio even when
+         * the last RX status also contains CRC/SFD/timeout bits. Those bits
+         * cannot turn a hardware failure into ordinary RF activity or a
+         * quiet timeout. The owner must recover and restore its own PHY. */
+        if (radio_state_unknown || !radio_configured || !radio_awake) {
+            return ret;
+        }
         if (ret == -ECANCELED) {
             return -ECANCELED;
         }
@@ -525,6 +549,11 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     payload_len = payload_len_without_fcs(raw_len);
     if (payload_len > frame_cap) {
         dwt_forcetrxoff();
+        ret = take_port_error("receive-frame-oversize-cleanup");
+        last_rx_host_uptime_valid = false;
+        if (ret < 0) {
+            return ret == -ETIMEDOUT || ret == -ECANCELED ? -EIO : ret;
+        }
         if (failure != NULL) {
             *failure = DWM3000_RX_FAILURE_BAD_FRAME;
         }
@@ -635,7 +664,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                acquire_timeout_ms,
                                &status,
                                true,
-                               &observed_at_ms);
+                               &observed_at_ms, 0u);
     last_status = status;
     if (ret == -ECANCELED) {
         dwt_forcetrxoff();
@@ -726,7 +755,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                     remaining_ms,
                     &status,
                     true,
-                    &observed_at_ms);
+                    &observed_at_ms, 0u);
                 last_status = status;
                 if (ret == -ECANCELED) {
                     dwt_forcetrxoff();
@@ -879,7 +908,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                        remaining_ms,
                                        &status,
                                        true,
-                                       &observed_at_ms);
+                                       &observed_at_ms, 0u);
             last_status = status;
             if (ret == -ECANCELED) {
                 dwt_forcetrxoff();
@@ -913,7 +942,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                        remaining_ms,
                                        &status,
                                        true,
-                                       &observed_at_ms);
+                                       &observed_at_ms, 0u);
             last_status = status;
             if (ret == -ECANCELED) {
                 dwt_forcetrxoff();
@@ -1032,7 +1061,7 @@ int dwm3000_driver_sniff_activity(uint32_t timeout_ms,
                                timeout_ms,
                                &status,
                                false,
-                               NULL);
+                               NULL, 0u);
     activity_seen = rx_status_has_activity(status);
     dwt_forcetrxoff();
     {

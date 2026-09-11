@@ -142,7 +142,33 @@ static void make_direct_probe(struct mesh_outbound *probe, uint64_t source_id)
     probe->packet.seq = 1u;
     probe->packet.ttl = MESH_DEFAULT_TTL;
     probe->next_hop_id = GATEWAY_ID;
-    probe->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    probe->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+}
+
+static bool direct_contact_used_c5(const struct mesh_sim_world *world,
+                                   uint16_t transmission_index,
+                                   uint8_t receiver)
+{
+    const struct mesh_sim_transmission *tx =
+        &world->transmissions[transmission_index];
+    uint64_t propagation_us = world->propagation_us[tx->node_index][receiver];
+
+    if (tx->channel != UWB_CHANNEL_WAKE_CONTACT ||
+        tx->phy != MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) {
+        return false;
+    }
+    for (size_t i = 0u; i < world->rx_window_count; i++) {
+        const struct mesh_sim_rx_window *window = &world->rx_windows[i];
+
+        if (window->node_index == receiver &&
+            window->channel == UWB_CHANNEL_WAKE_CONTACT &&
+            window->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+            window->start_us <= tx->start_us + propagation_us &&
+            window->end_us >= tx->end_us + propagation_us) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static int transmit_route_wake_contact(struct mesh_sim_world *world,
@@ -166,6 +192,7 @@ static int transmit_route_wake_contact(struct mesh_sim_world *world,
         .flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
     };
     uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    uint64_t start_us;
     uint64_t end_us;
     uint16_t tx_index;
     size_t frame_len = 0u;
@@ -175,7 +202,9 @@ static int transmit_route_wake_contact(struct mesh_sim_world *world,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = mesh_sim_schedule_raw_tx(world, transmitter, ROUTE_WAKE_START_US,
+    start_us = max_u64(ROUTE_WAKE_START_US,
+                       world->now_us + 2u * RX_GUARD_US + 1u);
+    ret = mesh_sim_schedule_raw_tx(world, transmitter, start_us,
                                    UWB_CHANNEL_WAKE_CONTACT,
                                    MESH_SIM_PHY_CHANNEL5_WAKE,
                                    frame, frame_len, false, &tx_index);
@@ -184,7 +213,7 @@ static int transmit_route_wake_contact(struct mesh_sim_world *world,
     }
     end_us = world->transmissions[tx_index].end_us +
              world->propagation_us[transmitter][anchor];
-    ret = mesh_sim_schedule_rx(world, anchor, ROUTE_WAKE_START_US - RX_GUARD_US,
+    ret = mesh_sim_schedule_rx(world, anchor, start_us - RX_GUARD_US,
                                end_us + RX_GUARD_US,
                                UWB_CHANNEL_WAKE_CONTACT,
                                MESH_SIM_PHY_CHANNEL5_WAKE, NULL);
@@ -397,9 +426,10 @@ static int run_forcedhop_connection_scenario(void)
                             DIRECT_PROBE_START_US, &probe_tx) == MESH_SIM_OK);
     CHECK(world.receptions[world.reception_count - 1u].outcome ==
           MESH_SIM_RX_DECODED);
+    CHECK(direct_contact_used_c5(&world, probe_tx, gateway));
     CHECK(take_queued_message(&world.roles[gateway], MSG_GATEWAY_ACK,
                               &gateway_reply));
-    gateway_reply.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    gateway_reply.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     CHECK(gateway_reply.packet.src_id == GATEWAY_ID);
     CHECK(gateway_reply.packet.dst_id == TRANSMITTER_ID);
     gateway_ack_receptions = count_decoded_receptions(
@@ -409,6 +439,13 @@ static int run_forcedhop_connection_scenario(void)
           MESH_SIM_OK);
     CHECK(count_decoded_receptions(&world, TRANSMITTER_ID, MSG_GATEWAY_ACK) ==
           gateway_ack_receptions + 1u);
+    CHECK(direct_contact_used_c5(&world, duplicate_reply_tx, transmitter));
+    CHECK(app_mesh_direct_gateway_ack_matches(
+              &direct_probe,
+              &world.receptions[world.reception_count - 1u].packet,
+              world.receptions[world.reception_count - 1u].payload,
+              world.receptions[world.reception_count - 1u].payload_len,
+              GATEWAY_ID, GATEWAY_ID));
     CHECK(mesh_relay_select_next_hop(&world.roles[transmitter].relay,
                                      GATEWAY_ID, &next_hop_id) ==
           PROTO_ERR_NOT_FOUND);
@@ -428,6 +465,7 @@ static int run_forcedhop_connection_scenario(void)
               world.now_us + 1000u, &duplicate_reply_tx) == MESH_SIM_OK);
     CHECK(world.receptions[world.reception_count - 1u].outcome ==
           MESH_SIM_RX_DECODED);
+    CHECK(direct_contact_used_c5(&world, duplicate_reply_tx, transmitter));
     CHECK(count_decoded_receptions(&world, TRANSMITTER_ID, MSG_GATEWAY_ACK) ==
           gateway_ack_receptions + 1u);
     CHECK(mesh_relay_select_next_hop(&world.roles[transmitter].relay,
@@ -448,6 +486,24 @@ static int run_forcedhop_connection_scenario(void)
                             world.now_us + 1000u, &probe_tx) == MESH_SIM_OK);
     CHECK(world.receptions[world.reception_count - 1u].outcome ==
           MESH_SIM_RX_DECODED);
+    CHECK(direct_contact_used_c5(&world, probe_tx, gateway));
+    CHECK(route_selected(&world.roles[anchor].relay.upstream) == NULL);
+    CHECK(take_queued_message(&world.roles[gateway], MSG_GATEWAY_ACK,
+                              &gateway_reply));
+    gateway_reply.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    CHECK(gateway_reply.packet.dst_id == ANCHOR_ID);
+    CHECK(transmit_outbound(&world, gateway, anchor, &gateway_reply,
+                            world.now_us + 1000u, &duplicate_reply_tx) ==
+          MESH_SIM_OK);
+    CHECK(world.receptions[world.reception_count - 1u].outcome ==
+          MESH_SIM_RX_DECODED);
+    CHECK(direct_contact_used_c5(&world, duplicate_reply_tx, anchor));
+    CHECK(app_mesh_direct_gateway_ack_matches(
+              &direct_probe,
+              &world.receptions[world.reception_count - 1u].packet,
+              world.receptions[world.reception_count - 1u].payload,
+              world.receptions[world.reception_count - 1u].payload_len,
+              GATEWAY_ID, GATEWAY_ID));
     CHECK(mesh_relay_note_direct_gateway_route(&world.roles[anchor].relay,
                                                (uint32_t)(world.now_us / 1000u)) ==
                                                PROTO_OK);

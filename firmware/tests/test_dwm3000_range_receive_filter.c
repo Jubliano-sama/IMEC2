@@ -18,7 +18,7 @@
 #define DEFAULT_RESPONDER_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define DWM3000_PHY_RANGE DWM3000_TIMING_PHY_CH5_RANGE
 
-enum stage { POLL, RESPONSE, FINAL, REPORT };
+enum stage { POLL, RESPONSE, FINAL, REPORT, INITIATOR };
 enum noise { CLICK, OTHER_INITIATOR, OTHER_TARGET, OTHER_NETWORK,
              OTHER_SESSION, OTHER_NONCE, OTHER_SEQUENCE, OTHER_ROUND,
              OTHER_FLAGS, TRUNCATED, OVERSIZED, WRONG_TYPE, NOISE_COUNT };
@@ -27,6 +27,7 @@ struct physical_frame {
     uint8_t bytes[128];
     size_t length;
     uint32_t delay_ms;
+    uint32_t completion_delay_ms;
     uint32_t status;
     int error;
     uint64_t timestamp;
@@ -40,12 +41,19 @@ static int64_t now_us, deadlines[2];
 static unsigned int receives[2], arms, stops, clears, tx_starts, tx_writes, patches;
 static unsigned int fail_arm;
 static bool fail_clear, rx_armed;
+static int deadline_abort_error;
 static enum stage tested_stage;
-static uint8_t staged_response[UWB_RESP_LEN];
+static uint8_t staged_response[UWB_FINAL_LEN];
+static size_t staged_length;
 static uint32_t programmed_tx_time;
+static uint32_t receive_entry_pause_ms, tx_start_pause_ms;
+static uint32_t poll_completion_pause_ms, final_completion_pause_ms;
+static unsigned int poll_starts, phy_configurations;
+static unsigned int poll_completions, final_completions;
+static uint64_t poll_tx_timestamp, observed_send_deadline;
 static struct dwm3000_range_result *observed_result;
 
-static const struct dwm3000_range_request request = {
+static const struct dwm3000_range_request default_request = {
     .initiator_id = UINT64_C(0x100000001234),
     .responder_id = UINT64_C(0x200000005678),
     .network_id = 123, .session_nonce = UINT64_C(0xabc12345678),
@@ -54,6 +62,7 @@ static const struct dwm3000_range_request request = {
     .timeout_ms = 23, .reply_delay_uus = UWB_RANGE_REPLY_DELAY_UUS,
     .capture_rsl = true,
 };
+static struct dwm3000_range_request request;
 
 static int64_t k_uptime_get(void) { return now_us / 1000; }
 static uint32_t k_uptime_get_32(void) { return (uint32_t)k_uptime_get(); }
@@ -68,6 +77,7 @@ static void clear_all_events(void) { clears++; now_us += 200; }
 static int take_port_error(const char *operation)
 {
     now_us += 50;
+    if (strcmp(operation, "range-deadline-abort") == 0) return deadline_abort_error;
     return fail_clear && strcmp(operation, "range-ignore-frame") == 0 ? -EIO : 0;
 }
 static int start_immediate_rx(void)
@@ -81,11 +91,69 @@ static int start_immediate_rx(void)
     rx_armed = true;
     return 0;
 }
-static int ensure_phy_mode(int mode) { assert(mode == DWM3000_PHY_RANGE); return 0; }
+static int ensure_phy_mode(int mode) { assert(mode == DWM3000_PHY_RANGE); phy_configurations++; return 0; }
 void dwt_setpreambledetecttimeout(uint16_t timeout) { assert(timeout == 0); }
 void dwt_setrxtimeout(uint32_t timeout) { (void)timeout; }
 void dwt_setrxaftertxdelay(uint32_t delay) { (void)delay; }
 void dwt_setdelayedtrxtime(uint32_t time) { programmed_tx_time = time; }
+uint32_t dwt_readsystimestamphi32(void)
+{ return (uint32_t)(((uint64_t)now_us * DWM3000_UUS_TO_DWT_TIME) >> 8); }
+static int send_range_frame_until(const uint8_t *frame, size_t length,
+    uint8_t mode, uint64_t absolute_deadline_ms, bool *rf_start_possible,
+    uint64_t *rf_start_at_ms)
+{
+    struct uwb_poll_frame poll;
+    assert(uwb_decode_poll_frame(frame, length, &poll) == PROTO_OK);
+    assert(mode == (DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED));
+    (void)rf_start_possible;
+    (void)rf_start_at_ms;
+    observed_send_deadline = absolute_deadline_ms;
+    if (absolute_deadline_ms != 0u && (uint64_t)k_uptime_get() >= absolute_deadline_ms) {
+        return -ETIMEDOUT;
+    }
+    poll_starts++;
+    poll_tx_timestamp = (uint64_t)now_us * DWM3000_UUS_TO_DWT_TIME;
+    now_us += (int64_t)dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_RANGE, length);
+    rx_armed = true;
+    return 0;
+}
+static int capture_completed_tx_timestamp(uint32_t timeout_ms,
+    uint64_t *timestamp, uint64_t absolute_deadline_ms)
+{
+    assert(timeout_ms > 0u);
+    assert(absolute_deadline_ms == request.absolute_deadline_ms);
+    poll_completions++;
+    *timestamp = poll_tx_timestamp;
+    now_us += 100 + (int64_t)poll_completion_pause_ms * 1000;
+    return 0;
+}
+static int wait_tx_complete_observed(uint32_t timeout_ms,
+    uint64_t *completed_at_ms, uint64_t absolute_deadline_ms)
+{
+    assert(timeout_ms > 0u && tx_starts == 1u);
+    assert(absolute_deadline_ms == request.absolute_deadline_ms);
+    assert(timeout_ms <= ds_twr_rx_wait_timeout_ms(request.reply_delay_uus));
+    assert(absolute_deadline_ms == 0u ||
+           (uint64_t)k_uptime_get() + timeout_ms <= absolute_deadline_ms);
+    final_completions++;
+    int32_t until_marker = (int32_t)((programmed_tx_time & UINT32_C(0xfffffffe)) -
+                                   dwt_readsystimestamphi32());
+    if (until_marker > 0) {
+        uint64_t tail = dwm3000_timing_airtime_rctu(
+            DWM3000_TIMING_PHY_CH5_RANGE, UWB_FINAL_LEN) -
+            dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_RANGE);
+        now_us += (int64_t)dwm3000_timing_rctu_to_us_ceil(
+            ((uint64_t)(uint32_t)until_marker << 8) + tail);
+    }
+    now_us += 100 + (int64_t)final_completion_pause_ms * 1000;
+    if (completed_at_ms != NULL) *completed_at_ms = (uint64_t)k_uptime_get();
+    return 0;
+}
+static uint16_t dwt_delta_to_uus(uint32_t start, uint32_t end)
+{ return dwm3000_driver_dwt_delta_to_uus(start, end); }
+static int validate_driver_reply_timing(uint16_t first, uint16_t second, uint16_t expected)
+{ return dwm3000_driver_validate_reply_timing(first, second, expected, 1u); }
 uint32_t dwt_read32bitoffsetreg(int id, int offset)
 {
     assert(id == SYS_STATUS_ID && offset == 0);
@@ -100,14 +168,16 @@ static int clear_status_checked(uint32_t mask, const char *operation)
 }
 static int write_tx_frame(const uint8_t *bytes, size_t length)
 {
-    assert(length == sizeof(staged_response) && tx_writes++ == 0);
+    assert(length == (tested_stage == INITIATOR ? UWB_FINAL_LEN : UWB_RESP_LEN) && tx_writes++ == 0);
     memcpy(staged_response, bytes, length);
+    staged_length = length;
     now_us += 350;
     return 0;
 }
 static int patch_tx_frame(const uint8_t *bytes, size_t length, uint16_t offset)
 {
-    assert(offset == UWB_HEADER_LEN && length == 2 * sizeof(uint32_t));
+    assert(offset == UWB_HEADER_LEN && length ==
+        (tested_stage == INITIATOR ? 3u : 2u) * sizeof(uint32_t));
     assert(patches++ == 0 && observed_result->exchange_started);
     memcpy(staged_response + offset, bytes, length);
     now_us += 200;
@@ -116,9 +186,27 @@ static int patch_tx_frame(const uint8_t *bytes, size_t length, uint16_t offset)
 static int start_prepared_range_frame(size_t length, uint8_t mode)
 {
     struct uwb_response_frame response;
-    assert(length == sizeof(staged_response));
-    assert(mode == (DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED));
+    assert(length == staged_length);
+    assert(mode == (DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) ||
+           (tested_stage == INITIATOR && mode == DWT_START_TX_DELAYED));
+    now_us += (int64_t)tx_start_pause_ms * 1000;
+    if (request.absolute_deadline_ms != 0u &&
+        (int32_t)((programmed_tx_time & UINT32_C(0xfffffffe)) -
+                  dwt_readsystimestamphi32()) <= 0) {
+        return -ETIME; /* Delayed hardware start cannot fall back to immediate. */
+    }
     assert(tx_starts++ == 0 && patches == 1 && observed_result->exchange_started);
+    if (tested_stage == INITIATOR) {
+        struct uwb_final_frame final;
+        assert(uwb_decode_final(staged_response, length, &final) == PROTO_OK);
+        assert(dwm3000_driver_header_matches_request(&final.header, &request, MSG_UWB_FINAL));
+        assert(final.poll_tx_ts_32 == (uint32_t)poll_tx_timestamp);
+        assert(final.resp_rx_ts_32 == (uint32_t)frames[consumed - 1].timestamp);
+        assert(programmed_tx_time == delayed_tx_time_from_rx_reference(
+            frames[consumed - 1].timestamp, request.reply_delay_uus));
+        assert(final.final_tx_ts_32 ==
+            (uint32_t)delayed_tx_timestamp_from_programmed_time(programmed_tx_time));
+    } else {
     assert(uwb_decode_response(staged_response, length, &response) == PROTO_OK);
     assert(dwm3000_driver_header_matches_request(&response.header, &request, MSG_UWB_RESP));
     /* The response is scheduled from the accepted POLL's RF timestamp,
@@ -128,6 +216,7 @@ static int start_prepared_range_frame(size_t length, uint8_t mode)
         frames[consumed - 1].timestamp, request.reply_delay_uus));
     assert(response.resp_tx_ts_32 ==
            (uint32_t)delayed_tx_timestamp_from_programmed_time(programmed_tx_time));
+    }
     now_us += 300;
     rx_armed = true; /* Hardware RESPONSE_EXPECTED opens the FINAL window. */
     return 0;
@@ -140,10 +229,18 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          bool *cir_sampled, int16_t *clock_offset_raw,
                          bool *clock_offset_sampled, int32_t *carrier_integrator,
                          bool *carrier_integrator_sampled,
-                         uint64_t *ipatov_rx_timestamp, bool capture_rsl)
+                         uint64_t *ipatov_rx_timestamp, bool capture_rsl,
+                         uint64_t absolute_deadline_ms)
 {
     unsigned int window = tx_starts != 0;
+    now_us += (int64_t)receive_entry_pause_ms * 1000;
+    receive_entry_pause_ms = 0u;
     int64_t deadline = k_uptime_get() + timeout_ms;
+    assert(request.absolute_deadline_ms == 0u ? absolute_deadline_ms == 0u :
+           absolute_deadline_ms != 0u && absolute_deadline_ms <= request.absolute_deadline_ms);
+    if (absolute_deadline_ms != 0u && absolute_deadline_ms < (uint64_t)deadline) {
+        deadline = (int64_t)absolute_deadline_ms;
+    }
     (void)capture_rsl;
     assert(rx_armed && timeout_ms > 0);
     assert(++receives[window] <= 64);
@@ -151,7 +248,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         deadlines[window] = deadline;
     }
     assert(deadline == deadlines[window]); /* Never refresh on foreign traffic. */
-    if (observed_result != NULL) {
+    if (observed_result != NULL && tested_stage != INITIATOR) {
         assert(observed_result->exchange_started == (tx_starts != 0));
         assert(observed_result->clock_offset_raw == 0);
         assert(!observed_result->clock_offset_sampled);
@@ -163,15 +260,17 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
             assert(observed_result->session_id == 0);
         }
     }
-    if (consumed == frame_count ||
+    if (k_uptime_get() >= deadline || consumed == frame_count ||
         now_us + (int64_t)frames[consumed].delay_ms * 1000 > deadline * 1000) {
-        now_us = deadline * 1000;
+        if (now_us < deadline * 1000) now_us = deadline * 1000;
         *status = SYS_STATUS_RXFTO_BIT_MASK;
         rx_armed = false;
         return -ETIMEDOUT;
     }
-    const struct physical_frame *frame = &frames[consumed++];
+    struct physical_frame *frame = &frames[consumed++];
     now_us += (int64_t)frame->delay_ms * 1000;
+    frame->timestamp = (uint64_t)now_us * DWM3000_UUS_TO_DWT_TIME;
+    now_us += (int64_t)frame->completion_delay_ms * 1000;
     *status = frame->status;
     rx_armed = false;
     if (frame->error != 0) {
@@ -203,6 +302,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #include "dwm3000_range_filter_responder.inc"
+#include "dwm3000_range_filter_initiator.inc"
 #pragma GCC diagnostic pop
 
 static struct uwb_range_header expected_header(uint8_t type)
@@ -246,7 +346,8 @@ static struct physical_frame *append_range(uint8_t type, int noise, bool fcs)
         break;
     case MSG_UWB_RESP: {
         struct uwb_response_frame response = { .header = header,
-            .poll_rx_ts_32 = 100, .resp_tx_ts_32 = 200 };
+            .poll_rx_ts_32 = 100,
+            .resp_tx_ts_32 = 100 + UWB_RANGE_REPLY_DELAY_UUS * DWM3000_UUS_TO_DWT_TIME };
         ret = uwb_encode_response(&response, frame->bytes, sizeof(frame->bytes), &frame->length);
         break;
     }
@@ -306,12 +407,20 @@ static void reset_case(enum stage stage, int64_t start_ms)
     memset(receives, 0, sizeof(receives));
     frame_count = consumed = 0;
     now_us = start_ms * 1000;
+    request = default_request;
+    receive_entry_pause_ms = tx_start_pause_ms = 0u;
+    poll_completion_pause_ms = final_completion_pause_ms = 0u;
+    poll_starts = phy_configurations = 0u;
+    poll_completions = final_completions = 0u;
+    observed_send_deadline = poll_tx_timestamp = 0u;
     arms = stops = clears = tx_starts = tx_writes = patches = 0;
     fail_arm = 0;
     fail_clear = false;
+    deadline_abort_error = 0;
     rx_armed = stage == RESPONSE || stage == REPORT;
     observed_result = NULL;
     tested_stage = stage;
+    if (stage == INITIATOR) request.skip_responder_report = true;
     if (stage == FINAL) {
         append_range(MSG_UWB_POLL, -1, false);
     }
@@ -320,6 +429,10 @@ static void reset_case(enum stage stage, int64_t start_ms)
 static int run_stage(struct dwm3000_range_result *result)
 {
     memset(result, 0, sizeof(*result));
+    if (tested_stage == INITIATOR) {
+        observed_result = result;
+        return dwm3000_driver_range_initiator(&request, result);
+    }
     if (tested_stage == POLL || tested_stage == FINAL) {
         observed_result = result;
         return responder_poll_once(request.responder_id, &request, request.timeout_ms, result);
@@ -442,6 +555,183 @@ static void test_hard_errors(void)
     }
 }
 
+static void test_stale_attempt_starts_no_rf(int64_t start_ms)
+{
+    struct dwm3000_range_result result;
+    for (enum stage stage = POLL; stage <= INITIATOR; stage++) {
+        for (unsigned expired_by = 0u; expired_by < 2u; expired_by++) {
+            reset_case(stage, start_ms);
+            request.absolute_deadline_ms = (uint64_t)start_ms - expired_by;
+            bool entry = stage == POLL || stage == FINAL || stage == INITIATOR;
+            assert(run_stage(&result) == (entry ? -ESTALE : -ETIMEDOUT));
+            assert(result.status == RANGE_RX_TIMEOUT);
+            assert(arms == 0u && tx_starts == 0u && poll_starts == 0u);
+            assert(phy_configurations == 0u && consumed == 0u);
+            assert(!result.exchange_started);
+        }
+    }
+}
+
+static void test_absolute_end_caps_every_receive_phase(int64_t start_ms)
+{
+    struct dwm3000_range_result result;
+    for (enum stage stage = POLL; stage <= REPORT; stage++) {
+        reset_case(stage, start_ms);
+        request.absolute_deadline_ms = (uint64_t)start_ms + 20u;
+        for (unsigned n = 0u; n < 40u; n++) {
+            append_range(stage_type(stage), (int)(n % NOISE_COUNT), false)->delay_ms = 1u;
+        }
+        assert(run_stage(&result) == -ETIMEDOUT);
+        assert(result.status == RANGE_RX_TIMEOUT);
+        unsigned window = stage == FINAL;
+        assert(deadlines[window] == (int64_t)request.absolute_deadline_ms);
+        assert(now_us >= deadlines[window] * 1000);
+        assert(now_us < (deadlines[window] + 2) * 1000);
+        assert(consumed < frame_count && receives[window] < 40u);
+        assert(!result.clock_offset_sampled && !result.carrier_integrator_sampled);
+    }
+}
+
+static void test_late_software_completion_cannot_accept_expected_frame(int64_t start_ms)
+{
+    struct dwm3000_range_result result;
+    for (enum stage stage = POLL; stage <= REPORT; stage++) {
+        reset_case(stage, start_ms);
+        request.absolute_deadline_ms = (uint64_t)start_ms + 20u;
+        append_range(stage_type(stage), -1, false)->completion_delay_ms = 30u;
+        assert(run_stage(&result) == -ETIMEDOUT);
+        assert(result.status == RANGE_RX_TIMEOUT);
+        assert(consumed == 1u + (unsigned)(stage == FINAL));
+        assert(tx_starts == (unsigned)(stage == FINAL));
+        assert(result.distance_mm == 0);
+        assert(!result.clock_offset_sampled && !result.carrier_integrator_sampled);
+    }
+}
+
+static void test_receive_entry_pause_keeps_original_end(void)
+{
+    struct dwm3000_range_result result;
+    for (enum stage stage = POLL; stage <= REPORT; stage++) {
+        reset_case(stage, 1000);
+        request.absolute_deadline_ms = 1020u;
+        /* This pause occurs after the production caller calculated remaining
+         * time. The physical boundary must still receive the original end. */
+        receive_entry_pause_ms = 25u;
+        append_range(stage_type(stage), -1, false);
+        assert(run_stage(&result) == -ETIMEDOUT);
+        assert(result.status == RANGE_RX_TIMEOUT);
+        assert(consumed == 0u && tx_starts == 0u);
+        assert(deadlines[0] == 1020);
+    }
+    reset_case(RESPONSE, 1000);
+    request.absolute_deadline_ms = 1055u;
+    receive_entry_pause_ms = 25u;
+    append_range(MSG_UWB_RESP, -1, false);
+    assert(run_stage(&result) == -ETIMEDOUT);
+    assert(result.status == RANGE_RX_TIMEOUT && consumed == 0u);
+    assert(deadlines[0] == 1023); /* Original phase ends before the attempt. */
+}
+
+static void test_scheduled_response_and_final_must_fit_attempt(void)
+{
+    struct dwm3000_range_result result;
+    const enum stage stages[] = {POLL, INITIATOR};
+    for (unsigned n = 0u; n < sizeof(stages) / sizeof(stages[0]); n++) {
+        for (unsigned late = 0u; late < 2u; late++) {
+            reset_case(stages[n], 1000);
+            request.absolute_deadline_ms = late ? 1012u : 1055u;
+            append_range(stages[n] == POLL ? MSG_UWB_POLL : MSG_UWB_RESP, -1, false);
+            if (stages[n] == POLL) append_range(MSG_UWB_FINAL, -1, false);
+            int ret = run_stage(&result);
+            if (late) {
+                assert(ret == -ETIMEDOUT && result.status == RANGE_RX_TIMEOUT);
+                assert(tx_starts == 0u && consumed == 1u);
+            } else {
+                assert(ret == 0 && tx_starts == 1u);
+            }
+            if (stages[n] == INITIATOR) {
+                uint64_t airtime_ms = (dwm3000_timing_airtime_us_ceil(
+                    DWM3000_TIMING_PHY_CH5_RANGE, UWB_POLL_LEN) + 999u) / 1000u;
+                assert(poll_starts == 1u);
+                assert(observed_send_deadline == request.absolute_deadline_ms - airtime_ms);
+            }
+        }
+        reset_case(stages[n], 1000);
+        request.absolute_deadline_ms = 1055u;
+        tx_start_pause_ms = 60u;
+        append_range(stages[n] == POLL ? MSG_UWB_POLL : MSG_UWB_RESP, -1, false);
+        assert(run_stage(&result) == -ETIME);
+        assert(result.status == RANGE_DELAYED_TX_MISSED);
+        assert(tx_starts == 0u && consumed == 1u);
+    }
+}
+
+static void test_delayed_marker_before_end_cannot_hide_late_frame_tail(void)
+{
+    const size_t lengths[] = {UWB_RESP_LEN, UWB_FINAL_LEN};
+    for (unsigned i = 0u; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+        reset_case(POLL, 1000);
+        now_us += 950; /* Exercise the sub-ms phase hidden by integer uptime. */
+        request.absolute_deadline_ms = 1010u;
+        /* The delayed TX marker is 100 us before the end, but the remaining
+         * PHR/data/FCS extend beyond it. Checking only the marker is unsafe. */
+        const uint64_t marker_us = UINT64_C(1009900);
+        uint64_t tail_us = dwm3000_timing_rctu_to_us_ceil(
+            dwm3000_timing_airtime_rctu(DWM3000_TIMING_PHY_CH5_RANGE, lengths[i]) -
+            dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_RANGE));
+        assert(marker_us < request.absolute_deadline_ms * 1000u);
+        assert(marker_us + tail_us > request.absolute_deadline_ms * 1000u);
+        uint32_t target = (uint32_t)((marker_us * DWM3000_UUS_TO_DWT_TIME) >> 8);
+        assert(range_request_start_prepared_frame(&request, lengths[i],
+            DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED, target) == -ETIMEDOUT);
+        assert(tx_starts == 0u && tx_writes == 0u && patches == 0u);
+    }
+}
+
+static void test_initiator_completion_cannot_publish_late_success(void)
+{
+    struct dwm3000_range_result result;
+    for (unsigned final = 0u; final < 2u; final++) {
+        reset_case(INITIATOR, 1000);
+        request.absolute_deadline_ms = 1055u;
+        append_range(MSG_UWB_RESP, -1, false);
+        if (final) final_completion_pause_ms = 60u;
+        else poll_completion_pause_ms = 60u;
+        assert(run_stage(&result) == -ETIMEDOUT);
+        assert(result.status == RANGE_RX_TIMEOUT && result.exchange_started);
+        assert(poll_starts == 1u && poll_completions == 1u);
+        assert(tx_starts == final && final_completions == final);
+        assert(consumed == final);
+    }
+}
+
+static void test_deadline_abort_error_is_not_timeout_success(void)
+{
+    struct dwm3000_range_result result;
+    const enum stage entries[] = {POLL, INITIATOR};
+    for (unsigned i = 0u; i < sizeof(entries) / sizeof(entries[0]); i++) {
+        reset_case(entries[i], 1000);
+        request.absolute_deadline_ms = 1000u;
+        deadline_abort_error = -EIO;
+        assert(run_stage(&result) == -EIO && result.status == RANGE_RX_ERROR);
+        assert(tx_starts == 0u && poll_starts == 0u && arms == 0u);
+    }
+    for (enum stage stage = POLL; stage <= REPORT; stage++) {
+        reset_case(stage, 1000);
+        request.absolute_deadline_ms = 1020u;
+        append_range(stage_type(stage), -1, false)->completion_delay_ms = 30u;
+        deadline_abort_error = -EIO;
+        assert(run_stage(&result) == (stage == POLL ? -EAGAIN : -EIO));
+        assert(result.status != RANGE_RX_TIMEOUT && result.status != RANGE_OK);
+        assert(tx_starts == (unsigned)(stage == FINAL));
+    }
+    reset_case(POLL, 1000);
+    request.absolute_deadline_ms = 1000u;
+    deadline_abort_error = -ETIMEDOUT; /* A timed-out SPI command isn't quiet RF. */
+    assert(run_stage(&result) == -EIO && result.status == RANGE_RX_ERROR);
+    assert(arms == 0u && poll_starts == 0u && tx_starts == 0u);
+}
+
 int main(void)
 {
     /* Run both sides of 32-bit uptime rollover without resetting the clock. */
@@ -449,8 +739,16 @@ int main(void)
     for (size_t i = 0; i < sizeof(starts) / sizeof(starts[0]); i++) {
         test_foreign_then_expected(starts[i]);
         test_noise_timeout(starts[i]);
+        test_stale_attempt_starts_no_rf(starts[i]);
+        test_absolute_end_caps_every_receive_phase(starts[i]);
+        test_late_software_completion_cannot_accept_expected_frame(starts[i]);
     }
     test_hard_errors();
-    puts("DS-TWR receive filtering: real POLL/RESP/FINAL/REPORT, fixed deadlines and TX edge passed");
+    test_receive_entry_pause_keeps_original_end();
+    test_scheduled_response_and_final_must_fit_attempt();
+    test_delayed_marker_before_end_cannot_hide_late_frame_tail();
+    test_initiator_completion_cannot_publish_late_success();
+    test_deadline_abort_error_is_not_timeout_success();
+    puts("DS-TWR: receive filtering, whole-attempt deadlines and delayed RESPONSE/FINAL edges passed");
     return 0;
 }
