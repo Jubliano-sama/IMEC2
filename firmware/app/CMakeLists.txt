@@ -71,10 +71,38 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     mesh_anchor
     mesh_anchor_forcedhop
 )
+# Presets own cached identity, role and Kconfig settings. Reusing those values
+# for a different image can silently produce a hybrid; require a fresh cache.
+if(NOT DEFINED IMEC_CONFIGURED_PRESET AND
+   EXISTS "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt")
+    file(STRINGS "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt" imec_previous_preset
+        REGEX "^IMEC_BUILD_PRESET:[^=]*=")
+    if(imec_previous_preset)
+        string(REGEX REPLACE "^[^=]*=" "" IMEC_CONFIGURED_PRESET
+            "${imec_previous_preset}")
+        # CMake saves command-line cache changes even after a configure error.
+        # Retain the original owner before rejecting a legacy-cache migration.
+        set(IMEC_CONFIGURED_PRESET "${IMEC_CONFIGURED_PRESET}" CACHE INTERNAL
+            "Preset owning this build directory")
+    endif()
+endif()
+if(DEFINED IMEC_CONFIGURED_PRESET AND
+   NOT "${IMEC_CONFIGURED_PRESET}" STREQUAL "${IMEC_BUILD_PRESET}")
+    message(FATAL_ERROR
+        "Changing IMEC_BUILD_PRESET from '${IMEC_CONFIGURED_PRESET}' to '${IMEC_BUILD_PRESET}' requires a pristine build directory (west build -p always).")
+endif()
+set(IMEC_CONFIGURED_PRESET "${IMEC_BUILD_PRESET}" CACHE INTERNAL
+    "Preset owning this build directory")
+
 set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant")
 set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the connected-routing mesh runtime")
 set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
-set(IMEC_STACK_DIAGNOSTICS_BUILD OFF CACHE BOOL "Enable exact-preset RTT stack diagnostics")
+set(IMEC_STACK_DIAGNOSTICS_DEFAULT OFF)
+if(IMEC_BUILD_PRESET MATCHES "^mesh_(clicker|gateway|anchor|anchor_forcedhop)$")
+    set(IMEC_STACK_DIAGNOSTICS_DEFAULT ON)
+endif()
+set(IMEC_STACK_DIAGNOSTICS_BUILD ${IMEC_STACK_DIAGNOSTICS_DEFAULT} CACHE BOOL
+    "Enable exact-preset RTT stack diagnostics")
 set(IMEC_STACK_STRESS_BUILD OFF CACHE BOOL
     "Enable opt-in stack canaries and retained fatal context for an exact production mesh preset")
 set(IMEC_WATCHDOG_BYPASS_BUILD OFF CACHE BOOL
@@ -109,7 +137,6 @@ if(IMEC_BUILD_PRESET)
             "Build the connected-routing mesh runtime" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Clicker" CACHE STRING
             "Diagnostic name for connected-routing builds" FORCE)
-        set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
         set(IMEC_DEPLOYABLE_MESH_PRESET ON)
     elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_([1-8])$")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
@@ -127,7 +154,6 @@ if(IMEC_BUILD_PRESET)
             "Build the connected-routing mesh runtime" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Test Gateway" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
-        set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
         set(IMEC_DEPLOYABLE_MESH_PRESET ON)
     elseif(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter" OR
            IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
@@ -151,7 +177,6 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_DEVICE_ID "" CACHE STRING
             "Production mesh anchors always use the hardware-derived ID" FORCE)
         set(IMEC_USE_HARDWARE_DEVICE_ID ON)
-        set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
         if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor")
             set(IMEC_DEPLOYABLE_MESH_PRESET ON)
         endif()

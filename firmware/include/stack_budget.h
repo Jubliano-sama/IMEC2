@@ -28,9 +28,13 @@ extern "C" {
  * The prototype's user-approved static RAM reserve is 4 KiB for anchors and
  * gateway. This is separate from every measured per-thread stack margin.
  */
+/* Linked ARM cold reply capture, including request/listener/queue frames,
+ * ordinary queue-full logging, TLS and exception context. */
+#define STACK_BUDGET_CLICKER_ROUTE_CAPTURE_BOUND_BYTES 5932u
+
 /* STACK_BUDGET_POLICY_BEGIN */
 #define STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X)                              \
-    X(CLICKER, "mesh_clicker", 4096u, 6144u, 6784u, 8192u, 320u, 2048u, 1536u,   \
+    X(CLICKER, "mesh_clicker", 4096u, 6144u, 8064u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
       0u, 4096u, true, true, true, true, false)                               \

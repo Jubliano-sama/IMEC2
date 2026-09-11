@@ -772,6 +772,16 @@ bool mesh_queue_from_frame(const uint8_t *frame,
                                     previous_hop_id);
 }
 
+bool mesh_queue_from_frame_received_at(const uint8_t *frame, size_t frame_len,
+                                       uint8_t link_quality,
+                                       uint8_t radio_channel,
+                                       uint32_t received_at_ms)
+{
+    return mesh_queue_from_frame_at(frame, frame_len, link_quality,
+                                    radio_channel, received_at_ms, 0u,
+                                    NULL, 0u, NULL, NULL);
+}
+
 bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                     size_t frame_len,
                                     uint8_t link_quality,

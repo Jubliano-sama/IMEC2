@@ -9,6 +9,7 @@
 #include "app_gateway_ble_stream.h"
 #include "firmware_state_machines.h"
 #include "dwm3000_timing.h"
+#include "../app/src/app_mesh_result_handoff.c"
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -863,6 +864,130 @@ static void test_retained_bank_dedup_uses_semantics_until_completion(void)
     assert(!mesh_report_delivery_contains(&retry));
     k_mutex_unlock(&report_tx_queue_overflow_lock);
 }
+
+/* The queue boundary is still a bounded fake. Its semantic comparison and
+ * retained-bank lookup use production code, as does the downstream ACK gate. */
+static int admit_received_forward(const struct mesh_relay_result *result,
+                                  bool *hop_ack_allowed)
+{
+    struct app_mesh_result_handoff_status status;
+    bool admitted = false;
+    int ret = -ENOSPC;
+
+    assert((result->actions & MESH_RELAY_ACTION_FORWARD) != 0u);
+    assert((result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) == 0u);
+    k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    admitted = mesh_report_delivery_contains(&result->forward);
+    uint8_t incoming_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    assert(mesh_packet_semantic_digest(&result->forward.packet,
+        result->forward.payload, result->forward.payload_len, incoming_digest));
+    for (unsigned i = 0u; !admitted && i < queue_count; i++) {
+        uint8_t queued_digest[SEMANTIC_DIGEST_SHA256_LEN];
+        assert(mesh_packet_semantic_digest(&queue[i].packet, queue[i].payload,
+            queue[i].payload_len, queued_digest));
+        admitted = memcmp(incoming_digest, queued_digest,
+                          sizeof(incoming_digest)) == 0;
+    }
+    if (!admitted && queue_count < REPORT_TX_QUEUE_DEPTH) {
+        queue[queue_count++] = result->forward;
+        admitted = true;
+    }
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    if (admitted) ret = 0;
+    app_mesh_result_handoff_prepare_hop_ack(result, admitted, NULL, &status);
+    *hop_ack_allowed = status.hop_ack_allowed;
+    return ret;
+}
+
+static void test_returned_transit_requires_current_custody_before_ack(void)
+{
+    const uint64_t child = UINT64_C(0xc100);
+    const uint64_t parent = UINT64_C(0xb100);
+
+    for (unsigned changed_transport = 0u; changed_transport < 2u;
+         changed_transport++) {
+        reset_fixture(1u);
+        struct mesh_anchor_downlink_store store;
+        assert(mesh_relay_attach_anchor_downlink_store(&mesh_runtime, &store) == PROTO_OK);
+        mesh_runtime.upstream.candidates[0].next_hop_id = parent;
+        mesh_runtime.upstream.candidates[0].hop_count = 1u;
+        response_depth = 1u;
+        struct mesh_outbound incoming = queue[0];
+        incoming.packet.src_id = child;
+        queue_count = 0u;
+        struct mesh_relay_result result;
+        bool ack_allowed;
+
+        assert(mesh_relay_handle_rx(&mesh_runtime, &incoming.packet,
+            incoming.payload, incoming.payload_len, child, 90u, now_ms,
+            &result) == PROTO_OK);
+        assert(result.forward.next_hop_id == parent);
+        assert(admit_received_forward(&result, &ack_allowed) == 0 && ack_allowed);
+        assert(queue_count == 1u && mesh_report_delivery.count == 0u);
+
+        /* A lost child ACK and an alternate routed copy must find one owner,
+         * before and after bank transfer. TTL and age aren't identity; a
+         * reduced TTL is valid only when the physical hop isn't the source. */
+        struct mesh_outbound retry = incoming;
+        uint64_t retry_previous_hop = changed_transport ? parent : child;
+        if (changed_transport) {
+            retry.packet.ttl--;
+            retry.packet.message_age_ms += 100u;
+        }
+        for (unsigned in_bank = 0u; in_bank < 2u; in_bank++) {
+            if (in_bank) {
+                receive_error = -ETIMEDOUT;
+                assert(mesh_report_delivery_step() == 0);
+            }
+            assert(mesh_relay_handle_rx(&mesh_runtime, &retry.packet,
+                retry.payload, retry.payload_len, retry_previous_hop, 90u, now_ms,
+                &result) == PROTO_OK);
+            assert(result.status == PROTO_ERR_STALE);
+            assert(admit_received_forward(&result, &ack_allowed) == 0 && ack_allowed);
+            assert(queue_count == (in_bank ? 0u : 1u));
+            assert(mesh_report_delivery.count == (in_bank ? 1u : 0u));
+        }
+
+        /* An exact hop ACK from B retires A's actual production bank. The
+         * duplicate cache outlives that byte ownership. */
+        receive_error = 0;
+        sent_count = ack_reads = 0u;
+        assert(mesh_report_delivery_step() == 0);
+        assert(sent_count == 1u && sent[0].next_hop_id == parent);
+        assert(queue_count == 0u && mesh_report_delivery.count == 0u);
+        assert(!mesh_relay_tx_active(&mesh_runtime));
+
+        struct mesh_outbound returned = sent[0];
+        returned.packet.ttl--;
+        returned.packet.message_age_ms += 200u;
+        assert(mesh_relay_handle_rx(&mesh_runtime, &returned.packet,
+            returned.payload, returned.payload_len, parent, 90u, now_ms,
+            &result) == PROTO_OK);
+        assert(result.status == PROTO_ERR_STALE);
+        assert((result.actions & MESH_RELAY_ACTION_SEND_HOP_ACK) != 0u);
+        assert(result.hop_ack.next_hop_id == parent);
+
+        /* Capacity can disappear between RX and queue admission. No current
+         * owner means no ACK, even though this exact report was seen before. */
+        for (unsigned i = 0u; i < REPORT_TX_QUEUE_DEPTH; i++) {
+            queue[i] = incoming;
+            queue[i].packet.seq += (uint16_t)(i + 1u);
+        }
+        queue_count = REPORT_TX_QUEUE_DEPTH;
+        assert(admit_received_forward(&result, &ack_allowed) == -ENOSPC);
+        assert(!ack_allowed && mesh_report_delivery.count == 0u);
+        assert(queue_count == REPORT_TX_QUEUE_DEPTH);
+
+        /* Once space is available, A reacquires the returned bytes before
+         * granting B permission to release its copy. */
+        queue_count = 0u;
+        assert(admit_received_forward(&result, &ack_allowed) == 0 && ack_allowed);
+        assert(queue_count == 1u && mesh_report_delivery.count == 0u);
+        assert(admit_received_forward(&result, &ack_allowed) == 0 && ack_allowed);
+        assert(queue_count == 1u);
+    }
+}
+
 static void test_receiver_grant_and_cleanup(void)
 {
     for (unsigned gateway=0;gateway<2;gateway++) {
@@ -993,6 +1118,7 @@ int main(void)
     test_click_during_ack_wait_handoffs_only_after_radio_release();
     test_partial_ack_retry_key_belongs_to_unacknowledged_member();
     test_retained_bank_dedup_uses_semantics_until_completion();
+    test_returned_transit_requires_current_custody_before_ack();
     test_credit_and_partial_ack(); test_single_candidate_and_retained_full_queue();
     test_route_wait_and_terminal_completion();
     test_ack_rejection_and_refusal(); test_radio_failure_cleanup(); test_receiver_grant_and_cleanup();

@@ -29,6 +29,7 @@ int app_anchor_init(void)
             .anchor_consume_enumeration_handoff =
                 anchor_enumeration_rx_consume_survey_handoff,
             .anchor_reschedule = anchor_survey_work_reschedule,
+            .anchor_receive_cancel = anchor_survey_receive_cancel,
 #endif
         };
 
@@ -36,6 +37,11 @@ int app_anchor_init(void)
         if (ret < 0) {
             return ret;
         }
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+        k_work_init_delayable(&anchor_survey_cancel_forward_work,
+                              anchor_survey_cancel_forward_work_handler);
+#endif
     }
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
     if (gateway_host_command_msgq.max_msgs != GATEWAY_HOST_COMMAND_QUEUE_DEPTH) {

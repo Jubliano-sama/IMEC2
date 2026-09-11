@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 import math
 
@@ -29,6 +30,7 @@ CIR_WINDOW_SAMPLES = 192
 CIR_WINDOW_BYTES = CIR_SAMPLE_BYTES * CIR_WINDOW_SAMPLES
 CIR_ACCUMULATOR_SAMPLES = 2048
 CIR_FRAGMENT_COUNT = 2
+CIR_MAX_ASSEMBLY_ERRORS = 16
 
 CIR_FRAGMENT_TLV_TYPES = {
     TLV_UWB_CIR_BYTE_OFFSET,
@@ -149,13 +151,24 @@ def _format_ranges(ranges: tuple[tuple[int, int], ...]) -> str:
 
 
 class CirReassembler:
-    """Accumulates fragments without filling gaps or accepting overlaps."""
+    """Accumulates fragments in a bounded history without filling gaps.
 
-    def __init__(self) -> None:
-        self._assemblies: dict[CirAssemblyKey, _CirAssembly] = {}
+    The default covers every packet row in the GUI. At capacity, the least
+    recently updated assembly is retired, including abandoned partial streams;
+    a later fragment starts a new incomplete assembly rather than inventing
+    bytes from an evicted one.
+    """
+
+    def __init__(self, *, max_assemblies: int = 1000) -> None:
+        self.max_assemblies = max(1, int(max_assemblies))
+        self._assemblies: OrderedDict[CirAssemblyKey, _CirAssembly] = OrderedDict()
 
     def clear(self) -> None:
         self._assemblies.clear()
+
+    def discard(self, key: CirAssemblyKey) -> None:
+        """Release an assembly after its last packet row leaves the GUI."""
+        self._assemblies.pop(key, None)
 
     def view(self, key: CirAssemblyKey) -> CirAssemblyView | None:
         assembly = self._assemblies.get(key)
@@ -189,9 +202,12 @@ class CirReassembler:
         accepted = not new_errors
         if accepted:
             assembly.fragments[fragment.fragment_index] = fragment
+            self._assemblies.move_to_end(fragment.key)
         for error in new_errors:
             self._add_error(assembly, error)
         self._note_terminal_gaps(assembly)
+        while len(self._assemblies) > self.max_assemblies:
+            self._assemblies.popitem(last=False)
         return CirIngestResult(
             fragment.key,
             accepted,
@@ -456,8 +472,12 @@ class CirReassembler:
 
     @staticmethod
     def _add_error(assembly: _CirAssembly, error: str) -> None:
-        if error not in assembly.errors:
+        if error in assembly.errors:
+            return
+        if len(assembly.errors) < CIR_MAX_ASSEMBLY_ERRORS:
             assembly.errors.append(error)
+        elif len(assembly.errors) == CIR_MAX_ASSEMBLY_ERRORS:
+            assembly.errors.append("Additional CIR assembly errors omitted.")
 
     def _note_terminal_gaps(self, assembly: _CirAssembly) -> None:
         if len(assembly.fragments) != assembly.fragment_count:

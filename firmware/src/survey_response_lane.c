@@ -348,7 +348,8 @@ int survey_response_lane_bundle_for_offset(
             (uint8_t)(timing->round_offset_ms -
                       lane->round_offsets_ms[sequence]) >
                 ENUMERATION_RESPONSE_TX_LATE_GUARD_MS ||
-            (lane->acked_mask & (UINT16_C(1) << sequence)) != 0u) {
+            ((lane->acked_mask | lane->attempted_mask) &
+             (UINT16_C(1) << sequence)) != 0u) {
             continue;
         }
         start = (uint8_t)(sequence * SURVEY_RESPONSE_RECORDS_PER_BUNDLE);

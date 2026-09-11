@@ -76,7 +76,9 @@ struct app_node_comm_delivery_record {
     uint32_t reservation_token;
     uint8_t reservation_owner_kind;
     bool delivery_reserved;
+    bool message_origin_valid;
     uint64_t first_rf_started_at_ms;
+    uint64_t message_origin_at_ms;
 };
 
 static struct node_comm node_comm_policy;
@@ -3283,6 +3285,16 @@ int app_node_comm_service_deliveries(void)
 #endif
         return state_ret < 0 ? state_ret : -EAGAIN;
     }
+    if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD &&
+        attempt_record.message_origin_valid) {
+        /* Keep the submitted envelope immutable for idempotent admission.
+         * Only the transport view advances from its retained RF-backed clock;
+         * its absolute delivery cutoff remains unchanged across retries. */
+        attempt_record.packet.message_age_ms = 0u;
+        attempt_record.queued_at_ms =
+            (uint32_t)attempt_record.message_origin_at_ms;
+        attempt_record.queued_at_valid = true;
+    }
     attempt_view = (struct app_mesh_outbound_view) {
         .packet = &attempt_record.packet,
         .payload = attempt_payload,
@@ -3429,6 +3441,11 @@ int app_node_comm_service_deliveries(void)
     if (record != NULL && observation.rf_started &&
         record->first_rf_started_at_ms == 0u) {
         record->first_rf_started_at_ms = observation.rf_started_at_ms;
+    }
+    if (record != NULL && observation.rf_started &&
+        observation.message_origin_valid && !record->message_origin_valid) {
+        record->message_origin_at_ms = observation.message_origin_at_ms;
+        record->message_origin_valid = true;
     }
     if (record != NULL && durable_complete_ret < 0) {
         record->backend_attempt_outstanding = true;
@@ -4310,6 +4327,34 @@ int app_node_comm_delivery_first_rf_started_at(
         ret = -EAGAIN;
     } else {
         *rf_started_at_ms_out = record->first_rf_started_at_ms;
+        ret = 0;
+    }
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+int app_node_comm_delivery_message_origin_at(
+    uint32_t handle,
+    uint64_t *origin_at_ms_out)
+{
+    struct app_node_comm_delivery_record *record;
+    int ret;
+
+    if (handle == 0u || origin_at_ms_out == NULL) {
+        return -EINVAL;
+    }
+    ret = app_node_comm_sync_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    record = app_node_comm_delivery_record_for_handle(handle);
+    if (record == NULL) {
+        ret = -ENOENT;
+    } else if (record->first_rf_started_at_ms == 0u ||
+               !record->message_origin_valid) {
+        ret = -EAGAIN;
+    } else {
+        *origin_at_ms_out = record->message_origin_at_ms;
         ret = 0;
     }
     app_node_comm_sync_unlock();

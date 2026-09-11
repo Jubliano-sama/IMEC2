@@ -442,7 +442,7 @@ static void test_duplicate_relay_admission_is_coalesced(void)
           world.roles[relay].tx_queue_count);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_PACKET_COALESCED,
-                                     SOURCE_B_ID) == 1u,
+                                     SOURCE_B_ID) == 2u,
           "duplicate created a second upstream owner or failed to coalesce "
           "the child hop ACK");
     coalesced = mesh_sim_find_transition(
@@ -451,9 +451,24 @@ static void test_duplicate_relay_admission_is_coalesced(void)
         SOURCE_B_ID,
         0u);
     CHECK(coalesced != NULL &&
+              coalesced->msg_type == MSG_MESH_DATA &&
+              coalesced->peer_id == GATEWAY_ID,
+          "duplicate did not coalesce its existing upstream DATA owner");
+    coalesced = mesh_sim_find_transition(
+        &world, MESH_SIM_TRANSITION_PACKET_COALESCED, SOURCE_B_ID, 1u);
+    CHECK(coalesced != NULL &&
               coalesced->msg_type == MSG_MESH_HOP_ACK &&
               coalesced->peer_id == SOURCE_A_ID,
-          "duplicate did not coalesce only the child-facing hop ACK");
+          "duplicate did not coalesce its child-facing semantic hop ACK");
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &world.roles[relay].tx_queue[i];
+        if (queued->valid && queued->outbound.packet.msg_type == MSG_MESH_DATA) {
+            CHECK(queued->outbound.payload_len == sizeof(data_payload) &&
+                      memcmp(queued->outbound.payload, data_payload,
+                             sizeof(data_payload)) == 0,
+                  "duplicate changed the retained DATA bytes");
+        }
+    }
 }
 
 static size_t queued_packet_count(
@@ -594,6 +609,152 @@ static void test_expired_relay_dedup_reuses_exact_full_queue_owner(void)
                   &world, MESH_SIM_TRANSITION_PACKET_COALESCED,
                   SOURCE_B_ID) == coalesced_after_exact,
           "mutated replay was acknowledged or coalesced despite failed custody");
+}
+
+static void test_live_custody_coalesces_before_capacity_but_idle_history_does_not(void)
+{
+    static struct mesh_sim_world world;
+    struct proto_packet packet = data_packet(SOURCE_A_ID, 18u);
+    struct mesh_sim_queued_tx queue_snapshot[MESH_SIM_TX_QUEUE_CAPACITY];
+    struct mesh_pending_tx pending_snapshot;
+    struct mesh_outbound started;
+    const uint8_t payload[] = {0x51u};
+    const uint8_t mutated[] = {0x52u};
+    uint8_t source, relay, gateway, alternate;
+    size_t data_index = SIZE_MAX;
+    size_t coalesced_before;
+    size_t queued_before;
+    int ret;
+
+    phase = "live-custody-before-capacity";
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet.payload_len = sizeof(payload);
+    /* A physical relay child permits different positive forwarded TTLs;
+     * direct traffic from the logical source must retain the origin TTL. */
+    packet.ttl--;
+    mesh_sim_init(&world, UINT32_C(0x2018));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            SOURCE_A_ID + UINT64_C(0x100), GATEWAY_ID, 1u, &source) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                SOURCE_B_ID, GATEWAY_ID, 1u, &relay) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                                GATEWAY_ID, GATEWAY_ID, 1u, &gateway) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                ALT_PARENT_ID, GATEWAY_ID, 1u, &alternate) == MESH_SIM_OK,
+          "custody roles setup failed");
+    CHECK(mesh_sim_set_link(&world, source, relay, 100u, 0u) == MESH_SIM_OK &&
+              mesh_sim_set_link(&world, relay, gateway, 100u, 0u) == MESH_SIM_OK &&
+              mesh_sim_set_link(&world, relay, alternate, 90u, 0u) == MESH_SIM_OK &&
+              mesh_sim_install_route(&world, relay, gateway, 0u, 1u) == PROTO_OK &&
+              mesh_sim_install_route(&world, relay, alternate, 1u, 1u) == PROTO_OK,
+          "custody topology setup failed");
+    world.now_us = UINT64_C(1000000);
+    CHECK(mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         payload, sizeof(payload)) == MESH_SIM_OK,
+          "initial custody admission failed");
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        if (world.roles[relay].tx_queue[i].valid &&
+            world.roles[relay].tx_queue[i].outbound.packet.msg_type == MSG_MESH_DATA) {
+            data_index = i;
+            break;
+        }
+    }
+    CHECK(data_index != SIZE_MAX, "initial DATA owner missing");
+    struct mesh_sim_queued_tx *queued = &world.roles[relay].tx_queue[data_index];
+    CHECK(mesh_relay_start_tx(&world.roles[relay].relay,
+                              &queued->outbound.packet, queued->outbound.payload,
+                              queued->outbound.payload_len, 1000u, &started) == PROTO_OK,
+          "queued DATA could not transfer to real pending custody");
+    mesh_relay_note_tx_sent(&world.roles[relay].relay, &started, 1000u);
+    /* Complete the queue-to-core ownership transfer without introducing an
+     * unrelated RF schedule; the pending state itself is production code. */
+    memset(queued, 0, sizeof(*queued));
+    world.roles[relay].tx_queue_count--;
+    CHECK(mesh_relay_tx_active(&world.roles[relay].relay) &&
+              mesh_sim_set_tx_queue_capacity(&world, relay, 1u) == MESH_SIM_OK,
+          "pending DATA and full ACK queue were not established");
+    pending_snapshot = world.roles[relay].relay.pending;
+    memcpy(queue_snapshot, world.roles[relay].tx_queue, sizeof(queue_snapshot));
+
+    /* Semantic custody survives mutable hop metadata and a newly selected
+     * route. Neither change grants a second owner or advances its timers. */
+    (void)route_abandon_selected_at(&world.roles[relay].relay.upstream, 1001u);
+    CHECK(route_selected(&world.roles[relay].relay.upstream) != NULL &&
+              route_selected(&world.roles[relay].relay.upstream)->next_hop_id == ALT_PARENT_ID,
+          "alternate route was not selected");
+    packet.ttl--;
+    packet.message_age_ms += 73u;
+    world.now_us += 1000u;
+    coalesced_before = mesh_sim_count_transitions(
+        &world, MESH_SIM_TRANSITION_PACKET_COALESCED, SOURCE_B_ID);
+    CHECK(mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         payload, sizeof(payload)) == MESH_SIM_OK,
+          "live exact custody was rejected by a full queue");
+    CHECK(world.roles[relay].tx_queue_count == 1u &&
+              queued_type_count(&world.roles[relay], MSG_MESH_DATA) == 0u &&
+              memcmp(queue_snapshot, world.roles[relay].tx_queue, sizeof(queue_snapshot)) == 0 &&
+              world.roles[relay].relay.pending.packet.ttl == pending_snapshot.packet.ttl &&
+              world.roles[relay].relay.pending.packet.message_age_ms ==
+                  pending_snapshot.packet.message_age_ms &&
+              pending_identity_unchanged(&world.roles[relay].relay.pending, &pending_snapshot),
+          "exact retry allocated DATA or changed its live owner/timers");
+    CHECK(mesh_sim_count_transitions(&world, MESH_SIM_TRANSITION_PACKET_COALESCED,
+                                     SOURCE_B_ID) == coalesced_before + 2u,
+          "live custody and existing child ACK were not both coalesced: before=%zu after=%zu",
+          coalesced_before, mesh_sim_count_transitions(&world,
+              MESH_SIM_TRANSITION_PACKET_COALESCED, SOURCE_B_ID));
+
+    phase = "mutated-pending-custody-is-not-an-owner";
+    world.now_us += ((uint64_t)ROUTE_DEDUP_WINDOW_MS + 1u) * 1000u;
+    coalesced_before = mesh_sim_count_transitions(
+        &world, MESH_SIM_TRANSITION_PACKET_COALESCED, SOURCE_B_ID);
+    queued_before = mesh_sim_count_transitions(
+        &world, MESH_SIM_TRANSITION_PACKET_QUEUED, SOURCE_B_ID);
+    ret = mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         mutated, sizeof(mutated));
+    CHECK(ret == MESH_SIM_ERR_CAPACITY || ret == MESH_SIM_OK,
+          "mutated retry returned unexpected result %d", ret);
+    CHECK(memcmp(queue_snapshot, world.roles[relay].tx_queue, sizeof(queue_snapshot)) == 0 &&
+              pending_identity_unchanged(&world.roles[relay].relay.pending, &pending_snapshot) &&
+              mesh_sim_count_transitions(&world, MESH_SIM_TRANSITION_PACKET_COALESCED,
+                                         SOURCE_B_ID) == coalesced_before &&
+              mesh_sim_count_transitions(&world, MESH_SIM_TRANSITION_PACKET_QUEUED,
+                                         SOURCE_B_ID) == queued_before,
+          "mutated bytes borrowed pending custody or emitted an ACK");
+
+    phase = "idle-history-needs-new-capacity";
+    mesh_relay_cancel_tx(&world.roles[relay].relay);
+    CHECK(!mesh_relay_tx_active(&world.roles[relay].relay),
+          "old custody did not become idle");
+    world.now_us += ((uint64_t)ROUTE_DEDUP_WINDOW_MS + 1u) * 1000u;
+    CHECK(mesh_sim_install_route(&world, relay, gateway, 0u, 1u) == PROTO_OK,
+          "route refresh failed");
+    ret = mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         payload, sizeof(payload));
+    CHECK(ret == MESH_SIM_ERR_CAPACITY,
+          "idle history was accepted as custody despite a full queue: %d", ret);
+    CHECK(memcmp(queue_snapshot, world.roles[relay].tx_queue, sizeof(queue_snapshot)) == 0 &&
+              queued_type_count(&world.roles[relay], MSG_MESH_DATA) == 0u &&
+              mesh_sim_count_transitions(&world, MESH_SIM_TRANSITION_PACKET_COALESCED,
+                                         SOURCE_B_ID) == coalesced_before &&
+              mesh_sim_count_transitions(&world, MESH_SIM_TRANSITION_PACKET_QUEUED,
+                                         SOURCE_B_ID) == queued_before,
+          "failed reacquisition changed the queue or acknowledged custody");
+
+    /* Once capacity exists, the same exact report must be reacquired; a
+     * retained duplicate-cache entry cannot suppress its new owner. */
+    memset(world.roles[relay].tx_queue, 0, sizeof(world.roles[relay].tx_queue));
+    world.roles[relay].tx_queue_count = 0u;
+    CHECK(mesh_sim_set_tx_queue_capacity(&world, relay, 2u) == MESH_SIM_OK &&
+              mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                             payload, sizeof(payload)) == MESH_SIM_OK,
+          "available capacity did not reacquire idle-history report");
+    CHECK(world.roles[relay].tx_queue_count == 2u &&
+              queued_packet_count(&world.roles[relay], MSG_MESH_DATA,
+                                  packet.src_id, packet.session_id, packet.seq,
+                                  payload, sizeof(payload)) == 1u &&
+              queued_type_count(&world.roles[relay], MSG_MESH_HOP_ACK) == 1u,
+          "reacquisition did not create one DATA owner followed by its ACK");
 }
 
 static void test_malformed_control_is_inert(void)
@@ -989,6 +1150,7 @@ int main(void)
     test_duplicate_delivery_is_idempotent();
     test_duplicate_relay_admission_is_coalesced();
     test_expired_relay_dedup_reuses_exact_full_queue_owner();
+    test_live_custody_coalesces_before_capacity_but_idle_history_does_not();
     test_malformed_control_is_inert();
     test_same_seed_replays_delay_and_reordering();
     test_stale_relay_tick_cannot_mutate_new_operation();

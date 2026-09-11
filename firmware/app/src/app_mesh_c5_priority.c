@@ -99,16 +99,24 @@ bool app_mesh_c5_route_capture_relevant(
         state->control_origin_id : state->target_id;
 
     if (state->msg_type == MSG_ROUTE_REPLY) {
-        /* The route validator owns logical source and path identity.  This
-         * layer only correlates the reply to the active receive handoff. */
-        return state->dst_id == state->local_id &&
-               (!state->route_identity_required ||
-                (state->expected_session_id != 0u &&
-                 state->expected_flood_epoch_id != 0u &&
-                 state->expected_reply_nonce != 0u &&
-                 state->session_id == state->expected_session_id &&
-                 state->flood_epoch_id == state->expected_flood_epoch_id &&
-                 state->reply_nonce == state->expected_reply_nonce));
+        /* The route validator owns path and commitment validation. A
+         * rebroadcaster retains the original requester, so its reply is
+         * physically addressed here while the logical destination stays
+         * at that requester. Transit capture requires that exact owner. */
+        if (!state->route_identity_required) {
+            return state->dst_id == state->local_id;
+        }
+        return state->expected_origin_id != 0u &&
+               state->expected_origin_id != MESH_BROADCAST_ID &&
+               state->expected_origin_id != state->target_id &&
+               state->dst_id == state->expected_origin_id &&
+               state->src_id == state->target_id &&
+               state->expected_session_id != 0u &&
+               state->expected_flood_epoch_id != 0u &&
+               state->expected_reply_nonce != 0u &&
+               state->session_id == state->expected_session_id &&
+               state->flood_epoch_id == state->expected_flood_epoch_id &&
+               state->reply_nonce == state->expected_reply_nonce;
     }
 
     if (state->msg_type == MSG_GATEWAY_ROUTE_ADV) {

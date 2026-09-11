@@ -2053,30 +2053,8 @@ clicker_leaf_rx_allowed:
             return PROTO_OK;
         }
 
-        if (mesh_relay_packet_can_queue_gateway_report(relay, packet)) {
-            /*
-             * DUPLICATE_CLASS_EXACT is returned only for a digest-bound
-             * entry whose first delivery was accepted.  Per-hop custody is
-             * therefore already at this relay even if the child missed the
-             * original HOP_ACK.  Replay that terminal proof without creating
-             * a second upstream owner.  CUSTODY_ACCEPTED tells the platform
-             * handoff gate that this ACK is backed by existing custody rather
-             * than by a new forward in this receive turn.
-             */
-            add_hop_ack_action(relay,
-                               packet,
-                               payload,
-                               payload_len,
-                               previous_hop_id,
-                               now_ms,
-                               result);
-            result->actions |= MESH_RELAY_ACTION_CUSTODY_ACCEPTED |
-                               MESH_RELAY_ACTION_DROP;
-            result->status = PROTO_ERR_STALE;
-            return PROTO_OK;
-        }
-
         if (mesh_relay_tx_active(relay) &&
+            !mesh_relay_packet_can_queue_gateway_report(relay, packet) &&
             !late_gateway_ack_can_forward_independently(
                 relay, packet, previous_hop_id) &&
 #if !IMEC_MESH_RELAY_GATEWAY_ONLY
@@ -2099,21 +2077,6 @@ clicker_leaf_rx_allowed:
             if (ret != PROTO_ERR_NOT_FOUND) {
                 return PROTO_OK;
             }
-            if (mesh_relay_packet_can_queue_gateway_report(relay, packet)) {
-                /* The first copy transferred into the bounded app queue.
-                 * Repair only the child's hop ACK; the queue remains the one
-                 * immutable owner of the report. */
-                add_hop_ack_action(relay,
-                                   packet,
-                                   payload,
-                                   payload_len,
-                                   previous_hop_id,
-                                   now_ms,
-                                   result);
-                result->actions |= MESH_RELAY_ACTION_DROP;
-                result->status = PROTO_ERR_STALE;
-                return PROTO_OK;
-            }
             if (duplicate_busy_response_due(relay, packet, payload,
                                             payload_len, now_ms)) {
                 add_busy_action(relay, packet, payload, payload_len,
@@ -2124,6 +2087,11 @@ clicker_leaf_rx_allowed:
             return PROTO_OK;
         }
 
+        /* Duplicate history outlives queue/bank custody after a parent ACK.
+         * An exact report retry must therefore pass application admission
+         * again, including while an unrelated core transaction is active.
+         * The app deduplicates bytes it still owns or reacquires returned
+         * bytes, and permits the hop ACK only after admission succeeds. */
         ret = build_forward(relay,
                             packet,
                             payload,

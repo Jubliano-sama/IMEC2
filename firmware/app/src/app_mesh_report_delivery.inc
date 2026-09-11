@@ -1854,7 +1854,8 @@ unlock:
 static bool mesh_send_route_reply_outbound_action(const struct mesh_outbound *route_reply,
                                                   bool backup_valid,
                                                   uint64_t backup_next_hop_id,
-                                                  const char *reason)
+                                                  const char *reason,
+                                                  const uint32_t *owner_deadline_ms)
 {
     uint64_t route_reply_acked_next_hop = 0u;
     int ret;
@@ -1888,6 +1889,10 @@ static bool mesh_send_route_reply_outbound_action(const struct mesh_outbound *ro
             mesh_wait_until_ms(route_reply->earliest_tx_ms);
         }
     }
+    if (owner_deadline_ms != NULL &&
+        uptime_deadline_reached(k_uptime_get_32(), *owner_deadline_ms)) {
+        return false;
+    }
     if (mesh_id_is_unicast(route_reply->next_hop_id)) {
         mesh_c5_contact_exchange(route_reply->next_hop_id,
                                  C5_CONTACT_PURPOSE_ROUTE_REPLY,
@@ -1898,7 +1903,8 @@ static bool mesh_send_route_reply_outbound_action(const struct mesh_outbound *ro
     ret = mesh_send_route_reply_train(route_reply,
                                       backup_valid,
                                       backup_next_hop_id,
-                                      &route_reply_acked_next_hop);
+                                      &route_reply_acked_next_hop,
+                                      owner_deadline_ms);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_REPLY_ACTION_DONE ret=%d ack=0x%llx reason=%s\n",
                             ret,
@@ -1931,7 +1937,8 @@ static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
         &result->route_reply,
         result->route_reply_backup_valid,
         result->route_reply_backup_next_hop_id,
-        reason);
+        reason,
+        NULL);
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -2015,14 +2022,14 @@ static bool mesh_execute_route_request_action(uint64_t previous_hop_id,
     if (ret == 0 && mesh_id_is_unicast(previous_hop_id)) {
         memset(route_reply, 0, sizeof(*route_reply));
 
-        ret = mesh_relay_build_route_reply_for_request(&mesh_runtime,
-                                                       &route_req->packet,
-                                                       route_req->payload,
-                                                       route_req->payload_len,
-                                                       previous_hop_id,
-                                                       k_uptime_get_32(),
-                                                       sys_rand32_get(),
-                                                       route_reply);
+        ret = mesh_relay_build_route_reply_for_forwarded_request(
+            &mesh_runtime,
+            route_req,
+            previous_hop_id,
+            reply_deadline_ms,
+            k_uptime_get_32(),
+            sys_rand32_get(),
+            route_reply);
         if (ret == PROTO_OK) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_DIRECT_REPLY next=0x%llx seq=%u\n",
@@ -2032,13 +2039,20 @@ static bool mesh_execute_route_request_action(uint64_t previous_hop_id,
             handled = mesh_send_route_reply_outbound_action(route_reply,
                                                             false,
                                                             0u,
-                                                            "route-request-direct-probe-reply");
+                                                            "route-request-direct-probe-reply",
+                                                            &reply_deadline_ms);
             goto out;
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_DIRECT_REPLY_FAIL ret=%d\n",
                                 ret);
         }
+    }
+
+    /* The probe can consume the remaining owner lifetime. Neither a late
+     * reply nor another wake train may restart that request's deadline. */
+    if (uptime_deadline_reached(k_uptime_get_32(), reply_deadline_ms)) {
+        goto out;
     }
 
     ret = mesh_send_route_wake_train(MESH_BROADCAST_ID,
@@ -2664,6 +2678,8 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
         if (received_radio_channel == UWB_CHANNEL_WAKE_CONTACT) {
             const uint64_t ack_deadline_ms = (uint64_t)k_uptime_get() +
                 MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS;
+            const bool route_probe = rx != NULL &&
+                rx->packet.msg_type == MSG_GATEWAY_ROUTE_REQ;
 
             gateway_ack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
             gateway_ack->earliest_tx_ms = 0u;
@@ -2671,7 +2687,7 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
             /* Causal reply: publishes the RX-to-control handoff and may
              * transmit while later RX items are still queued, because the
              * sender's ACK window is far shorter than draining a backlog. */
-            if (mesh_c5_collect_ack(gateway_ack, rx)) {
+            if (!route_probe && mesh_c5_collect_ack(gateway_ack, rx)) {
                 if (gateway_ack_handed_off != NULL) {
                     *gateway_ack_handed_off = true;
                 }
@@ -2697,6 +2713,17 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                         gateway_ack,
                                         k_uptime_get_32());
                 mesh_c5_capture_followers(gateway_ack, rx);
+                goto after_gateway_ack;
+            }
+            if (route_probe) {
+                /* Contact probes own their bounded retry at the sender.
+                 * Retaining ACKs for fresh probe identities would consume
+                 * control-response capacity after that sender has moved on. */
+                status_debug_printf(
+                    "DBG_GATEWAY_ROUTE_PROBE_ACK_RETRY_OWNED ret=%d rxseq=%u ackseq=%u\n",
+                    ret,
+                    rx->packet.seq,
+                    gateway_ack->packet.seq);
                 goto after_gateway_ack;
             }
             /* The radio was busy in this turn; node communication owns the

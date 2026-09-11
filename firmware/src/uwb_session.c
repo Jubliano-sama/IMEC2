@@ -229,6 +229,15 @@ int uwb_clicker_decode_politeness_wait(const struct uwb_clicker_session *session
         if (ret != PROTO_OK) {
             return ret;
         }
+        /* Ordinary mesh contact is not another click's ranging reservation.
+         * Its repeated wake copies must not keep restarting the click gate.
+         * The caller still accounts for RF activity and checks for quiet;
+         * control followups and actual ranging claims retain their waits.
+         */
+        if (claim.flags ==
+            (FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY)) {
+            return PROTO_OK;
+        }
         if (clicker_peer_frame_relevant(session, claim.network_id, claim.clicker_id)) {
             *wait_ms = politeness_wait_nonzero(claim.claimed_duration_ms);
         }

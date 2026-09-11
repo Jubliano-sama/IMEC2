@@ -335,7 +335,8 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          int32_t *carrier_integrator,
                          bool *carrier_integrator_sampled,
                          uint64_t *ipatov_rx_timestamp,
-                         bool capture_rsl)
+                         bool capture_rsl,
+                         uint64_t absolute_deadline_ms)
 {
     int64_t deadline_ms;
     uint64_t observed_at_ms = 0u;
@@ -347,6 +348,10 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     *frame_len = 0u;
     driver_stats.rx_starts++;
     deadline_ms = k_uptime_get() + timeout_ms;
+    if (absolute_deadline_ms != 0u &&
+        absolute_deadline_ms < (uint64_t)deadline_ms) {
+        deadline_ms = (int64_t)absolute_deadline_ms;
+    }
 
     while (true) {
         uint32_t remaining_ms = remaining_timeout_ms(deadline_ms);
@@ -363,7 +368,9 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                                remaining_ms,
                                status,
                                true,
-                               &observed_at_ms);
+                               &observed_at_ms,
+                               absolute_deadline_ms == 0u ? 0u :
+                                   (uint64_t)deadline_ms);
         if (ret < 0) {
             if (ret == -ETIMEDOUT) {
                 driver_stats.rx_timeouts++;
@@ -374,6 +381,14 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                 dwt_forcetrxoff();
             }
             return ret;
+        }
+
+        if (absolute_deadline_ms != 0u &&
+            (uint64_t)k_uptime_get() >= absolute_deadline_ms) {
+            *status = 0u;
+            driver_stats.rx_timeouts++;
+            dwt_forcetrxoff();
+            return -ETIMEDOUT;
         }
 
         if ((*status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
@@ -459,6 +474,110 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     }
 }
 
+static int64_t range_request_deadline_ms(
+    const struct dwm3000_range_request *request, uint32_t timeout_ms)
+{
+    int64_t deadline_ms = k_uptime_get() + timeout_ms;
+
+    if (request->absolute_deadline_ms != 0u &&
+        request->absolute_deadline_ms < (uint64_t)deadline_ms) {
+        deadline_ms = (int64_t)request->absolute_deadline_ms;
+    }
+    return deadline_ms;
+}
+
+static int range_abort_timeout(void)
+{
+    int ret;
+
+    dwt_forcetrxoff();
+    ret = take_port_error("range-deadline-abort");
+    return ret < 0 ? (ret == -ETIMEDOUT ? -EIO : ret) : -ETIMEDOUT;
+}
+
+static int range_request_check_deadline(
+    const struct dwm3000_range_request *request)
+{
+    if (request->absolute_deadline_ms != 0u &&
+        (uint64_t)k_uptime_get() >= request->absolute_deadline_ms) {
+        return range_abort_timeout();
+    }
+    return 0;
+}
+
+static uint32_t range_request_timeout_ms(
+    const struct dwm3000_range_request *request, uint32_t timeout_ms)
+{
+    if (request->absolute_deadline_ms == 0u) {
+        return timeout_ms;
+    }
+    return remaining_timeout_ms(range_request_deadline_ms(request, timeout_ms));
+}
+
+static int range_request_send_frame(
+    const struct dwm3000_range_request *request,
+    const uint8_t *frame, size_t frame_len, uint8_t tx_mode)
+{
+    uint64_t deadline_ms = request->absolute_deadline_ms;
+
+    if (deadline_ms != 0u) {
+        uint64_t airtime_ms = (dwm3000_timing_airtime_us_ceil(
+            DWM3000_TIMING_PHY_CH5_RANGE, frame_len) + 999u) / 1000u;
+
+        /* The shared sender bounds the hardware TX start. Reserve complete
+         * airtime here so an admitted start cannot cross the attempt end. */
+        if (deadline_ms <= airtime_ms) {
+            return -ESTALE;
+        }
+        deadline_ms -= airtime_ms;
+    }
+    {
+        bool rf_start_possible = false;
+        int ret = send_range_frame_until(frame, frame_len, tx_mode, deadline_ms,
+                                         &rf_start_possible, NULL);
+
+        /* A refusal before the TX command must not masquerade as a completed
+         * RF wait. Preserve errors after an ambiguously emitted command. */
+        return deadline_ms != 0u && ret == -ETIMEDOUT && !rf_start_possible ?
+               -ESTALE : ret;
+    }
+}
+
+static int range_request_start_prepared_frame(
+    const struct dwm3000_range_request *request,
+    size_t frame_len, uint8_t tx_mode, uint32_t tx_time)
+{
+    if (request->absolute_deadline_ms != 0u) {
+        uint32_t device_now = dwt_readsystimestamphi32();
+        uint64_t host_now_ms = (uint64_t)k_uptime_get();
+        int32_t until_marker = (int32_t)((tx_time & UINT32_C(0xfffffffe)) -
+                                         device_now);
+        uint64_t tail_rctu = dwm3000_timing_airtime_rctu(
+            DWM3000_TIMING_PHY_CH5_RANGE, frame_len) -
+            dwm3000_timing_shr_rctu(DWM3000_TIMING_PHY_CH5_RANGE) +
+            DWM3000_TIMING_TX_ANTENNA_DELAY_RCTU;
+        uint64_t finish_us;
+        int ret = take_port_error("range-deadline-tx-system-time");
+
+        if (ret < 0) {
+            return ret == -ETIMEDOUT ? -EIO : ret;
+        }
+        if (until_marker <= 0 || host_now_ms >= request->absolute_deadline_ms) {
+            return range_abort_timeout();
+        }
+        finish_us = dwm3000_timing_rctu_to_us_ceil(
+            ((uint64_t)(uint32_t)until_marker << 8) + tail_rctu);
+        /* Uptime truncates below one millisecond. Round outward, including
+         * that uncertainty, before accepting the fixed DS-TWR reply edge. */
+        if (request->absolute_deadline_ms - host_now_ms <=
+            (finish_us + 999u) / 1000u) {
+            return range_abort_timeout();
+        }
+    }
+    dwt_setdelayedtrxtime(tx_time);
+    return start_prepared_range_frame(frame_len, tx_mode);
+}
+
 /* Ignore a foreign frame without giving it a fresh receive budget. The
  * caller owns the original deadline and the staged delayed-TX bytes. */
 static int range_rearm_ignored_frame(int64_t deadline_ms)
@@ -466,6 +585,7 @@ static int range_rearm_ignored_frame(int64_t deadline_ms)
     int ret;
 
     if (remaining_timeout_ms(deadline_ms) == 0u) {
+        dwt_forcetrxoff();
         return -ETIMEDOUT;
     }
     dwt_forcetrxoff();
@@ -473,6 +593,9 @@ static int range_rearm_ignored_frame(int64_t deadline_ms)
     ret = take_port_error("range-ignore-frame");
     if (ret < 0) {
         return ret;
+    }
+    if (remaining_timeout_ms(deadline_ms) == 0u) {
+        return -ETIMEDOUT;
     }
     return start_immediate_rx();
 }
@@ -487,12 +610,15 @@ static int receive_response(const struct dwm3000_range_request *request,
     uint32_t status = 0u;
     size_t frame_len;
     int ret;
-    const int64_t deadline_ms = k_uptime_get() +
-        (request->timeout_ms == 0u ? RESP_RX_TIMEOUT_MS : request->timeout_ms);
+    const int64_t deadline_ms = range_request_deadline_ms(request,
+        request->timeout_ms == 0u ? RESP_RX_TIMEOUT_MS : request->timeout_ms);
     uint32_t remaining_ms;
 
 receive_response_again:
     remaining_ms = remaining_timeout_ms(deadline_ms);
+    if (remaining_ms == 0u) {
+        dwt_forcetrxoff();
+    }
     ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms,
                         &status,
                         rx_buffer,
@@ -508,7 +634,12 @@ receive_response_again:
                         NULL,
                         NULL,
                         NULL,
-                        false);
+                        false,
+                        request->absolute_deadline_ms == 0u ? 0u :
+                            (uint64_t)deadline_ms);
+    if (ret == 0) {
+        ret = range_request_check_deadline(request);
+    }
     if (ret == -EMSGSIZE) {
         goto ignore_response;
     }
@@ -561,14 +692,23 @@ static int receive_report(const struct dwm3000_range_request *request,
     uint32_t status = 0u;
     size_t frame_len;
     int ret;
-    const int64_t deadline_ms = k_uptime_get() + REPORT_RX_TIMEOUT_MS;
+    const int64_t deadline_ms = range_request_deadline_ms(request,
+                                                         REPORT_RX_TIMEOUT_MS);
     uint32_t remaining_ms;
 
 receive_report_again:
     remaining_ms = remaining_timeout_ms(deadline_ms);
+    if (remaining_ms == 0u) {
+        dwt_forcetrxoff();
+    }
     ret = remaining_ms == 0u ? -ETIMEDOUT : receive_frame(remaining_ms, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false);
+                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false,
+                        request->absolute_deadline_ms == 0u ? 0u :
+                            (uint64_t)deadline_ms);
+    if (ret == 0) {
+        ret = range_request_check_deadline(request);
+    }
     if (ret == -EMSGSIZE) {
         goto ignore_report;
     }
@@ -774,7 +914,7 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
                         NULL,
                         NULL,
                         NULL,
-                        false);
+                        false, 0u);
     if (ret < 0) {
         if (result != NULL) {
             result->clicker_diag_dropped = true;
@@ -886,7 +1026,7 @@ static int receive_anchor_diag(const struct dwm3000_range_request *request,
                         NULL,
                         NULL,
                         NULL,
-                        false);
+                        false, 0u);
     if (ret < 0) {
         return ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
     }
@@ -975,7 +1115,7 @@ static int receive_anchor_diag_fragments(const struct dwm3000_range_request *req
                             NULL,
                             NULL,
                             NULL,
-                            false);
+                            false, 0u);
         if (ret < 0) {
             last_error = ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
             if (ret == -ETIMEDOUT) {

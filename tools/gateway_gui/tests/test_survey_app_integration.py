@@ -224,17 +224,17 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         self.assertIsNone(gui.survey_model.generation)
         self.assertEqual(gui._survey_event_buffer, [])
 
-    def test_all_survey_controls_expire_before_applying_a_late_result(self) -> None:
+    def test_only_uncertain_start_and_plan_accept_exact_late_results(self) -> None:
         for command in (CMD_SURVEY_START, CMD_SURVEY_PLAN, CMD_SURVEY_CANCEL, CMD_SURVEY_GET_STATUS):
             gui = self.recovery_gui()
             gui.survey_command_owner.begin(command, 50, 1, "control", now=0., timeout_s=1.)
             gui._observe_survey_command_result(result_packet(command, 50, 1, 0), received_at=2.)
             self.assertIsNone(gui.survey_command_owner.pending)
-            self.assertFalse(gui.survey_model.start_accepted)
-            self.assertFalse(gui.survey_model.plan_accepted)
+            self.assertEqual(gui.survey_model.start_accepted, command == CMD_SURVEY_START)
+            self.assertEqual(gui.survey_model.plan_accepted, command == CMD_SURVEY_PLAN)
             if command in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
-                self.assertEqual(gui._survey_phase, "recovering")
-                self.assertTrue(gui.survey_model.active)  # Preserve remote ownership until status recovery.
+                self.assertIsNone(gui.survey_command_owner.uncertain)
+                self.assertTrue(gui.survey_model.active)
 
     def test_lost_events_get_three_owned_status_attempts_then_unknown_failure(self) -> None:
         gui = self.recovery_gui()
@@ -299,6 +299,9 @@ class SurveyAppIntegrationTests(unittest.TestCase):
         gui._cancel_survey = Mock()
         gui._submit_survey_dispatch = Mock()
         assignment = SurveyAssignmentIdentity(71, 81, bytes((0x5A,)) * 32, 20, 8)
+        gui._survey_generation = gui.survey_model.generation = 9
+        gui._survey_assignment = gui.survey_model.assignment = assignment
+        gui._survey_phase = gui.survey_model.phase = "planning"
         gui._submit_next_survey_batch(9, assignment)
         self.assertEqual(gui._survey_pair_batches, (pairs,))
         gui._cancel_survey.assert_called_once()

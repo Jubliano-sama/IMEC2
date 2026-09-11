@@ -29,10 +29,13 @@ struct app_survey_ops {
     int (*anchor_consume_enumeration_handoff)(uint32_t assignment_epoch);
     int (*anchor_reschedule)(struct k_work_delayable *work,
                              uint32_t delay_ms);
+    bool (*anchor_receive_cancel)(const uint8_t *frame, size_t frame_len);
 };
 
 struct app_survey_gateway_roster {
     struct survey_assignment_identity assignment;
+    uint32_t host_session_id;
+    uint16_t host_sequence;
     uint64_t node_ids[SURVEY_MAX_ANCHORS];
     uint8_t slots[SURVEY_MAX_ANCHORS];
     uint8_t hop_counts[SURVEY_MAX_ANCHORS];
@@ -49,6 +52,9 @@ int app_survey_gateway_submit_plan(
     struct survey_plan_build_result *result_out);
 int app_survey_gateway_abort(const struct survey_identity *identity);
 int app_survey_gateway_status(struct survey_event *event_out);
+/* Replay exact host control acceptance before the latest status. */
+int app_survey_gateway_acceptance(enum survey_event_kind kind,
+                                  struct survey_event *event_out);
 bool app_survey_gateway_active(void);
 bool app_survey_gateway_response_window(uint64_t now_ms,
                                         uint64_t *round_deadline_ms);

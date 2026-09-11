@@ -29,6 +29,10 @@ BUILD_ASSERT(APP_WATCHDOG_PROGRESS_LEASE_MS + APP_WATCHDOG_CHECK_MS <
 BUILD_ASSERT(APP_WATCHDOG_INIT_RETRY_DELAY_MS <
              APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
              "watchdog initialization retry must remain bounded");
+BUILD_ASSERT(APP_WATCHDOG_TERMINAL_RESTART_MIN_BOOT_MS +
+                 APP_WATCHDOG_TERMINAL_RESTART_DELAY_MS <
+                 APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
+             "terminal restart backoff must fit the production watchdog");
 
 static const struct device *const watchdog_device =
     DEVICE_DT_GET_OR_NULL(DT_NODELABEL(wdt0));
@@ -42,11 +46,13 @@ static atomic_t clicker_action_progress_generation;
 static atomic_t clicker_action_progress_ms;
 static atomic_t feeding_stopped;
 static atomic_t bypass_stop_reported;
-static uint32_t startup_grace_until_ms;
+static uint64_t startup_grace_until_ms;
 static bool stale_reported;
 static int8_t zephyr_watchdog_channel = -1;
 static uint8_t inherited_reload_request_mask;
 static struct app_watchdog_health watchdog_health;
+/* Unknown reset history must not reopen a rapid durable-boot write loop. */
+static bool terminal_restart_boot_backoff = true;
 
 static void watchdog_timer_handler(struct k_timer *timer);
 static void watchdog_bypass_feed(void);
@@ -73,6 +79,10 @@ static void system_progress_work_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     atomic_set(&system_progress_ms, (atomic_val_t)k_uptime_get_32());
+    if (clicker_idle_watchdog_coalesced()) {
+        watchdog_timer_handler(NULL);
+        return;
+    }
     (void)k_work_reschedule(&system_progress_work,
                             K_MSEC(APP_WATCHDOG_CHECK_MS));
 }
@@ -111,11 +121,11 @@ static uint8_t feed_inherited_watchdog(bool feeding_allowed)
 
 static void start_watchdog_health_monitor(void)
 {
+    k_work_init_delayable(&system_progress_work,
+                          system_progress_work_handler);
     if (clicker_idle_watchdog_coalesced()) {
         return;
     }
-    k_work_init_delayable(&system_progress_work,
-                          system_progress_work_handler);
     k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
     (void)k_work_reschedule(&system_progress_work, K_NO_WAIT);
     k_timer_start(&watchdog_timer,
@@ -125,7 +135,8 @@ static void start_watchdog_health_monitor(void)
 
 static void watchdog_timer_handler(struct k_timer *timer)
 {
-    uint32_t now_ms = k_uptime_get_32();
+    uint64_t now_uptime_ms = (uint64_t)k_uptime_get();
+    uint32_t now_ms = (uint32_t)now_uptime_ms;
     uint32_t system_age_ms;
     uint32_t radio_age_ms;
     uint32_t clicker_action_age_ms;
@@ -170,7 +181,7 @@ static void watchdog_timer_handler(struct k_timer *timer)
         now_ms,
         clicker_action_progress_ms_value,
         APP_WATCHDOG_PROGRESS_LEASE_MS);
-    if ((int32_t)(now_ms - startup_grace_until_ms) < 0) {
+    if (now_uptime_ms < startup_grace_until_ms) {
         system_stale = false;
         radio_stale = false;
         clicker_action_stale = false;
@@ -248,8 +259,17 @@ int app_watchdog_init(void)
     int ret;
 
     memset(&watchdog_health, 0, sizeof(watchdog_health));
-    (void)hwinfo_get_reset_cause(&watchdog_health.reset_cause);
-    (void)hwinfo_clear_reset_cause();
+    ret = hwinfo_get_reset_cause(&watchdog_health.reset_cause);
+    /* nRF52833 POR/BOR reports no RESETREAS bits. Accept only an exact cold
+     * or pin reset; mixed, unknown and failed observations stay conservative.
+     * A watchdog reset may corrupt retained RAM, so no RAM breadcrumb is
+     * needed or trusted when selecting this boot's recovery policy. */
+    terminal_restart_boot_backoff =
+        ret != 0 || (watchdog_health.reset_cause != 0u &&
+                     watchdog_health.reset_cause != RESET_PIN);
+    if (hwinfo_clear_reset_cause() != 0) {
+        terminal_restart_boot_backoff = true;
+    }
     atomic_set(&system_progress_ms, (atomic_val_t)now_ms);
     atomic_set(&radio_progress_ms, (atomic_val_t)now_ms);
     atomic_clear(&clicker_action_generation_counter);
@@ -259,7 +279,8 @@ int app_watchdog_init(void)
     atomic_clear(&feeding_stopped);
     atomic_clear(&bypass_stop_reported);
     stale_reported = false;
-    startup_grace_until_ms = now_ms + APP_WATCHDOG_STARTUP_GRACE_MS;
+    startup_grace_until_ms =
+        (uint64_t)k_uptime_get() + APP_WATCHDOG_STARTUP_GRACE_MS;
     zephyr_watchdog_channel = -1;
     inherited_reload_request_mask = 0u;
 
@@ -373,12 +394,42 @@ void app_watchdog_clicker_idle_checkpoint(void)
         return;
     }
 
-    /* The production clicker is already awake for its ten-second battery
+    /* The production clicker is already awake for its battery
      * pulse. Refresh the system-workqueue lease and service the hardware
      * watchdog at that same boundary, so watchdog supervision adds no
      * one-second timer or workqueue wakeups while retained-idle. */
     atomic_set(&system_progress_ms, (atomic_val_t)k_uptime_get_32());
     watchdog_timer_handler(NULL);
+}
+
+bool app_watchdog_clicker_action_checkpoint(uint32_t generation)
+{
+    uint32_t active_generation =
+        (uint32_t)atomic_get(&clicker_action_active_generation);
+
+    if (generation == 0u || active_generation != generation ||
+        atomic_get(&feeding_stopped) != 0 ||
+        app_watchdog_action_lease_stale(
+            active_generation,
+            (uint32_t)atomic_get(&clicker_action_active_generation),
+            (uint32_t)atomic_get(&clicker_action_progress_generation),
+            k_uptime_get_32(),
+            (uint32_t)atomic_get(&clicker_action_progress_ms),
+            APP_WATCHDOG_PROGRESS_LEASE_MS)) {
+        return false;
+    }
+    if (!clicker_idle_watchdog_coalesced()) {
+        return true;
+    }
+    if (IS_ENABLED(CONFIG_IMEC_WATCHDOG_BYPASS)) {
+        watchdog_bypass_feed();
+        return true;
+    }
+
+    /* Actions can indefinitely postpone the battery pulse. Queue one check
+     * at their completed boundary: the system worker must actually run before
+     * it may refresh its own lease and pass the normal watchdog health gate. */
+    return k_work_reschedule(&system_progress_work, K_NO_WAIT) >= 0;
 }
 
 void app_watchdog_note_radio_progress(void)
@@ -464,8 +515,23 @@ K_TIMER_DEFINE(terminal_restart_timer, terminal_restart_handler, NULL);
 void app_watchdog_schedule_terminal_restart(void)
 {
     if (atomic_cas(&terminal_restart_scheduled, 0, 1)) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+        uint32_t delay_ms = APP_WATCHDOG_TERMINAL_RESTART_DELAY_MS;
+
+        if (terminal_restart_boot_backoff &&
+            now_ms < APP_WATCHDOG_TERMINAL_RESTART_MIN_BOOT_MS) {
+            uint32_t remaining_ms =
+                APP_WATCHDOG_TERMINAL_RESTART_MIN_BOOT_MS - (uint32_t)now_ms;
+
+            if (remaining_ms > delay_ms) {
+                delay_ms = remaining_ms;
+            }
+        }
+        /* Feeds remain stopped. An inherited shorter hardware timeout can
+         * preempt this delay once; its watchdog reset also resets the WDT,
+         * allowing the next boot to install the normal one-hour timeout. */
         k_timer_start(&terminal_restart_timer,
-                      K_MSEC(APP_WATCHDOG_TERMINAL_RESTART_DELAY_MS),
+                      K_MSEC(delay_ms),
                       K_NO_WAIT);
     }
 }

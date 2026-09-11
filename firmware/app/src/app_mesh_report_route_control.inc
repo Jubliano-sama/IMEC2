@@ -307,10 +307,9 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
         return -EBUSY;
     }
 
-    mesh_c5_contact_exchange(route_reply->next_hop_id,
-                             C5_CONTACT_PURPOSE_ROUTE_REPLY,
-                             k_uptime_get_32() + RREP_ACK_TIMEOUT_MS,
-                             "route-reply-ack-listen");
+    /* Successful reply TX already established the complete retry exchange.
+     * This ACK receive deadline must not shorten that peer contact, or its
+     * first timeout would forbid every remaining bounded reply attempt. */
     mesh_stop_role_scan();
     ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_RX,
                                      "mesh route reply ACK RX",
@@ -321,7 +320,7 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
     }
 
     uwb_window_start_ms = k_uptime_get();
-    ret = dwm3000_driver_configure_wake_mode();
+    ret = dwm3000_driver_configure_wake_mesh_control_mode();
     if (ret == 0) {
         uint32_t listen_start_ms = k_uptime_get_32();
 
@@ -466,7 +465,9 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
         goto out_unlock;
     }
 
-    ret = last_ret;
+    /* A decoded but unrelated frame is not acknowledgement. It can be the
+     * final receive before the deadline, leaving the driver's status zero. */
+    ret = last_ret < 0 ? last_ret : -ETIMEDOUT;
 
 out_unlock:
     k_mutex_unlock(&mesh_route_reply_ack_scratch_lock);
@@ -477,7 +478,8 @@ out_unlock:
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
                                        uint8_t attempt,
-                                       bool apply_turnaround_delay)
+                                       bool apply_turnaround_delay,
+                                       const uint32_t *owner_deadline_ms)
 {
     uint8_t repeat_count = 1u;
     uint8_t sent_count = 0u;
@@ -506,11 +508,38 @@ static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
             k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS);
         }
 
-        last_ret = mesh_send_c5_causal_response(
-            route_reply,
-            C5_CONTACT_PURPOSE_ROUTE_REPLY,
-            MESH_C5_CONTROL_WAKE_IF_NEEDED,
-            i == 0u ? "route-reply" : "route-reply-repeat");
+        if (owner_deadline_ms != NULL) {
+            uint64_t now_ms = (uint64_t)k_uptime_get();
+            int32_t remaining_ms =
+                (int32_t)(*owner_deadline_ms - (uint32_t)now_ms);
+            size_t frame_len = UWB_MESH_FRAME_HEADER_LEN +
+                proto_packet_encoded_len(route_reply->payload_len) +
+                UWB_FRAME_CRC_LEN;
+            uint64_t airtime_ms = (mesh_transmitted_frame_airtime_us(
+                UWB_CHANNEL_WAKE_CONTACT, true, frame_len) + 999u) / 1000u;
+
+            if (remaining_ms <= 0 || (uint64_t)remaining_ms <= airtime_ms) {
+                return -ETIMEDOUT;
+            }
+            /* Reserve complete C5 control airtime. The driver's delayed-TX
+             * deadline check runs after configuration/SPI, so a late retry
+             * cannot escape this owner's end. A wrapped zero is still valid.
+             * This reply already owns a listening peer; losing that contact
+             * must not start an unbounded replacement wake train. */
+            last_ret = mesh_send_c5_control_attempt(
+                route_reply,
+                C5_CONTACT_PURPOSE_ROUTE_REPLY,
+                MESH_C5_CONTROL_ACCEPTED_EXCHANGE,
+                i == 0u ? "route-reply" : "route-reply-repeat",
+                now_ms + (uint32_t)remaining_ms - airtime_ms,
+                NULL, NULL, FW_C5_TX_INTENT_CAUSAL_RESPONSE, false);
+        } else {
+            last_ret = mesh_send_c5_causal_response(
+                route_reply,
+                C5_CONTACT_PURPOSE_ROUTE_REPLY,
+                MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                i == 0u ? "route-reply" : "route-reply-repeat");
+        }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ROUTE_REPLY_TX_REPEAT attempt=%u idx=%u ret=%d sent=%u\n",
                                 attempt,
@@ -531,7 +560,9 @@ static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
 #endif
 
 #if DEVICE_ROLE == ROLE_ANCHOR
-static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_reply)
+static int mesh_send_route_reply_train_to_hop(
+    const struct mesh_outbound *route_reply,
+    const uint32_t *owner_deadline_ms)
 {
     int last_ret = -EINVAL;
 
@@ -546,7 +577,9 @@ static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_
         };
         struct app_mesh_route_reply_ack_attempt_result attempt_result;
 
-        last_ret = mesh_send_route_reply_burst(route_reply, attempt, attempt == 0u);
+        last_ret = mesh_send_route_reply_burst(route_reply, attempt,
+                                               attempt == 0u,
+                                               owner_deadline_ms);
         attempt_state.send_ret = last_ret;
         if (last_ret == 0) {
             last_ret = mesh_listen_for_route_reply_ack(route_reply, attempt);
@@ -582,7 +615,8 @@ static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_
 static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
                                        bool backup_valid,
                                        uint64_t backup_next_hop_id,
-                                       uint64_t *acked_next_hop_id)
+                                       uint64_t *acked_next_hop_id,
+                                       const uint32_t *owner_deadline_ms)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
     struct mesh_outbound *backup_route_reply = &mesh_route_reply_backup_scratch;
@@ -598,7 +632,7 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
         return -EINVAL;
     }
 
-    ret = mesh_send_route_reply_train_to_hop(route_reply);
+    ret = mesh_send_route_reply_train_to_hop(route_reply, owner_deadline_ms);
     if (ret == 0) {
         if (acked_next_hop_id != NULL) {
             *acked_next_hop_id = route_reply->next_hop_id;
@@ -630,7 +664,7 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
         mesh_relay_note_route_reply_retry(&mesh_runtime);
     }
 
-    ret = mesh_send_route_reply_train_to_hop(backup_route_reply);
+    ret = mesh_send_route_reply_train_to_hop(backup_route_reply, owner_deadline_ms);
     if (ret == 0 && acked_next_hop_id != NULL) {
         *acked_next_hop_id = backup_route_reply->next_hop_id;
     } else if (ret != 0) {
@@ -646,6 +680,7 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
     ARG_UNUSED(backup_valid);
     ARG_UNUSED(backup_next_hop_id);
     ARG_UNUSED(acked_next_hop_id);
+    ARG_UNUSED(owner_deadline_ms);
     return -ENOTSUP;
 #endif
 }
@@ -2322,7 +2357,9 @@ static bool mesh_route_capture_identity_from_request(
     if (request == NULL || identity == NULL ||
         request->packet.msg_type != MSG_ROUTE_REQ ||
         request->packet.session_id == 0u ||
+        !mesh_id_is_unicast(request->packet.src_id) ||
         !mesh_id_is_unicast(target_id) ||
+        request->packet.src_id == target_id ||
         !mesh_route_capture_find_u32(request->payload,
                                      request->payload_len,
                                      TLV_FLOOD_EPOCH_ID,
@@ -2332,6 +2369,7 @@ static bool mesh_route_capture_identity_from_request(
     }
 
     *identity = (struct mesh_route_capture_identity) {
+        .origin_id = request->packet.src_id,
         .session_id = request->packet.session_id,
         .flood_epoch_id = flood_epoch_id,
         .reply_nonce = mesh_route_reply_nonce(request->packet.src_id,
@@ -2742,7 +2780,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                         parsed.payload,
                                         sizeof(parsed.payload),
                                         &parsed.payload_len);
-            if (ret != PROTO_OK || parsed.payload_len > UINT8_MAX) {
+            /* This followup also receives extended uplinks and commands.
+             * The decoder bounds their full payload to the parse buffer;
+             * envelope validation and queue admission retain that length. */
+            if (ret != PROTO_OK) {
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_printf("DBG_ROUTE_REPLY_DECODE_FAIL ret=%d len=%u q=%u\n",
                                         ret,
@@ -2814,6 +2855,23 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 if (validate_ret != PROTO_OK) {
                     status_debug_printf(
                         "DBG_ROUTE_REPLY_IDENTITY_REJECT prev=0x%llx seq=%u ret=%d\n",
+                        (unsigned long long)parsed.previous_hop_id,
+                        parsed.packet.seq,
+                        validate_ret);
+                    continue;
+                }
+            } else if (parsed.packet.msg_type == MSG_ROUTE_REQ) {
+                int validate_ret = mesh_relay_validate_route_request(
+                    &mesh_runtime,
+                    &parsed.packet,
+                    parsed.payload,
+                    parsed.payload_len,
+                    parsed.previous_hop_id,
+                    k_uptime_get_32());
+
+                if (validate_ret != PROTO_OK) {
+                    status_debug_printf(
+                        "DBG_ROUTE_REQ_SEMANTIC_REJECT prev=0x%llx seq=%u ret=%d\n",
                         (unsigned long long)parsed.previous_hop_id,
                         parsed.packet.seq,
                         validate_ret);
@@ -2913,6 +2971,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                             captured_route_request_target_id,
                         .local_id = DEVICE_ID,
                         .control_origin_id = GATEWAY_ID,
+                        .expected_origin_id =
+                            identity == NULL ? 0u : identity->origin_id,
                         .expected_session_id =
                             identity == NULL ? 0u : identity->session_id,
                         .expected_flood_epoch_id =
@@ -3300,7 +3360,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
         yielded_to_gateway_priority_control) {
         MESH_ROUTE_LISTENER_RETURN(-EAGAIN);
     }
-    ret = capture_count > 0u ? 0 : last_ret;
+    /* A route installed by another worker is useful even without a queued
+     * frame. A rejected final frame alone cannot turn expiry into success. */
+    ret = captured_route_reply || capture_count > 0u ? 0 :
+          last_ret < 0 ? last_ret : -ETIMEDOUT;
     MESH_ROUTE_LISTENER_RETURN(ret);
 #if DEVICE_ROLE == ROLE_ANCHOR
 #undef parsed

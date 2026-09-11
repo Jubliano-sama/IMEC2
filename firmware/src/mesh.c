@@ -88,6 +88,7 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_RESULT_GRANT:
     case MSG_COMMAND:
     case MSG_ROUTE_SOLICIT:
+    case MSG_GATEWAY_ROUTE_REQ:
         return channel5;
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
@@ -100,7 +101,6 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_RESULT_BUNDLE:
     case MSG_GATEWAY_COLLECTION_EACK:
         return true;
-    case MSG_GATEWAY_ROUTE_REQ:
     case MSG_MESH_EVENT_END:
         return channel9;
     case MSG_MESH_DATA:

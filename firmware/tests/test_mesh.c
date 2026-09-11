@@ -10,6 +10,7 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
         MSG_ROUTE_REPLY,
         MSG_ROUTE_REPLY_ACK,
         MSG_GATEWAY_ROUTE_ADV,
+        MSG_GATEWAY_ROUTE_REQ,
         MSG_MESH_EVENT_PROPOSE,
         MSG_MESH_EVENT_ACCEPT,
         MSG_MESH_EVENT_UPDATE,
@@ -32,7 +33,6 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
         MSG_RESULT_BUNDLE,
     };
     static const uint8_t channel9_only[] = {
-        MSG_GATEWAY_ROUTE_REQ,
         MSG_MESH_EVENT_END,
     };
     static const uint8_t rejected[] = {
@@ -1401,19 +1401,46 @@ static void test_rx_envelope_rejects_noncanonical_gateway_route_and_event(void)
 
     assert(mesh_packet_rx_envelope_validate(
                &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
-               UWB_CHANNEL_MESH_PAYLOAD, false) == PROTO_OK);
-    packet.ttl--;
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_OK);
+    /* Cold probes must use the gateway's continuously owned C5 control PHY. */
     assert(mesh_packet_rx_envelope_validate(
                &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
                UWB_CHANNEL_MESH_PAYLOAD, false) == PROTO_ERR_MALFORMED);
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
+               UWB_CHANNEL_MESH_PAYLOAD, true) == PROTO_ERR_MALFORMED);
+    packet.ttl--;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
     packet.ttl = MESH_DEFAULT_TTL;
     assert(mesh_packet_rx_envelope_validate(
                &packet, NULL, 0u, UINT64_C(0x3000000000000003),
-               gateway_id, gateway_id, UWB_CHANNEL_MESH_PAYLOAD, false) ==
+               gateway_id, gateway_id, UWB_CHANNEL_WAKE_CONTACT, false) ==
            PROTO_ERR_MALFORMED);
     assert(mesh_packet_rx_envelope_validate(
                &packet, NULL, 0u, anchor_id, anchor_id, gateway_id,
-               UWB_CHANNEL_MESH_PAYLOAD, false) == PROTO_ERR_MALFORMED);
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+    packet.flags |= FLAG_DIAGNOSTIC;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+    packet.dst_id = 0u;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+    packet.dst_id = gateway_id;
+    {
+        const uint8_t unexpected_payload[] = {0u};
+
+        packet.payload_len = sizeof(unexpected_payload);
+        assert(mesh_packet_rx_envelope_validate(
+                   &packet, unexpected_payload, sizeof(unexpected_payload),
+                   anchor_id, gateway_id, gateway_id,
+                   UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+        packet.payload_len = 0u;
+    }
 
     {
         struct mesh_event_timing timing = {

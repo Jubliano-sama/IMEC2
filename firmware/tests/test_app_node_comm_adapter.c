@@ -64,6 +64,8 @@ static int try_flood_results[32];
 static bool try_flood_sent[32];
 static bool try_flood_wake_train[32];
 static struct mesh_outbound try_flood_envelopes[32];
+static uint64_t try_flood_deadlines_ms[32];
+static bool observe_flood_clock;
 static uint32_t try_response_calls;
 static int try_response_results[64];
 static bool try_response_sent[64];
@@ -74,6 +76,7 @@ static bool try_uplink_sent[64];
 static bool try_uplink_confirmed[64];
 static uint32_t try_uplink_retry_delays_ms[64];
 static uint32_t try_uplink_delivery_generations[64];
+static uint64_t try_uplink_deadlines_ms[64];
 static struct mesh_outbound try_uplink_envelopes[64];
 static uint32_t cancel_uplink_calls;
 static int cancel_uplink_result;
@@ -665,6 +668,7 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     assert(index < sizeof(try_flood_wake_train) /
                        sizeof(try_flood_wake_train[0]));
     try_flood_wake_train[index] = send_wake_train;
+    try_flood_deadlines_ms[index] = view->absolute_deadline_ms;
     assert(pthread_mutex_lock(&interleave_lock) == 0);
     if (block_flood_view_copy) {
         send_entered = true;
@@ -675,6 +679,7 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
         }
     }
     assert(pthread_mutex_unlock(&interleave_lock) == 0);
+    assert(view->absolute_deadline_ms == try_flood_deadlines_ms[index]);
     out.packet = *view->packet;
     memcpy(out.payload, view->payload, view->payload_len);
     out.payload_len = view->payload_len;
@@ -695,6 +700,19 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
         observation->tx_completed = sent_now && ret == 0;
         observation->tx_completed_at_ms = now_ms;
         observation->result_at_ms = now_ms;
+        if (observe_flood_clock && sent_now) {
+            const uint32_t elapsed_ms = out.queued_at_valid ?
+                (uint32_t)now_ms - out.queued_at_ms : 0u;
+            observation->message_origin_valid = true;
+            observation->message_origin_at_ms = now_ms - elapsed_ms -
+                out.packet.message_age_ms;
+            /* Preserve the distinction between protocol origin and the
+             * physical edge after final radio ownership/SPI work. */
+            observation->rf_started_at_ms = now_ms + 13u;
+            observation->tx_completed_at_ms = now_ms + 14u;
+            observation->result_at_ms = now_ms + 14u;
+            atomic_store(&fake_now_ms, (int64_t)(now_ms + 14u));
+        }
     }
     block_after_backend_observation_if_requested();
     return ret;
@@ -768,6 +786,7 @@ int mesh_try_send_reliable_uplink_view(
     assert(view->packet != NULL);
     assert(view->delivery_generation != 0u);
     try_uplink_delivery_generations[index] = view->delivery_generation;
+    try_uplink_deadlines_ms[index] = view->absolute_deadline_ms;
     out = &try_uplink_envelopes[index];
     memset(out, 0, sizeof(*out));
     out->packet = *view->packet;
@@ -924,10 +943,12 @@ static void reset_fixture(void)
     atomic_store(&rx_response_active, false);
     send_calls = 0u;
     try_flood_calls = 0u;
+    observe_flood_clock = false;
     memset(try_flood_results, 0, sizeof(try_flood_results));
     memset(try_flood_sent, 1, sizeof(try_flood_sent));
     memset(try_flood_wake_train, 0, sizeof(try_flood_wake_train));
     memset(try_flood_envelopes, 0, sizeof(try_flood_envelopes));
+    memset(try_flood_deadlines_ms, 0, sizeof(try_flood_deadlines_ms));
     try_response_calls = 0u;
     memset(try_response_results, 0, sizeof(try_response_results));
     memset(try_response_sent, 1, sizeof(try_response_sent));
@@ -940,6 +961,7 @@ static void reset_fixture(void)
            sizeof(try_uplink_retry_delays_ms));
     memset(try_uplink_delivery_generations, 0,
            sizeof(try_uplink_delivery_generations));
+    memset(try_uplink_deadlines_ms, 0, sizeof(try_uplink_deadlines_ms));
     memset(try_uplink_envelopes, 0, sizeof(try_uplink_envelopes));
     cancel_uplink_calls = 0u;
     cancel_uplink_result = 0;
@@ -2506,6 +2528,111 @@ static void test_delivery_pre_rf_busy_defers_without_consuming_attempts(void)
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(event.attempts_started == 3u);
     assert(try_flood_calls == 5u);
+}
+
+static void test_control_message_clock_survives_deferral_and_retry(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(611u);
+    struct node_comm_terminal_event event;
+    uint32_t handle = 0u;
+    uint64_t origin_ms = UINT64_MAX;
+    uint64_t first_rf_ms = UINT64_MAX;
+
+    reset_fixture();
+    observe_flood_clock = true;
+    envelope.queued_at_valid = false;
+    envelope.queued_at_ms = 0u;
+    atomic_store(&fake_now_ms, 1000);
+    try_flood_results[0] = -EBUSY;
+    try_flood_sent[0] = false;
+    try_flood_results[2] = -EAGAIN;
+    try_flood_sent[2] = false;
+    assert(app_node_comm_submit_delivery(&envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 10000u, 611u, &handle) == 0);
+    assert(app_node_comm_delivery_message_origin_at(handle, &origin_ms) == -EAGAIN);
+    assert(app_node_comm_service_deliveries() == -EBUSY);
+    assert(app_node_comm_delivery_message_origin_at(handle, &origin_ms) == -EAGAIN);
+
+    atomic_store(&fake_now_ms, 2000);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(app_node_comm_delivery_message_origin_at(handle, &origin_ms) == 0);
+    assert(origin_ms == 2000u); /* Pre-first-RF waiting did not age START. */
+    assert(app_node_comm_delivery_first_rf_started_at(handle, &first_rf_ms) == 0);
+    assert(first_rf_ms == origin_ms + 13u);
+    uint32_t duplicate_handle = 0u;
+    assert(app_node_comm_submit_delivery(&envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 10000u, 611u,
+        &duplicate_handle) == 0);
+    assert(duplicate_handle == handle);
+    for (unsigned call = 2u; call < 5u; call++) {
+        atomic_store(&fake_now_ms, (int64_t)((call + 1u) * 1000u));
+        assert(app_node_comm_service_deliveries() == (call == 2u ? -EAGAIN : 0));
+        assert(app_node_comm_delivery_message_origin_at(handle, &origin_ms) == 0);
+        assert(origin_ms == 2000u);
+        assert(app_node_comm_delivery_first_rf_started_at(handle, &first_rf_ms) == 0);
+        assert(first_rf_ms == 2013u);
+        assert(try_flood_envelopes[call].queued_at_valid);
+        assert(try_flood_envelopes[call].queued_at_ms == origin_ms);
+        assert(try_flood_envelopes[call].packet.message_age_ms == 0u);
+    }
+    assert(!try_flood_envelopes[0].queued_at_valid);
+    assert(!try_flood_envelopes[1].queued_at_valid);
+    assert(!envelope.queued_at_valid && envelope.queued_at_ms == 0u);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 3u && try_flood_calls == 5u);
+    for (unsigned call = 0u; call < try_flood_calls; call++) {
+        assert(try_flood_deadlines_ms[call] == 10000u);
+    }
+}
+
+static void test_abandoned_active_control_keeps_frozen_physical_cutoff(void)
+{
+    struct adapter_thread_result service_result = {0};
+    struct mesh_outbound envelope = delivery_envelope(612u);
+    struct node_comm_terminal_event event;
+    pthread_t service_thread;
+    uint32_t handle = 0u;
+    uint64_t origin_ms = UINT64_MAX;
+    const uint64_t deadline_ms = 1100u;
+
+    reset_fixture();
+    observe_flood_clock = true;
+    envelope.queued_at_valid = false;
+    envelope.queued_at_ms = 0u;
+    atomic_store(&fake_now_ms, 1000);
+    /* The physical flood regression proves deadline enforcement. Here the
+     * backend reports that no-RF timeout after cancellation while retaining
+     * the adapter's actual borrowed command view across the interleaving. */
+    try_flood_sent[0] = false;
+    try_flood_results[0] = -ETIMEDOUT;
+    assert(app_node_comm_submit_delivery(&envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, deadline_ms, 612u,
+        &handle) == 0);
+    assert(pthread_mutex_lock(&interleave_lock) == 0);
+    block_flood_view_copy = true;
+    assert(pthread_mutex_unlock(&interleave_lock) == 0);
+    assert(pthread_create(&service_thread, NULL,
+                          adapter_delivery_service_thread,
+                          &service_result) == 0);
+    wait_for_interleave_flag(&send_entered);
+
+    atomic_store(&fake_now_ms, 1020);
+    assert(app_node_comm_abandon_delivery(handle) == 0);
+    assert(app_node_comm_delivery_handle_state(handle) == 1);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+    assert(app_node_comm_delivery_message_origin_at(handle, &origin_ms) == -EAGAIN);
+    assert(try_flood_deadlines_ms[0] == deadline_ms);
+
+    atomic_store(&fake_now_ms, (int64_t)deadline_ms + 1);
+    release_blocked_send();
+    assert(pthread_join(service_thread, NULL) == 0);
+    assert(service_result.result == -ETIMEDOUT);
+    assert(try_flood_calls == 1u && try_flood_deadlines_ms[0] == deadline_ms);
+    assert(!try_flood_envelopes[0].queued_at_valid);
+    assert(app_node_comm_delivery_handle_state(handle) == 0);
+    assert(app_node_comm_delivery_message_origin_at(handle, &origin_ms) == -ENOENT);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
 }
 
 static void test_auto_reaped_control_flood_retries_without_leaking_handle(void)
@@ -5355,9 +5482,16 @@ test_durable_external_pre_rf_completion_failure_retains_exact_token(void)
     assert(event.attempts_started == 1u);
 }
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+#include "test_app_mesh_synthetic_lifetime.inc"
+#endif
+
 int main(void)
 {
     test_production_init_installs_delivery_transition_trace();
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+    test_synthetic_lifetime_regressions();
+#endif
     test_peek_attempt_count_does_not_service_delivery_policy();
     test_control_flood_freezes_age_before_wake_work();
     test_pause_and_stop_gate_new_submissions_without_clearing_queue();
@@ -5397,6 +5531,8 @@ int main(void)
         test_gateway_due_gate_pause_and_stop_clear_without_rf();
     }
     test_delivery_pre_rf_busy_defers_without_consuming_attempts();
+    test_control_message_clock_survives_deferral_and_retry();
+    test_abandoned_active_control_keeps_frozen_physical_cutoff();
     test_auto_reaped_control_flood_retries_without_leaking_handle();
     test_best_effort_uplink_sends_once_without_reliable_custody();
     test_gateway_control_flood_preempts_queued_control_response();

@@ -214,22 +214,22 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
     def test_wait_plan_and_final_stride_enter_cleanup(self) -> None:
         work = function_body(APP_SURVEY, "gateway_work_handler")
-        wait_start = work.index(
-            "gateway_state.stage == APP_SURVEY_GATEWAY_WAIT_PLAN"
-        )
+        wait_start = re.search(
+            r"gateway_state\.stage == APP_SURVEY_GATEWAY_WAIT_PLAN\s*&&",
+            work,
+        ).start()
         execute_start = work.index(
             "gateway_state.stage == APP_SURVEY_GATEWAY_EXECUTING",
             wait_start,
         )
         wait_plan = work[wait_start:execute_start]
 
-        abort_phase = wait_plan.index(
-            "abort_control.phase = SURVEY_PHASE_ABORT"
-        )
-        cleanup = wait_plan.index("gateway_begin_cleanup_locked(", abort_phase)
-        queue = wait_plan.index("queue_abort = true", cleanup)
-        self.assertLess(abort_phase, cleanup)
-        self.assertLess(cleanup, queue)
+        partial = wait_plan.index("SURVEY_PARTIAL_NO_EXECUTABLE_PAIRS")
+        terminal = wait_plan.index("gateway_terminal_event_init_locked(", partial)
+        cleanup = wait_plan.index("gateway_begin_abort_cleanup_locked(", terminal)
+        self.assertLess(partial, terminal)
+        self.assertLess(terminal, cleanup)
+        self.assertNotIn("queue_abort = true", wait_plan)
         self.assertNotIn("terminal = true", wait_plan)
 
         queue_start = work.index("if (queue_abort)", execute_start)
@@ -278,12 +278,17 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "gateway_state.cleanup_abort_pending = true", before_deadline
         )
         schedule = cleanup.index(
-            'gateway_work_reschedule_owned(now_ms, "cleanup-abort")',
+            "gateway_work_reschedule_owned(gateway_state.cleanup_abort_due_ms",
             pending,
         )
+        boundary = cleanup.index("gateway_cancel_control_boundary_locked(now_ms)", pending)
         self.assertLess(cleanup_begin, before_deadline)
         self.assertLess(before_deadline, pending)
-        self.assertLess(pending, schedule)
+        self.assertLess(pending, boundary)
+        self.assertLess(boundary, schedule)
+        self.assertIn("gateway_state.cleanup_deadline_ms", cleanup[boundary:schedule])
+        self.assertIn("gateway_state.cleanup_abort_until_ms = MIN(", cleanup)
+        self.assertIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", cleanup)
         for premature_release in (
             "gateway_state.active = false",
             "gateway_terminal_publish(",
@@ -467,7 +472,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD", gateway)
         self.assertNotIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", schedule)
         self.assertIn(
-            "app_node_comm_delivery_first_rf_started_at", origin
+            "app_node_comm_delivery_message_origin_at", origin
         )
         self.assertNotIn("k_sleep", gateway)
         self.assertNotIn("while (", gateway)

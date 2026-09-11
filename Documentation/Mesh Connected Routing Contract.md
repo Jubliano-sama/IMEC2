@@ -1,6 +1,6 @@
 # Mesh routing and radio ownership contract
 
-Current production-candidate behavior, checked against the working tree on 2026-09-06. This document distinguishes explicit requirements from implemented mechanisms. The `mesh_` preset names survive the migration; production report delivery now uses Channel 5. Older Channel-9 cadence, PROPOSE/ACCEPT and ACK_CONFIRM descriptions are historical, although compatibility code and regression tests remain.
+Current production-candidate behavior, checked against the working tree on 2026-09-07. This document distinguishes explicit requirements from implemented mechanisms. The `mesh_` preset names survive the migration; production report delivery now uses Channel 5. Older Channel-9 cadence, PROPOSE/ACCEPT and ACK_CONFIRM descriptions are historical, although compatibility code and regression tests remain.
 
 ## Ownership requirements
 
@@ -34,6 +34,8 @@ Each wake copy contains a complete standard-PHR frame with a 4096-symbol preambl
 
 DWM3000 initialization and the wake handshake use 2 MHz SPI, then restore effective 32 MHz before normal transfers. The shared SPI configuration cache must reflect the configuration actually applied to the peripheral, including shared-structure mutation. Retained wake verifies the channel/codes/SFD, PAC/SFD timeout, PHR/STS/PDoA and TX preamble/data rate against the intended PHY; a readable chip ID alone does not prove configuration retention. A mismatch triggers bounded full DW3000 reinitialization without clearing nRF identity, assignment or survey state. Radio parking/recovery must succeed before ownership is released or watchdog progress is credited. These guarantees are tested separately from protocol scheduling.
 
+Terminal radio recovery keeps watchdog feeds stopped. A verified cold or pin-reset boot permits a one-second restart; after an automatic or unknown reset, the restart timer waits until at least 30 minutes of boot uptime to prevent persistent radio failure from rapidly rewriting durable boot identities. The first request fixes the deadline. This limit covers the terminal radio recovery timer; an inherited shorter watchdog can preempt one delay, and external resets or other direct reboot paths have separate behavior.
+
 ## Routing and report delivery
 
 Wake/contact, control, ranging and production mesh report delivery share Channel 5, with operation-specific standard/extended-PHR configurations. BLE GATT connects the gateway to the host; it does not carry anchor routing or DS-TWR.
@@ -46,7 +48,7 @@ Candidates carry measured local link quality and gateway depth. Selection exclud
 
 ## Enumeration and click ranging
 
-The normal enumeration sequence is `Here-I-Am -> RESPONSE -> TABLE`; matching prearm avoids a second CLAIM wave. A fallback CLAIM can establish the same bounded operation when prearm is absent. The active operation binds its epoch, roster and deadlines; exact duplicates preserve them. Outside an active survey, an authoritative new enumeration can recover from an older or numerically lower gateway epoch without erasing every anchor.
+The normal enumeration sequence is `Here-I-Am -> RESPONSE -> TABLE`; matching prearm avoids a second CLAIM wave. When prearm is absent, assignment runs the same bounded Here-I-Am preflight before collecting responses and publishing TABLE. The active operation binds its epoch, roster and deadlines; exact duplicates preserve them. Outside an active survey, an authoritative new enumeration can recover from an older or numerically lower gateway epoch without erasing every anchor.
 
 The gateway freezes current responders and emits one authoritative immutable TABLE with explicit stable slots. Anchors validate and commit their own assignment; omitted anchors become unprovisioned. TABLE has no receipt/ACK_CONFIRM quorum and no terminal END wave. Gateway success follows local TABLE transmission and the bounded propagation hold, not verified reception by every physical board. Normal enumeration persists assignment; the GUI's survey enumeration requests temporary RAM-only assignment. Reset restores the saved configuration and permanent hardware ID. Fresh stable-ID identification/battery actions do not require the anchor to retain the temporary survey epoch; GUI/gateway enumeration admission remains required. Fresh surveys establish a new valid operation rather than resuming lost volatile state.
 
@@ -61,6 +63,12 @@ Implementation lives in [`app_survey.c`](../firmware/app/src/app_survey.c), [`su
 3. **Plan on the host.** The GUI owns the remaining pair queue and partitions it into at most 100 pairs per firmware PLAN. The firmware validates the exact survey/assignment identity and plan commitment. Noninterfering pairs can share a wave; conflicting pairs require separate waves. This is the current START/PLAN protocol, not per-endpoint PREPARE/START/GO transactions.
 4. **Range and drain.** A range wave is 600 ms, with responder preparation and five attempts spaced 80 ms apart. Usable results require at least three successful ranges. Compact neighbor/range records are bundled and forwarded through the survey response lane. ACKs bind network, generation, endpoints, result kind, batch, sequence and the immutable bundle digest. Capacity pressure retains or defers bounded work; it must not silently truncate successful results.
 5. **Finish or cancel.** Exact matching controls govern further batches and cancellation. Terminal publication distinguishes complete, partial, failed and aborted work; a partial graph is not complete geometry. Phase/depth estimates aid the UI, while the 30-minute hard cap and bounded local ownership remain terminal safety limits.
+
+START and PLAN copies share one immutable message-clock origin once the first radio opportunity reaches RF. Time waiting for initial radio admission does not consume the phase delay; every subsequent copy and retry advances age from that same origin. The gateway schedules its phase from the message origin, while physical first-RF timestamps remain separate telemetry.
+
+Host acceptance is recoverable by exact command identity. STARTED publishes the accepted START's host session/sequence and operation generation before neighbor results; PLAN_ACCEPTED carries the original PLAN identity. GET_STATUS replays those acceptance records with available operation state. A host command timeout retains the unresolved identity through reconciliation, and foreign or old-batch events cannot mutate the current plan. Completed-batch partial reasons accumulate through the final outcome.
+
+The survey radio owner admits matching CANCEL through the canonical command validator during control-PHY receive boundaries, including slot waits and result drains. Other traffic retains the original absolute deadline and receives no command response. Cleanup retries cancellation until the existing bounded self-stop horizon; local transmission alone is not an all-anchor cancellation quorum. Each ranging attempt also carries an absolute driver deadline so delayed execution cannot extend a transmission into a later reservation.
 
 The GUI owns graph solving, NLOS processing, layout constraints and visualization. Its current solver produces a relative 2D layout. The broader 3D workplace self-setup objective still needs its separate height/frame/reflection contract; documentation must not present a 2D fit as proof of that product requirement.
 

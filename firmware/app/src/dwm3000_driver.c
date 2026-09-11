@@ -143,7 +143,6 @@ static atomic_t receive_abort_enabled;
     (SYS_STATUS_RXPRD_BIT_MASK | SYS_STATUS_RXSFDD_BIT_MASK | \
      SYS_STATUS_RXPHD_BIT_MASK | SYS_STATUS_RXFR_BIT_MASK)
 #define RX_CLEAR_STATUS_MASK (RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK)
-#define DWM3000_DEADLINE_TX_LEAD_UUS 5000u
 #define DWM3000_STANDARD_FRAME_MAX_LEN 127u
 
 #ifndef DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
@@ -231,8 +230,9 @@ static atomic_t receive_abort_enabled;
  * so no calibration runs, CP_LOCK never re-asserts, the six 20 us polls expire
  * and dwt_configure() returns DWT_ERROR.  Re-enabling this needs
  * dwt_setdwstate(DWT_DW_IDLE_RC) plus a dwt_checkidlerc() wait before
- * dwt_configure(), which is exactly the precondition configure_radio_from_reset()
- * gets for free from dwt_initialise(); that has not been proven on the bench.
+ * dwt_configure(). configure_radio_from_reset() now explicitly checks this
+ * precondition before dwt_initialise(); an in-place transition has not been
+ * proven on the bench.
  */
 #define DWM3000_ENABLE_SAME_CHANNEL_FAST_SWITCH 0
 #define IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC 5u

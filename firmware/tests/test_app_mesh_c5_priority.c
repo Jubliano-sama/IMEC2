@@ -157,9 +157,9 @@ static void test_parent_captures_child_uplink_after_wake(void)
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
-static void test_route_reply_capture_does_not_duplicate_source_validation(void)
+static void test_route_reply_capture_binds_target_only_for_owned_discovery(void)
 {
-    const struct app_mesh_c5_route_capture_state route_reply = {
+    struct app_mesh_c5_route_capture_state route_reply = {
         .msg_type = MSG_ROUTE_REPLY,
         .session_id = 0x10203040u,
         .flood_epoch_id = 0x50607080u,
@@ -172,9 +172,15 @@ static void test_route_reply_capture_does_not_duplicate_source_validation(void)
         .expected_session_id = 0x10203040u,
         .expected_flood_epoch_id = 0x50607080u,
         .expected_reply_nonce = 0x3344u,
+        .expected_origin_id = 0x3333333333333301ull,
         .route_identity_required = true,
     };
 
+    assert(!app_mesh_c5_route_capture_relevant(&route_reply));
+    route_reply.src_id = route_reply.target_id;
+    assert(app_mesh_c5_route_capture_relevant(&route_reply));
+    route_reply.route_identity_required = false;
+    route_reply.src_id = 0x7777888877776666ull;
     assert(app_mesh_c5_route_capture_relevant(&route_reply));
 }
 
@@ -391,6 +397,7 @@ static void test_route_reply_capture_requires_exact_discovery_identity(void)
         .expected_session_id = 0x10203040u,
         .expected_flood_epoch_id = 0x50607080u,
         .expected_reply_nonce = 0x3344u,
+        .expected_origin_id = 0x3333333333333301ull,
         .route_identity_required = true,
     };
 
@@ -1255,7 +1262,7 @@ int main(void)
     test_gateway_route_adv_counts_as_route_capture();
     test_gateway_route_adv_does_not_require_wake_source_as_origin();
     test_parent_captures_child_uplink_after_wake();
-    test_route_reply_capture_does_not_duplicate_source_validation();
+    test_route_reply_capture_binds_target_only_for_owned_discovery();
     test_route_reply_and_event_control_capture_rules();
     test_competing_route_request_yields_without_false_route_success();
     test_control_wake_captures_gateway_broadcast_command();

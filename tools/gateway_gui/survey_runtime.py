@@ -22,6 +22,7 @@ from .protocol import (
     SURVEY_EVENT_PLAN_ACCEPTED,
     SURVEY_EVENT_RANGE_PROGRESS,
     SURVEY_EVENT_SIGNALS,
+    SURVEY_EVENT_STARTED,
     SURVEY_EVENT_TERMINAL,
     SURVEY_TERMINAL_ABORTED,
     SURVEY_TERMINAL_COMPLETE,
@@ -77,6 +78,7 @@ class SurveyCommandTransition:
     outcome: str | None = None
     request: SurveyCommandRequest | None = None
     status: int | None = None
+    recovered: bool = False
 
 
 class SurveyCommandOwner:
@@ -84,6 +86,7 @@ class SurveyCommandOwner:
 
     def __init__(self) -> None:
         self.pending: SurveyCommandRequest | None = None
+        self.uncertain: SurveyCommandRequest | None = None
 
     def begin(
         self,
@@ -96,6 +99,8 @@ class SurveyCommandOwner:
         now: float | None = None,
     ) -> bool:
         if self.pending is not None:
+            return False
+        if self.uncertain is not None and command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
             return False
         if command_id not in (CMD_SURVEY_START, CMD_SURVEY_PLAN, CMD_SURVEY_CANCEL, CMD_SURVEY_GET_STATUS):
             raise ValueError("survey command owner received an unrelated command")
@@ -118,23 +123,28 @@ class SurveyCommandOwner:
         sequence: int,
         status: int,
     ) -> SurveyCommandTransition:
+        identity = command_id, session_id, sequence
         pending = self.pending
-        if pending is None or (
-            command_id,
-            session_id,
-            sequence,
-        ) != (
-            pending.command_id,
-            pending.session_id,
-            pending.sequence,
+        recovered = False
+        if pending is None or identity != (
+            pending.command_id, pending.session_id, pending.sequence
+        ):
+            pending = self.uncertain
+            recovered = True
+        if pending is None or identity != (
+            pending.command_id, pending.session_id, pending.sequence
         ):
             return SurveyCommandTransition()
-        self.pending = None
+        if recovered:
+            self.uncertain = None
+        else:
+            self.pending = None
         return SurveyCommandTransition(
             matched=True,
             outcome="accepted" if status == 0 else "rejected",
             request=pending,
             status=status,
+            recovered=recovered,
         )
 
     def expire(self, *, now: float | None = None) -> SurveyCommandTransition:
@@ -145,6 +155,8 @@ class SurveyCommandOwner:
         if current < pending.started_at + pending.timeout_s:
             return SurveyCommandTransition()
         self.pending = None
+        if pending.command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
+            self.uncertain = pending
         return SurveyCommandTransition(
             matched=True,
             outcome="timeout",
@@ -152,6 +164,15 @@ class SurveyCommandOwner:
         )
 
     def reset(self) -> None:
+        self.pending = None
+        self.uncertain = None
+
+    def disconnect(self) -> None:
+        """Keep a possibly admitted control correlated across link recovery."""
+        if self.pending is not None and self.pending.command_id in (
+            CMD_SURVEY_START, CMD_SURVEY_PLAN
+        ):
+            self.uncertain = self.pending
         self.pending = None
 
 
@@ -226,6 +247,7 @@ class SurveyOperationModel:
         self.plan_pairs: tuple[SurveyPlanPair, ...] = ()
         self.results: dict[int, SurveyRangeResult] = {}
         self.batch_plan_pairs: tuple[SurveyPlanPair, ...] = ()
+        self.batch_plan_event: SurveyEvent | None = None
         self.batch_plan_offset = 0
         self.next_batch_index = 0
         self.partial_reasons = 0
@@ -234,6 +256,8 @@ class SurveyOperationModel:
         self.start_dispatched_at: float | None = None
         self.start_accepted = False
         self.plan_accepted = False
+        self.start_command_identity: tuple[int, int] | None = None
+        self.plan_command_identity: tuple[int, int] | None = None
         self.layout: AnchorLayoutResult | None = None
         self.geometry_revision = 0
         self.layout_revision = -1
@@ -482,9 +506,15 @@ class SurveyOperationModel:
         return True
 
     def note_command_dispatched(
-        self, command_id: int, *, now: float | None = None
+        self, command_id: int, *, now: float | None = None,
+        session_id: int | None = None, sequence: int | None = None,
     ) -> None:
+        identity = (
+            (session_id, sequence)
+            if session_id is not None and sequence is not None else None
+        )
         if command_id == CMD_SURVEY_START:
+            self.start_command_identity = identity
             self.start_dispatched_at = time.monotonic() if now is None else now
             self.start_accepted = False
             self.phase = "neighbors"
@@ -492,6 +522,7 @@ class SurveyOperationModel:
                 "neighbors", "running", "Survey START sent; waiting for acceptance"
             )
         elif command_id == CMD_SURVEY_PLAN:
+            self.plan_command_identity = identity
             self.plan_accepted = False
             self.phase = "plan"
             self._set_step(
@@ -501,9 +532,14 @@ class SurveyOperationModel:
             self.phase = "aborting"
 
     def note_command_accepted(self, command_id: int) -> None:
+        if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN) and self.error == (
+            "Gateway command result timed out; the remote outcome is unknown"
+        ):
+            self.error = None
         if command_id == CMD_SURVEY_START:
             self.start_accepted = True
-            self.phase = "neighbors"
+            if self.phase != "aborting":
+                self.phase = "neighbors"
             self._set_step(
                 "neighbors",
                 "running",
@@ -528,6 +564,13 @@ class SurveyOperationModel:
             self._set_step("ranging", "warning", self.error)
             self.phase = "ranging"
             return
+        if (command_id == CMD_SURVEY_PLAN and self.active
+                and self.generation is not None and self.assignment is not None):
+            # Rejecting a PLAN leaves the accepted START owned remotely.
+            self.error = f"{command_name} was rejected with {status_name}"
+            self._set_step("plan", "warning", self.error)
+            self.phase = "aborting"
+            return
         step = "neighbors" if command_id == CMD_SURVEY_START else "plan"
         self.fail(step, f"{command_name} was rejected with {status_name}")
 
@@ -535,11 +578,12 @@ class SurveyOperationModel:
         if command_id == CMD_SURVEY_CANCEL:
             self.error = "Survey abort result timed out; the remote operation may still be active"
             self._set_step("ranging", "warning", self.error)
-            self.phase = "ranging"
+            self.phase = "aborting"
             return
         step = "neighbors" if command_id == CMD_SURVEY_START else "plan"
         self.error = "Gateway command result timed out; the remote outcome is unknown"
-        self.phase = "recovering"
+        if self.phase != "aborting":
+            self.phase = "recovering"
         self._set_step(step, "warning", self.error)
 
     def set_requested_pairs(self, pairs: tuple[tuple[int, int], ...]) -> None:
@@ -593,12 +637,23 @@ class SurveyOperationModel:
     ) -> bool:
         if not self.active:
             raise StaleSurveyEvent("survey event arrived without an active GUI run")
+        authoritative = event.kind in (
+            SURVEY_EVENT_STARTED, SURVEY_EVENT_PLAN_ACCEPTED
+        ) and bool(event.host_session_id and event.host_sequence)
+        if authoritative:
+            expected_identity = (
+                self.start_command_identity
+                if event.kind == SURVEY_EVENT_STARTED
+                else self.plan_command_identity
+            )
+            if (event.host_session_id, event.host_sequence) != expected_identity:
+                raise StaleSurveyEvent("survey acceptance belongs to another host command")
         if self.generation is None:
-            if not self.start_accepted:
+            if not self.start_accepted and event.kind != SURVEY_EVENT_STARTED:
                 raise SurveyEventNotReady(
                     "survey event is waiting for the exact START command result"
                 )
-            if event.kind != SURVEY_EVENT_NEIGHBOR_GRAPH:
+            if event.kind not in (SURVEY_EVENT_NEIGHBOR_GRAPH, SURVEY_EVENT_STARTED):
                 raise StaleSurveyEvent(
                     "a new survey must begin with its generation-bound neighbor graph"
                 )
@@ -616,7 +671,12 @@ class SurveyOperationModel:
                 raise StaleSurveyEvent(
                     "survey event predates the current START dispatch"
                 )
-            self._validate_first_event(event)
+            if event.kind == SURVEY_EVENT_STARTED:
+                if not authoritative:
+                    raise SurveyStateError("survey START acceptance lacks its command identity")
+                self._validate_assignment(event)
+            else:
+                self._validate_first_event(event)
             self.generation = event.generation
             self.assignment = event.assignment
             self._seen_identities.append(identity)
@@ -630,8 +690,34 @@ class SurveyOperationModel:
 
         if event in self._applied_events:
             return False
+        if event.kind in (
+            SURVEY_EVENT_PLAN_ACCEPTED,
+            SURVEY_EVENT_RANGE_PROGRESS,
+            SURVEY_EVENT_BATCH_COMPLETE,
+            SURVEY_EVENT_TERMINAL,
+        ) and event.batch_index != self.next_batch_index:
+            if event.batch_index < self.next_batch_index:
+                raise StaleSurveyEvent("survey event belongs to a completed batch")
+            raise SurveyStateError("survey event belongs to an unrequested batch")
+        previous_plan = self.batch_plan_event
+        if (event.kind == SURVEY_EVENT_PLAN_ACCEPTED and previous_plan is not None
+                and event.batch_index == previous_plan.batch_index):
+            if (
+                event.plan_pairs, event.wave_count, event.skipped_pairs,
+                event.final_batch, event.host_session_id, event.host_sequence,
+            ) != (
+                previous_plan.plan_pairs, previous_plan.wave_count, previous_plan.skipped_pairs,
+                previous_plan.final_batch, previous_plan.host_session_id, previous_plan.host_sequence,
+            ):
+                raise SurveyStateError("survey plan changed after its first acceptance")
+            self.partial_reasons |= event.partial_reasons
+            return False
+        aborting = self.phase == "aborting"
         self.partial_reasons |= event.partial_reasons
-        if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
+        if event.kind == SURVEY_EVENT_STARTED:
+            if not self.start_accepted:
+                self.note_command_accepted(CMD_SURVEY_START)
+        elif event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
             self._observe_neighbor_graph(event)
         elif event.kind == SURVEY_EVENT_SIGNALS:
             self._observe_signals(event)
@@ -645,6 +731,10 @@ class SurveyOperationModel:
             self._observe_ranges(event)
         else:  # The decoder rejects this, but the model remains fail closed.
             raise SurveyStateError(f"unsupported survey event kind {event.kind}")
+        if aborting and event.kind != SURVEY_EVENT_TERMINAL:
+            # Late telemetry still contributes data, but cannot restart work
+            # after the host requested cancellation.
+            self.phase = "aborting"
         self._applied_events.append(event)
         return True
 
@@ -676,8 +766,12 @@ class SurveyOperationModel:
             )
         if not occupied:
             raise SurveyStateError("survey neighbor graph has no enumerated anchors")
-        assert self.slot_hops
-        if event.assignment.slot_span <= max(occupied):
+        self._validate_assignment(event)
+
+    def _validate_assignment(self, event: SurveyEvent) -> None:
+        if not self.slot_to_anchor or not self.slot_hops:
+            raise SurveyStateError("survey acceptance has no current enumerated roster")
+        if event.assignment.slot_span <= max(self.slot_to_anchor):
             raise SurveyStateError("survey assignment slot span excludes an anchor")
         if event.assignment.max_hop_count < max(self.slot_hops.values()):
             raise SurveyStateError("survey assignment understates the enumerated route depth")
@@ -726,7 +820,7 @@ class SurveyOperationModel:
             raise SurveyStateError("survey plan arrived before the neighbor graph")
         if not self.requested_pairs and event.plan_pairs:
             raise SurveyStateError("gateway added pairs to an empty host request")
-        if not self.plan_accepted:
+        if not self.plan_accepted and not (event.host_session_id and event.host_sequence):
             raise SurveyEventNotReady(
                 "survey plan event is waiting for the exact PLAN command result"
             )
@@ -749,6 +843,8 @@ class SurveyOperationModel:
             ):
                 raise SurveyStateError("gateway plan references an unknown slot")
             accepted.add(key)
+        self.plan_accepted = True
+        self.batch_plan_event = event
         self.batch_plan_offset = len(self.plan_pairs)
         self.batch_plan_pairs = event.plan_pairs
         self.plan_pairs = self.plan_pairs + event.plan_pairs
@@ -773,7 +869,13 @@ class SurveyOperationModel:
         )
 
     def _observe_ranges(self, event: SurveyEvent) -> None:
-        if not self.plan_accepted and (event.range_results or self.requested_pairs):
+        terminal_without_ranges = (
+            event.kind == SURVEY_EVENT_TERMINAL
+            and event.status != SURVEY_TERMINAL_COMPLETE
+            and not event.range_results
+        )
+        if (not self.plan_accepted and (event.range_results or self.requested_pairs)
+                and not terminal_without_ranges):
             raise SurveyEventNotReady(
                 "survey range event is waiting for the exact PLAN command result"
             )
@@ -842,16 +944,21 @@ class SurveyOperationModel:
             return
         total = len(self.plan_pairs)
         usable = sum(result.usable for result in self.results.values())
-        self.terminal_status = event.status
+        self.terminal_status = (
+            SURVEY_TERMINAL_PARTIAL
+            if event.status == SURVEY_TERMINAL_COMPLETE
+            and (self.partial_reasons or usable != total)
+            else event.status
+        )
         self.active = False
         self.phase = "terminal"
-        if event.status == SURVEY_TERMINAL_COMPLETE and usable == total:
+        if self.terminal_status == SURVEY_TERMINAL_COMPLETE:
             state = "done"
             detail = f"All {total} pair medians are usable"
         elif event.status == SURVEY_TERMINAL_ABORTED:
             state = "warning"
             detail = f"Survey aborted with {usable}/{total} usable medians"
-        elif event.status == SURVEY_TERMINAL_PARTIAL:
+        elif self.terminal_status == SURVEY_TERMINAL_PARTIAL:
             state = "warning"
             detail = f"Partial survey: {usable}/{total} usable medians"
         else:

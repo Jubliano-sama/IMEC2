@@ -950,7 +950,7 @@ static void decode_outbound_over_uwb(const struct mesh_outbound *out,
     assert(packet->payload_len == *payload_len);
 }
 
-static void test_relay_replays_hop_ack_for_accepted_gateway_report_duplicate(void)
+static void test_gateway_report_duplicate_requires_application_readmission(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
@@ -1029,11 +1029,27 @@ static void test_relay_replays_hop_ack_for_accepted_gateway_report_duplicate(voi
                                 2001u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
-    assert(has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
     assert(result.hop_ack.next_hop_id == ANCHOR_A);
+
+    /* A previously admitted report can return through a loop with its last
+     * TTL. History cannot authorize a hop ACK when forwarding is impossible. */
+    struct proto_packet exhausted = report;
+    exhausted.ttl = 1u;
+    exhausted.message_age_ms += 100u;
+    assert(mesh_relay_handle_rx(&relay,
+                                &exhausted,
+                                payload,
+                                payload_len,
+                                ANCHOR_C,
+                                95u,
+                                2002u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(result.actions == MESH_RELAY_ACTION_DROP);
 
     assert(mesh_relay_handle_rx(&relay,
                                 &report,
@@ -1223,10 +1239,10 @@ static void test_pending_retry_requires_exact_payload(void)
                                 2202u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
-    assert(has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(memcmp(&relay.pending, &pending_before, sizeof(pending_before)) == 0);
 
     assert(mesh_relay_handle_rx(&relay,
@@ -5101,8 +5117,8 @@ static void test_busy_relay_transfers_gateway_report_to_bounded_queue(void)
     assert(result.forward.next_hop_id == GATEWAY);
     assert(memcmp(&relay.pending, &pending_before, sizeof(pending_before)) == 0);
 
-    /* Once app admission commits the duplicate record, a lost child hop ACK
-     * is repaired without adding the same immutable report twice. */
+    /* History cannot prove that the app still owns the report. Even while
+     * unrelated core work is busy, a retry must revisit application admission. */
     assert(mesh_relay_handle_rx(&relay,
                                 &incoming_report,
                                 incoming_payload,
@@ -5112,10 +5128,10 @@ static void test_busy_relay_transfers_gateway_report_to_bounded_queue(void)
                                 4111u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
-    assert(has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
     assert(memcmp(&relay.pending, &pending_before, sizeof(pending_before)) == 0);
 
@@ -5129,15 +5145,15 @@ static void test_busy_relay_transfers_gateway_report_to_bounded_queue(void)
                                 4112u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
-    assert(has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
     assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
     assert(result.hop_ack.next_hop_id == ANCHOR_A);
 }
 
-static void test_live_duplicate_child_retry_replays_hop_ack_without_reforward(void)
+static void test_live_duplicate_child_retry_revisits_application_admission(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
@@ -5199,8 +5215,8 @@ static void test_live_duplicate_child_retry_replays_hop_ack_without_reforward(vo
     pending_before = relay.pending;
     outbox_before = relay.outbox_record;
 
-    /* The first HOP_ACK was lost. The relay already owns the exact packet,
-     * so the child's identical retry repairs only that custody edge. */
+    /* The first HOP_ACK was lost. The application's admission gate finds its
+     * existing semantic owner without mutating the active core transaction. */
     contains = false;
     assert(mesh_relay_handle_rx(&relay,
                                 &report,
@@ -5212,9 +5228,9 @@ static void test_live_duplicate_child_retry_replays_hop_ack_without_reforward(vo
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
-    assert(has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
     assert(result.hop_ack.next_hop_id == ANCHOR_A);
     assert(mesh_ack_payload_contains_packet(&result.hop_ack.packet,
@@ -5381,7 +5397,7 @@ static void test_busy_gateway_still_accepts_direct_route_probe(void)
                   sizeof(outbox_before)) == 0);
 }
 
-static void test_busy_relay_repairs_queued_report_hop_ack(void)
+static void test_busy_relay_readmits_queued_report_before_hop_ack(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
@@ -5438,10 +5454,11 @@ static void test_busy_relay_repairs_queued_report_hop_ack(void)
                                 4202u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
-    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
     assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
 static void test_busy_relay_sends_result_busy_for_command_result(void)
@@ -8517,7 +8534,7 @@ static void test_app_ack_window_notice_never_shortens_hop_ack_progress(void)
     }
 }
 
-static void test_child_retry_is_acked_while_transit_custody_has_no_parent(void)
+static void test_child_retry_without_parent_cannot_claim_application_custody(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 9u, 80u);
@@ -8614,11 +8631,9 @@ static void test_child_retry_is_acked_while_transit_custody_has_no_parent(void)
     pending_before = relay.pending;
     outbox_before = relay.outbox_record;
 
-    /*
-     * The child still needs hop-level custody progress while this relay is
-     * finding a replacement parent. There is no valid upstream outbound yet,
-     * so an exact retry must be ACKed without forwarding to ID zero.
-     */
+    /* No usable parent means no application forward can be admitted. Cached
+     * history must not certify custody; the child retains its report while
+     * the existing core transaction continues route recovery unchanged. */
     assert(mesh_relay_handle_rx(&relay,
                                 &report,
                                 payload,
@@ -8627,13 +8642,11 @@ static void test_child_retry_is_acked_while_transit_custody_has_no_parent(void)
                                 90u,
                                 now_ms + 1u,
                                 &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_STALE);
-    assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(result.status == PROTO_ERR_NOT_FOUND);
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
-    assert(has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
+    assert(!has_action(&result, MESH_RELAY_ACTION_CUSTODY_ACCEPTED));
     assert(has_action(&result, MESH_RELAY_ACTION_DROP));
-    assert(result.hop_ack.next_hop_id == ANCHOR_A);
-    assert(result.hop_ack.next_hop_id != 0u);
     assert(relay.pending.state == pending_before.state);
     assert(relay.pending.next_hop_id == pending_before.next_hop_id);
     assert(relay.pending.retry_after_ms == pending_before.retry_after_ms);
@@ -21169,7 +21182,7 @@ int main(void)
     test_gateway_adjacent_relay_consumes_exact_gateway_ack();
     test_relayed_gateway_history_retains_exact_identities();
     test_direct_gateway_history_survives_lost_ack();
-    test_relay_replays_hop_ack_for_accepted_gateway_report_duplicate();
+    test_gateway_report_duplicate_requires_application_readmission();
     test_range_retry_attempts_do_not_conflict_in_relay_dedup();
     test_pending_retry_requires_exact_payload();
     test_duplicate_cache_expires_by_time_window();
@@ -21213,10 +21226,10 @@ int main(void)
     test_ttl_zero_packet_is_dropped_without_ack();
     test_zero_session_or_sequence_mesh_packets_are_rejected();
     test_busy_relay_transfers_gateway_report_to_bounded_queue();
-    test_live_duplicate_child_retry_replays_hop_ack_without_reforward();
+    test_live_duplicate_child_retry_revisits_application_admission();
     test_busy_relay_still_delivers_direct_local_command();
     test_busy_gateway_still_accepts_direct_route_probe();
-    test_busy_relay_repairs_queued_report_hop_ack();
+    test_busy_relay_readmits_queued_report_before_hop_ack();
     test_busy_relay_sends_result_busy_for_command_result();
     test_result_busy_preserves_command_result_identity();
     test_result_offer_gets_result_grant_when_parent_has_capacity();
@@ -21251,7 +21264,7 @@ int main(void)
     test_gateway_ack_timeout_retries_then_requests_route_discovery();
     test_app_ack_window_notice_starts_backoff_at_app_window();
     test_app_ack_window_notice_never_shortens_hop_ack_progress();
-    test_child_retry_is_acked_while_transit_custody_has_no_parent();
+    test_child_retry_without_parent_cannot_claim_application_custody();
     test_gateway_ack_timeout_handles_ms_wrap();
     test_deferred_retransmit_waits_for_actual_radio_send();
     test_route_discovery_reaches_ttl_eight_with_backoff();

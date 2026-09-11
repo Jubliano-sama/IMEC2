@@ -7,6 +7,7 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
+DRIVER_HEADER = (ROOT / "app/src/dwm3000_driver.h").read_text(encoding="utf-8")
 TIMING_HEADER = (ROOT / "include/dwm3000_timing.h").read_text(encoding="utf-8")
 TIMING_MODEL = (ROOT / "src/dwm3000_timing.c").read_text(encoding="utf-8")
 
@@ -152,6 +153,7 @@ mark_radio_awake_unconfigured = function_body(
 check_device_fatal_status = function_body("check_device_fatal_status")
 initialise = function_body("initialise_radio")
 wake_configured = function_body("wake_configured_radio")
+wait_idle_rc = function_body("wait_for_idle_rc")
 probe = function_body("dwm3000_driver_probe")
 configure_default = function_body("dwm3000_driver_configure_default")
 apply_config = function_body("apply_radio_config")
@@ -280,11 +282,8 @@ response_reencode = responder.index(
     "ret = uwb_encode_response(", response_receive
 )
 response_patch = responder.index("ret = patch_tx_frame(", response_reencode)
-response_delayed_time = responder.index(
-    "dwt_setdelayedtrxtime(resp_tx_time)", response_patch
-)
 response_start = responder.index(
-    "ret = start_prepared_range_frame(", response_delayed_time
+    "ret = range_request_start_prepared_frame(", response_patch
 )
 assert (
     response_prestage
@@ -292,15 +291,18 @@ assert (
     < response_receive
     < response_reencode
     < response_patch
-    < response_delayed_time
     < response_start
 ), (
     "the responder must stage its invariant RESPONSE before POLL RX, then "
     "patch only timestamps before the delayed-TX command"
 )
 assert "2u * sizeof(uint32_t)" in responder[
-    response_patch:response_delayed_time
+    response_patch:response_start
 ], "the prepared RESPONSE path must patch exactly its two timestamp fields"
+prepared_deadline_guard = function_body("range_request_start_prepared_frame")
+assert prepared_deadline_guard.index("dwt_setdelayedtrxtime(tx_time)") < (
+    prepared_deadline_guard.index("return start_prepared_range_frame(frame_len, tx_mode)")
+), "the guarded prepared path must preserve the original delayed TX marker"
 assert "send_range_frame(tx_buffer, tx_len" not in responder[
     response_receive:response_start
 ], "the post-POLL deadline must not contain a full RESPONSE frame write"
@@ -354,9 +356,36 @@ assert "return ret < 0 ? ret : -EIO" in check_device_fatal_status, (
 )
 
 slow_spi = initialise.index("ret = dwm3000_port_set_slow_spi()")
-initialise_chip = initialise.index("dwt_initialise(mode)", slow_spi)
-assert "if (ret < 0)" in initialise[slow_spi:initialise_chip], (
+initialise_ready = initialise.index('ret = wait_for_idle_rc("initialise-idle-check", &idle_rc_expired)')
+assert_order(initialise[slow_spi:initialise_ready], "if (ret < 0)", "return ret")
+assert slow_spi < initialise_ready, (
     "initialisation must stop if the mandatory slow-SPI transition fails"
+)
+assert_order(
+    initialise[initialise_ready:],
+    "if (idle_rc_expired)",
+    "dwt_softreset()",
+    'ret = take_port_error("initialise-soft-reset")',
+    "if (ret == 0)",
+    'ret = wait_for_idle_rc("initialise-soft-reset-idle-check", NULL)',
+    "if (ret < 0)",
+    "invalidate_radio_state_tagged(__func__)",
+    "return ret",
+    "dwt_initialise(mode)",
+    'take_port_error("initialise")',
+    'check_device_fatal_status("initialise")',
+    'validate_device_identity("initialise")',
+    "ret = dwm3000_port_set_fast_spi()",
+    "mark_radio_awake_unconfigured_tagged(__func__)",
+)
+assert initialise.count("dwt_softreset()") == 1, (
+    "reset readiness recovery must have exactly one SDK reset attempt"
+)
+assert "if (ret == -ETIMEDOUT)" not in initialise, (
+    "a port timeout must not be mistaken for elapsed radio readiness expiry"
+)
+assert initialise.index("ensure_local_data()") < initialise_ready, (
+    "the SDK reset needs initialized host-side local data"
 )
 
 slow_spi = probe.index("ret = dwm3000_port_set_slow_spi()")
@@ -380,22 +409,50 @@ assert_order(
     "mark_radio_awake_unconfigured_tagged(__func__)",
 )
 
-# Fast transfers are safe only after the sleeping chip reaches IDLE_RC. Once
-# readiness is proven, restore at the normal rate rather than spending every
-# low-duty wake on slow register transfers. Each fallible transition must stop
-# before the next operation and invalidate the claimed radio state.
+# Reset and retained wake share one readiness proof. Its elapsed-time bound
+# includes SPI transfers and scheduling delay; an errored or late ready sample
+# cannot authorize SDK initialization, fast SPI, or retained-register restore.
+assert_order(
+    wait_idle_rc,
+    "uint32_t start_cycles = k_cycle_get_32()",
+    "*expired = false",
+    "while (true)",
+    "uint32_t elapsed_us = k_cyc_to_us_floor32(",
+    "k_cycle_get_32() - start_cycles)",
+    "if (elapsed_us >= DWM3000_WAKE_IDLE_RC_TIMEOUT_US)",
+    "*expired = true",
+    "return -ETIMEDOUT",
+    "ready = dwt_checkidlerc() != 0u",
+    "ret = take_port_error(operation)",
+    "if (ret < 0)",
+    "return ret",
+    "elapsed_us = k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles)",
+    "if (elapsed_us >= DWM3000_WAKE_IDLE_RC_TIMEOUT_US)",
+    "*expired = true",
+    "return -ETIMEDOUT",
+    "if (ready)",
+    "return 0",
+    "uint32_t remaining_us = DWM3000_WAKE_IDLE_RC_TIMEOUT_US - elapsed_us",
+    "k_busy_wait(remaining_us < DWM3000_STATUS_POLL_INTERVAL_US ?",
+    "remaining_us : DWM3000_STATUS_POLL_INTERVAL_US)",
+)
+assert wait_idle_rc.count("*expired = true") == 2, (
+    "only the two elapsed-time boundaries may authorize a reset retry"
+)
+for readiness_caller, bounded_waits in ((initialise, 2), (wake_configured, 1)):
+    assert readiness_caller.count("wait_for_idle_rc(") == bounded_waits
+    assert "dwt_checkidlerc(" not in readiness_caller, (
+        "reset and retained wake must use the same elapsed/error-checked proof"
+    )
+
+# Once readiness is proven, restore at the normal rate. Every fallible
+# transition must stop before the next operation and invalidate radio state.
 assert_order(
     wake_configured,
     "ret = dwm3000_port_set_slow_spi()",
     "ret = dwm3000_port_wakeup()",
     "dwm3000_port_clear_error()",
-    "waited_us <= DWM3000_WAKE_IDLE_RC_TIMEOUT_US",
-    "if (dwt_checkidlerc())",
-    "ret = 0",
-    "break;",
-    'take_port_error("wake-idle-check")',
-    "k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US)",
-    "ret = -ETIMEDOUT",
+    'ret = wait_for_idle_rc("wake-idle-check", NULL)',
     "ret = dwm3000_port_set_fast_spi()",
     "dwt_restore_common()",
     'take_port_error("restore-common")',
@@ -406,7 +463,7 @@ assert_order(
 for begin, end in (
     ("ret = dwm3000_port_set_slow_spi()", "ret = dwm3000_port_wakeup()"),
     ("ret = dwm3000_port_wakeup()", "dwm3000_port_clear_error()"),
-    ("ret = -ETIMEDOUT", "ret = dwm3000_port_set_fast_spi()"),
+    ('ret = wait_for_idle_rc("wake-idle-check", NULL)', "ret = dwm3000_port_set_fast_spi()"),
     ("ret = dwm3000_port_set_fast_spi()", "dwt_restore_common()"),
 ):
     phase_start = wake_configured.index(begin)
@@ -657,7 +714,7 @@ deadline_program = send_range_frame[
 ]
 deadline_tx_lead = re.search(
     r"#define\s+DWM3000_DEADLINE_TX_LEAD_UUS\s+(\d+)u\b",
-    DRIVER,
+    DRIVER_HEADER,
 )
 assert deadline_tx_lead is not None
 assert int(deadline_tx_lead.group(1)) >= 5000, (

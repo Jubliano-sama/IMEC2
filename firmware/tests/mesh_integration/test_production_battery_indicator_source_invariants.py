@@ -91,8 +91,11 @@ assert "DEVICE_ROLE == ROLE_CLICKER" in coalesced
 assert "CONFIG_IMEC_PRODUCTION_BATTERY_INDICATOR" in coalesced
 monitor_start = function_body(WATCHDOG, "start_watchdog_health_monitor")
 assert monitor_start.index("clicker_idle_watchdog_coalesced()") < \
-    monitor_start.index("k_work_init_delayable"), \
-    "production clicker must skip the one-second work and timer owners"
+    monitor_start.index("k_work_reschedule"), \
+    "production clicker must skip periodic work; action boundaries may submit one check"
+assert monitor_start.index("clicker_idle_watchdog_coalesced()") < \
+    monitor_start.index("k_timer_start"), \
+    "production clicker must not add a periodic watchdog timer"
 checkpoint = function_body(WATCHDOG, "app_watchdog_clicker_idle_checkpoint")
 assert checkpoint.index("atomic_set(&system_progress_ms") < \
     checkpoint.index("watchdog_timer_handler(NULL)"), \
@@ -102,6 +105,18 @@ action = function_body(CLICKER, "app_clicker_handle_button_action")
 assert action.index("app_battery_indicator_suspend()") < action.index(
     "clicker_connect_status_leds_for_action()"
 ), "click/self-test feedback must take LED ownership before reconnecting pins"
+
+action_worker = function_body(CLICKER, "clicker_action_work_handler")
+completed_action = action_worker.index("app_clicker_handle_button_action(action)")
+completed_progress = action_worker.index(
+    "app_watchdog_note_clicker_action_progress(", completed_action
+)
+action_checkpoint = action_worker.index("app_watchdog_clicker_action_checkpoint(")
+assert completed_action < completed_progress < action_checkpoint < \
+    action_worker.index("idle_after_drain =\n"), \
+    "each completed action must service watchdog health before continuing the FIFO drain"
+assert action_checkpoint < action_worker.index("app_watchdog_clicker_action_end("), \
+    "the checkpoint must retain the exact action generation through health admission"
 
 retained_idle = function_body(CLICKER, "clicker_enter_systemon_retained_idle")
 assert retained_idle.index("status_leds_disconnect()") < retained_idle.index(

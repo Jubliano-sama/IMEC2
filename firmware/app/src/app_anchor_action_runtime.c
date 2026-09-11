@@ -53,10 +53,15 @@ int app_anchor_action_handle(const struct proto_packet *command,
         return -EINVAL;
     }
     (void)local_anchor_discovery_assignment_get(&epoch, &slot, &count);
+#if defined(CONFIG_IMEC_DURABLE_STATE)
     ret = app_durable_state_boot_incarnation(&boot);
     if (ret < 0) {
         return ret;
     }
+#else
+    /* Synthetic roles have no durable boot identity for command results. */
+    return -ENOTSUP;
+#endif
     ret = app_anchor_action_execute(&actions, command, payload, payload_len,
         DEVICE_ID, GATEWAY_ID, boot, now, &ops, &result);
     if (ret < 0) {

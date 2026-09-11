@@ -236,6 +236,7 @@ SURVEY_EVENT_RANGE_PROGRESS = 3
 SURVEY_EVENT_TERMINAL = 4
 SURVEY_EVENT_BATCH_COMPLETE = 5
 SURVEY_EVENT_SIGNALS = 6
+SURVEY_EVENT_STARTED = 7
 
 SURVEY_TERMINAL_COMPLETE = 0
 SURVEY_TERMINAL_PARTIAL = 1
@@ -1002,6 +1003,8 @@ class SurveyEvent:
     signal_measurements: tuple[SurveySignalMeasurement, ...] = ()
     batch_index: int = 0
     final_batch: bool = False
+    host_session_id: int = 0
+    host_sequence: int = 0
 
 
 def _slots_from_bitmap(raw: bytes) -> frozenset[int]:
@@ -1047,17 +1050,39 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
     if (
         generation == 0
         or status > 4
-        or kind not in (1, 2, 3, 4, 5)
+        or kind not in (1, 2, 3, 4, 5, SURVEY_EVENT_STARTED)
         or batch_index >= SURVEY_MAX_BATCHES
         or (kind != SURVEY_EVENT_NEIGHBOR_GRAPH and payload[64] > 1)
     ):
         raise DecodeError("survey event has an invalid identity, status, or kind")
+    host_session_id = 0
+    host_sequence = 0
+    if kind != SURVEY_EVENT_NEIGHBOR_GRAPH:
+        if any(payload[65:72]):
+            raise DecodeError("survey event has nonzero reserved bytes")
+        if kind in (SURVEY_EVENT_STARTED, SURVEY_EVENT_PLAN_ACCEPTED):
+            host_session_id = int.from_bytes(payload[56:60], "little")
+            host_sequence = int.from_bytes(payload[60:62], "little")
+            if any(payload[62:64]) or bool(host_session_id) != bool(host_sequence):
+                raise DecodeError("survey acceptance has invalid host identity")
+        elif any(payload[56:64]):
+            raise DecodeError("survey event has nonzero reserved bytes")
+        occupied_mask = 0
     offset = SURVEY_EVENT_HEADER_WIRE_LEN
     reports: list[SurveyNeighborReport] = []
     plan_pairs: list[SurveyPlanPair] = []
     skipped: list[SurveySkippedPair] = []
     results: list[SurveyRangeResult] = []
-    if kind == 1:
+    if kind == SURVEY_EVENT_STARTED:
+        if (
+            not host_session_id or not host_sequence
+            or status != SURVEY_TERMINAL_COMPLETE
+            or len(payload) != SURVEY_EVENT_HEADER_WIRE_LEN
+            or batch_index or final_batch or partial_reasons
+            or result_count or pair_count or wave_count or skipped_count
+        ):
+            raise DecodeError("survey START acceptance carries unrelated fields")
+    elif kind == 1:
         if pair_count or result_count or skipped_count:
             raise DecodeError("neighbor graph event carries unrelated records")
         expected = SURVEY_EVENT_HEADER_WIRE_LEN + graph_count * SURVEY_NEIGHBOR_RECORD_WIRE_LEN
@@ -1076,6 +1101,8 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
             seen.add(own_slot)
             offset += SURVEY_NEIGHBOR_RECORD_WIRE_LEN
     elif kind == 2:
+        if status not in (SURVEY_TERMINAL_COMPLETE, SURVEY_TERMINAL_PARTIAL):
+            raise DecodeError("survey PLAN acceptance has a terminal failure status")
         if graph_count or result_count or pair_count > SURVEY_MAX_PAIRS or skipped_count > SURVEY_MAX_PAIRS:
             raise DecodeError("plan event has invalid record counts")
         expected = SURVEY_EVENT_HEADER_WIRE_LEN + pair_count * SURVEY_PLAN_PAIR_WIRE_LEN + skipped_count * 4
@@ -1142,6 +1169,8 @@ def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
         range_results=tuple(results),
         batch_index=batch_index,
         final_batch=final_batch,
+        host_session_id=host_session_id,
+        host_sequence=host_sequence,
     )
 
 

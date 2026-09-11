@@ -69,6 +69,7 @@ from .protocol import (
     SURVEY_EVENT_PLAN_ACCEPTED,
     SURVEY_EVENT_RANGE_PROGRESS,
     SURVEY_EVENT_SIGNALS,
+    SURVEY_EVENT_STARTED,
     SURVEY_EVENT_TERMINAL,
     SURVEY_MAX_DEGREE,
     SURVEY_MAX_PAIRS,
@@ -1463,7 +1464,19 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         self,
         generation: int,
         assignment: SurveyAssignmentIdentity,
+        *,
+        run_serial: int | None = None,
     ) -> None:
+        model = self.survey_model
+        if (
+            not model.active
+            or model.phase != "planning"
+            or self._survey_phase != "planning"
+            or (generation, assignment) != (model.generation, model.assignment)
+            or (generation, assignment) != (self._survey_generation, self._survey_assignment)
+            or (run_serial is not None and run_serial != model.run_serial)
+        ):
+            return
         try:
             if self._survey_batch_cursor >= len(self._survey_pair_batches):
                 raise SurveyStateError("survey firmware requested an extra pair batch")
@@ -1563,7 +1576,11 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         ):
             return False
         self._survey_pending_dispatch = dispatch
-        self.survey_model.note_command_dispatched(dispatch.command_id)
+        self.survey_model.note_command_dispatched(
+            dispatch.command_id,
+            session_id=dispatch.session_id,
+            sequence=dispatch.sequence,
+        )
         if dispatch.command_id == CMD_SURVEY_START:
             self._survey_gateway_id = getattr(self, "gateway_id", None)
         if dispatch.command_id != CMD_SURVEY_GET_STATUS:
@@ -1679,10 +1696,24 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
 
         if not changed:
             return True
+        acceptance_recovered = False
+        if event.kind in (SURVEY_EVENT_STARTED, SURVEY_EVENT_PLAN_ACCEPTED):
+            recovered_command = (
+                CMD_SURVEY_START if event.kind == SURVEY_EVENT_STARTED
+                else CMD_SURVEY_PLAN
+            )
+            transition = self.survey_command_owner.observe_result(
+                recovered_command, event.host_session_id, event.host_sequence, 0,
+            )
+            if transition.matched:
+                acceptance_recovered = True
+                self._apply_survey_command_result(
+                    transition, acceptance_applied=True, defer_followups=True,
+                )
         self._survey_reconcile_attempts = 0
         self._survey_event_due_at = (
             max(getattr(self, "_survey_event_due_at", 0.0), observed_at + 60.0)
-            if event.kind in (SURVEY_EVENT_RANGE_PROGRESS, SURVEY_EVENT_SIGNALS)
+            if event.kind in (SURVEY_EVENT_RANGE_PROGRESS, SURVEY_EVENT_SIGNALS, SURVEY_EVENT_STARTED)
             else observed_at + 60.0
         )
         if event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
@@ -1692,7 +1723,22 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         self._survey_generation = self.survey_model.generation
         self._survey_assignment = self.survey_model.assignment
         self._survey_results = dict(self.survey_model.results)
-        if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
+        self._survey_pairs = tuple(
+            (pair.initiator_slot, pair.responder_slot)
+            for pair in self.survey_model.plan_pairs
+        )
+        self._survey_batch_cursor = self.survey_model.next_batch_index
+        if self.survey_model.phase == "aborting":
+            self._survey_phase = "aborting"
+            self._clear_scheduled_phase_estimate()
+            self.status_text.set("Survey abort pending; waiting for terminal state")
+        elif event.kind == SURVEY_EVENT_STARTED:
+            if not self.survey_model.neighbor_reports:
+                self._survey_phase = "neighbors"
+                self.status_text.set(
+                    f"Survey {event.generation} accepted; collecting neighbors"
+                )
+        elif event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
             self._finish_scheduled_phase_estimate(
                 "neighbors",
                 successful=(
@@ -1737,10 +1783,6 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 # retained queue age is subtracted from the countdown.
                 now=created_at,
             )
-            self._survey_pairs = tuple(
-                (pair.initiator_slot, pair.responder_slot)
-                for pair in self.survey_model.plan_pairs
-            )
             self.status_text.set(
                 f"Survey batch {event.batch_index + 1} accepted: "
                 f"{len(event.plan_pairs)} pairs in "
@@ -1761,7 +1803,6 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 now=observed_at, successful=event.status == SURVEY_TERMINAL_COMPLETE,
             )
             self._clear_scheduled_phase_estimate()
-            self._survey_batch_cursor += 1
             self._survey_phase = "planning"
             self.status_text.set(
                 f"Survey batch {event.batch_index + 1} returned; firmware "
@@ -1770,13 +1811,23 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             assert self._survey_generation is not None
             assert self._survey_assignment is not None
             self.root.after_idle(
-                lambda: self._submit_next_survey_batch(
-                    self._survey_generation,
-                    self._survey_assignment,
+                lambda generation=event.generation,
+                assignment=event.assignment,
+                run_serial=self.survey_model.run_serial: self._submit_next_survey_batch(
+                    generation,
+                    assignment,
+                    run_serial=run_serial,
                 )
             )
         elif event.kind == SURVEY_EVENT_TERMINAL:
-            if event.status == SURVEY_TERMINAL_COMPLETE:
+            self.survey_command_owner.reset()
+            self._survey_pending_dispatch = None
+            self._survey_deferred_dispatch = None
+            self._survey_event_buffer.clear()
+            terminal_status = self.survey_model.terminal_status
+            assert terminal_status is not None
+            partial_reasons = self.survey_model.partial_reasons
+            if terminal_status == SURVEY_TERMINAL_COMPLETE:
                 self._finish_received_range_countdown(now=observed_at)
             self._clear_scheduled_phase_estimate()
             usable = sum(
@@ -1787,17 +1838,17 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 SURVEY_TERMINAL_COMPLETE: "complete",
                 SURVEY_TERMINAL_PARTIAL: "partial",
                 SURVEY_TERMINAL_ABORTED: "aborted",
-            }.get(event.status, f"status {event.status}")
+            }.get(terminal_status, f"status {terminal_status}")
             message = (
                 f"Survey {outcome}: {usable}/{len(self._survey_pairs)} "
                 f"pairs have usable median ranges"
             )
-            if event.partial_reasons:
-                message += f"; partial flags=0x{event.partial_reasons:04x}"
+            if partial_reasons:
+                message += f"; partial flags=0x{partial_reasons:04x}"
             continue_all_neighbors = bool(
                 self._survey_auto_all
-                and event.status == SURVEY_TERMINAL_COMPLETE
-                and event.partial_reasons == 0
+                and terminal_status == SURVEY_TERMINAL_COMPLETE
+                and partial_reasons == 0
                 and self.survey_model.plan_pairs
             )
             if continue_all_neighbors:
@@ -1806,8 +1857,8 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             elif self._survey_auto_all:
                 self._survey_auto_all = False
                 if (
-                    event.status == SURVEY_TERMINAL_COMPLETE
-                    and event.partial_reasons == 0
+                    terminal_status == SURVEY_TERMINAL_COMPLETE
+                    and partial_reasons == 0
                     and not self.survey_model.plan_pairs
                 ):
                     message = (
@@ -1825,6 +1876,9 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             self._schedule_survey_geometry_solve()
         self._refresh_survey_view()
         self._update_command_state()
+        if acceptance_recovered:
+            self._drain_buffered_survey_events()
+            self._dispatch_deferred_survey_command()
         return True
 
     def _finish_received_range_countdown(
@@ -1920,6 +1974,8 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             CMD_SURVEY_GET_STATUS,
         } or not isinstance(status, int):
             return
+        if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN) and not self.survey_model.active:
+            return
         if received_at is not None:
             self._expire_survey_command(now=received_at)
         transition = self.survey_command_owner.observe_result(
@@ -1930,7 +1986,17 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         )
         if not transition.matched or transition.request is None:
             return
-        self._survey_pending_dispatch = None
+        self._apply_survey_command_result(transition)
+
+    def _apply_survey_command_result(
+        self, transition: Any, *, acceptance_applied: bool = False,
+        defer_followups: bool = False,
+    ) -> None:
+        assert transition.request is not None
+        command_id = transition.request.command_id
+        status = transition.status
+        if not transition.recovered:
+            self._survey_pending_dispatch = None
         if command_id == CMD_SURVEY_GET_STATUS:
             # The replayed event may precede this result and already finish the
             # run. A status command result alone is never terminal evidence.
@@ -1943,7 +2009,17 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             self._update_command_state()
             return
         if transition.outcome == "accepted":
-            self.survey_model.note_command_accepted(command_id)
+            error_text = getattr(self, "error_text", None)
+            if error_text is not None and error_text.get() == (
+                "Survey command result was lost; checking gateway state before releasing the run"
+            ):
+                error_text.set("")
+            if self.survey_model.error == (
+                "Gateway command result timed out; the remote outcome is unknown"
+            ):
+                self.survey_model.error = None
+            if not acceptance_applied:
+                self.survey_model.note_command_accepted(command_id)
             if command_id == CMD_SURVEY_START:
                 model = self.survey_model
                 depth = max(model.slot_hops.values(), default=SURVEY_MAX_HOPS)
@@ -1951,9 +2027,10 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
                 self._survey_event_due_at = time.monotonic() + (
                     survey_neighbor_phase_ms(depth, span) / 1000.0 + 60.0
                 )
-            if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
+            if not defer_followups and command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
                 self._drain_buffered_survey_events()
-            self._dispatch_deferred_survey_command()
+            if not defer_followups:
+                self._dispatch_deferred_survey_command()
         else:
             self._clear_scheduled_phase_estimate()
             status_name = COMMAND_STATUS_NAMES.get(status, str(status))
@@ -1961,6 +2038,16 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             if command_id == CMD_SURVEY_CANCEL:
                 self._survey_event_due_at = time.monotonic()
                 self._survey_phase = "ranging"
+            elif self.survey_model.phase == "aborting":
+                self._survey_phase = "aborting"
+                pending = self.survey_command_owner.pending
+                if pending is not None and pending.command_id == CMD_SURVEY_CANCEL:
+                    pass
+                elif (self._survey_deferred_dispatch is not None
+                        and self._survey_deferred_dispatch.command_id == CMD_SURVEY_CANCEL):
+                    self._dispatch_deferred_survey_command()
+                else:
+                    self._cancel_survey()
             else:
                 self._survey_chain_pending = False
                 self._survey_auto_all = False
@@ -2048,15 +2135,19 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
         self.survey_model.note_command_timeout(command_id)
         if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
             self._survey_event_due_at = time.monotonic()
-            self._survey_phase = "recovering"
-            self._survey_deferred_dispatch = None
+            if self.survey_model.phase == "aborting":
+                self._survey_phase = "aborting"
+                self._dispatch_deferred_survey_command()
+            else:
+                self._survey_phase = "recovering"
+                self._survey_deferred_dispatch = None
             self._show_error("Survey command result was lost; checking gateway state before releasing the run")
             self._refresh_survey_view()
             self._update_command_state()
             return
         if command_id == CMD_SURVEY_CANCEL:
             self._survey_event_due_at = time.monotonic()
-            self._survey_phase = "ranging"
+            self._survey_phase = "aborting"
         else:
             self._survey_chain_pending = False
             self._survey_auto_all = False
@@ -2363,6 +2454,10 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             return
         self._survey_auto_all = False
         self._survey_phase = "aborting"
+        self.survey_model.phase = "aborting"
+        if (self._survey_deferred_dispatch is not None
+                and self._survey_deferred_dispatch.command_id == CMD_SURVEY_PLAN):
+            self._survey_deferred_dispatch = None
         self._submit_survey_dispatch(
             GatewayCommandDispatch(
                 command_kind=2,
@@ -2605,7 +2700,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
             getattr(self, "_assignment_replay_receipts", {}).clear()
             survey_owner = getattr(self, "survey_command_owner", None)
             if survey_owner is not None:
-                survey_owner.reset()
+                survey_owner.disconnect()
             self._survey_pending_dispatch = None
             self._survey_deferred_dispatch = None
             getattr(self, "_survey_event_buffer", []).clear()
@@ -3663,7 +3758,7 @@ class GatewayGui(GatewayAnchorActionsMixin, GatewayDiagnosticsMixin):
     def _clear_packets(self) -> None:
         self._clear_tree(self.packet_tree)
         self.packet_by_iid.clear()
-        self._wake_row_iids.clear()
+        self._clear_diagnostic_packet_rows()
         self.cir_reassembler.clear()
         self.cir_key_by_packet_id.clear()
         self.cir_errors_by_packet_id.clear()

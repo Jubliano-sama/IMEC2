@@ -46,6 +46,7 @@ from .command_telemetry import (
     GATEWAY_COMMAND_STAGE_NAMES, is_enumeration_count_mismatch,
 )
 from .protocol import (
+    GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES,
     Packet, MSG_CLICK_REPORT, TLV_ANCHOR_ID, TLV_CLICKER_ID, TLV_ATTEMPT_INDEX,
     TLV_DETECTION_SOURCE,
     TLV_DISTANCE_MM, TLV_EVENT_SEQ, TLV_RANGE_STATUS, TLV_SAMPLE_COUNT,
@@ -122,6 +123,10 @@ class WakeTrainMonitor:
         self._order.clear()
         self._evidence.clear()
         self._diagnostics.clear()
+
+    @property
+    def retained_keys(self) -> frozenset[tuple[object, ...]]:
+        return frozenset(self._evidence)
 
     @property
     def counters(self) -> dict[str, int]:
@@ -436,8 +441,9 @@ def _u32_serial_newer(candidate: int, reference: int) -> bool:
 
 
 class TopologyBaselineModel:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, max_runs: int = 32) -> None:
         self.path = path
+        self.max_runs = max(1, int(max_runs))
         self.load_error: str | None = None
         try:
             self.baseline = self._load()
@@ -452,6 +458,7 @@ class TopologyBaselineModel:
         self._anchors_by_key: dict[tuple[int, int, int, int], set[int]] = {}
         self._terminals: dict[tuple[int, int, int, int], GatewayCommandEvent] = {}
         self._live_keys: set[tuple[int, int, int, int]] = set()
+        self._overflow_keys: set[tuple[int, int, int, int]] = set()
         self._first_sequence_by_key: dict[
             tuple[int, int, int, int], int
         ] = {}
@@ -465,6 +472,7 @@ class TopologyBaselineModel:
         self._anchors_by_key.clear()
         self._terminals.clear()
         self._live_keys.clear()
+        self._overflow_keys.clear()
         self._first_sequence_by_key.clear()
         self._first_loss_by_key.clear()
 
@@ -488,7 +496,13 @@ class TopologyBaselineModel:
                 self._first_loss_by_key[key], event.lost_event_count
             )
         if event.stage == 6 and event.anchor_id:
-            anchor_ids.add(event.anchor_id)
+            if (
+                event.anchor_id not in anchor_ids
+                and len(anchor_ids) >= GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES
+            ):
+                self._overflow_keys.add(key)
+            else:
+                anchor_ids.add(event.anchor_id)
         if event.terminal:
             previous_terminal = self._terminals.get(key)
             if (
@@ -518,6 +532,7 @@ class TopologyBaselineModel:
         ):
             self._select_current(key, event.event_sequence)
 
+        self._prune_runs()
         if key != self.current_key:
             return None
         self.current_ids = anchor_ids
@@ -527,7 +542,12 @@ class TopologyBaselineModel:
         actual = tuple(sorted(self.current_ids))
         telemetry_lost = terminal.lost_event_count > self._first_loss_by_key[key]
         count_mismatch = is_enumeration_count_mismatch(terminal)
-        if key not in self._live_keys:
+        if key in self._overflow_keys:
+            reason = (
+                "Incomplete: anchor details exceeded the protocol capacity "
+                f"of {GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES} anchors."
+            )
+        elif key not in self._live_keys:
             reason = (
                 "Incomplete: this enumeration is available only as replayed "
                 "history; run a new enumeration before accepting a baseline."
@@ -576,6 +596,18 @@ class TopologyBaselineModel:
         self._latest_key = key
         return self.latest
 
+    def _prune_runs(self) -> None:
+        # Replay can arrive after a newer live run. Always preserve the current
+        # run and retire every secondary index with its history owner.
+        while len(self._anchors_by_key) > self.max_runs:
+            oldest = next(key for key in self._anchors_by_key if key != self.current_key)
+            self._anchors_by_key.pop(oldest)
+            self._terminals.pop(oldest, None)
+            self._live_keys.discard(oldest)
+            self._overflow_keys.discard(oldest)
+            self._first_sequence_by_key.pop(oldest, None)
+            self._first_loss_by_key.pop(oldest, None)
+
     def accept_latest(self) -> AnchorBaseline:
         if (
             self.latest is None
@@ -623,7 +655,7 @@ class TopologyBaselineModel:
 
 class CommandTimelineModel:
     def __init__(self, *, max_events: int = 1000) -> None:
-        self.max_events = max_events
+        self.max_events = max(1, int(max_events))
         self.events: dict[tuple[tuple[int, int, int, int], int], GatewayCommandEvent] = {}
         self.terminals: dict[tuple[int, int, int, int], GatewayCommandEvent] = {}
         self.enumerated_anchors: dict[tuple[int, int, int, int], dict[int, GatewayCommandEvent]] = {}
@@ -635,16 +667,28 @@ class CommandTimelineModel:
     def observe(self, event: GatewayCommandEvent) -> None:
         key = event.correlation_key
         self.events[(key, event.event_sequence)] = event
+        self._index(event)
+        while len(self.events) > self.max_events:
+            # Arrival order remains well-defined across the u32 sequence wrap.
+            retired = self.events.pop(next(iter(self.events)))
+            retired_key = retired.correlation_key
+            if not any(item.correlation_key == retired_key for item in self.events.values()):
+                self.terminals.pop(retired_key, None)
+                self.enumerated_anchors.pop(retired_key, None)
+
+    def _index(self, event: GatewayCommandEvent) -> None:
+        key = event.correlation_key
         if event.command_kind == 1 and event.stage == 6 and event.anchor_id:
             anchors = self.enumerated_anchors.setdefault(key, {})
             previous = anchors.get(event.anchor_id)
+            if previous is None and len(anchors) >= GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES:
+                # Excess IDs remain in the bounded event timeline; the topology
+                # model marks this run incomplete instead of accepting a subset.
+                return
             if previous is None or event.discovery_slot != 255 or previous.discovery_slot == 255:
                 anchors[event.anchor_id] = event
         if event.terminal:
             self.terminals[key] = event
-        while len(self.events) > self.max_events:
-            oldest = min(self.events, key=lambda item: item[1])
-            self.events.pop(oldest)
 
     def ordered(self) -> tuple[GatewayCommandEvent, ...]:
         return tuple(sorted(self.events.values(), key=lambda event: event.event_sequence))

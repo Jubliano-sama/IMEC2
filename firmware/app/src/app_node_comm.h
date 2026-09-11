@@ -264,6 +264,8 @@ int app_node_comm_cancel_protocol_response_reservation(
 int app_node_comm_service_deliveries(void);
 int app_node_comm_gateway_delivery_safe_boundary(void);
 int app_node_comm_cancel_delivery(uint32_t handle);
+/* Cancels policy and arranges retirement; an already claimed backend may
+ * still be running. Success does not prove that all RF has stopped. */
 int app_node_comm_abandon_delivery(uint32_t handle);
 int app_node_comm_auto_reap_delivery(uint32_t handle);
 /* Returns 1 while the exact facade record exists, 0 after retirement. */
@@ -289,6 +291,10 @@ int app_node_comm_delivery_attempts_started(uint32_t handle,
 int app_node_comm_delivery_first_rf_started_at(
     uint32_t handle,
     uint64_t *rf_started_at_ms_out);
+/* Shared message-age origin, available only after a real flood transmission. */
+int app_node_comm_delivery_message_origin_at(
+    uint32_t handle,
+    uint64_t *origin_at_ms_out);
 /* The active delivery generation binds an asynchronous backend attempt. */
 int app_node_comm_delivery_generation(uint32_t handle,
                                       uint32_t *generation_out);

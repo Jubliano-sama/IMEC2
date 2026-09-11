@@ -11,6 +11,8 @@ from typing import Any
 
 from .app import GatewayGui
 from .protocol import (
+    CMD_SURVEY_CANCEL,
+    CMD_SURVEY_GET_STATUS,
     CMD_SURVEY_PLAN,
     CMD_SURVEY_START,
     COMMAND_NAMES,
@@ -23,6 +25,7 @@ from .protocol import (
     SURVEY_EVENT_PLAN_ACCEPTED,
     SURVEY_EVENT_RANGE_PROGRESS,
     SURVEY_EVENT_SIGNALS,
+    SURVEY_EVENT_STARTED,
     SURVEY_EVENT_TERMINAL,
     TLV_COMMAND_ID,
     TLV_COMMAND_STATUS,
@@ -30,6 +33,7 @@ from .protocol import (
     Packet,
     decode_survey_event,
     validate_gateway_command_event_packet,
+    validate_gateway_local_command_result_packet,
 )
 
 
@@ -47,6 +51,49 @@ class SurveyHilEvidence:
     partial_reasons: int = 0
     terminal_seen: bool = False
     signal_measurements: int = 0
+    dispatched_commands: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    command_results: dict[tuple[int, int, int], int] = field(default_factory=dict)
+    started_generation: int | None = None
+
+    def note_dispatch(self, command_id: int, session_id: int, sequence: int) -> None:
+        identity = (command_id, session_id, sequence)
+        if self.dispatched_commands.get(command_id) == identity:
+            return
+        self.dispatched_commands[command_id] = identity
+        self.command_status.pop(command_id, None)
+        if command_id == CMD_SURVEY_START:
+            self.started_generation = None
+
+    def observe_command_result(
+        self, command_id: int, session_id: int, sequence: int, status: int
+    ) -> bool:
+        identity = (command_id, session_id, sequence)
+        if (self.dispatched_commands.get(command_id) != identity
+                or identity in self.command_results):
+            return False
+        self.command_results[identity] = status
+        self.command_status[command_id] = status
+        if command_id == CMD_SURVEY_PLAN and status == 0:
+            self.plan_command_successes += 1
+        return True
+
+    def note_started(self, generation: int, session_id: int, sequence: int) -> bool:
+        if (generation <= 0
+                or self.dispatched_commands.get(CMD_SURVEY_START)
+                != (CMD_SURVEY_START, session_id, sequence)
+                or self.started_generation not in (None, generation)):
+            return False
+        self.started_generation = generation
+        return True
+
+    def start_accepted_for(self, generation: int | None) -> bool:
+        identity = self.dispatched_commands.get(CMD_SURVEY_START)
+        return (
+            generation is not None and generation > 0
+            and self.started_generation == generation
+            and identity is not None
+            and self.command_results.get(identity) == 0
+        )
 
     def qualifies(
         self,
@@ -91,7 +138,46 @@ class SurveyHilGui(GatewayGui):
 
     def __init__(self, root: tk.Tk, evidence: SurveyHilEvidence) -> None:
         self.hil_evidence = evidence
+        self.hil_disconnect_after_start = False
         super().__init__(root)
+
+    def _dispatch_gateway_command(self, dispatch: Any) -> None:
+        self.hil_evidence.note_dispatch(
+            dispatch.command_id, dispatch.session_id, dispatch.sequence,
+        )
+        super()._dispatch_gateway_command(dispatch)
+
+    def _apply_survey_command_result(self, transition: Any, **kwargs: Any) -> None:
+        # Production correlation has already matched the exact pending or
+        # uncertain request, including acceptance recovered through GET_STATUS.
+        request = transition.request
+        if transition.matched and request is not None:
+            self.hil_evidence.observe_command_result(
+                request.command_id, request.session_id, request.sequence,
+                transition.status,
+            )
+        super()._apply_survey_command_result(transition, **kwargs)
+
+    def _submit_survey_plan(self, event: Any) -> None:
+        if self.hil_disconnect_after_start:
+            # The disconnect experiment measures the START-only lease even if
+            # BLE backlog delivers its neighbor graph before the timer expires.
+            print("GUI_DISCONNECT_PLAN_SUPPRESSED", flush=True)
+            return
+        super()._submit_survey_plan(event)
+
+    def _disconnect_start_is_current(self) -> bool:
+        model = self.survey_model
+        identity = self.hil_evidence.dispatched_commands.get(CMD_SURVEY_START)
+        return (
+            model.active and model.start_accepted
+            and self.hil_evidence.start_accepted_for(self._survey_generation)
+            and model.generation == self._survey_generation
+            and identity is not None
+            and model.start_command_identity == identity[1:]
+            and model.plan_command_identity is None
+            and CMD_SURVEY_PLAN not in self.hil_evidence.dispatched_commands
+        )
 
     def _append_log(self, tag: str, message: str) -> None:
         print(f"GUI_LOG level={tag} message={message}", flush=True)
@@ -106,10 +192,17 @@ class SurveyHilGui(GatewayGui):
                 command_id = packet.value(TLV_COMMAND_ID)
                 status = packet.value(TLV_COMMAND_STATUS)
                 reason = packet.value(TLV_REASON)
-                if isinstance(command_id, int) and isinstance(status, int):
-                    self.hil_evidence.command_status[command_id] = status
-                    if command_id == CMD_SURVEY_PLAN and status == 0:
-                        self.hil_evidence.plan_command_successes += 1
+                # Survey results enter evidence only through the production
+                # owner's matched transition, never through a retained replay.
+                if command_id not in {
+                    CMD_SURVEY_START, CMD_SURVEY_PLAN,
+                    CMD_SURVEY_CANCEL, CMD_SURVEY_GET_STATUS,
+                }:
+                    validate_gateway_local_command_result_packet(packet)
+                    if packet.src_id == packet.dst_id == self.gateway_id:
+                        self.hil_evidence.observe_command_result(
+                            command_id, packet.session_id, packet.seq, status,
+                        )
                 print(
                     f"HOST_PACKET command={COMMAND_NAMES.get(command_id, command_id)} "
                     f"status={status} ({COMMAND_STATUS_NAMES.get(status, status)}) "
@@ -150,7 +243,14 @@ class SurveyHilGui(GatewayGui):
                     )
                     return
                 self.hil_evidence.partial_reasons |= event.partial_reasons
-                if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
+                if event.kind == SURVEY_EVENT_STARTED:
+                    if (self.survey_model.start_accepted
+                            and self.survey_model.assignment == event.assignment):
+                        self.hil_evidence.note_started(
+                            event.generation, event.host_session_id,
+                            event.host_sequence,
+                        )
+                elif event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
                     self.hil_evidence.neighbor_reports = len(
                         event.neighbor_reports
                     )
@@ -272,6 +372,7 @@ def run(args: argparse.Namespace) -> int:
         root.withdraw()
     evidence = SurveyHilEvidence()
     gui = SurveyHilGui(root, evidence)
+    gui.hil_disconnect_after_start = args.disconnect_after_start is not None
     gui._survey_batch_pair_limit = args.batch_pairs
     _configure_expected_anchors(gui, args.expected_anchors)
     started_at = time.monotonic()
@@ -290,7 +391,7 @@ def run(args: argparse.Namespace) -> int:
         results = dict(gui._survey_results)
         error = gui.error_text.get()
         if reason == "disconnect-injected":
-            success = evidence.command_status.get(CMD_SURVEY_START) == 0
+            success = gui._disconnect_start_is_current()
         else:
             success = reason == "survey-complete" and evidence.qualifies(
                 expected_anchors=args.expected_anchors,
@@ -393,7 +494,7 @@ def run(args: argparse.Namespace) -> int:
         if (
             args.disconnect_after_start is not None
             and started
-            and evidence.command_status.get(CMD_SURVEY_START) == 0
+            and gui._disconnect_start_is_current()
         ):
             if survey_start_accepted_at is None:
                 survey_start_accepted_at = time.monotonic()
@@ -405,6 +506,8 @@ def run(args: argparse.Namespace) -> int:
             ):
                 finish("disconnect-injected")
                 return
+        else:
+            survey_start_accepted_at = None
         if (
             started
             and evidence.terminal_seen

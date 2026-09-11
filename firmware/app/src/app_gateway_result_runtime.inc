@@ -718,7 +718,7 @@ static bool gateway_survey_event_envelope_valid(const uint8_t *payload,
     }
     if (payload_len < SURVEY_EVENT_HEADER_WIRE_LEN ||
         kind < SURVEY_EVENT_NEIGHBOR_GRAPH ||
-        kind > SURVEY_EVENT_BATCH_COMPLETE) {
+        kind > SURVEY_EVENT_STARTED) {
         return false;
     }
     if (kind != SURVEY_EVENT_NEIGHBOR_GRAPH &&
@@ -726,14 +726,43 @@ static bool gateway_survey_event_envelope_valid(const uint8_t *payload,
         return false;
     }
     switch (kind) {
+    case SURVEY_EVENT_STARTED:
+        if (payload[2] != SURVEY_TERMINAL_COMPLETE || payload[3] != 0u ||
+            proto_get_u32_le(&payload[56]) == 0u ||
+            proto_get_u16_le(&payload[60]) == 0u) {
+            return false;
+        }
+        /* STARTED is an empty acceptance bound to the original host command.
+         * Counts, partial flags, batch finality and reserved bytes stay zero. */
+        for (size_t i = 8u; i < 14u; i++) {
+            if (payload[i] != 0u) {
+                return false;
+            }
+        }
+        for (size_t i = 62u; i < SURVEY_EVENT_HEADER_WIRE_LEN; i++) {
+            if (payload[i] != 0u) {
+                return false;
+            }
+        }
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN;
+        break;
     case SURVEY_EVENT_NEIGHBOR_GRAPH:
         expected = SURVEY_EVENT_HEADER_WIRE_LEN +
             (size_t)payload[3] * SURVEY_NEIGHBOR_RECORD_WIRE_LEN;
         break;
     case SURVEY_EVENT_PLAN_ACCEPTED:
-        if (payload[11] > SURVEY_MAX_PAIRS ||
-            payload[13] > SURVEY_MAX_PAIRS) {
+        if (payload[2] > SURVEY_TERMINAL_PARTIAL || payload[10] != 0u ||
+            payload[11] > SURVEY_MAX_PAIRS ||
+            payload[13] > SURVEY_MAX_PAIRS ||
+            (proto_get_u32_le(&payload[56]) == 0u) !=
+                (proto_get_u16_le(&payload[60]) == 0u) ||
+            payload[62] != 0u || payload[63] != 0u) {
             return false;
+        }
+        for (size_t i = 65u; i < SURVEY_EVENT_HEADER_WIRE_LEN; i++) {
+            if (payload[i] != 0u) {
+                return false;
+            }
         }
         expected = SURVEY_EVENT_HEADER_WIRE_LEN +
             (size_t)payload[11] * SURVEY_PLAN_PAIR_WIRE_LEN +

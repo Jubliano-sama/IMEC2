@@ -16,6 +16,7 @@
 #define APP_WATCHDOG_STARTUP_GRACE_MS 900000u
 #define APP_WATCHDOG_INIT_RETRY_DELAY_MS 1000u
 #define APP_WATCHDOG_TERMINAL_RESTART_DELAY_MS 1000u
+#define APP_WATCHDOG_TERMINAL_RESTART_MIN_BOOT_MS 1800000u
 
 struct app_watchdog_health {
     uint32_t feeds;
@@ -49,13 +50,18 @@ static inline bool app_watchdog_action_lease_stale(
 
 int app_watchdog_init(void);
 void app_watchdog_clicker_idle_checkpoint(void);
+/* Check an already completed action through the system workqueue without
+ * renewing its progress lease or adding a periodic idle wakeup. */
+bool app_watchdog_clicker_action_checkpoint(uint32_t generation);
 void app_watchdog_note_radio_progress(void);
 uint32_t app_watchdog_clicker_action_begin(void);
 bool app_watchdog_note_clicker_action_progress(uint32_t generation);
 bool app_watchdog_clicker_action_end(uint32_t generation);
 void app_watchdog_stop_feeding(void);
-/* After stopping feeds for an unrecoverable radio fault, reset promptly.
- * The first request owns the deadline; repeated faults cannot postpone it. */
+/* Call after stopping feeds for an unrecoverable radio fault. Cold/pin boots
+ * retry promptly; automatic or unknown boots wait until at least 30 minutes
+ * uptime so persistent faults cannot churn durable boot identities. The first
+ * request owns the deadline; repeated faults cannot postpone it. */
 void app_watchdog_schedule_terminal_restart(void);
 void app_watchdog_get_health(struct app_watchdog_health *health);
 

@@ -222,7 +222,7 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                 bool queued = mesh_queue_from_frame_at(frame,
                                                        frame_len,
                                                        quality,
-                                                       UWB_CHANNEL_MESH_PAYLOAD,
+                                                       probe->radio_channel,
                                                        k_uptime_get_32(),
                                                        0u,
                                                        NULL,
@@ -494,7 +494,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
     int ret;
 
     if (probe == NULL ||
-        probe->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        probe->radio_channel != UWB_CHANNEL_WAKE_CONTACT ||
         probe->next_hop_id != GATEWAY_ID) {
         return -EINVAL;
     }
@@ -522,9 +522,9 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
 
     /*
      * Direct route contact is background maintenance. Check the control lane
-     * at every safe retry boundary before leaving channel 5 so a gateway wake
-     * train that started during the previous ACK wait can preempt the next
-     * channel-9 attempt.
+     * at every safe retry boundary before switching from the standard wake
+     * PHY to extended-PHR control, so a gateway wake train that started
+     * during the previous ACK wait can preempt the next probe.
      */
     ret = mesh_route_wake_sniff_activity("direct-gateway-pre",
                                          GATEWAY_ID,
@@ -559,7 +559,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
         APP_MESH_DIRECT_PROBE_PHASE_CH9_CONFIGURE_RECOVERY,
         attempt,
         probe->packet.seq);
-    ret = dwm3000_driver_configure_mesh_payload_mode();
+    ret = dwm3000_driver_configure_wake_mesh_control_mode();
     app_mesh_direct_probe_breadcrumb_note(
         APP_MESH_DIRECT_PROBE_PHASE_PAYLOAD_MODE_COMPLETE,
         attempt,
@@ -593,7 +593,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
         parking_ret = mesh_radio_idle_with_bounded_recovery(
             "direct-gateway-probe");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_DIRECT_GW_PROBE_KEEP_CH9_AWAKE seq=%u attempt=%u release_ret=%d\n",
+            status_debug_printf("DBG_DIRECT_GW_PROBE_KEEP_C5_AWAKE seq=%u attempt=%u release_ret=%d\n",
                                 probe->packet.seq,
                                 attempt,
                                 parking_ret);
@@ -696,7 +696,7 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
         probe->packet.payload_len = 0u;
         probe->payload_len = 0u;
         probe->next_hop_id = GATEWAY_ID;
-        probe->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+        probe->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
         probe->queued_at_ms = now_ms;
         probe->earliest_tx_ms = now_ms;
         probe->queued_at_valid = true;

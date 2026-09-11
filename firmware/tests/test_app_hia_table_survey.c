@@ -384,6 +384,54 @@ static void test_matching_start_plan_cancel_remain_eligible(void)
     assert(lock_depth == 0u);
 }
 
+static void test_every_control_copy_reconstructs_the_same_survey_deadlines(void)
+{
+    const uint32_t copy_ages_ms[] = {5u, 83u, 205u, 611u};
+    const uint32_t start_origin_ms = 1000u;
+    const uint32_t plan_origin_ms = 4000u;
+
+    /* Each iteration is a separately provisioned receiver which missed all
+     * earlier copies. The last age also represents a delayed relay/retry.
+     * Apply the real START and PLAN boundaries, then replay every later copy:
+     * neither initial acceptance nor duplicate acceptance may move a phase. */
+    for (size_t first = 0u; first < sizeof(copy_ages_ms) / sizeof(copy_ages_ms[0]); first++) {
+        reset_fixture();
+        assert(prearm(NEW_EPOCH) == 0);
+        assert(apply_table(NEW_EPOCH) == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+        struct survey_control control = start_control();
+        struct proto_packet packet = {.msg_type=MSG_COMMAND, .src_id=GATEWAY_ID};
+        control.start_delay_ms = 2000u;
+        for (size_t copy = first; copy < sizeof(copy_ages_ms) / sizeof(copy_ages_ms[0]); copy++) {
+            now_ms = start_origin_ms + copy_ages_ms[copy];
+            packet.message_age_ms = copy_ages_ms[copy];
+            assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+            assert(anchor_state.neighbor_start_ms == start_origin_ms + control.start_delay_ms);
+            assert(anchor_state.self_stop_ms == start_origin_ms + control.self_stop_delay_ms);
+            assert(scheduled_at == anchor_state.neighbor_start_ms - APP_SURVEY_ANCHOR_PREPARE_MS);
+            assert(scheduled == 1u && consumed == 1u);
+        }
+        control.phase = SURVEY_PHASE_PLAN;
+        control.start_delay_present = control.self_stop_delay_present = false;
+        control.plan_present = true;
+        control.plan = (struct survey_plan) {
+            .identity = control.identity, .execution_start_delay_ms = 2000u,
+            .self_stop_delay_ms = 10000u, .pair_count = 1u, .wave_count = 1u,
+            .batch_index = 0u, .final_batch = true,
+            .pairs = {{.initiator_slot = 0u, .responder_slot = 1u, .wave_index = 0u}},
+        };
+        assert(survey_plan_commitment(&control.plan, control.plan.commitment));
+        for (size_t copy = first; copy < sizeof(copy_ages_ms) / sizeof(copy_ages_ms[0]); copy++) {
+            now_ms = plan_origin_ms + copy_ages_ms[copy];
+            packet.message_age_ms = copy_ages_ms[copy];
+            assert(app_survey_anchor_apply_control(&packet, &control) == 0);
+            assert(anchor_state.execution_start_ms == plan_origin_ms + control.plan.execution_start_delay_ms);
+            assert(anchor_state.self_stop_ms == plan_origin_ms + control.plan.self_stop_delay_ms);
+            assert(scheduled_at == anchor_state.execution_start_ms - APP_SURVEY_ANCHOR_PREPARE_MS);
+            assert(scheduled == 2u && consumed == 1u);
+        }
+    }
+}
+
 int main(void)
 {
     test_lower_hia_authorizes_table_and_survey_without_separate_claim();
@@ -392,6 +440,7 @@ int main(void)
     test_active_survey_rejects_enumeration_without_rebasing();
     test_active_survey_command_admission_is_exact_and_read_only();
     test_matching_start_plan_cancel_remain_eligible();
+    test_every_control_copy_reconstructs_the_same_survey_deadlines();
     puts("production HIA TABLE survey harness passed");
     return 0;
 }

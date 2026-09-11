@@ -59,6 +59,23 @@ static bool packet_identity_matches_pending(
     return packet_identity_matches(packet, &pending->packet);
 }
 
+static bool packet_semantic_matches(const struct proto_packet *left,
+                                    const uint8_t *left_payload,
+                                    size_t left_payload_len,
+                                    const struct proto_packet *right,
+                                    const uint8_t *right_payload,
+                                    size_t right_payload_len)
+{
+    uint8_t left_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t right_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    return mesh_packet_semantic_digest(left, left_payload, left_payload_len,
+                                       left_digest) &&
+           mesh_packet_semantic_digest(right, right_payload, right_payload_len,
+                                       right_digest) &&
+           memcmp(left_digest, right_digest, sizeof(left_digest)) == 0;
+}
+
 static bool queued_outbound_matches_transit_confirm_pending(
     const struct mesh_sim_queued_tx *queued,
     const struct mesh_pending_tx *pending,
@@ -338,6 +355,7 @@ static int queue_outbound(struct mesh_sim_world *world,
 {
     struct mesh_sim_role_instance *node;
     struct mesh_sim_queued_tx *slot = NULL;
+    bool report_admission;
 
     if (!mesh_sim_node_index_valid(world, node_index) || outbound == NULL ||
         outbound->payload_len != outbound->packet.payload_len ||
@@ -347,10 +365,34 @@ static int queue_outbound(struct mesh_sim_world *world,
         return MESH_SIM_ERR_ARG;
     }
     node = &world->roles[node_index];
+    report_admission = needs_relay_start &&
+        mesh_relay_packet_can_queue_gateway_report(&node->relay,
+                                                   &outbound->packet);
+    /* Production report admission checks its live delivery bank before queue
+     * capacity. The simulator's active pending transaction models that owner;
+     * an idle pending packet or duplicate history does not retain any bytes. */
+    if (report_admission && mesh_relay_tx_active(&node->relay) &&
+        packet_semantic_matches(&outbound->packet, outbound->payload,
+                                 outbound->payload_len,
+                                 &node->relay.pending.packet,
+                                 node->relay.pending.payload,
+                                 node->relay.pending.payload_len)) {
+        return mesh_sim_trace_add_packet(
+            world, world->now_us, node->id, outbound->next_hop_id,
+            MESH_SIM_TRANSITION_PACKET_COALESCED, &outbound->packet,
+            outbound_priority(node, outbound));
+    }
     for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
         if (queued_outbound_matches(&node->tx_queue[i],
                                     outbound,
-                                    needs_relay_start)) {
+                                    needs_relay_start) ||
+            (report_admission && node->tx_queue[i].valid &&
+             node->tx_queue[i].needs_relay_start &&
+             packet_semantic_matches(
+                 &outbound->packet, outbound->payload, outbound->payload_len,
+                 &node->tx_queue[i].outbound.packet,
+                 node->tx_queue[i].outbound.payload,
+                 node->tx_queue[i].outbound.payload_len))) {
             return mesh_sim_trace_add_packet(
                 world,
                 world->now_us,
@@ -1628,13 +1670,14 @@ static int process_relay_actions(struct mesh_sim_world *world,
             (result->actions &
              MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING) == 0u;
         if (needs_relay_start &&
+            !mesh_relay_packet_can_queue_gateway_report(&node->relay,
+                                                        &forward.packet) &&
             node->relay.pending.state != MESH_RELAY_TX_IDLE &&
             packet_identity_matches(&forward.packet,
                                     &node->relay.pending.packet)) {
-            /* A duplicate retry of the packet already tracked by this relay
-             * is an immutable custody retransmission.  It must be admitted
-             * during the pending turn, just like the generated ACKs, while
-             * still using the exact pending identity. */
+            /* A retained control retry remains eligible during the pending
+             * turn. Report bytes instead pass the semantic ownership check
+             * in queue_outbound() without creating another retransmission. */
             needs_relay_start = false;
         }
         if (!needs_relay_start) {

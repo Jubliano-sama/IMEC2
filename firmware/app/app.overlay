@@ -235,6 +235,8 @@
 &pinctrl {
     spi3_default: spi3_default {
         group1 {
+            /* Pinctrl owns GPIO setup, including the 32 MHz output drive. */
+            nordic,drive-mode = <NRF_DRIVE_H0H1>;
             psels = <NRF_PSEL(SPIM_SCK, 0, 11)>,
                     <NRF_PSEL(SPIM_MISO, 0, 12)>,
                     <NRF_PSEL(SPIM_MOSI, 1, 0)>;
