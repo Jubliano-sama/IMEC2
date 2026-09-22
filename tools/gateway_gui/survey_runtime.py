@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import time
 
 from .anchor_geometry import AnchorLayoutResult, AnchorPairDistance
@@ -1100,7 +1100,15 @@ class SurveyOperationModel:
         )
 
     @property
+    def geometry_solve_available(self) -> bool:
+        """Allow an explicit solve attempt with any usable measured ranges."""
+
+        return bool(self.geometry_pairs)
+
+    @property
     def geometry_solve_ready(self) -> bool:
+        """Keep automatic solving gated on complete, connected range coverage."""
+
         pairs = self.geometry_pairs
         if (
             self.pass_mode != SURVEY_PASS_FRESH
@@ -1201,6 +1209,16 @@ class SurveyOperationModel:
         }
         if set(layout.positions_m) != expected:
             raise SurveyStateError("geometry solver returned the wrong anchor set")
+        missing = {
+            anchor_label(anchor_id) for anchor_id in self.slot_to_anchor.values()
+        } - expected
+        if missing:
+            warning = (
+                f"Partial layout: {len(missing)} enumerated anchor(s) have no usable "
+                "ranges and are not shown."
+            )
+            if warning not in layout.warnings:
+                layout = replace(layout, warnings=(*layout.warnings, warning))
         self.layout = layout
         self.layout_revision = revision
         state = "warning" if layout.warnings else "done"

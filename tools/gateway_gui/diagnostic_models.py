@@ -624,11 +624,14 @@ class TopologyBaselineModel:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, self.path)
-        directory_fd = os.open(self.path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        # Windows cannot open directories through os.open. The file itself
+        # is flushed above; retain the directory durability barrier on POSIX.
+        if os.name != "nt":
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         self.baseline = baseline
         self.latest = TopologyComparison("exact", baseline.anchor_ids, baseline.anchor_ids, (), (), True,
                                          f"Complete: {len(baseline.anchor_ids)} anchors accepted as the baseline.")

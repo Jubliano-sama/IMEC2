@@ -80,6 +80,23 @@ class SurveyLockTests(unittest.TestCase):
         view.solver_var.set(NLOS_ONE_SIDED_ALGORITHM)
         self.assertEqual(view.distance_weight_power, 0.5)
 
+    def test_manual_solve_button_allows_sparse_ranges_and_respects_busy_state(self):
+        self.model.layout = None
+        self.model._solve_base_pairs = {
+            (pair.anchor_a_id, pair.anchor_b_id): pair for pair in self.pairs[:3]
+        }
+        self.assertFalse(self.model.geometry_solve_ready)
+        self.view.show_model(self.model)
+        self.assertEqual(str(self.view.solve_button.cget("state")), "normal")
+        self.assertIn("Manual solve available", self.view.geometry_var.get())
+        self.view.set_geometry_job_pending(True, "Solving...")
+        self.assertEqual(str(self.view.solve_button.cget("state")), "disabled")
+        self.view.set_geometry_job_pending(False)
+        self.assertEqual(str(self.view.solve_button.cget("state")), "normal")
+        self.model._solve_base_pairs.clear()
+        self.view.show_model(self.model)
+        self.assertEqual(str(self.view.solve_button.cget("state")), "disabled")
+
     def test_fit_details_exposes_solver_warnings_in_both_views(self):
         self.model.layout = replace(self.model.layout, warnings=(
             "Near-fit ranges constrain 4/5 shape dimensions; result depends on relaxed ranges or radio bounds.",

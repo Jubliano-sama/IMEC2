@@ -182,6 +182,25 @@ def gui_model() -> GatewayGui:
 
 
 class SurveyAppIntegrationTests(unittest.TestCase):
+    def test_manual_sparse_solve_is_submitted_but_not_automatically_scheduled(self) -> None:
+        gui = gui_model()
+        gui._geometry_future = None
+        gui._submit_geometry_solve = Mock()
+        pairs = (AnchorPairDistance("A", "B", 3), AnchorPairDistance("B", "C", 4))
+        gui.survey_model._solve_base_pairs = {
+            (pair.anchor_a_id, pair.anchor_b_id): pair for pair in pairs
+        }
+        self.assertFalse(gui.survey_model.geometry_solve_ready)
+        gui._schedule_survey_geometry_solve()
+        gui._submit_geometry_solve.assert_not_called()
+        gui._request_survey_geometry_solve("Spring energy", "Auto (best of all)", 7, 15, 0, None)
+        gui._submit_geometry_solve.assert_called_once()
+
+        gui._submit_geometry_solve.reset_mock()
+        gui.survey_model._solve_base_pairs.clear()
+        gui._request_survey_geometry_solve("Spring energy", "Auto (best of all)", 7, 15, 0, None)
+        gui._submit_geometry_solve.assert_not_called()
+
     def recovery_gui(self) -> GatewayGui:
         gui = gui_model()
         gui.connected = True

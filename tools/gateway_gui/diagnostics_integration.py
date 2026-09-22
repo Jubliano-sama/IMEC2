@@ -190,7 +190,7 @@ class GatewayDiagnosticsMixin:
 
         model = self.survey_model
         view = getattr(self, "survey_geometry_view", None)
-        if view is None or not model.geometry_solve_ready:
+        if view is None or not model.geometry_solve_available:
             return
         try:
             layout = evaluate_anchor_layout(
@@ -523,7 +523,7 @@ class GatewayDiagnosticsMixin:
         current_positions_override: dict[str, tuple[float, float]] | None,
     ) -> None:
         model = self.survey_model
-        if not model.geometry_solve_ready:
+        if not model.geometry_solve_available:
             return
         future = self._geometry_future
         if future is not None and not future.done():
@@ -683,7 +683,7 @@ class GatewayDiagnosticsMixin:
 
     def _request_distance_only_refinement(self) -> None:
         model = self.survey_model
-        if model.layout is None or not model.geometry_solve_ready:
+        if model.layout is None or not model.geometry_solve_available:
             return
         future = self._geometry_future
         if future is not None and not future.done():

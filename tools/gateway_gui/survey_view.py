@@ -968,6 +968,8 @@ class SurveyGeometryView(ttk.Frame):
             self.geometry_var.set(
                 f"Solving relative 2D geometry from {len(model.geometry_pairs)} ranges..."
             )
+        elif model.geometry_solve_available:
+            self.geometry_var.set("Manual solve available; the layout may be underconstrained.")
         else:
             self.geometry_var.set(model.geometry_requirement)
         self._show_pairs(model)
@@ -1678,7 +1680,7 @@ class SurveyGeometryView(ttk.Frame):
         model = self.model
         can_solve = bool(
             model is not None
-            and model.geometry_solve_ready
+            and model.geometry_solve_available
             and not self._geometry_job_pending
         )
         can_transform = has_layout and not self._geometry_job_pending

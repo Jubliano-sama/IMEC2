@@ -563,7 +563,7 @@ class SurveyOperationModelTests(unittest.TestCase):
         with self.assertRaisesRegex(SurveyStateError, "changed"):
             model.observe_survey_event(changed)
 
-    def test_underconstrained_ranges_remain_visible_without_fake_coordinates(self) -> None:
+    def test_underconstrained_ranges_allow_manual_solve_without_automatic_coordinates(self) -> None:
         model = self.model_after_enumeration()
         model.note_command_dispatched(CMD_SURVEY_START, now=1.0)
         model.note_command_accepted(CMD_SURVEY_START)
@@ -586,8 +586,18 @@ class SurveyOperationModelTests(unittest.TestCase):
         )
 
         self.assertFalse(model.geometry_solve_ready)
+        self.assertTrue(model.geometry_solve_available)
+        self.assertFalse(model.geometry_solve_pending)
         self.assertIn("at least 3 usable constraints", model.geometry_requirement)
         self.assertIsNone(model.layout)
+        from tools.gateway_gui.survey_view import SOLVER_CHOICES
+
+        for solver in SOLVER_CHOICES:
+            with self.subTest(solver=solver):
+                layout = solve_geometry(model.geometry_pairs, solver=solver)
+                self.assertTrue(model.apply_layout(model.geometry_revision, layout))
+                self.assertEqual(len(model.layout.positions_m), 3)
+                self.assertTrue(any("underconstrained" in warning for warning in model.layout.warnings))
 
     def test_partial_layout_cannot_silently_omit_an_enumerated_anchor(self) -> None:
         model = self.model_after_enumeration()
@@ -606,6 +616,11 @@ class SurveyOperationModelTests(unittest.TestCase):
 
         self.assertFalse(model.geometry_solve_ready)
         self.assertIn("all anchors", model.geometry_requirement)
+        self.assertTrue(model.geometry_solve_available)
+        layout = solve_geometry(model.geometry_pairs, solver="Spring energy")
+        self.assertTrue(model.apply_layout(model.geometry_revision, layout))
+        self.assertNotIn(anchor_label(0xD4), model.layout.positions_m)
+        self.assertTrue(any("1 enumerated anchor(s)" in warning for warning in model.layout.warnings))
 
     def test_fresh_assignment_can_restart_at_the_same_generation_after_reboot(self) -> None:
         model = self.model_after_enumeration()

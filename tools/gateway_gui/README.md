@@ -7,6 +7,28 @@ substituting synthetic results when BLE or protocol operations fail.
 
 ## Setup
 
+### Standalone Windows app
+
+Download `IMEC2-Gateway-GUI-Windows-x64.exe` from the repository's
+[GitHub Releases](https://github.com/Jubliano-sama/IMEC2/releases) and double-click
+it. Python is bundled; no Python installation or virtual environment is needed.
+Windows 10/11 x64 and a working Bluetooth adapter are required for live gateway
+connections. The first launch extracts the bundled runtime and may take a few
+seconds. The executable is unsigned.
+
+To build it from a Windows checkout, run from the repository root:
+
+```powershell
+.venv\Scripts\python.exe -m uv pip install --python .venv\Scripts\python.exe -r tools\gateway_gui\requirements-windows-build.txt
+powershell -ExecutionPolicy Bypass -File tools\gateway_gui\build_windows.ps1
+```
+
+The executable is written to `build/gateway-gui-windows/dist/`. It can validate
+its bundled Tk/Pillow interface and all five geometry solvers with
+`--smoke-test REPORT_JSON`; add `--scan` to also exercise Windows Bluetooth.
+
+### Run from Python source
+
 From the repository root, use the existing Python environment:
 
 ```sh
@@ -270,6 +292,12 @@ stream. Enumeration supplies the exact discovery-slot-to-anchor mapping; the
 accepted gateway plan supplies stable pair indices; only immutable results with
 at least three successful samples become distance constraints. Pending and
 insufficient pairs remain visible, but they never become invented coordinates.
+**Solve / re-solve** can be tried whenever usable ranges exist, including an
+underconstrained graph. Automatic solving still waits for complete, connected
+range coverage. Manual results retain ambiguity warnings, and any enumerated
+anchors without measured ranges are explicitly reported as omitted. The selected
+solver can still report an input error, such as disconnected measured components.
+
 The solver runs on one background worker and stale completions are discarded by
 GUI-run serial plus geometry revision, so packet and command progress stays live.
 
