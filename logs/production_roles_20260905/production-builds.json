@@ -1,0 +1,18 @@
+{
+  "anchor": {
+    "preset": "mesh_anchor",
+    "commit": "107e72d866f5d32443c04191220f20d56211fc77",
+    "ram_free_bytes": 6336,
+    "bin_sha256": "b280edcd978a4ed91dec389fd762d14d1129c1f5a6ac22711c16f42d11e052a2",
+    "rtt_click_injection": false,
+    "forced_hops": false
+  },
+  "clicker": {
+    "preset": "mesh_clicker",
+    "commit": "107e72d866f5d32443c04191220f20d56211fc77",
+    "ram_free_bytes": 33456,
+    "bin_sha256": "f1dfff78f054562fbfa562ae120d0e29f74f63a8d4edd70ee69d8f97e2694123",
+    "rtt_click_injection": false,
+    "forced_hops": false
+  }
+}

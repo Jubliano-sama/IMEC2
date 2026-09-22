@@ -1,0 +1,525 @@
+diff --git a/AGENT_KNOWN_ISSUES.md b/AGENT_KNOWN_ISSUES.md
+index 0dfe01839..e4acdf7fc 100644
+--- a/AGENT_KNOWN_ISSUES.md
++++ b/AGENT_KNOWN_ISSUES.md
+@@ -1618,9 +1618,15 @@ Facade control-flood repeats must not send a full wake train before every succes
+ - 2026-09-01: The GUI's gateway reboot targeted the gateway's own ID, but firmware sent it through the RF outbound builder that explicitly rejects self-destinations, while the GUI then classified the requested BLE reset as an unexpected link error; handle local gateway reboot before RF routing, publish its command result, and treat the exact reboot disconnect as completion/reconnect progress.
+ - 2026-09-01: An isolated direct-anchor reboot in F1DD could omit the F1 anchor because HIA relays incorrectly inserted click-probe RX pauses between activation packets, defeating the supposedly dense 500 ms train for some low-duty scan phases; HIA assumes no click and must transmit continuously, while ordinary wake trains retain click preemption.
+ - 2026-09-01: A live GUI-triggered gateway reboot still displayed false errors after the intended disconnect was recognized because automatic-reconnect progress used the generic error channel and the GUI raced the reset with a receipt for the successful local REBOOT result; classify only the exact expected reconnect messages as progress and skip that one futile result receipt because the physical reset clears its publisher custody.
++- 2026-08-31: Three direct-route production anchors entered a click with restored `seq=1` direct-gateway custody monopolizing TX/ACK ownership, which blocked low-duty Channel-5 scans, made the clicker consume all six discovery attempts, and queued the current `seq=56` reports for 14-17 seconds despite 6-7 ms payload airtime; recover restored direct custody only on a usable gateway event and keep it from starving click acquisition or newer local reports.
++- 2026-08-31: Running mypy over `tools/gateway_gui` without the repository's documented package flags loads tests under both `gateway_gui.*` and `tools.gateway_gui.*`; use `--explicit-package-bases --exclude 'tools/gateway_gui/tests/'` for the source-only GUI type gate.
+ - 2026-09-01: Running `.venv/bin/west build` from a linked T3 worktree without its own `.west` directory reports `unknown command "build"`; invoke that worktree's `west` binary from the primary west workspace while passing absolute worktree source and build paths.
+ - 2026-09-02: Artifact-cohort creation could bind a stale pre-HEAD firmware binary to the current source snapshot when Ninja incorrectly reported no work, allowing a byte-for-byte `bfa14fd` image to be labeled as `959a260`; require the build graph's Git version to match workspace HEAD and require its build identity to match both ELF and HEX before flashing.
+ - 2026-09-02: A host-abandoned survey eventually flooded ABORT to every anchor, whose handler left the level-triggered gateway-priority receive-abort owner armed forever so every later Channel-5 wake scan returned `-ECANCELED`; use a one-shot mesh-control abort for terminal survey cancellation and clear scoped level ownership on every radio-claim exit.
+ - 2026-09-02: A pristine linked-worktree Zephyr rebuild selected system Python unless the project venv led `PATH`, and CMake 4.4 then rejected the SDK finder when the toolchain variable was absent; invoke west with `--no-sysbuild`, put the project venv first on `PATH`, and export the repository's Zephyr SDK/toolchain variables explicitly.
+ - 2026-09-02: The survey HIL verifier merged a replayed abandoned generation's expected partial flag into the next successful survey even though the production GUI correctly rejected the stale packets; apply the GUI's accepted-generation gate before recording qualification evidence.
+ - 2026-09-02: Some anchor evidence captures produced a truncated first typed stack sample when the next low-duty scan began before startup sampling finished, so the strict verifier rejected the transcript despite later complete samples; keep this as a failed capture rather than weakening the verifier, and investigate the sampler overlap separately.
++- 2026-09-02: Wine 11.15 fails to initialize a fresh `WINEPREFIX` with `chdir ... No such file or directory` when the final prefix directory does not exist; create the exact prefix directory before running `wineboot`.
++- 2026-09-02: LTwiki's historical replacement `standard.*` device tables contain malformed model lines that make LTspice reject the entire included table even when the selected jellybean entry is valid; leave those global tables out of the search path and use current factory tables plus individually validated legacy models.
++- 2026-09-02: Sandboxed Wine can fail before application startup with `wineserver: bind: Operation not permitted`, while `xdg-mime` on this KDE host prints a missing `qtpaths` warning even after successfully writing associations; rerun Wine with host permissions and verify MIME state with `xdg-mime query default` instead of trusting either command's noise.
++- 2026-09-02: Pacman rejects a removal preview that combines `-Rns` with `--print` because `--nosave` and `--print` are incompatible; inspect the target package and remove only that package with `pacman -R` when dependency cleanup is intentionally out of scope.
+diff --git a/firmware/app/src/app_anchor_radio.inc b/firmware/app/src/app_anchor_radio.inc
+index a7c48a2d1..3a1906166 100644
+--- a/firmware/app/src/app_anchor_radio.inc
++++ b/firmware/app/src/app_anchor_radio.inc
+@@ -1301,6 +1301,15 @@ discovery_miss:
+             claim_handled = true;
+             goto claim_complete;
+         }
++#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
++        reply.hop_depth = (uint8_t)(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS + 1u);
++#else
++        {
++            const struct route_candidate *selected_candidate = route_selected(&mesh_runtime.upstream);
++            reply.hop_depth = (selected_candidate != NULL && selected_candidate->hop_count < UWB_ENUM_MAX_HOPS) ?
++                              (uint8_t)(selected_candidate->hop_count + 1u) : 1u;
++        }
++#endif
+ #endif
+ 
+         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+diff --git a/firmware/app/src/app_clicker.c b/firmware/app/src/app_clicker.c
+index 6d45c9d7c..984ceb85d 100644
+--- a/firmware/app/src/app_clicker.c
++++ b/firmware/app/src/app_clicker.c
+@@ -1409,6 +1409,46 @@ int app_clicker_discover_uwb_anchors_until(
+     return clicker_discover_uwb_anchors_until(session, deadline_ms);
+ }
+ 
++static void clicker_sort_schedule_entries_by_depth_and_slot(
++    const struct uwb_clicker_session *session,
++    struct uwb_range_schedule_frame *schedule)
++{
++    if (session == NULL || schedule == NULL || schedule->selected_count <= 1u) {
++        return;
++    }
++
++    for (uint8_t i = 0u; i < schedule->selected_count; i++) {
++        for (uint8_t j = (uint8_t)(i + 1u); j < schedule->selected_count; j++) {
++            uint8_t depth_i = 1u, slot_i = 0u;
++            uint8_t depth_j = 1u, slot_j = 0u;
++
++            for (uint8_t c = 0u; c < session->candidate_count; c++) {
++                if (session->candidates[c].anchor_id == schedule->entries[i].anchor_id) {
++                    depth_i = session->candidates[c].hop_depth > 0u ? session->candidates[c].hop_depth : 1u;
++                    slot_i = session->candidates[c].anchor_slot;
++                }
++                if (session->candidates[c].anchor_id == schedule->entries[j].anchor_id) {
++                    depth_j = session->candidates[c].hop_depth > 0u ? session->candidates[c].hop_depth : 1u;
++                    slot_j = session->candidates[c].anchor_slot;
++                }
++            }
++
++            if (depth_j < depth_i ||
++                (depth_j == depth_i && slot_j < slot_i) ||
++                (depth_j == depth_i && slot_j == slot_i &&
++                 schedule->entries[j].anchor_id < schedule->entries[i].anchor_id)) {
++                struct uwb_range_schedule_entry tmp = schedule->entries[i];
++                schedule->entries[i] = schedule->entries[j];
++                schedule->entries[j] = tmp;
++            }
++        }
++    }
++
++    for (uint8_t i = 0u; i < schedule->selected_count; i++) {
++        schedule->entries[i].seq = (uint8_t)(i + 1u);
++    }
++}
++
+ static int clicker_collect_uwb_attempt_with_options_until(
+     struct uwb_clicker_session *session,
+     uint64_t priority_id,
+@@ -1524,6 +1564,7 @@ static int clicker_collect_uwb_attempt_with_options_until(
+     if (ret != PROTO_OK) {
+         return ret == PROTO_ERR_NOT_FOUND ? -ETIMEDOUT : -EINVAL;
+     }
++    clicker_sort_schedule_entries_by_depth_and_slot(session, schedule);
+ #if defined(CONFIG_IMEC_ML_CLICKER)
+     if (clicker_callbacks.ml_relax_range_schedule != NULL) {
+         ret = clicker_callbacks.ml_relax_range_schedule(schedule, post_burst_diagnostics);
+@@ -2145,6 +2186,7 @@ static int clicker_build_and_send_schedule_for_event(
+     if (ret != PROTO_OK) {
+         return ret == PROTO_ERR_NOT_FOUND ? -ETIMEDOUT : -EINVAL;
+     }
++    clicker_sort_schedule_entries_by_depth_and_slot(session, schedule);
+ #if defined(CONFIG_IMEC_ML_CLICKER)
+     if (clicker_callbacks.ml_relax_range_schedule != NULL) {
+         ret = clicker_callbacks.ml_relax_range_schedule(schedule, true);
+diff --git a/firmware/app/src/app_mesh_report_delivery.inc b/firmware/app/src/app_mesh_report_delivery.inc
+index ae5e8c1a3..58c7e7bb1 100644
+--- a/firmware/app/src/app_mesh_report_delivery.inc
++++ b/firmware/app/src/app_mesh_report_delivery.inc
+@@ -62,6 +62,10 @@ static int mesh_try_send_report_tx_ch9_batch(void)
+         (first->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+     if (direct_gateway_batch) {
+         mesh_init_direct_gateway_batch_plan(&plan, now_ms);
++        if (now_ms < plan.start_ms) {
++            report_tx_schedule(plan.start_ms - now_ms);
++            return -EALREADY;
++        }
+         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+             status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_IMMEDIATE now=%u start=%u end=%u q=%u max=%u reserve=%u\n",
+                                 now_ms,
+diff --git a/firmware/app/src/app_mesh_report_direct_gateway.inc b/firmware/app/src/app_mesh_report_direct_gateway.inc
+index b2ee0bc97..cc815c21f 100644
+--- a/firmware/app/src/app_mesh_report_direct_gateway.inc
++++ b/firmware/app/src/app_mesh_report_direct_gateway.inc
+@@ -50,12 +50,23 @@ static bool mesh_direct_gateway_ack_matches_packet(const struct mesh_outbound *p
+         return false;
+     }
+ 
+-    return app_mesh_direct_gateway_ack_matches(probe,
+-                                               packet,
+-                                               payload,
+-                                               payload_len,
+-                                               previous_hop_id,
+-                                               GATEWAY_ID);
++    if (probe->next_hop_id == GATEWAY_ID) {
++        return app_mesh_direct_gateway_ack_matches(probe,
++                                                   packet,
++                                                   payload,
++                                                   payload_len,
++                                                   previous_hop_id,
++                                                   GATEWAY_ID);
++    }
++
++    if (previous_hop_id == probe->next_hop_id &&
++        packet->msg_type == MSG_MESH_HOP_ACK &&
++        packet->src_id == probe->next_hop_id &&
++        packet->dst_id == probe->packet.src_id) {
++        return true;
++    }
++
++    return false;
+ }
+ 
+ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outbound *probe,
+@@ -218,7 +229,7 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
+                 frame,
+                 frame_len,
+                 quality,
+-                UWB_CHANNEL_MESH_PAYLOAD,
++                probe->radio_channel,
+                 k_uptime_get_32(),
+                 0u,
+                 NULL,
+@@ -282,8 +293,9 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
+         memset(observation, 0, sizeof(*observation));
+     }
+     if (out == NULL ||
+-        out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+-        out->next_hop_id != GATEWAY_ID) {
++        (out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
++         out->radio_channel != UWB_CHANNEL_WAKE_CONTACT) ||
++        out->next_hop_id == 0u) {
+         return -EINVAL;
+     }
+ 
+@@ -297,10 +309,13 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
+         k_mutex_unlock(&mesh_send_scratch_lock);
+         return ret;
+     }
+-
+     uwb_window_start_ms = k_uptime_get();
+-    ret = dwm3000_driver_configure_mesh_payload_mode();
+-    mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
++    ret = (out->radio_channel == UWB_CHANNEL_WAKE_CONTACT) ?
++          dwm3000_driver_configure_wake_mesh_control_mode() :
++          dwm3000_driver_configure_mesh_payload_mode();
++    if (out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
++        mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
++    }
+     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+         status_debug_printf("DBG_DIRECT_GW_TX_CONFIG ret=%d now=%u seq=%u\n",
+                             ret,
+@@ -436,10 +451,17 @@ static void mesh_init_direct_gateway_batch_plan(struct mesh_event_plan *plan,
+         return;
+     }
+ 
++    uint8_t slot = 0u;
++    uint32_t slot_offset_ms = 0u;
++
++    if (local_anchor_discovery_slot(UWB_DISCOVERY_SLOT_COUNT, &slot) == PROTO_OK) {
++        slot_offset_ms = (uint32_t)slot * 35u;
++    }
++
+     plan->action = MESH_EVENT_PLAN_START;
+-    plan->start_ms = now_ms;
++    plan->start_ms = now_ms + slot_offset_ms;
+     plan->window_ms = MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
+-    plan->end_ms = now_ms + MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
++    plan->end_ms = plan->start_ms + MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
+ }
+ 
+ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
+diff --git a/firmware/app/src/app_mesh_report_event_tx.inc b/firmware/app/src/app_mesh_report_event_tx.inc
+index 109620785..3f37a9528 100644
+--- a/firmware/app/src/app_mesh_report_event_tx.inc
++++ b/firmware/app/src/app_mesh_report_event_tx.inc
+@@ -4709,9 +4709,10 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
+         }
+         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+             DEVICE_ROLE != ROLE_GATEWAY &&
+-            aged_out.packet.dst_id == GATEWAY_ID &&
+             debug_select_ret == PROTO_OK &&
+-            debug_next_hop == GATEWAY_ID) {
++            (aged_out.packet.msg_type == MSG_CLICK_REPORT ||
++             aged_out.packet.msg_type == MSG_SELF_TEST_REPORT ||
++             debug_next_hop == GATEWAY_ID)) {
+             ret = mesh_relay_start_tx(&mesh_runtime,
+                                       &aged_out.packet,
+                                       aged_out.payload,
+@@ -4719,13 +4720,13 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
+                                       now_ms,
+                                       &tx);
+             if (ret == PROTO_OK) {
+-                tx.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
++                tx.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+                 if (mesh_relay_tx_active(&mesh_runtime) &&
+                     mesh_runtime.pending.packet.session_id == tx.packet.session_id &&
+                     mesh_runtime.pending.packet.seq == tx.packet.seq) {
+-                    mesh_runtime.pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
++                    mesh_runtime.pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+                 }
+-                channel9_success_pending = true;
++                channel9_success_pending = false;
+                 direct_gateway_tx_pending =
+                     (aged_out.packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+                 channel9_report_latency_pending = aged_out.packet.msg_type == MSG_CLICK_REPORT;
+@@ -4734,9 +4735,10 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
+                 plan.start_ms = now_ms;
+                 plan.end_ms = now_ms + MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS;
+                 plan.window_ms = MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS;
+-                status_debug_printf("DBG_DIRECT_GW_TX seq=%u now=%u reason=%s\n",
++                status_debug_printf("DBG_DIRECT_GW_TX seq=%u now=%u next=0x%llx reason=%s\n",
+                                     tx.packet.seq,
+                                     now_ms,
++                                    (unsigned long long)tx.next_hop_id,
+                                     reason == NULL ? "mesh-tx" : reason);
+                 goto send_prepared;
+             }
+diff --git a/firmware/app/src/app_mesh_report_rx.inc b/firmware/app/src/app_mesh_report_rx.inc
+index b9cb547b2..50eebaeaa 100644
+--- a/firmware/app/src/app_mesh_report_rx.inc
++++ b/firmware/app/src/app_mesh_report_rx.inc
+@@ -1262,7 +1262,7 @@ static bool mesh_route_activation_allows_route_adv(
+                                        received_at_ms);
+     observed_sender_depth =
+         (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL - ttl);
+-    return entry != NULL &&
++    return entry == NULL ||
+            entry->activation.sender_depth == observed_sender_depth;
+ #endif
+ }
+diff --git a/firmware/app/src/app_state.c b/firmware/app/src/app_state.c
+index d0603e365..07e007081 100644
+--- a/firmware/app/src/app_state.c
++++ b/firmware/app/src/app_state.c
+@@ -326,8 +326,7 @@ int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot)
+     if (!local_anchor_discovery_assignment_get(&epoch,
+                                                &assigned_slot,
+                                                &assigned_slot_count) ||
+-        epoch == 0u || assigned_slot_count != slot_count ||
+-        assigned_slot >= assigned_slot_count) {
++        epoch == 0u || assigned_slot >= slot_count) {
+         /*
+          * A hash fallback can collide with another anchor and defeats the
+          * collision-free table the gateway just enumerated.  Stay silent
+diff --git a/firmware/include/uwb.h b/firmware/include/uwb.h
+index 41fd4b0c0..0b4c648dd 100644
+--- a/firmware/include/uwb.h
++++ b/firmware/include/uwb.h
+@@ -55,7 +55,7 @@ extern "C" {
+ #define UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST (1u << 0)
+ #define UWB_WAKE_CLAIM_LEN 49u
+ #define UWB_DISCOVER_LEN 32u
+-#define UWB_DISCOVERY_REPLY_LEN 44u
++#define UWB_DISCOVERY_REPLY_LEN 45u
+ #define UWB_DISCOVERY_SLOT_COUNT 50u
+ #define UWB_RANGE_RELEASE_LEN 34u
+ #define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
+@@ -266,6 +266,7 @@ struct uwb_discovery_reply_frame {
+     uint8_t rx_quality;
+     uint16_t battery_mv;
+     uint8_t flags;
++    uint8_t hop_depth;
+ };
+ 
+ struct uwb_range_schedule_entry {
+diff --git a/firmware/include/uwb_session.h b/firmware/include/uwb_session.h
+index 028064511..28d5c1112 100644
+--- a/firmware/include/uwb_session.h
++++ b/firmware/include/uwb_session.h
+@@ -102,6 +102,7 @@ struct uwb_anchor_candidate {
+     uint8_t sample_count;
+     uint8_t failure_count;
+     bool ranged_ok;
++    uint8_t hop_depth;
+ };
+ 
+ struct uwb_clicker_session {
+diff --git a/firmware/scripts/test_clicker_hil.py b/firmware/scripts/test_clicker_hil.py
+index 529bc4220..45c28cff9 100644
+--- a/firmware/scripts/test_clicker_hil.py
++++ b/firmware/scripts/test_clicker_hil.py
+@@ -296,7 +296,7 @@ def run_click_test(
+                     not clicker_firmware_ready and
+                     clicker_down_channel_ready and
+                     connected_roles == set(PROBES)):
+-                write_rtt_command(fds["clicker"], b"READY\n")
++                write_rtt_command(fds["clicker"], b"\nREADY\n")
+                 clicker_ready_query_sent = True
+                 print("All four RTT readers attached; querying clicker firmware readiness")
+             
+diff --git a/firmware/src/mesh.c b/firmware/src/mesh.c
+index 2c7183863..3fada96a8 100644
+--- a/firmware/src/mesh.c
++++ b/firmware/src/mesh.c
+@@ -94,6 +94,7 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
+     case MSG_MESH_HOP_ACK:
+     case MSG_GATEWAY_ACK:
+     case MSG_GATEWAY_ACK_CONFIRM:
++        return true;
+     case MSG_GATEWAY_ROUTE_REQ:
+     case MSG_COMMAND_RESULT:
+     case MSG_RESULT_BUNDLE:
+diff --git a/firmware/src/uwb.c b/firmware/src/uwb.c
+index 59d4185ef..71c3de4a7 100644
+--- a/firmware/src/uwb.c
++++ b/firmware/src/uwb.c
+@@ -891,7 +891,8 @@ static int validate_discovery_reply(const struct uwb_discovery_reply_frame *fram
+         frame->anchor_slot >= UWB_DISCOVERY_SLOT_COUNT ||
+         !discovery_reply_status_valid(frame->status) ||
+         frame->rx_quality > 100u ||
+-        !flags_valid(frame->flags)) {
++        !flags_valid(frame->flags) ||
++        frame->hop_depth > UWB_ENUM_MAX_HOPS) {
+         return PROTO_ERR_MALFORMED;
+     }
+     return PROTO_OK;
+@@ -1182,6 +1183,7 @@ int uwb_encode_discovery_reply(const struct uwb_discovery_reply_frame *frame,
+     out[38] = frame->rx_quality;
+     proto_put_u16_le(&out[39], frame->battery_mv);
+     out[41] = frame->flags;
++    out[42] = frame->hop_depth;
+     append_crc(out, UWB_DISCOVERY_REPLY_LEN - UWB_FRAME_CRC_LEN);
+     *written = UWB_DISCOVERY_REPLY_LEN;
+     return PROTO_OK;
+@@ -1218,6 +1220,7 @@ int uwb_decode_discovery_reply(const uint8_t *data,
+     frame->rx_quality = data[38];
+     frame->battery_mv = proto_get_u16_le(&data[39]);
+     frame->flags = data[41];
++    frame->hop_depth = data[42];
+     return validate_discovery_reply(frame);
+ }
+ 
+diff --git a/firmware/src/uwb_session.c b/firmware/src/uwb_session.c
+index 6be6c753a..df70476dc 100644
+--- a/firmware/src/uwb_session.c
++++ b/firmware/src/uwb_session.c
+@@ -649,6 +649,7 @@ int uwb_clicker_note_discovery_reply(struct uwb_clicker_session *session,
+             candidate->rx_quality = reply->rx_quality;
+         }
+         candidate->anchor_slot = reply->anchor_slot;
++        candidate->hop_depth = reply->hop_depth;
+         return PROTO_OK;
+     }
+ 
+@@ -661,6 +662,7 @@ int uwb_clicker_note_discovery_reply(struct uwb_clicker_session *session,
+     candidate->anchor_slot = reply->anchor_slot;
+     candidate->rx_quality = reply->rx_quality;
+     candidate->sample_count = session->config.samples_per_anchor;
++    candidate->hop_depth = reply->hop_depth;
+     session->candidate_count++;
+     return PROTO_OK;
+ }
+@@ -1290,6 +1292,7 @@ int uwb_anchor_build_discovery_reply(struct uwb_anchor_session *session,
+     reply->rx_quality = rx_quality;
+     reply->battery_mv = battery_mv;
+     reply->flags = discover->flags;
++    reply->hop_depth = 1u;
+ 
+     session->state = UWB_ANCHOR_DISCOVERY_REPLIED;
+     session->diagnostics.discovery_replies++;
+diff --git a/firmware/tests/mesh_integration/test_anchor_click_discovery_slot_source_invariants.py b/firmware/tests/mesh_integration/test_anchor_click_discovery_slot_source_invariants.py
+index 96fbc9a2c..1fb63aba8 100644
+--- a/firmware/tests/mesh_integration/test_anchor_click_discovery_slot_source_invariants.py
++++ b/firmware/tests/mesh_integration/test_anchor_click_discovery_slot_source_invariants.py
+@@ -30,8 +30,7 @@ class AnchorClickDiscoverySlotSourceInvariants(unittest.TestCase):
+         production = slot.split("#else", maxsplit=1)[1].split("#endif", maxsplit=1)[0]
+ 
+         self.assertIn("local_anchor_discovery_assignment_get(", production)
+-        self.assertIn("assigned_slot_count != slot_count", production)
+-        self.assertIn("assigned_slot >= assigned_slot_count", production)
++        self.assertIn("assigned_slot >= slot_count", production)
+         self.assertIn("return PROTO_ERR_NOT_FOUND;", production)
+         self.assertNotIn("uwb_discovery_slot_for_anchor", production)
+         self.assertIn("*anchor_slot = assigned_slot;", production)
+diff --git a/firmware/tests/mesh_integration/test_clicker_hil.py b/firmware/tests/mesh_integration/test_clicker_hil.py
+index 9dc9e82c4..46439b54a 100644
+--- a/firmware/tests/mesh_integration/test_clicker_hil.py
++++ b/firmware/tests/mesh_integration/test_clicker_hil.py
+@@ -133,7 +133,7 @@ class ClickerHilContractTest(unittest.TestCase):
+ 
+         self.assertEqual(
+             b"".join(call.args[1] for call in write.call_args_list),
+-            b"READY\n",
++            b"\nREADY\n",
+             "a live attachment may query readiness but must not inject a gesture",
+         )
+         self.assertIsNotNone(failure)
+@@ -150,7 +150,7 @@ class ClickerHilContractTest(unittest.TestCase):
+ 
+         self.assertEqual(
+             b"".join(call.args[1] for call in write.call_args_list),
+-            b"READY\n\nCLICK\n",
++            b"\nREADY\n\nCLICK\n",
+         )
+         self.assertIsNone(failure)
+ 
+diff --git a/firmware/tests/test_mesh.c b/firmware/tests/test_mesh.c
+index a0ffc5bd7..1a54f51c4 100644
+--- a/firmware/tests/test_mesh.c
++++ b/firmware/tests/test_mesh.c
+@@ -19,12 +19,16 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
+         MSG_RESULT_GRANT,
+         MSG_COMMAND,
+     };
+-    static const uint8_t channel9_only[] = {
++    static const uint8_t both_channels[] = {
+         MSG_CLICK_REPORT,
+         MSG_SELF_TEST_REPORT,
+         MSG_ANCHOR_HEARTBEAT,
+         MSG_MESH_HOP_ACK,
+         MSG_GATEWAY_ACK,
++        MSG_GATEWAY_ACK_CONFIRM,
++        MSG_GATEWAY_COLLECTION_EACK,
++    };
++    static const uint8_t channel9_only[] = {
+         MSG_GATEWAY_ROUTE_REQ,
+         MSG_COMMAND_RESULT,
+         MSG_RESULT_BUNDLE,
+@@ -55,10 +59,12 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
+             rejected[i], UWB_CHANNEL_MESH_PAYLOAD, true));
+     }
+ 
+-    assert(mesh_packet_rf_channel_allowed(
+-        MSG_GATEWAY_COLLECTION_EACK, UWB_CHANNEL_WAKE_CONTACT, false));
+-    assert(mesh_packet_rf_channel_allowed(
+-        MSG_GATEWAY_COLLECTION_EACK, UWB_CHANNEL_MESH_PAYLOAD, false));
++    for (size_t i = 0u; i < sizeof(both_channels); i++) {
++        assert(mesh_packet_rf_channel_allowed(
++            both_channels[i], UWB_CHANNEL_WAKE_CONTACT, false));
++        assert(mesh_packet_rf_channel_allowed(
++            both_channels[i], UWB_CHANNEL_MESH_PAYLOAD, false));
++    }
+     assert(!mesh_packet_rf_channel_allowed(
+         MSG_MESH_DATA, UWB_CHANNEL_MESH_PAYLOAD, false));
+     assert(mesh_packet_rf_channel_allowed(
+diff --git a/firmware/tests/test_uwb.c b/firmware/tests/test_uwb.c
+index 6e8965c21..28348e014 100644
+--- a/firmware/tests/test_uwb.c
++++ b/firmware/tests/test_uwb.c
+@@ -606,6 +606,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
+         .rx_quality = 88u,
+         .battery_mv = 3010u,
+         .flags = claim.flags,
++        .hop_depth = 1u,
+     };
+     const struct uwb_range_release_frame release =
+         valid_range_release_for_claim(&claim);
+@@ -794,6 +795,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
+     assert(decoded_reply.rx_quality == reply.rx_quality);
+     assert(decoded_reply.battery_mv == reply.battery_mv);
+     assert(decoded_reply.flags == reply.flags);
++    assert(decoded_reply.hop_depth == reply.hop_depth);
+ 
+     assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
+     assert(written == UWB_RANGE_RELEASE_LEN);
+@@ -1112,6 +1114,14 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
+                                       &(struct uwb_discovery_reply_frame){0}) ==
+            PROTO_ERR_MALFORMED);
+ 
++    assert(uwb_encode_discovery_reply(&reply, buf, sizeof(buf), &written) == PROTO_OK);
++    buf[42] = UWB_ENUM_MAX_HOPS + 1u;
++    refresh_frame_crc(buf, written);
++    assert(uwb_decode_discovery_reply(buf,
++                                      written,
++                                      &(struct uwb_discovery_reply_frame){0}) ==
++           PROTO_ERR_MALFORMED);
++
+ }
+ 
+ static void test_range_release_decode_rejects_valid_crc_malformed_fields(void)
+diff --git a/logs/stack-evidence/verified-capture-ledger.jsonl b/logs/stack-evidence/verified-capture-ledger.jsonl
+index 9abd4c3de..78b258863 100644
+--- a/logs/stack-evidence/verified-capture-ledger.jsonl
++++ b/logs/stack-evidence/verified-capture-ledger.jsonl
+@@ -53,3 +53,7 @@
+ {"artifact_id":"0546701ee7a8abffc7ed5025536e843a65efd046432643c159da900afa05afa8","capture_id":null,"code_sector_map_sha256":"47a50a5ba4984998161daeb8cabfd944be82de0e096b75375e58de7775118854","cohort_id":"880d3822af6982eb085a10c544a0e3de67ab5427737b004c4ff02d70713370fe","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-880d3822af6982eb085a10c544a0e3de67ab5427737b004c4ff02d70713370fe.json","preset":"mesh_gateway","probe_id":"E46070D247233537","promoted_at_utc":"2026-08-22T00:47:19Z","source_id":"52c898fb0bdda53da0d6ad4146212b8cef82d12196e7c806d3c42ee555dcde01","staged_flash_sha256":"87455063913158183ba86ad5f3431fc358386e5db7e2aec0dcc2ff3f927e35cc","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"756729c14e644019b974aef50b959b4f"}
+ {"artifact_id":"4af4d42a373531a449a394244f4766ad0e2d9478cfa3de57d6b54d7bbacbbaa4","capture_id":null,"code_sector_map_sha256":"22b747c6b9f7d8ef1b58afcedbef4c3332d6923f33b9a192332970a867c662a5","cohort_id":"16e9208218056046d47119ac89f0f172d40ed9bc78eca2d6403d163548d7a9ff","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-16e9208218056046d47119ac89f0f172d40ed9bc78eca2d6403d163548d7a9ff.json","preset":"mesh_gateway","probe_id":"E46070D247233537","promoted_at_utc":"2026-08-22T00:59:24Z","source_id":"7de597a64fcfedfd796b974b7004fa7a20b29ece5a6fe7d97fd54d770ce03246","staged_flash_sha256":"a9f4fbeb45897b4fcf2e256c17be986cc582c549cd96b3a4577373788812ed0c","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"b655533841704fde93480eced12bf155"}
+ {"artifact_id":"973618fb4994e75ce1a10e64fe5baf1676e0f121a516d796e9cad5240f32a495","capture_id":null,"code_sector_map_sha256":"d35120ba90ea3730166e091f6d59e1f56dc60bc614f8be9fbc80b13e3bd987a1","cohort_id":"dfd79529bc0f982c07a7db1b467eb98ba04f9b660b4c5d9238b8fe6d63d5bd7e","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-dfd79529bc0f982c07a7db1b467eb98ba04f9b660b4c5d9238b8fe6d63d5bd7e.json","preset":"mesh_gateway","probe_id":"E46070D247233537","promoted_at_utc":"2026-08-22T01:08:08Z","source_id":"e3da40de8adf94499f429adc53f3a602ffaf823fe6365f13e4f6e509c3f0e149","staged_flash_sha256":"89f06885a83ff51a5e1502ccfc9b47b68908fa3439d8f52e5daf80f5f97ac1c0","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"51c8b5c15cb7497f85648a35616b01af"}
++{"artifact_id":"7c0c5d0132efe13fb00512f5dae53479f41a92196dc4ff0ea31e3ca469eee84f","capture_id":null,"code_sector_map_sha256":"d35120ba90ea3730166e091f6d59e1f56dc60bc614f8be9fbc80b13e3bd987a1","cohort_id":"914799b443920a36b27bff33975724671b620e6ed45764fa30d60faba24acbab","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-914799b443920a36b27bff33975724671b620e6ed45764fa30d60faba24acbab.json","preset":"mesh_gateway","probe_id":"E46070D247233537","promoted_at_utc":"2026-08-22T09:54:21Z","source_id":"52a2e1e6b9afa73d0bb02eeb25ee41f8aa1967fb6169e69a07a92e172d335a34","staged_flash_sha256":"fd4b927a309a07c3c0a9328d2c6683fe32c8a0e9c68bed70dd11f3a47f7c74c0","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"47f13e362ae8476e908f60539c20067a"}
++{"artifact_id":"a6e6f257cbdf773bd8ddcd7731cd84c4b715a475045d3215cf6600f25dee1830","capture_id":null,"code_sector_map_sha256":"78c046a4b91c4b00b4b3e2f48a41424190b83c5b1addd17d68a3eea8aef0c6b4","cohort_id":"e2aa1a05fccb83c0f3162217bb49dccd954754aa209f86814f6db437f487bb7a","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-e2aa1a05fccb83c0f3162217bb49dccd954754aa209f86814f6db437f487bb7a.json","preset":"mesh_anchor","probe_id":"E4645C15CB365D30","promoted_at_utc":"2026-08-22T09:55:18Z","source_id":"52a2e1e6b9afa73d0bb02eeb25ee41f8aa1967fb6169e69a07a92e172d335a34","staged_flash_sha256":"f99496c32f9eedd4368f53160e45b7cabcb07cbe31347cbb3e6dc0bec2ece9dd","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"7133a746df8e449bbbf4ed890a10fbea"}
++{"artifact_id":"a6e6f257cbdf773bd8ddcd7731cd84c4b715a475045d3215cf6600f25dee1830","capture_id":null,"code_sector_map_sha256":"78c046a4b91c4b00b4b3e2f48a41424190b83c5b1addd17d68a3eea8aef0c6b4","cohort_id":"e2aa1a05fccb83c0f3162217bb49dccd954754aa209f86814f6db437f487bb7a","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-e2aa1a05fccb83c0f3162217bb49dccd954754aa209f86814f6db437f487bb7a.json","preset":"mesh_anchor","probe_id":"E46070D247394D36","promoted_at_utc":"2026-08-22T09:56:14Z","source_id":"52a2e1e6b9afa73d0bb02eeb25ee41f8aa1967fb6169e69a07a92e172d335a34","staged_flash_sha256":"e1e77deffb387ab9b9af231512efe31afd592872a9b18073345a27dea6e255a7","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"8013cedcb9c04fd2a0907d17ac477f35"}
++{"artifact_id":"a6e6f257cbdf773bd8ddcd7731cd84c4b715a475045d3215cf6600f25dee1830","capture_id":null,"code_sector_map_sha256":"78c046a4b91c4b00b4b3e2f48a41424190b83c5b1addd17d68a3eea8aef0c6b4","cohort_id":"e2aa1a05fccb83c0f3162217bb49dccd954754aa209f86814f6db437f487bb7a","cohort_manifest_path":"/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-e2aa1a05fccb83c0f3162217bb49dccd954754aa209f86814f6db437f487bb7a.json","preset":"mesh_anchor","probe_id":"E4645C15CB0F3B37","promoted_at_utc":"2026-08-22T09:57:11Z","source_id":"52a2e1e6b9afa73d0bb02eeb25ee41f8aa1967fb6169e69a07a92e172d335a34","staged_flash_sha256":"1b8eccad040b17e38cd63c22f91cebb121eb98f2febdb1e88f7329598581db07","storage_initialization":{"initialized":false},"storage_initialized":false,"transaction_id":"127fe6e0d4174c888b82b8a538728f4f"}

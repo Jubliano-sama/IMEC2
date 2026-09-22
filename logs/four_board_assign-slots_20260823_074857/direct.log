@@ -1,0 +1,1048 @@
+[34m0000461[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000476[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000680[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000686[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000687[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000687[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000690[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000693[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000694[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000696[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000697[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000700[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000702[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000706[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000706[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000706[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000708[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000713[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000714[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000735[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000735[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000737[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=354873 next=354933 cnt=3236976907 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976907 now=354873 start=354933 end=355053
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=354933 end=355053 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=354874 start=354933 end=355053 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EMPTY
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=356153 next=356213 cnt=3236976909 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976909 now=356153 start=356213 end=356333
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=356213 end=356333 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=356153 start=356213 end=356333 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=356175 start=356213 guard=60
+DBG_CH9_RX_ARMED now=356175 start=356213 end=356333 deadline=356393
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=356395 start=356213 end=356333 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=356213 end=356333 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=356415 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20904 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=357433 next=357493 cnt=3236976911 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976911 now=357433 start=357493 end=357613
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=357493 end=357613 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=357433 start=357493 end=357613 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=357455 start=357493 guard=60
+DBG_CH9_RX_ARMED now=357455 start=357493 end=357613 deadline=357673
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=357675 start=357493 end=357613 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=357493 end=357613 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=357677 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20751 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=358713 next=358773 cnt=3236976913 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976913 now=358713 start=358773 end=358893
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=358773 end=358893 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=358714 start=358773 end=358893 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=358735 start=358773 guard=60
+DBG_CH9_RX_ARMED now=358735 start=358773 end=358893 deadline=358953
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=358954 start=358773 end=358893 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=358773 end=358893 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=358963 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20751 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=359993 next=360053 cnt=3236976915 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976915 now=359993 start=360053 end=360173
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=360053 end=360173 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=359993 start=360053 end=360173 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=360015 start=360053 guard=60
+DBG_CH9_RX_ARMED now=360015 start=360053 end=360173 deadline=360233
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=360234 start=360053 end=360173 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=360053 end=360173 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=360248 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20843 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=361273 next=361333 cnt=3236976917 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976917 now=361273 start=361333 end=361453
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=361333 end=361453 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=361273 start=361333 end=361453 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=361295 start=361333 guard=60
+DBG_CH9_RX_ARMED now=361295 start=361333 end=361453 deadline=361513
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=361515 start=361333 end=361453 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=361333 end=361453 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=361534 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20935 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=362553 next=362613 cnt=3236976919 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976919 now=362553 start=362613 end=362733
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=362613 end=362733 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=362553 start=362613 end=362733 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=362575 start=362613 guard=60
+DBG_CH9_RX_ARMED now=362575 start=362613 end=362733 deadline=362793
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=362795 start=362613 end=362733 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=362613 end=362733 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=362795 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=21118 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=363833 next=363893 cnt=3236976921 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976921 now=363833 start=363893 end=364013
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=363893 end=364013 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=363834 start=363893 end=364013 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=363855 start=363893 guard=60
+DBG_CH9_RX_ARMED now=363855 start=363893 end=364013 deadline=364073
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=364075 start=363893 end=364013 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=363893 end=364013 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=364081 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20599 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=365113 next=365173 cnt=3236976923 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976923 now=365113 start=365173 end=365293
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=365173 end=365293 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=365113 start=365173 end=365293 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=365135 start=365173 guard=60
+DBG_CH9_RX_ARMED now=365135 start=365173 end=365293 deadline=365353
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=365354 start=365173 end=365293 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=365173 end=365293 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=365367 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20721 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=366393 next=366453 cnt=3236976925 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976925 now=366393 start=366453 end=366573
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=366453 end=366573 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=366393 start=366453 end=366573 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=366415 start=366453 guard=60
+DBG_CH9_RX_ARMED now=366415 start=366453 end=366573 deadline=366633
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=366635 start=366453 end=366573 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=366453 end=366573 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=366654 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20721 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=367673 next=367733 cnt=3236976927 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976927 now=367673 start=367733 end=367853
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=367733 end=367853 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=367674 start=367733 end=367853 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=367695 start=367733 guard=60
+DBG_CH9_RX_ARMED now=367695 start=367733 end=367853 deadline=367913
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=367914 start=367733 end=367853 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=367733 end=367853 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=367915 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20172 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=368953 next=369013 cnt=3236976929 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976929 now=368953 start=369013 end=369133
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=369013 end=369133 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=368953 start=369013 end=369133 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=368975 start=369013 guard=60
+DBG_CH9_RX_ARMED now=368975 start=369013 end=369133 deadline=369193
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=369195 start=369013 end=369133 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=369013 end=369133 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=369201 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20935 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=370233 next=370293 cnt=3236976931 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976931 now=370233 start=370293 end=370413
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=370293 end=370413 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=370233 start=370293 end=370413 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=370255 start=370293 guard=60
+DBG_CH9_RX_ARMED now=370255 start=370293 end=370413 deadline=370473
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=370475 start=370293 end=370413 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=370293 end=370413 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=370487 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20751 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=371513 next=371573 cnt=3236976933 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976933 now=371513 start=371573 end=371693
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=371573 end=371693 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=371513 start=371573 end=371693 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=371535 start=371573 guard=60
+DBG_CH9_RX_ARMED now=371535 start=371573 end=371693 deadline=371753
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=371755 start=371573 end=371693 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=371573 end=371693 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=371774 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=21118 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=372793 next=372853 cnt=3236976935 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976935 now=372793 start=372853 end=372973
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=372853 end=372973 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=372793 start=372853 end=372973 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=372815 start=372853 guard=60
+DBG_CH9_RX_ARMED now=372815 start=372853 end=372973 deadline=373033
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=373035 start=372853 end=372973 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=372853 end=372973 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=373035 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20355 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=374073 next=374133 cnt=3236976937 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976937 now=374073 start=374133 end=374253
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=374133 end=374253 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=374074 start=374133 end=374253 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=374095 start=374133 guard=60
+DBG_CH9_RX_ARMED now=374095 start=374133 end=374253 deadline=374313
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=374315 start=374133 end=374253 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=374133 end=374253 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=374321 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20904 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=375353 next=375413 cnt=3236976939 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976939 now=375353 start=375413 end=375533
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=375413 end=375533 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=375353 start=375413 end=375533 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=375375 start=375413 guard=60
+DBG_CH9_RX_ARMED now=375375 start=375413 end=375533 deadline=375593
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=375594 start=375413 end=375533 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=375413 end=375533 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=375607 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20904 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=376633 next=376693 cnt=3236976941 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976941 now=376633 start=376693 end=376813
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=376693 end=376813 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=376633 start=376693 end=376813 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=376655 start=376693 guard=60
+DBG_CH9_RX_ARMED now=376655 start=376693 end=376813 deadline=376873
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=376894 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20568 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=377913 next=377973 cnt=3236976943 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976943 now=377913 start=377973 end=378093
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=377973 end=378093 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=377913 start=377973 end=378093 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=377935 start=377973 guard=60
+DBG_CH9_RX_ARMED now=377935 start=377973 end=378093 deadline=378153
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=378155 start=377973 end=378093 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=377973 end=378093 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=378155 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20721 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=379193 next=379253 cnt=3236976945 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976945 now=379193 start=379253 end=379373
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=379253 end=379373 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=379194 start=379253 end=379373 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=379215 start=379253 guard=60
+DBG_CH9_RX_ARMED now=379215 start=379253 end=379373 deadline=379433
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=379434 start=379253 end=379373 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=379253 end=379373 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=379442 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20751 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=380473 next=380533 cnt=3236976947 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976947 now=380473 start=380533 end=380653
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=380533 end=380653 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=380473 start=380533 end=380653 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=380495 start=380533 guard=60
+DBG_CH9_RX_ARMED now=380495 start=380533 end=380653 deadline=380713
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=380715 start=380533 end=380653 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=380533 end=380653 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=380727 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20721 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=381753 next=381813 cnt=3236976949 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976949 now=381753 start=381813 end=381933
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=381813 end=381933 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=381753 start=381813 end=381933 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=381775 start=381813 guard=60
+DBG_CH9_RX_ARMED now=381775 start=381813 end=381933 deadline=381993
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=381994 start=381813 end=381933 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=381813 end=381933 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=382014 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20782 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=383033 next=383093 cnt=3236976951 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976951 now=383033 start=383093 end=383213
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=383093 end=383213 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=383033 start=383093 end=383213 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=383055 start=383093 guard=60
+DBG_CH9_RX_ARMED now=383055 start=383093 end=383213 deadline=383273
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=383275 start=383093 end=383213 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=383093 end=383213 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_ARM now=383275 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=21118 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=384313 next=384373 cnt=3236976953 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976953 now=384313 start=384373 end=384493
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=384373 end=384493 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=384313 start=384373 end=384493 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=384335 start=384373 guard=60
+DBG_CH9_RX_ARMED now=384335 start=384373 end=384493 deadline=384553
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=384554 start=384373 end=384493 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=384373 end=384493 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=384562 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20904 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=385593 next=385653 cnt=3236976955 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976955 now=385593 start=385653 end=385773
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=385653 end=385773 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=385593 start=385653 end=385773 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=385615 start=385653 guard=60
+DBG_CH9_RX_ARMED now=385615 start=385653 end=385773 deadline=385833
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=385835 start=385653 end=385773 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=385653 end=385773 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=385849 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20751 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=386873 next=386933 cnt=3236976957 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=3236976957 now=386873 start=386933 end=387053
+DBG_CH9_EVENT_STATE state=granted peer=0x708bc0aab970300e start=386933 end=387053 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=386874 start=386933 end=387053 tail=60
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=386895 start=386933 guard=60
+DBG_CH9_RX_ARMED now=386895 start=386933 end=387053 deadline=387113
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=1 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=387115 start=386933 end=387053 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x708bc0aab970300e start=386933 end=387053 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=387134 win=20 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20965 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380

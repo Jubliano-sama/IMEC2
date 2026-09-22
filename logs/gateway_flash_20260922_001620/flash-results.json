@@ -1,0 +1,25 @@
+[
+  {
+    "probe": "E4645C15CB365D30",
+    "reachable": true,
+    "locked": false,
+    "ficr": "0xeefc9670907f2ef7",
+    "storage_blank": false,
+    "storage_sha256": "8dc179a274ac68f9f2e88e107c1f7c83af23d5049c72aec6917a3b1f8644f4c3",
+    "durable_roles": [
+      {
+        "role": 3,
+        "device": "0xeefc9670907f2ef7",
+        "count": 53
+      }
+    ],
+    "role": "mesh_gateway",
+    "hex_sha256": "06347ee9a94a58b2f31d6d9fef04c67fcf41c97f08e16bb1ebf6694dd9dcc379",
+    "readback_verified_bytes": 479682,
+    "storage_handling": "same-role gateway storage backed up and preserved with normal sector erase",
+    "node_id": "0x9999888877776666",
+    "startup_checked": true,
+    "ble_advertising_started": true,
+    "startup_log": "startup/gateway.log"
+  }
+]

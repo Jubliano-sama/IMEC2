@@ -1,0 +1,35 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "reachable": false,
+    "locked": false,
+    "error": "SWD/JTAG communication failure (No ACK); check USB cable, reduce debugger clock"
+  },
+  {
+    "probe": "E46070D247394D36",
+    "reachable": false,
+    "locked": false,
+    "error": "SWD/JTAG communication failure (No ACK); check USB cable, reduce debugger clock"
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "reachable": false,
+    "locked": false,
+    "error": "SWD/JTAG communication failure (No ACK); check USB cable, reduce debugger clock"
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "reachable": true,
+    "locked": false,
+    "ficr": "0xeefc9670907f2ef7",
+    "storage_blank": false,
+    "storage_sha256": "8dc179a274ac68f9f2e88e107c1f7c83af23d5049c72aec6917a3b1f8644f4c3",
+    "durable_roles": [
+      {
+        "role": 3,
+        "device": "0xeefc9670907f2ef7",
+        "count": 53
+      }
+    ]
+  }
+]

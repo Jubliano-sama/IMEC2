@@ -1,0 +1,13 @@
+{
+  "probe": "E4645C15CB0F3B37",
+  "ficr": "0xa7c8b90c9bf88acc",
+  "role": "mesh_clicker",
+  "hex_sha256": "8733d894b8be53b8ea9a72d10d352b06f2b3179cb9552b76144e0eb206fb9fc4",
+  "readback_verified_bytes": 435432,
+  "flash_started_monotonic": 52442.081573042,
+  "flash_finished_monotonic": 52458.737147695,
+  "storage_handling": "user-authorized full-chip unlock erase; original protected data could not be backed up",
+  "node_id": "0xee85fc4fdab6c9ce",
+  "startup_checked": true,
+  "startup_log": "startup/clicker_3b37.log"
+}

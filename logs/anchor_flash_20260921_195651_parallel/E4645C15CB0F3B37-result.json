@@ -1,0 +1,21 @@
+{
+  "probe": "E4645C15CB0F3B37",
+  "ficr": "0xbeb265a9c0f6547a",
+  "new_board": true,
+  "storage_blank": false,
+  "storage_sha256": "c029bb292de9c59863a1f6c0fa5fcdd3c707733034edc792b289c322b5ad8125",
+  "durable_roles": [
+    {
+      "role": 1,
+      "device": "0xbeb265a9c0f6547a",
+      "count": 6
+    }
+  ],
+  "role": "mesh_anchor",
+  "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+  "readback_verified_bytes": 464840,
+  "flash_started_monotonic": 43950.457832115,
+  "flash_finished_monotonic": 43967.871991534,
+  "elapsed_seconds": 21.82213402400521,
+  "storage_migration": "backed up clicker storage; erased and verified six storage sectors"
+}

@@ -1,0 +1,27 @@
+[1/7] Building C object CMakeFiles/app.dir/src/app_mesh_report.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1449:
+/home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report_c5_batch.inc:561:13: warning: 'mesh_report_delivery_active' defined but not used [-Wunused-function]
+  561 | static bool mesh_report_delivery_active(void) { return false; }
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report_c5_batch.inc:560:12: warning: 'mesh_report_delivery_step' defined but not used [-Wunused-function]
+  560 | static int mesh_report_delivery_step(void) { return -ENOTSUP; }
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1447:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:14603:12: warning: 'mesh_complete_terminal_release' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1446:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:10561:13: warning: 'mesh_outbound_is_topology_ack_confirm' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1442:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2208:12: warning: 'mesh_gateway_preflight_semantic_delivery' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2102:12: warning: 'mesh_gateway_commit_preflighted_semantic_delivery' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2020:12: warning: 'mesh_report_anchor_handle_local_command' defined but not used [-Wunused-function]
+[2/7] Linking C static library app/libapp.a
+[3/7] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[4/7] Generating linker.cmd
+[5/7] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[6/7] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[7/7] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      431756 B       488 KB     86.40%
+             RAM:       97744 B       128 KB     74.57%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/Projects/IMEC2/build/mesh-clicker-rtt-3a/zephyr/zephyr.elf for board: nrf52833dk

@@ -1,0 +1,14 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "role": "clicker",
+    "storage_action": "restored original clicker backup",
+    "verified_storage_sha256": "f3e78de97e922f5faf7d64dbd508ea220a9175aa12f3868222d6286992f21c66"
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "role": "anchor_d",
+    "storage_action": "initialized anchor partition after backup",
+    "verified_storage_sha256": "1df8949b2e345ab8c00cb81fb6b83686e20a4080f969e5cd8b8d520a07cdaba2"
+  }
+]

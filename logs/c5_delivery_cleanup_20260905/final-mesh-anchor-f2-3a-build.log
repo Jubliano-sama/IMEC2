@@ -1,0 +1,15 @@
+[1/7] Building C object CMakeFiles/app.dir/src/app_mesh_report.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1442:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2208:12: warning: 'mesh_gateway_preflight_semantic_delivery' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2102:12: warning: 'mesh_gateway_commit_preflighted_semantic_delivery' defined but not used [-Wunused-function]
+[2/7] Linking C static library app/libapp.a
+[3/7] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[4/7] Generating linker.cmd
+[5/7] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[6/7] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[7/7] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      453920 B       488 KB     90.84%
+             RAM:      124672 B       128 KB     95.12%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/Projects/IMEC2/build/mesh-anchor-f2-3a/zephyr/zephyr.elf for board: nrf52833dk

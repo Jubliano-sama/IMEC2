@@ -1,0 +1,52 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "reachable": true,
+    "ficr": "0xeccb411ad01c0d43",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "1c056a225f7e55e8dacda76c47996283d14a00a04f0b75f30cefe9461b46401d",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xeccb411ad01c0d43",
+        "count": 4
+      }
+    ]
+  },
+  {
+    "probe": "E46070D247394D36",
+    "reachable": false,
+    "error": "SWD/JTAG communication failure (No ACK); check USB cable, reduce debugger clock"
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "reachable": true,
+    "ficr": "0xf92c40599992d2d9",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "7ef0c47a3fee55983282b72183a349f48b8ac9a2e1e6d6fe029472297697178c",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xf92c40599992d2d9",
+        "count": 4
+      }
+    ]
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "reachable": true,
+    "ficr": "0x592f7f0631d1c602",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "df3398147db7f068600ccc772589530579156ea7a24a7c7f1b706350a60735f9",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0x592f7f0631d1c602",
+        "count": 4
+      }
+    ]
+  }
+]

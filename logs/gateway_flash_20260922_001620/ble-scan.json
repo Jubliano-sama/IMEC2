@@ -1,0 +1,10 @@
+[
+  {
+    "address": "E0:85:31:10:C4:17",
+    "name": "IMEC Mesh Test Gateway",
+    "rssi": -79,
+    "service_uuids": [
+      "494d4543-0001-4757-8000-000000000001"
+    ]
+  }
+]

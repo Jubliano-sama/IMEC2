@@ -1,0 +1,2930 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "07160c858508c8b26937050912ebfbd22f89a27a11271922b88cbc5456e9b5a0",
+      "board": "nrf52833dk/nrf52833",
+      "config_sha256": "134ae2a9463f5a399fc344e0aae11848b7260d01de73c86e1e914c5067babffd",
+      "devicetree_sha256": "614e5be822f84222b2235bdb4afc9fa170628916ca39bd8a80aad99c964dcda8",
+      "elf_sha256": "60521bc93a93ec4b40d2f15ee3aafcff9805a4362182bf66a9c9bf40797aea34",
+      "hex_sha256": "7f9172cf35a7788c26ebc788bc8ce561e87db177cc01d55b526db763878b81ad",
+      "legacy_build_identity": "imec-stack-v1:mesh_anchor:ab16ba6faedde7ceaf970987465bd37be438889ef540ba997849a9b6d1e7cf77",
+      "preset": "mesh_anchor",
+      "programmed_sector_sha256": {
+        "0x00000000": "6afc7ff9dfdeb9ea153fcc61152c079120ae41bf93776f5e4785b39dca00d6e7",
+        "0x00001000": "830a46486c85e0e5326a3db84b02a780d51b724846ea0a43b97e5b7cca968ad5",
+        "0x00002000": "c22947cbf3644bc84fe818ed1e05f8d447cc54d7271be4a8ef852c4a56aeb508",
+        "0x00003000": "53cb165abee64fc122df274f29c6fa68e497339b54a0456145f0897670f7ff9e",
+        "0x00004000": "1ae0d6f9a5fdce8f4ad413b021d3e942946fd2968e38f89bcc52d23bc3361e7d",
+        "0x00005000": "f0bc12088ec44c61089f9dc4b9f2de47cf51ccac3c8bbc9945b2e45cac5dc2b2",
+        "0x00006000": "3f77b31d954184ab09cfa7d3d55b2cac21a4a846c8d38bf8b20a22410879fefe",
+        "0x00007000": "061f1b965fe83bc05db24622df64db7f6705fb4479ab6be3ee6c643135cb4039",
+        "0x00008000": "7b3c3d8a79c2e7fc73a4bc3de1b3607a1ba3be2465f39a81f6fe2486722292e3",
+        "0x00009000": "422dae9a8e0f3f99693d1c620fb5aeb0259cb2d3597a7109d4e45924b204e07d",
+        "0x0000a000": "71fb175c30f3c845c005b7f4b044212a9997677a55ba519dad79b124175fc61c",
+        "0x0000b000": "bcb96c064f0b09ced9d072c378a70d584a342ebb4515cf4660980f5035131b36",
+        "0x0000c000": "a18bd9a8ee070acc739566919b410ee509d9bc5658bbb39fbf4f57883fa5f94b",
+        "0x0000d000": "631fe8cf421937ebbdeb4ecf8eaf4fdda65a3c0ab1eef250a32ad1aba18b8f23",
+        "0x0000e000": "eb4447c25119f1ea0fac49c9c20e5e2e69174a331ce393d8175e119d12a814a8",
+        "0x0000f000": "941079213113eb5812c8f3abfe260c3c43a4de8674a88bf5424aa3590bb4cd76",
+        "0x00010000": "b5588d275d7aeba172d0d7e60b121782b0f0bf2924e5be0f0c39a452d1caa5df",
+        "0x00011000": "b078baa27eeb7065dafa84107d51a7b40d65723be9cd6925dd6cecc9cbcffdc9",
+        "0x00012000": "8366847cb0373678e6c92fb73868ce448fe383c0e1e03fdff057ae5686577811",
+        "0x00013000": "98d3fa5c55c1648982e7e78f3d8e1a3c64b103daa287aed6bc1a23abfc102f20",
+        "0x00014000": "a68b39b8330397b42eb7d22bfcaa419f492329ccc7e724bbe3df5be26ef729b5",
+        "0x00015000": "d31be12cb551aeb494ec9cb54b5015b058a41507ef56a661dc5b38d8c5fbed94",
+        "0x00016000": "ebd07b0effd6dae6b8aec6fa3449aefaa5b5bfd04d9d29a972ba7f388b228f9d",
+        "0x00017000": "a9081e02c31f194e7784a1e475752b71b744f5959a1d053c9898529fc6b4367c",
+        "0x00018000": "01737be5077f28bc27391b3d997beb30eee2451c44e1ea096b9a3e73efda9d86",
+        "0x00019000": "258fe7f145e18bb8eb17c01ab8a5d4d9a0d29c7a93c594186b80317a1e66ea46",
+        "0x0001a000": "fd325a3515b0b837d381221d2c506ac24256986bcc88fd8bbb46e4434d8123cc",
+        "0x0001b000": "374dc1013e8b21ec40d5ac7e830d4d52047ba449b2e58e3645f8e22adf871088",
+        "0x0001c000": "389134525b598738cc06f740933005c27a481761c37912ecaef31276eb5a927d",
+        "0x0001d000": "6c4dad242fd476ebb9937b2f4fd236f6e2eef15f9303395fb56c629eea279d4e",
+        "0x0001e000": "a0d6c9931916c4be047429da04eed452cb78e73d8ccbfabe5d92f678d9c62111",
+        "0x0001f000": "d2d8e828f03780bba6b1556fa8bcf74e1344ceb5fc6fb7b2a22f83420702f24b",
+        "0x00020000": "e53f2c0bee79f79a7b1844ffdf319483193a9ab8ec812ebaf2dd2834503dd220",
+        "0x00021000": "1d7cf2a67c502ec087b120956001efcac684a06bb533e34d59fa3f4bd43e9316",
+        "0x00022000": "1dcdab56b0cd354c627d97afe8278474e2fc32ffc79b7ea3db8991a92382dda3",
+        "0x00023000": "6d38dfa095d8fabefee25d8729f50e14c95484d18e4f28455a005ddb0e8a6243",
+        "0x00024000": "c4c4f968d4e5795a2b2ef65bd39bed4034a2b0f8b816fdbaf525f06dde89c735",
+        "0x00025000": "a105db8bc5f878f9f7d4e981eb7c86c2cd518d0d73ca23eed3db642489113db5",
+        "0x00026000": "a6540a20e28b5de50fa1890c568553f5115e66e7e2036ad6de4a9eb43a6a9f2e",
+        "0x00027000": "7809ec3c4c770bc2eaa963b82a45ae57ab2b31af54441f1ec26d57a42522101d",
+        "0x00028000": "51559ca7f8b9272b787b14a78632acf11c7037425c3a66f683235325c03f094f",
+        "0x00029000": "0fef31c3ef31446cf97f67a349db61ef01728d195a0953dc34f8b922b441665c",
+        "0x0002a000": "6fb6083f01142d8cb2b80c87d6115d1732ad084d7508cdc05c2f26ca2c942f09",
+        "0x0002b000": "6651713130e1155ee89072eb43d34e3532a1c877a6f16df3cc1afefd33983e43",
+        "0x0002c000": "3216caab54fd25c5491481ef55612e18a52c5de9ad86ab1e98de1df5beb6bc20",
+        "0x0002d000": "3eab871db87f232afa6bcb2cbda1f9c0a291abed6ae545a488f1d16690b90f0e",
+        "0x0002e000": "ccd644eec7dcafec6182656e26271f52da8793d83e4e7596ec39bb2ce4fb3791",
+        "0x0002f000": "186d809c6f8a6068d197400cd153e638da5decd149d54aa1becbb9bb1cd0af67",
+        "0x00030000": "b6d20b964a065e7610f6d8f6bd1d6cb59abcb1915c9218459ff55cc34470f541",
+        "0x00031000": "1ec1f6803548bcff407493c7b5dfe0ca0d3a5c132ad91cbb6341ad056b027704",
+        "0x00032000": "555fb8695fa048bfa3fd429a7eaa4aa6d555bd2e6a523dba5766f8cb23628ba4",
+        "0x00033000": "a1ffa6522cfab64e27cd3095a097d8f8a78ad060e1c8d4b34c072bf3103950d8",
+        "0x00034000": "6460ffe9aeaecc08c6ac9d2ec907993a7688753f5c3af61fc8480ad188220bcb",
+        "0x00035000": "d4ad5ff3b3962c901dea4ca8b2d326d80fb4408721d1bf584b1aa875ca3627b8",
+        "0x00036000": "8a9518d02ad495c1daf06fd858f9cb29cf0c22d803c817194f8358f72bc8830e",
+        "0x00037000": "0be1d41b45695804dee90175f319238a16c96e7832ec9a8749fb13fee2bc9565",
+        "0x00038000": "15e80a7964da9d486d5939ab689e9847670f0e6567db3abe4120157d037768d0",
+        "0x00039000": "26d647c7dacbb55757174272c91fe2d7241fad01ae8c23acf4497b6e1d6f54ea",
+        "0x0003a000": "0895a825943a93ea8a30591d0f75c7c83ca2a1d74fc79ac9f512ac021bcded64",
+        "0x0003b000": "ad3236e963db1d69daac22b8e4b1b47f0cc5394a272bdc7b1b0a20e3041c6ecc",
+        "0x0003c000": "082e3251675c85b9e0843e52d25cb9da01503966c58835bed157f5df0c025d2f",
+        "0x0003d000": "584c04a099974830cff27bb74c9fe53e201151a1a7776591615b64c4bd01f2e1",
+        "0x0003e000": "45020d6d6430a5614f05e04ef9ee41e57dd750edd7fd7844bf0a30763bebbdd1",
+        "0x0003f000": "9b9aa2d8025fb41bed474425f6d6117a0652ec9d6b0c2b5133ed4910e261c1c5",
+        "0x00040000": "0d3cf033074976f4df577f1e45a3362bbeed0b77663dcbc1f0f8973d613e39c3",
+        "0x00041000": "7f67748f01bf4590164f929b3cc209e7969efd41759058f7269fb4fbed382569",
+        "0x00042000": "bdda2be7cb4c76bb8d1127fc394419a77f3a1a44b653c2fd2200a275934d498d",
+        "0x00043000": "0331e3d78bde9cf935e6f79e7b89517f2e7cf0b61fa0fde39d603ac4f94605cc",
+        "0x00044000": "2aafed98ed239414dfd12e46f239c3c582c46060c7409dd4194fc8207d066675",
+        "0x00045000": "598f07331bc92780895380e4477f5aee6dd13ab2580eeabe714b25b61b4c0295",
+        "0x00046000": "b6797c7b0d2e5d18163f2260b18bbee0780fc39873d0a0e7766a2399504de394",
+        "0x00047000": "5814cdedbdeefc6d62b4db84b1314de1792af8ee347186a6fcc361844989fdd8",
+        "0x00048000": "7cd3f8d1b4b6bdb3533eea9f3a76724233086722a374c0fe488361845593fc47",
+        "0x00049000": "c1a90392d4b85c5541632efd00e484ed97060e5bcc10990bed756d48cd292613",
+        "0x0004a000": "8ff294b093ade591851b70a911194043c5f3185892085611bd34bda06a878de5",
+        "0x0004b000": "c3080f667714db04bfd9ffb437fce35fe5e164bce094f49c728d6efc00f0bce3",
+        "0x0004c000": "096aa26bb2093679fcd57bf4367f3f9078e6453554c12ce6bdc9162d4741d543",
+        "0x0004d000": "7c043321d728d2e2e2f1c5ef50ff94274cbbfe71f3b7614670ce84ddb6bb1928",
+        "0x0004e000": "bf284cfaa17f9ee645a66f6a2e05ac996347a7b03fa1653f7952e40ff557a372",
+        "0x0004f000": "6d2f188dbf115af126c90420b677c5d55e3c2b30dd0709da206b7b2554357a37",
+        "0x00050000": "0c9195d23d9c9ae6ee29e2d3b28cc8b263a5e3f36c45135c57d1174c2d11b7e5",
+        "0x00051000": "c10408d907da9d23931f65623b297fab6e25016629f80d08e1829ee81495ddbd",
+        "0x00052000": "cbe426b2b831e5c93ab710afcc4a577df5d1f9419d9f137608d73cc8b1d8e362",
+        "0x00053000": "dd34f5bd3509d4135ea08587c3742c79b32686451756eebf17ec11e34e0d9a8a",
+        "0x00054000": "1d91844cd3d169715cd37bad920f2d6621418f3dfbdd79f20f399a8e85490eef",
+        "0x00055000": "c23fe74b5824fd08a2cef3f257033e7c4a6f50e3190b832dc92d4adced190994",
+        "0x00056000": "0fb3ca173007ceb6c829c1d6bcbc9be1bb7bee2db437e2381abfb2a11c458d09",
+        "0x00057000": "db4d042060ae3cc89f3087ff1e006e6ae1591c226a17650b9ff5bdc091fe56ae",
+        "0x00058000": "390e03de7776c7e2cc6d650a2176d7631d7b66cd10e4b1ce051f49f01cc8451f",
+        "0x00059000": "698ed377967e7af01cad31429f142ad05b17e682ef3806328db8c30dedf423bd",
+        "0x0005a000": "7d012fa20e3e5d6d0bb92d64a6869d740f2b51b195a61b48e953098f5f506550",
+        "0x0005b000": "a69c8b538b37d92ccf9fc6e375a8fcf3a198e02f48f1cda8813fb42ff8f46b86",
+        "0x0005c000": "1739ea953f1b903e022e3423584444de862ce66bd219a456b729ce42b5ce0016",
+        "0x0005d000": "0729c6fa8effe170801123569c65e0504cb5fe9f5e75f73c6a1b6d33ca702d75",
+        "0x0005e000": "e9dfe57d0ebcd6389eeefd4f84c126d173947e5fc9d4b310b7dd0ab6ebb35866",
+        "0x0005f000": "647b16ec704bd86b22d399af283b92ea4824e55d83b9c32d28083818d228573a",
+        "0x00060000": "ea878b3d45bbfb39087f2c8dc6314bbb6dd2e20c18116d4b720c6700dc3d4c2a",
+        "0x00061000": "353511e84e8882c283f4484c6aad45d9fbeb504d1d6d097796e1d9825b38cc60",
+        "0x00062000": "46461b40cbcc37836d92bdd8d1779f3a8fe28eeda87296c23b90a78e19056501",
+        "0x00063000": "47130cd020b85d1cfd15d0fce1c2efb0ca8cd840a793c285033a1ded08396a33",
+        "0x00064000": "57d370ec101cd4e5e9fd34c8b43e43ba3c1b4cb10fb9331a7d298536c307c521",
+        "0x00065000": "0fdc458aa62f607e303429161817989f52ed08d0c4b90a93230bcd4a0d9718d6",
+        "0x00066000": "59f90ea53e39b7751ceafcad96c5ab86a2c6a8ce9efdcd4da9aeb9e618ef74fe",
+        "0x00067000": "d98805b7142c4a7d25bb4e1da06d33c13a3ac6b5642dbde85a3acc7b062d7246",
+        "0x00068000": "4ccf8c25f8042f7dacb858bb05c6032498182e205d74385f8812f2b2e456ae3d",
+        "0x00069000": "2e7e8d0f850f88f29a55142ccd3abd183a7f285d7fde78127afd423147dbeb4e",
+        "0x0006a000": "ebde2c3b18cafe2184c42222ad4b93359896c21f1f7ceeb355c4bf5aa6d8cfcd",
+        "0x0006b000": "98233441d407ea518cd21d5f520e8230ec08ff1b4b06aaadcc05b8335eada1b3",
+        "0x0006c000": "896f105d95d50293ab9f70e0a2d3b89a051670671baa5d16f296bd27ddec311b",
+        "0x0006d000": "14adad8a4325f5fb7e102caef86a0941615ea915d7c33499ec980a2263b40d0b",
+        "0x0006e000": "69459da12338b8eb0d798472a051dfdefcf9c9f3acf69ce7bf8e40b4d9d03afc",
+        "0x0006f000": "c84fe5ef019b27ba4e5af71602ae2d11b77423809b9be9796c60b8987b93a6b1",
+        "0x00070000": "1a4d54a7edc29370269e7a22d0a48c9c3521de82d1982a8082348d96b988733b",
+        "0x00071000": "47d3c13e61652ced7fd44c781061fc05e3649652e89691c221bcc1250d948857",
+        "0x00072000": "209069378ea4bf0caf9da7ad6d6e569a6cec5eca409737917724c3981ef013e7"
+      },
+      "source_id": "833e76433ac3786051a353fbeab5589f4ca4e77840bc27ee77f69bc3a3d61f00",
+      "toolchain": {
+        "sdk_files": [
+          {
+            "path": "sdk_version",
+            "sha256": "0727b6687bddd595135504b91d8b6de3f7fc81844f45414a2c4e328bf4acca0a",
+            "size": 7
+          },
+          {
+            "path": "cmake/Zephyr-sdkConfigVersion.cmake",
+            "sha256": "4b88389a6e92fe9e6813751abec1ed9e0b05b870b6e0ff4581dd89955a4b98dd",
+            "size": 1419
+          }
+        ],
+        "sdk_name": "zephyr-sdk-0.16.8",
+        "toolchain_id": "ae2daa6e80aab9ad85e63ec1691f468cf031bf63c93a3037d00202faf6bf2611",
+        "tools": [
+          {
+            "cache_key": "CMAKE_C_COMPILER",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc",
+            "sha256": "a1932d42d053670f24b031ee57d8e7233f84c3fe4e9378418992f1891d192d72",
+            "size": 1411936
+          },
+          {
+            "cache_key": "CMAKE_AR",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-ar",
+            "sha256": "0b2a92f8763e1b1a2df447cecb0d120984c83ba1262fe2915ea471752be2f0e6",
+            "size": 1070264
+          },
+          {
+            "cache_key": "CMAKE_OBJCOPY",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-objcopy",
+            "sha256": "c5c16efe38ea4a3ff0fd349884cb2a95635e597ed4971afb87f3f272ec7ac665",
+            "size": 1184912
+          },
+          {
+            "cache_key": "CMAKE_RANLIB",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-ranlib",
+            "sha256": "5ee107852bf94bc99c4b554c761b0751d2cf6f3babf135bf8ff29cc93eef36b0",
+            "size": 1070296
+          }
+        ],
+        "variant": "zephyr"
+      },
+      "toolchain_id": "ae2daa6e80aab9ad85e63ec1691f468cf031bf63c93a3037d00202faf6bf2611"
+    },
+    {
+      "artifact_id": "c61f7b38e4d387e3aec9293448378116f8d19f8aab7926f17af30280b82fc6b9",
+      "board": "nrf52833dk/nrf52833",
+      "config_sha256": "ed386ab309dd46954993f39e2fee1bb007512c2c3413e5f4550dfed779888a85",
+      "devicetree_sha256": "614e5be822f84222b2235bdb4afc9fa170628916ca39bd8a80aad99c964dcda8",
+      "elf_sha256": "4384d28ca0940cfb48d6ffec1c9713ce28fd7444fb916370a3b9e99dfedfb52a",
+      "hex_sha256": "f9ac0e600993ce658fed7e1cafa8a2088199423040999aab7f5c39ec3f8e0b3c",
+      "legacy_build_identity": "imec-stack-v1:mesh_gateway:951c6e22de67cae0ee159049f7f60500cfb022e2b2067237f7f1b55d411f1192",
+      "preset": "mesh_gateway",
+      "programmed_sector_sha256": {
+        "0x00000000": "669c0b5805981c5e08b6925cd690a714fa435de6ff951870c1f742111177d910",
+        "0x00001000": "917579eb25be3378bf33e63c78af1d50d1d4e3f98cc2e07b080f2b8096878636",
+        "0x00002000": "ad1d34362c90e926d4206096e66b9e7f83bd95fa798fe8214ad16b612339cd95",
+        "0x00003000": "e6fefc778a93c03e782e2f9d9d54e0b37cde0384b656f7f78678f6232d737612",
+        "0x00004000": "50b2b6b2bdf339306c85c18c7792023b9c20657774324034f1f641ff10c63ca2",
+        "0x00005000": "2650462b9f2b350edf2e62c360d215ec015c9b33b353a9760247787a6fbeea3e",
+        "0x00006000": "7ab7b1bd127aa2493877b3d6dc1abcf7596f40a73dfd23d53a988e2401d0bc93",
+        "0x00007000": "4884c531af91ed0fec4d017cb65a83aff0b2441c4aa1232a0216de6cf264802b",
+        "0x00008000": "c4a9b924bf9209739861931374aebce2edecd19e760d8a1eb6c3475588669952",
+        "0x00009000": "124d3a964e385bb0f9be6383deba817ecf425691a8180f4579ca9eace92e8146",
+        "0x0000a000": "4e87f5c2b2d641189bbe65e9d9f9ae7b0054fc68d5c8894f8c24fa193c02f811",
+        "0x0000b000": "b1179d472145e7940001b6436a33f718905530900123196a0ac43ef094e8a6ef",
+        "0x0000c000": "75c39ef8fd79e4365ff1fc3eae2dc93c24b004db58039442246804f0307fa65f",
+        "0x0000d000": "7d1f934b947d2cb88f20ab49f9b4eedac3d04867d291121d43c97411f483ae24",
+        "0x0000e000": "6a82e5d70e2a962e9ae620a14a278ee8658db0358b6d6733a5a2af1f3ad483a5",
+        "0x0000f000": "9526b5828e33356d05063513ce23cc1264e61c0252df1c8e6f0d7c3c02724e99",
+        "0x00010000": "1c1d74b8b43c813a00d0cf77b0235d2406ad29b738f8b2977b3db7e5265295e6",
+        "0x00011000": "365ee2b29776d88ec09a1c581faec2f05ac084b9bcd5adf1579a570721bf44c2",
+        "0x00012000": "d6ff753aef77dc1a28c7a3532497cbe0b0f6846ddd1eb83c0f7fe41f23691c0e",
+        "0x00013000": "7ad99f17bd4032fe622d283f1884fd521b560e6da897525e82d96e79589d5553",
+        "0x00014000": "5629d753b2cc8736659d19f8503d7ef434f19ba18549fe6a57af1bab0ccaf76c",
+        "0x00015000": "c50c0a12a771ebd573c6824b4793fa2a969ebbc17d27c80841ec9e103eb0f33e",
+        "0x00016000": "75e4d1daf422c00378e7d3cba286003b03399207965132a16252d177a8daa633",
+        "0x00017000": "dc54d908f11abf7b485cfa2383ad47a0861d0cbd59b38c1f85c6778144ab1431",
+        "0x00018000": "713d21ed6635847b749cd2a38a2c3c62901379f3381a112ba6e706bba2c7c0e3",
+        "0x00019000": "36a5876ff3732fb197f72853c2e981a0c83dd558fc56f99c0ba44e7ffb1c2620",
+        "0x0001a000": "c3f4af76826b25a10630ec3bd0bec8a188ac99f83a4275f2845e4e3f8069c068",
+        "0x0001b000": "8fe56787d80fcb8afe40d40bf08c7447e39e6bbf0aadcd224de2875c27ae9469",
+        "0x0001c000": "d544064427631b60f687d509798a51de6f062ba5fc1fe1f6c5a745ba25e45477",
+        "0x0001d000": "f3a2d3e215db53734aab75440d406378863ce1f354445f7a27600e9f94cc3727",
+        "0x0001e000": "39aacd6b7c61b11368589724a1cdb809e3fec6ade0ec659835c1b327c841880a",
+        "0x0001f000": "c45b7012ecf58c84e80025ec03fd5764973b626f3c8508cc52616582b4795fdb",
+        "0x00020000": "34b91cdb76589707a39674ad999a74d4151481bb85bb24d213b9767ba3ac3a0c",
+        "0x00021000": "35eb0fcad06505d10857cf72fdd1746e6934af1df27750ba570c010753e1012f",
+        "0x00022000": "e15ab3ab8f619fc0045c0b6d55633e7200aee4fc84a0660aecb47636c610eda8",
+        "0x00023000": "37cb9db3c4edf3b626196f8712b3f7838ac476c824ec7586aba6730704f0a5b9",
+        "0x00024000": "f95883086f1050029f5c4f145dad42edc4c076891b113194c3073cf97454c075",
+        "0x00025000": "728fd692a416c23bfaa0db7ad8125f46297d5f9f0c592154ae8cef0dd8b378d0",
+        "0x00026000": "b7b0e80b97e18f53d2a6df4b92abef76f56f6162c9966803965b6356bbfa9456",
+        "0x00027000": "b54e549ff2ef15990bac08d5557149e4ae06dc996e686156855bc1617372f1d3",
+        "0x00028000": "9281c271a9509a63ae5c5c3e4ef1e0a591301f59c435b24130e0d6e1f6fec971",
+        "0x00029000": "c0805228dc549a2acebc0f393c4c3113d7192e134157337ac82412137d5a75cf",
+        "0x0002a000": "892961484e6069475c6a317a6079b2471604068ae481b87c55fa2d18470a63ef",
+        "0x0002b000": "ea38bc7ff5fa24f40ba6ab5db628bee3f38c2b618409d50fe893d34ff7fc3444",
+        "0x0002c000": "5005122db2ed7ec35c32898eecd7762b079763525ac43199a144775339fc63a7",
+        "0x0002d000": "eab0dd2797c8bb4381d9f6736393f3c774bb7d9b9d58a48702db4e620b3e8ef8",
+        "0x0002e000": "fb6c7d51a32aa8676b66d5bf308e340442113efda67cbadee11a6b9fd8ae23fd",
+        "0x0002f000": "b97c357100285640a91400c4b49eb71f5830a13ed170dd453928bd73779a256e",
+        "0x00030000": "5a9664f0e3ec6a8684f5936ca46ed019e564db81740645b83549b27e75fb86e5",
+        "0x00031000": "b374140f3a1a92927044dba57c05702487894b26f8b4210a2e761701da369499",
+        "0x00032000": "c381eafcf3923c23f335953fec2916dc4ceba5d4d7aebe159b1a3373375f18cd",
+        "0x00033000": "32af8e18fa2447b19ec80995b31826845499603683d7bfc9cc14cc73b6a65a5c",
+        "0x00034000": "0a392f31f3091727e873961f3dc798189f5642ea4a9368f762e6db039ed93bff",
+        "0x00035000": "9f894ab880fe1353749a441f9cd78c8e6a1ccd2dde88f82d89f2a930206e206c",
+        "0x00036000": "53b49b96470a3734080797bec87094087dfbcf71c318c29f1020321a5595375d",
+        "0x00037000": "29b142e407e217187bf56feac4a5805168aaa3966c81f24f8e5888477c1f3758",
+        "0x00038000": "8b8be7a760c1c45c0e446ad2b93c53b800a82787a2feb2a064254b1beea286a5",
+        "0x00039000": "508f10bc58b5b07fc8faa4c1b964eae5dfc2d28533a43600231a8be350dbe231",
+        "0x0003a000": "4cfac61a473a810b1b6dab0beb7bc99dd035511809e79cfbf073799181a844d7",
+        "0x0003b000": "d68f1c568c41ba0b33b1d934fc755c16da437b2ad220dcbf4e64e6763ae9410d",
+        "0x0003c000": "6fac19dce6e3a7736dc8def75c52db871797c2ce0d6ea53fc13abe1fdaedce85",
+        "0x0003d000": "d6ccff05f60a54a72b939ea0246b066bdbe06bad5e6b4ae1881ce7a85801dbc4",
+        "0x0003e000": "d8b8f82a515227e9879e8e282d6a8becb5343777f2488ffe5dc786b8a3af3042",
+        "0x0003f000": "50d2ffb7af017ebe63b3a188584ef0740ac115782c739e44e9281b2b3655cf9f",
+        "0x00040000": "45218f989c54bcb81d883ff9ed59bd3453d8440f2d1fdb1614b771704675e54e",
+        "0x00041000": "76e95bb5214ea1c10debbf58170e76043f4b0e50c542844a6650b4744aafc31f",
+        "0x00042000": "fb6069b16ea31b64947316f081e8156a54ee065dd8756f851ea54b027f48ac86",
+        "0x00043000": "a90670e206bf0c205a01dbc321c5a41315c3482349c1564fb6c15ab7445d15de",
+        "0x00044000": "ccc0ef328ee11ceb9ed236d1e1a88ce2e1faa061a53a8531944a77fdab8fc0c9",
+        "0x00045000": "6d5127e00a52e0a9325b59164885c4de57201debd6d8267fab359658bd727bd0",
+        "0x00046000": "f3c56d546e8aee460e039d93c081bdb5307b9f071fe1104dc478be5c55b042af",
+        "0x00047000": "3d8d866bc65c9bae77a86ca34239182c8f102d1aa1fc16e1aaf1bf4a0f696d7e",
+        "0x00048000": "c7ed279057f9f962b91f38e56af1a013f1423bf527a988e38794e9106d76ca93",
+        "0x00049000": "b3faf327c87f6f99f20cc31f1b3d6cb16771a71cecb9027afb5eeb1f8ceaec9c",
+        "0x0004a000": "247d78d1d06c75fd746bcc132949fd339079b1a8eb4395427394a699af82dfe9",
+        "0x0004b000": "990b9a9069fbf6d2dd976c6d329bf98144c60605cb035d336663c72b31151064",
+        "0x0004c000": "3277c2bdfc8b4bed11966222c8d51dadbab1dd20a06575bc3b48e1641eebe305",
+        "0x0004d000": "8a4e362e811d775eafb6ec7bdaab92ca7d0c91e3ee7e7ca5bdc611f3dabb4808",
+        "0x0004e000": "82c9bb78280f93d94a080dd12c316637a1a85a83c8d6cb28a722293ffe344295",
+        "0x0004f000": "4506a3ba719a206ced7eb88cf8faa875b92a5636e8fdb623b94c519d643c7749",
+        "0x00050000": "7d5fefba35620a3fd68248e9098fcc860ea1030cd98eb3d9a04566a1b2f2d993",
+        "0x00051000": "0af5a70f1bf06692a0c1f10eaa380e995058ba82d3e1ba55da0ac597478df305",
+        "0x00052000": "ee837a8376f350d64828f774db1e85e088880c3a00b628c7a47a89699b810aa1",
+        "0x00053000": "dcf00936ff122776d2ed0fc80d874901a26ee4b4f3e352677099448e67849609",
+        "0x00054000": "ffb45bec38468eda2d93a486f463d1a5c29933a312db7793c87da6835b0b6932",
+        "0x00055000": "5aff708f2e31e0445254ef53cfcd78b9637b04ee5d4ff304548971f58cdddeb3",
+        "0x00056000": "78c7af832f1bf8bd28878786d1f310cf6d932b3b4104070c66599e4defe71b37",
+        "0x00057000": "5b642200741939f414960a2f539c8c22c5e5580ec9b68dadfb286965530efa89",
+        "0x00058000": "5ada15e4558661b9af00705c7cd68c09630daff299ac3cac6b106aed0e211678",
+        "0x00059000": "9777e1ac4995fd8a82753bb4692125cabf4a369c3a768f9ed3c984cad5c50ba8",
+        "0x0005a000": "bf27a92a0278342c6ccf29ade173f072b653d398403b1a1b08fd16e4a41f79d4",
+        "0x0005b000": "902eb8ba8f3f36b2698c30e2141250e9a4577c462f656f2720aaad373b062afe",
+        "0x0005c000": "42d8f9a06aa029a36e85029fd03460da76b80be654a7e07f5903bde2336d6f59",
+        "0x0005d000": "53b7ca5b2f0c880f99dac6ece4637c79817c15d811f0289d77b25c15d57a079a",
+        "0x0005e000": "4953eb44786215b82eae575b694b32d6a2dd3727998996bc7919ddd40596dded",
+        "0x0005f000": "666fe30b6671b44bc4690a164826bc3aaa392ea2f9a3ca8286b88e6671bd4ed2",
+        "0x00060000": "b88134ac41cfd10ac5e50e4f21354811cdf00ff50cc1625e6e4f73c487372253",
+        "0x00061000": "d35b39c9c328e5bbc50ea4cbe0a68c44095bccfe67af2470b87698dcd0f42dc9",
+        "0x00062000": "b13e858d2628af66733c4184828c2fdb7c62071e93eb2bb366df9da486152650",
+        "0x00063000": "25a0bc58ef502fdebe841a1e1a009e919287f400bc936245e3ceedf2b179a0d1",
+        "0x00064000": "680b8597b786a41fc7f2d9f86bb67db1e0f735c28b84f6e3d856748b208e77d4",
+        "0x00065000": "b80014d1f33db98b84b33bdd9e1b650fdb6beb29ef20a1493ef3969960dce25e",
+        "0x00066000": "773e1b2a8fa19d1e1f2fa36f7696547e6109855b684e6be3918995c428c07d94",
+        "0x00067000": "019236f28f1f5b0a114845b21121e889c6107d8129cbc9d22abeee2a298ea211",
+        "0x00068000": "ad48fe5ace1e9f2c9e3bfbafa5136d8addf2be71e68428c946d0efb8cd788c1d",
+        "0x00069000": "e1db8110a83d8e555201ec500104bbf8e13e404e39d3cfed425de49add294eb0",
+        "0x0006a000": "71ff2508bcc4380839a2c35554df627b9ff81ebdc26ac2149f34aec027703827",
+        "0x0006b000": "fb3913464632dcea58d7b5507ef1c81f47fedb92ca66af0d1164fd2680a64cd6",
+        "0x0006c000": "faa90709173ee883d45a99dd96dee80a162a511392a311a9da35289c446e75fd",
+        "0x0006d000": "a5c4c78bdd0f00d031fb0367af7caa3ab99cf4871e7eff8ce9f94c8c1277642d",
+        "0x0006e000": "eb56ebfbd4c8f36557fd6423bb5e856db5cd945e9a167fb035a2d257b4bbe7be",
+        "0x0006f000": "b4dde431fe414aad8cc761a185dd2ad6b8ddc89cb6fd07541dc8683fd7654d7c",
+        "0x00070000": "6dcba9ebfd63a7847e252d2098bc0874a6d19da4e50555028d9e30a159df08d4",
+        "0x00071000": "11f05aafa399947e44583e3e147374fbab19c76c581ef2025b3abd5abc6b85e6",
+        "0x00072000": "aa74316258a05214e59939d9773d3361c63884bb23d4184276ec5077cd0c4e09",
+        "0x00073000": "3d38f805a3ccda2632fab8be41e6c759d20285f7fbee04c4b77546d032f34ee5",
+        "0x00074000": "7af7bef32ba6b6c5753250405233828f8fbedba39a19b386b2714fae96bfd181",
+        "0x00075000": "1eaa0850fd320cf6a5cf5e458d5ec76ae8cbe4658d311d3255f051390828dbaa",
+        "0x00076000": "9cc0c3e17b205afc998f5cfb550d7c59d575b9b88cd77d3e76973b1286e7d164",
+        "0x00077000": "de1fe903fa9aaee5c19efa36207d9eaeec588e047ccb35ded5fe99573d49d044",
+        "0x00078000": "91223560462f5f5c732f71831115fd6cccf794cbcc95f9c241c07331b0bf5d6e"
+      },
+      "source_id": "833e76433ac3786051a353fbeab5589f4ca4e77840bc27ee77f69bc3a3d61f00",
+      "toolchain": {
+        "sdk_files": [
+          {
+            "path": "sdk_version",
+            "sha256": "0727b6687bddd595135504b91d8b6de3f7fc81844f45414a2c4e328bf4acca0a",
+            "size": 7
+          },
+          {
+            "path": "cmake/Zephyr-sdkConfigVersion.cmake",
+            "sha256": "4b88389a6e92fe9e6813751abec1ed9e0b05b870b6e0ff4581dd89955a4b98dd",
+            "size": 1419
+          }
+        ],
+        "sdk_name": "zephyr-sdk-0.16.8",
+        "toolchain_id": "ae2daa6e80aab9ad85e63ec1691f468cf031bf63c93a3037d00202faf6bf2611",
+        "tools": [
+          {
+            "cache_key": "CMAKE_C_COMPILER",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc",
+            "sha256": "a1932d42d053670f24b031ee57d8e7233f84c3fe4e9378418992f1891d192d72",
+            "size": 1411936
+          },
+          {
+            "cache_key": "CMAKE_AR",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-ar",
+            "sha256": "0b2a92f8763e1b1a2df447cecb0d120984c83ba1262fe2915ea471752be2f0e6",
+            "size": 1070264
+          },
+          {
+            "cache_key": "CMAKE_OBJCOPY",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-objcopy",
+            "sha256": "c5c16efe38ea4a3ff0fd349884cb2a95635e597ed4971afb87f3f272ec7ac665",
+            "size": 1184912
+          },
+          {
+            "cache_key": "CMAKE_RANLIB",
+            "location": "arm-zephyr-eabi/bin/arm-zephyr-eabi-ranlib",
+            "sha256": "5ee107852bf94bc99c4b554c761b0751d2cf6f3babf135bf8ff29cc93eef36b0",
+            "size": 1070296
+          }
+        ],
+        "variant": "zephyr"
+      },
+      "toolchain_id": "ae2daa6e80aab9ad85e63ec1691f468cf031bf63c93a3037d00202faf6bf2611"
+    }
+  ],
+  "cohort_id": "e1c3af157b22fd52ed978372b72ca0b8b53c3b21de954802f0ac74d1c4339c50",
+  "schema": 1,
+  "source": {
+    "dependencies": [
+      {
+        "cache_keys": [
+          "NRFX_DIR"
+        ],
+        "dirty": false,
+        "dirty_entries": [],
+        "head": "54bde38c6f6ffb3780b26ae728cf79426184384e",
+        "location": "modules/hal/nordic"
+      },
+      {
+        "cache_keys": [
+          "NRF_DIR"
+        ],
+        "dirty": false,
+        "dirty_entries": [],
+        "head": "7787b264984022cda64d9629278942053e6462a5",
+        "location": "nrf"
+      },
+      {
+        "cache_keys": [
+          "NRFXLIB_DIR"
+        ],
+        "dirty": false,
+        "dirty_entries": [],
+        "head": "756bcec432f49aa5def6f47d2d09272f8c4d9192",
+        "location": "nrfxlib"
+      },
+      {
+        "cache_keys": [
+          "ZEPHYR_BASE"
+        ],
+        "dirty": true,
+        "dirty_entries": [
+          {
+            "kind": "file",
+            "path": "scripts/kconfig/kconfig.py",
+            "sha256": "463ddd274ed0bb22368dfd32d274bf789e58217fe2e90509e4e683392c1958fd",
+            "size": 13227
+          }
+        ],
+        "head": "1f8f3dc291420c70cd39e77a5cdc954561d4a08f",
+        "location": "zephyr"
+      }
+    ],
+    "files": [
+      {
+        "kind": "file",
+        "path": ".gitmodules",
+        "sha256": "aa525c99fab1b237da84cc8af1c9cdcfd2e137803ce2ab6e75b54a6c094f6807",
+        "size": 124
+      },
+      {
+        "head": "70231425cbadc83e1d1a8b526868e3461391dd9b",
+        "kind": "gitlink",
+        "path": "dwm3000 examples and sdk",
+        "sha256": "8e193fee3abb4401a611ba304e44045bae442a56dba04719891f9c30638a0786",
+        "size": 0
+      },
+      {
+        "kind": "file",
+        "path": "firmware/CMakeLists.txt",
+        "sha256": "1c5a7335712e0ac22fb98d446c4dc34702ce4cc55351f565daee7e79d4cf3ca8",
+        "size": 97159
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/CMakeLists.txt",
+        "sha256": "bb98513938ddd2e674773109856646355647c4ac44fa96bcf855b8121092bef7",
+        "size": 24170
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/Kconfig",
+        "sha256": "e0d26d02c2c8c02598d4c44ae5d51c109ed879ce19812d22ac98eb568f4347e2",
+        "size": 12465
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/app.overlay",
+        "sha256": "36703d16122ebd3f29323fa717d85acbd0b23859c7be212b0446b4ca69e445cc",
+        "size": 6210
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/mesh-anchor.conf",
+        "sha256": "be851683fafc5fd37057f14db094107e1f642de1b7f474ee2c33abf133a64eef",
+        "size": 234
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/mesh-clicker.conf",
+        "sha256": "141ad134d454d655951072334eaec31f80c01173103ce224f33955b5ee53e728",
+        "size": 328
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/mesh-route-test.conf",
+        "sha256": "c97a95eb908e81f150d7fc14460e13bda193af82286337a1e4ed2284b7c46319",
+        "size": 993
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/mesh-stack-diagnostics.conf",
+        "sha256": "c1c01ccaf7bf993c123add82445c4f54c73194e57b1caa555f4ed3a4b859df04",
+        "size": 539
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/mesh-stack-stress.conf",
+        "sha256": "2d35b82d46ad6caeeacb6416cb9f7cad98d5a72659295046fb9f9b1e781d835f",
+        "size": 391
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/ml-anchor.conf",
+        "sha256": "eabaf24c5e6a363ec6cf7c116b70d30a3243cb8c2578f4330d4cfd66cba6022e",
+        "size": 872
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/ml-clicker.conf",
+        "sha256": "ff7b58406f0db9dee8b3ea9ae44d9e14919928cccf47acb848d6cd3801da3c91",
+        "size": 964
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/conf/watchdog-bypass.conf",
+        "sha256": "a0e70145e97c9cc47d4e51be66ef470eac2a1b79d082efdabdac5382a6d038c4",
+        "size": 183
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/dts/bindings/uwb/qorvo,dwm3000.yaml",
+        "sha256": "5a5dfb31c60a2c523a2bfa507fd50ea638b72042395e9e9ac140f6f4264e777f",
+        "size": 632
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/overlays/bootloader-single-slot.overlay",
+        "sha256": "e0a400d9b851e0923d2782eda23e248182b9afaa6c14ceb070b25e8b567721a5",
+        "size": 722
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/prj-clicker.conf",
+        "sha256": "f405924f6ff33978ceff1d21a40a7326bf8f2b6b52e7ddcafc8c15c1aa26639d",
+        "size": 304
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/prj-gateway.conf",
+        "sha256": "f53def74e05b299f06995ccccaae206e1beb8d70103fdc4b1c388d4e8440cb46",
+        "size": 1060
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/prj.conf",
+        "sha256": "d0882756688b0cdb10b97308fde4d9121fe390398e7382b419b3123b3101fd81",
+        "size": 847
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/scripts/imgtool",
+        "sha256": "05fe98587fb320663af83733e4ec8485cb57dafe392040a2e6a789188764dbce",
+        "size": 338
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor.c",
+        "sha256": "7600d34dce6f68315479a813a1e196d1aea4eca5a7f8149d40ed38eb33ef3308",
+        "size": 32750
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor.h",
+        "sha256": "2bff276613a6f8ca29ddb702299ed1b7812a141c86416fefcd9c6b6b5514528b",
+        "size": 3887
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_click_event_runtime.c",
+        "sha256": "9db340c4e50a2c3317cc086bb7b72d2e03fe3eb52a66bd518745701eb380fa78",
+        "size": 7588
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_click_event_runtime.h",
+        "sha256": "fd3c95d84c2dd02c50bd8b866a9e2f50e056d68fd3cc2f2fcffcd88f673c61ee",
+        "size": 1879
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_command_completion.c",
+        "sha256": "ab74294decee72e0ba6052e0adcb84610c4d0dbb43824b7f1d16610d396a8fee",
+        "size": 1751
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_command_completion.h",
+        "sha256": "9150f293b5a4f959a04d02242f2f4ecb00489ba79ebee67c33eaa8183994d678",
+        "size": 1524
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_commands.inc",
+        "sha256": "669355ea835c4809983b89f113b7a0375275c1439abcbcc520d69c169f537a00",
+        "size": 188123
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_gateway_control.inc",
+        "sha256": "cac95fafc484ff895e85b8702271736caae7829e18662c6355e2dcba0391728d",
+        "size": 235494
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_gateway_survey.inc",
+        "sha256": "f798b527cad9d8496499a22b8eb9636827a9c1ae12628695f8a5f1c472dfccb7",
+        "size": 196549
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_gateway_survey_round.inc",
+        "sha256": "983870cb810b894d273721574d950bb92a32def21256d5259a4b453b5901dd6f",
+        "size": 34835
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_init.inc",
+        "sha256": "22414adce9c7dc5909cce2f75af00fc51739e4627a88990d9b0792316bd67149",
+        "size": 11248
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_radio.inc",
+        "sha256": "0e7a8079783ade90cc6d52acafd16f557c8921f3c67fd74b711c5a58196f690b",
+        "size": 134059
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_ranging.c",
+        "sha256": "7ebd09fabf22d9eba00cc69e3309f506c7df1d68622d6fd17ca4fe46c008fd73",
+        "size": 3257
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_ranging.h",
+        "sha256": "6d9218ae936b82d7f4e6279eb1246ea0ba129a1b4127253aa0374af1dc9da6ff",
+        "size": 717
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_survey_discovery.c",
+        "sha256": "eb6d4bb6456deedc9904a188ff75570957f3335d43e5fbf11c7ef412893872a9",
+        "size": 70546
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_survey_discovery.h",
+        "sha256": "804aecb1bc8d0752a96591705695e193f1c358460b3707cf55a540deb5a079c7",
+        "size": 2359
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_survey_result_delivery.c",
+        "sha256": "672de7e98b927a6a43b43f618234ba4ac8a27650ff636b434a90083d8d5f2d5c",
+        "size": 45525
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_survey_result_delivery.h",
+        "sha256": "b4903837472ca0a29070a33e7b9d1db26253337797060bec83ec4b90ee1b50ed",
+        "size": 3385
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_survey_runtime.c",
+        "sha256": "8a7bb2c5f3a9b73f9f5d4b124ab8c6e2b5c41b586cb1b24154a78939c395d986",
+        "size": 118563
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_anchor_survey_runtime.h",
+        "sha256": "096e4acc6e742353a96665b6106d65e39b78052c3797df5e494d05f21740460c",
+        "size": 3786
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_board.c",
+        "sha256": "77ae418af09277cec924ee9e344f5888ad888846551de2c6c4a772e3161b6b12",
+        "size": 23319
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_board.h",
+        "sha256": "d2e702c74b7210f631b8f17907cc0d68cbdd6f749b27150fa624e87ae459614c",
+        "size": 1467
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_click_event_sequence.c",
+        "sha256": "3fb92292ad0477d3cf6befddee3b9bb1fb9b40289e692bff094cee3a8aff9b9d",
+        "size": 6738
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_click_event_sequence.h",
+        "sha256": "f403c901af769ed39f1972708056049ee4a2c7b1d510c2f0dbaf7182218ef7e8",
+        "size": 1571
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_clicker.c",
+        "sha256": "d345a8802c93a731ad3185807778afacd9a87d76b25d90c48ed7820c0909322b",
+        "size": 160523
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_clicker.h",
+        "sha256": "33e95bb87d47cd61c67a418d55bbdc674fbc3ca2a505870d05b27e817ca9023c",
+        "size": 5946
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_clicker_event_runtime.c",
+        "sha256": "edc47f1ca3fa9db2d941343166088b7a9e5fc22d05031ed57809dc0a85d5321e",
+        "size": 12410
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_clicker_event_runtime.h",
+        "sha256": "8c99655b32b1d2bae2590a40f6b5bf9b6c9d49fc23dd402a0cb2b2629e8dab66",
+        "size": 2014
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_clicker_rtt_control.c",
+        "sha256": "93f1bdfe8602e03664ed6c7dc958894e2c97344ae0d73b9d40d932914a33d438",
+        "size": 3281
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_clicker_rtt_control.h",
+        "sha256": "052ef33cbf30cf9baeeeb7697f9caf523f549d6ab30a50778ef3e200e286d158",
+        "size": 118
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_config.h",
+        "sha256": "52b2f25e968dc5310c2b205607f7f1b303e8e31cfbefcd0969b6ff23e113a721",
+        "size": 18893
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_device_identity.c",
+        "sha256": "65f6cef03cc26bd96cc56f3cdf97a2c115cfb43eda02e2a817ec989e22a5d870",
+        "size": 1160
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_device_identity.h",
+        "sha256": "7093ed439313dc22a88c1b82251adcca98accdca80722bdd9c82d37cc921501c",
+        "size": 277
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_discovery_assignment_policy.h",
+        "sha256": "9427862ba7cf36555b499e494a098dda043554db89320da38552d0490eff3bb5",
+        "size": 24815
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_discovery_assignment_stack.h",
+        "sha256": "d82f77585515258e8753f72a9a519a13fef9412a8c457b91b538b6f03903e1ad",
+        "size": 473
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_durable_state.c",
+        "sha256": "0498f7ef391186380707fc86a402558699af243ac026ac10a8bb41585348b34d",
+        "size": 88625
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_durable_state.h",
+        "sha256": "6364621587e584f0c4af31425ec920c31c5b6edcb5ab06287324b89041a5e661",
+        "size": 13651
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_assignment_publisher.c",
+        "sha256": "3c7a5cda6f01909d70e68cd9c363c9d4fdfab507292a55b02008a5e6dd3a92be",
+        "size": 24862
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_assignment_publisher.h",
+        "sha256": "867a82cc420eafdf44a03d0e9cd0a056007a0fb012d1614ecc723a9dca3e6bef",
+        "size": 4328
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_ble.c",
+        "sha256": "9f94c51a4206ac02dcf293f6f612c934da872fcc3c20f40de7ef71b48cb949e7",
+        "size": 73962
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_ble.h",
+        "sha256": "29aa325727442e16b683990287df8e03f26ea5ebc5cb16ae969ef3fc3470f628",
+        "size": 14881
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_ble_stream.c",
+        "sha256": "e5895f222e71d7713ecc9fdb0fade0461c1a4f1133f41f9532c088a3b305d240",
+        "size": 38418
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_ble_stream.h",
+        "sha256": "19204b36b570140aadb4fbfe84715c519ed9805674aaa8fdecd412d23306c92d",
+        "size": 10137
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_collection_eack.c",
+        "sha256": "d8ecd5cc521917a6f851ec78b5855ee83e8ed669aed541be6a2022f242193a9e",
+        "size": 9339
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_collection_eack.h",
+        "sha256": "4622816ae858a216c3037db56aa5b18388806dd2d51f44323fc12f5bdf99d107",
+        "size": 1718
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_collection_recovery.c",
+        "sha256": "815abe0a7da3fd80dba62018e6ad889df6c000b76bdd000dbe5fd27447e23713",
+        "size": 15589
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_collection_recovery.h",
+        "sha256": "ccc1ae24a7de18d667d6b5b7561797e9bc2cb2e4381f1427611f3efd8ce6ed14",
+        "size": 4645
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_collection_runtime.inc",
+        "sha256": "71d3d262a6e493cfd6535669a3dcab9e6b97c3aabd38c9ac8468a83abf907a80",
+        "size": 22531
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_ingress.c",
+        "sha256": "a8e6f5fb086a15c141d064e924b9219cae4bab3d36889fee94e38f2dd026e4bb",
+        "size": 7218
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_ingress.h",
+        "sha256": "f205358d7683e5869e6213def3aa91d87fe5060b5d2ff09dd16e07148c84120a",
+        "size": 2967
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_lifecycle.c",
+        "sha256": "a2fe4b3708d0f257f14cacb252a811532561708147f3af12b703e7b931feaf0d",
+        "size": 6027
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_lifecycle.h",
+        "sha256": "b51c921ce04271aeb6dd3f32dcd98f68d387ac962862f5a8b3e9a7629b08d2c3",
+        "size": 2667
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_observability.c",
+        "sha256": "9fd3b7e12b6290ff7a8225f183933fe56745d815cb41893ebaba59d7094dfa43",
+        "size": 16418
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_observability.h",
+        "sha256": "5f7df24c49cc2c5910a8503b842c828fdbcc64fa358b5c5d8188697e8e55f3ae",
+        "size": 6548
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_result.c",
+        "sha256": "c1a89ac8cdc833459c751b363251a497f3fbf3cecbadb6c798f018211389595e",
+        "size": 15003
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_command_result.h",
+        "sha256": "566e2fc4b36ffcedc95d1f6fb772ff9e36e0298deebd7625ace732443b2acb46",
+        "size": 5296
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_control_sequence.c",
+        "sha256": "248f1977ba2a804297443bd7a77057aec285dea595eada079b1b06f3e58307ab",
+        "size": 12277
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_control_sequence.h",
+        "sha256": "7e6ab443368792209693c68be7a1ec6913b7c5fa5507121c8ab36d3e7071e11b",
+        "size": 3050
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_eack_policy.c",
+        "sha256": "315984baebd1caea2afda574273198074daf0c6e60ae527532cd4938e66cad22",
+        "size": 8486
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_eack_policy.h",
+        "sha256": "c7b48f348d920fa70b3062b2b0fc9df17b0bc2915531bc0c1610c04c69ea54d1",
+        "size": 2428
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_eack_retry.c",
+        "sha256": "fad183203916ff6b856c435db3bdd383e6377fdd10f6b00b8d0cf3fedb416389",
+        "size": 11871
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_eack_retry.h",
+        "sha256": "e9c323a09e7dea39a26d3fadff457aec5fbc8d0d73cc0f0c23020499133fa83b",
+        "size": 3375
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_operation_owner.h",
+        "sha256": "71a6c82077951bbe8b3e3ea924490caf8b3b43d056a75393132277a6e9ef8d02",
+        "size": 2128
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_result_runtime.inc",
+        "sha256": "4c04160c32453ebe9662e418e54908ee8b643fc1b9b91dd76ca1b82d8f0d07e9",
+        "size": 145438
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_survey_observability.c",
+        "sha256": "5af35ee6c4cc64a66642c217ca740f2cbceeb32bb549c0824a23c25d39018c44",
+        "size": 6127
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_survey_observability.h",
+        "sha256": "0740a967265c958eee9afcd8b84ee89959c95201fc6eafb9d46509d9b595675e",
+        "size": 1601
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_survey_round.c",
+        "sha256": "669c3e623726ee5e1f120898f93d65a21561e45ae6ad9fa67af86c6a25cfacc6",
+        "size": 38749
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_gateway_survey_round.h",
+        "sha256": "a6fc0148fd7080fb8c631c02726e754bea3391bf66e26c609b22274e5a6f3506",
+        "size": 10733
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_arbitration_zephyr.c",
+        "sha256": "926f970953be747c0d18f625f7416a1019dd5e27cf4feffd826accbcfa31df32",
+        "size": 9298
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_arbitration_zephyr.h",
+        "sha256": "9ae19920cf13069e66cd309c230e2a1f9e9342f694d17d688c1af76126523afe",
+        "size": 1176
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_async_route_request.c",
+        "sha256": "41418255f3a8162fb2352a416b321d81e51865df107fc416eaedb712ff52ed52",
+        "size": 7536
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_async_route_request.h",
+        "sha256": "d2c60b0e81b8a2a671202109f7748e4f739063c985f3e757dc7b6755b0d5e4d1",
+        "size": 2593
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_c5_priority.c",
+        "sha256": "c3173b051697cfdd8a9da6f2e7c4b09169fe6cec4ce1cb17eab75d05e8e1f797",
+        "size": 17667
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_c5_priority.h",
+        "sha256": "68f875d60d32c553edd80bb38d05f71699f231d94cf135ce28876395c460dff7",
+        "size": 6568
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_c5_repair_authorization.h",
+        "sha256": "e1eda31f2d7dda1621d648c1d5b5649922bc142d721cec4b415b0eb10aab0ec9",
+        "size": 852
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_ch9_ack.c",
+        "sha256": "70a9168c5aed22656cfb89a7940e24e818a16b520b8335e9d17a61376c117d9c",
+        "size": 45426
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_ch9_ack.h",
+        "sha256": "aea9e6856178b6484fd637e07dbc464acad829f3ac39622953f0b53dfee5b8b4",
+        "size": 9389
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_collection_deferral.c",
+        "sha256": "1df5f0f3765a1d10855eeacee546c0af1af6041ad2a139845a1f671d4aaadfa2",
+        "size": 898
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_collection_deferral.h",
+        "sha256": "a6af2aa66344d15321c3cdc1b720ea00c216ac77ae0e45a152bd5751e15b8e82",
+        "size": 606
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_command_orchestrator.c",
+        "sha256": "04c874b0ef533e866ec63b0a3b9edbbf61423d2ce442a19c9c0977b4ffc11624",
+        "size": 7114
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_command_orchestrator.h",
+        "sha256": "230305b278ed09c0978d2f3fb98e76fcffe2415327cb79360f75501c3fc3665d",
+        "size": 3870
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_direct_gateway_retry.c",
+        "sha256": "eb87120933105ab5f8f1727d93e4308fce0739009624833d4133b7ab35adbb8f",
+        "size": 5078
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_direct_gateway_retry.h",
+        "sha256": "fdcaf7a7f8d90da7535e1915c03a7e011f87a9513cec2ce93d7369f10794ff2d",
+        "size": 4022
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_direct_probe_diag.c",
+        "sha256": "0b5efb7e16d9abff6193ba3310324b06bfd3243d4df20c8bd73388d9dc2bb16b",
+        "size": 1720
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_direct_probe_diag.h",
+        "sha256": "e3fd8b6fa7fdbfc9957b2cdb12a53ff7263e4f91c3954ddec6e8fe6b413b71f7",
+        "size": 668
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_event_retry.c",
+        "sha256": "861f7106c902278274d87ea43d380030a21aa545c813bab8d33cdcab7d11dd00",
+        "size": 12111
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_event_retry.h",
+        "sha256": "18696f7ca0bd8058b89ed706035599aa94290594fd9fa2d1aec3302e077166f9",
+        "size": 4790
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_flood.c",
+        "sha256": "263f56e802a86ca7548b551d4ce8cd72cac783f4154f0ea3f8d03461d0077734",
+        "size": 11021
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_flood.h",
+        "sha256": "112106ccf423fd1cfd973920d7fac9181a59fb73d07c36e3d4472172fb9110b3",
+        "size": 1816
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_gateway_ack_policy.c",
+        "sha256": "257b73525e97431191da9da718207fd132238205fcc8709072449430555d8d40",
+        "size": 2053
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_gateway_ack_policy.h",
+        "sha256": "a1e975109408a2df51dd84386f30ec52b9a920967b7dc6b92597f83968beda99",
+        "size": 1027
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_gateway_command_flow.c",
+        "sha256": "6749ecef4612acdcde300f2dddef41437c85f58960677eb80172abbba57cdfea",
+        "size": 7249
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_gateway_command_flow.h",
+        "sha256": "99fb4342747880fea984cf4496b2df79293083bcc14b1313bb87dd229a186f8b",
+        "size": 1881
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_local_delivery.c",
+        "sha256": "75278bd2ed9f134f9dcc674e55b1d2adc11e4f77b119c4ff12b3b02bc1d556ac",
+        "size": 29080
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_local_delivery.h",
+        "sha256": "a9394d471e200bfc1a2f094afff45ed00056022f0045b8e472d0d9df8a7ba18a",
+        "size": 7229
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_preemption.c",
+        "sha256": "543106c5babb3ec361d2f46f2340dc56fc2d01b3020fe83c989aaaf2b4a6c34b",
+        "size": 8217
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_preemption.h",
+        "sha256": "17d8ff1541a7d9aad55315c660c42f1ad84ea28730399272e3c4011b4530a69a",
+        "size": 5067
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report.c",
+        "sha256": "28a11656f091459c224d90fdc22274a6ade9988b96cc25aac20841640523148d",
+        "size": 57853
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report.h",
+        "sha256": "2936164a11c128357e9d39d78c654a832eb3aeda7713202830d376ec982015d4",
+        "size": 16200
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_coordination.inc",
+        "sha256": "e873393f9c449b1bad0f417a5f17f137df8bac194416f61ee5c8e552e70124be",
+        "size": 142394
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_delivery.inc",
+        "sha256": "91cf9a183cbf508ed050b8ace775055b1d331b84db6b215658dc910976581371",
+        "size": 249821
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_direct_gateway.inc",
+        "sha256": "d71762f246387d3dafe2d7e1618613e29f938e0ae4b986dee439b7e051fabef6",
+        "size": 73820
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_encode.c",
+        "sha256": "b6dd93a76190d58ee3955119af0148c49f54c91fa15521bae25a191dc425c5a2",
+        "size": 32071
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_encode.h",
+        "sha256": "6785a6af31dd9c90808406ea98a99bfee75002c2dccf4d489ddea07a311cdbb5",
+        "size": 477
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_event_tx.inc",
+        "sha256": "40bdb22d76d371fa197a10fdcd7dddf87c2eab27ef3a2d2735dbeaf71e394118",
+        "size": 188225
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_route_control.inc",
+        "sha256": "f878a4d217a36e312716f3ec884f9f99cc70dc4761e1bbcdedcd8a358a63a148",
+        "size": 140331
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_rx.inc",
+        "sha256": "fc92d007a6ecc488b9f80b9e43d6603090816836a9752523c1bfc207fc7829e2",
+        "size": 117710
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_report_transport.inc",
+        "sha256": "bbad411e53338af6cca7231db66b11d4258b5bb4043a694fedb64a8fae760a3e",
+        "size": 118472
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_result_handoff.c",
+        "sha256": "ad627601f423d914d1fd36314134fb153aa34f6371e2bebbff8534ede43bf9a8",
+        "size": 2306
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_result_handoff.h",
+        "sha256": "2c78d62b8843ce93edcf7b2bdc991f52d65f9948a2edaec821ca68d2f9102cf6",
+        "size": 1227
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_rf_retry.c",
+        "sha256": "851c394932e962223b0bf47e745c15c952ce319e13bab3d82355eb8243e7246e",
+        "size": 6201
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_rf_retry.h",
+        "sha256": "c379e2a8071e8caccb0e9f57647ca30650a2f8bcf9eee7a2979d7c9ae2296929",
+        "size": 2359
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_ready_handoff.c",
+        "sha256": "2306ea4bd98f012bffa75f4678eea4bab4be9eed702c85a206c9a1a5e74fb883",
+        "size": 2438
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_ready_handoff.h",
+        "sha256": "5668d1ced0b1984da6e47ef46115504e31faec928baedaaafbc7950d97b6390d",
+        "size": 1230
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_reply_ack.c",
+        "sha256": "98686abf0c13db491c487eb1bf4a5cd951ddb679cbaa9af3067bb9f09511b3a4",
+        "size": 2962
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_reply_ack.h",
+        "sha256": "b5b47f2cf587bc52aec7b0f91b51872cbb0e96cf4c4dc0f5a5251caba31eaa24",
+        "size": 1610
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_request_policy.c",
+        "sha256": "f167daee132c278cb2dab144c6742a3cbeddbb87918f880e52f9aa4bfff5b93f",
+        "size": 3272
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_request_policy.h",
+        "sha256": "0aae3afb3782d42338be1b68c770712d4609f0bac0de6e49ebbb7c63504383b2",
+        "size": 2136
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_wait_tx.c",
+        "sha256": "aa099699f216bbe78bccf096c4b52dd8132389ac3b1f1548a262a74c386378ca",
+        "size": 4059
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_route_wait_tx.h",
+        "sha256": "2d6cd41c563b63d551d506218cd4d6e06499e24ff5959d8501a3e84484c73dbd",
+        "size": 2296
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_rx_policy.c",
+        "sha256": "3e6018d67d1425571544847e792fd6920ef3f7b5ce855f53a108bc14e7f9be32",
+        "size": 5456
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_rx_policy.h",
+        "sha256": "a5a71960d0cb73f54ae65fdc803fd61e4413e86c5afcbd3c190b1b966ca181f6",
+        "size": 2657
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_scheduler_liveness.h",
+        "sha256": "576878799fd620acf25980fcc8e4d98b41ded2f1d649b3dcc715a9220cf8944c",
+        "size": 1705
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_smoke_fast.c",
+        "sha256": "f5e8f80132ebdffe4b0dd0d835a0380801538845612a389ad373991d8308611d",
+        "size": 17154
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_smoke_fast.h",
+        "sha256": "e326c42593aba09540dd0630214f149bbacc2defb000647852f87937a713e235",
+        "size": 4391
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_test.c",
+        "sha256": "a11acb86285beef2f48beaf39e8da2066e3fe732dbd604a4882147744e0759f4",
+        "size": 34195
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_test.h",
+        "sha256": "67be150e3fcfda17067b4bc5de3723bc14a7dd72e6c94423c942f081fc415e22",
+        "size": 1864
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_tx_handoff_gate.c",
+        "sha256": "777d3fda69839ee2767706bffd549cfbfcf61985009aa3ce5961a51ba952fd7f",
+        "size": 1836
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_mesh_tx_handoff_gate.h",
+        "sha256": "b57eb5d574be98d22cca4c60c30960d6dc14abfdf81e523a4a40d50ccb89db16",
+        "size": 1331
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_ml.c",
+        "sha256": "f73b5eaf2846c17f0dc61fc3fad0d4105cd8490a074babdf9cdd83162364fded",
+        "size": 116626
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_ml.h",
+        "sha256": "a76276302da4f12a43aadf59c07137a22409febbaf2fa4d51aecf219c5e15f3e",
+        "size": 1846
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm.c",
+        "sha256": "8ba5200ee8216185648e4dd43e7b02d073cf034bb723df709bd471bb249b7fff",
+        "size": 175133
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm.h",
+        "sha256": "19a9857d16b511f2c10d01e91159513d53f64b469c1a17e557063103060b991e",
+        "size": 16436
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm_gateway_control.c",
+        "sha256": "ae1108138cd33f7735ac7ded481a74a0cea5bb385de1c4e360e803f06cd7a17d",
+        "size": 2260
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm_gateway_control.h",
+        "sha256": "ae9dd4acf9ecdbcfd6b9f04c5ffaf84fbfec285b8d862aef75ef0c56cb96a1db",
+        "size": 1272
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm_gateway_route_refresh.c",
+        "sha256": "27aa1b22acf93d09fc8c84610d45ba0816c11d5f59f074b4a563769919071d44",
+        "size": 35553
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm_gateway_route_refresh.h",
+        "sha256": "e5d905ea1a4233aa6db94bbf7d0c421ff128bcc56e0c9fa00510b85f3bf2913c",
+        "size": 3227
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm_sync.c",
+        "sha256": "e2961fe2bf4efd2da672c87d70cdac5b6f0c32cd1355b97b93d460350f0f2da5",
+        "size": 362
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_node_comm_sync.h",
+        "sha256": "6c1265e7c6b3243479cf2aa9cc6fc074755e78852c3a584acea3f9c51b2cfac1",
+        "size": 140
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_operation_policy.c",
+        "sha256": "74ea603274dd3f12c45310c16857bf7e0c11e9b256996e4a844fddf8acf03691",
+        "size": 6646
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_operation_policy.h",
+        "sha256": "5a94a393fe75f74a595067283432430665eda905820f92d2343e13681e1bdfee",
+        "size": 1378
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_radio_guard.c",
+        "sha256": "565750eddbdc2014f27075564f7ce02c46470607aaf8db92b234954cc5768816",
+        "size": 8707
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_radio_guard.h",
+        "sha256": "37d0b3511c542c41e7df3776c44abe9efad7ab97765ffe0c41a484f2cf518f43",
+        "size": 2063
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_radio_low_power_policy.h",
+        "sha256": "e5a9733fe163f3189ea1e142e8c76f72cb472821bcc00125c7b1e1cef1b7dfe6",
+        "size": 2162
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_radio_recovery.c",
+        "sha256": "893468d47435adc62849748e2fdae3893c0a6c746326bc7ba730e9393f4cd191",
+        "size": 2126
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_radio_recovery.h",
+        "sha256": "d16185f8022301d2d4290677277be3b4c6767357e692305d925ae6a47e3f44b2",
+        "size": 194
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_ram_state_types.h",
+        "sha256": "c5b1fa43795a35bd5aa5103d099615f20dc1607fcf29a28dd36e0756751fcbe7",
+        "size": 2117
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_stack_diag.c",
+        "sha256": "584a8fc0f27d03bcc72341111cfcc99e5548c9a5776f2cfdc2ea12a92545db6b",
+        "size": 18723
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_stack_diag.h",
+        "sha256": "0ca20a3fd12c4affed3dc5cac1680d5c332d782922b9f6e6b1979b813234fd4f",
+        "size": 2137
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_stack_diag_record.c",
+        "sha256": "48f9622bd05143fbd35c76ca027048cb049961f0310b8ba5913b50edd1c15c9b",
+        "size": 1188
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_stack_diag_record.h",
+        "sha256": "518982208def64421447c8f94f998933b9747413da955bbb61d015e785b23d4a",
+        "size": 1006
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_stack_workload_diag.c",
+        "sha256": "6be49e8f144bdbe79e570921de8b67a223d7a577d3930efd50a8fe82c1501c53",
+        "size": 11062
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_stack_workload_diag.h",
+        "sha256": "b473d1b21a6009833d16c0722a5c020798fc8739bcb2d53d9c310c9293f08eb7",
+        "size": 7872
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_state.c",
+        "sha256": "a44ec5f00fedde48db794f3f821d7ea86b5f0fe971e94ec1775f1e6a6dce758f",
+        "size": 27203
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_state.h",
+        "sha256": "528b0ffdb08be6a89fd20f93c401a29e0ce8030e391c20c578304f21c863f1dd",
+        "size": 6909
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_wake_train_politeness.c",
+        "sha256": "630fbba79523cd15f403a1d3947d4823a3289e88f90ee65cd2fa29414b7bd13b",
+        "size": 2771
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_wake_train_politeness.h",
+        "sha256": "f7eedc69c26633790113d29149046cf621491355198d1b3f395ad8b88e74ce41",
+        "size": 1699
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_watchdog.c",
+        "sha256": "b19c0281e44ddc27f9c924fa6ba18f6aa1f5ae39779e50c431da9222849bd22d",
+        "size": 15511
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/app_watchdog.h",
+        "sha256": "5ea232ce27bf456b6d38e187b9e89104c89132b093ee6da5387ea3fc163fc27b",
+        "size": 1944
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver.c",
+        "sha256": "8424dc5474a687812841980d4e6d10d8b85e6699926f75d42dbb9d6c65b440d7",
+        "size": 19727
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver.h",
+        "sha256": "d8bb9e5bbb546e063fecc60af9997746944202f475c2cc9e7a77364937fb76d8",
+        "size": 11537
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_ds_twr.inc",
+        "sha256": "01fda4f60a006b497be5fc96b5a9238d7a7673bebb2f494c480a80e6f68327f5",
+        "size": 46132
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_handler_contract.c",
+        "sha256": "d9d2e5676f7dde7fc3877eb96535aa6fb0b897a07a4503f64baf2b05fdc9e9ee",
+        "size": 5400
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_io.inc",
+        "sha256": "0b1bfa923fdd25bad330406bd6a6e2908acef5a550d516f9e0eddec93d893bf6",
+        "size": 34476
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_radio.inc",
+        "sha256": "4bd84bacebe6ea2fd39c2ed5b595d3d08ecc2c445efa13647061e68d8f4339ba",
+        "size": 54268
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_ranging_frames.inc",
+        "sha256": "7935c51c1e0f6179bfd54c4b3383d50d7c9d171bee894001523e36f2b3714923",
+        "size": 41064
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_test_seam.c",
+        "sha256": "504601740dca9c3c5ce8eee39176acc4786020871428c1d5f6317f39185e4735",
+        "size": 5964
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_driver_test_seam.h",
+        "sha256": "fd03b646854d8f681c854f03d6573ab88bcbdb1a9ea5fcd753cf7b1896ef85ef",
+        "size": 1160
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_port.c",
+        "sha256": "71412f5ea22a8e2e7294aa9ac73b9103183a4b5e3ea1d11573377363fac3703b",
+        "size": 12830
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_port.h",
+        "sha256": "bca889c64a2a17c7034259b5b451cec20ecc941e6a50dc973ef17f0362b00614",
+        "size": 1332
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/dwm3000_sdk_port.c",
+        "sha256": "f874574e88438160e777a9209b759200f75c917ad115679a8ff2c629324b1041",
+        "size": 3056
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/src/main.c",
+        "sha256": "ad7a67bbfb93b4d9ced12af2328eca3b77898e4ea409a099345bcc6fc29c1347",
+        "size": 28346
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/sysbuild.conf",
+        "sha256": "a2d2e25ab05d1a8a7a20d474606448cdef5c3ee74c01cc9e9f5119c9dc2866de",
+        "size": 201
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/gateway_eack_policy/CMakeLists.txt",
+        "sha256": "38577139a43e6f4444bdc7ab1746459acab14ecea5b6af10afc2609936212b3f",
+        "size": 342
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/gateway_eack_policy/prj.conf",
+        "sha256": "a4642ff62d0bbd42c8952deadb4a48d3e5014b81cd9c0a0f1388cd4d23b95d7f",
+        "size": 31
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/gateway_eack_policy/src/main.c",
+        "sha256": "978befe09b2ee7a1397c93f908b703fd73dc0212f5dc4e7685c83b842234258c",
+        "size": 18043
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_ch9_ack_handoff/CMakeLists.txt",
+        "sha256": "f9523ea4113cc14b4a6f84157568240c797d04112fae8d035a898931aa06033d",
+        "size": 423
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_ch9_ack_handoff/prj.conf",
+        "sha256": "8789b1d3ed57605b63916aa92649aa82803573bd5ad1c99cea864df0025f25d0",
+        "size": 44
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_ch9_ack_handoff/src/main.c",
+        "sha256": "49d4f6badc6559449ad0e260e2ec12bd15d010b66afe42b6faf03b439d295a95",
+        "size": 30281
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_flood/CMakeLists.txt",
+        "sha256": "1f15d8b615aa3602bbcc39f5b5954bd5161354dac0b18a40ffb5e241a7f66963",
+        "size": 382
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_flood/prj.conf",
+        "sha256": "51944b630356846563749b3b3c9d4c5b1f64f3a9c11b72e2f7e386a7d3dd3012",
+        "size": 15
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_flood/src/main.c",
+        "sha256": "021350b7c792a69a88c300cb7edfce417f523eaff920c5fc534768d70e25f740",
+        "size": 5784
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_preemption/CMakeLists.txt",
+        "sha256": "253cf2b111767bfe69c7d60061f2089013d3f26bc8fdbe0ca83492be28a6909c",
+        "size": 338
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_preemption/prj.conf",
+        "sha256": "8789b1d3ed57605b63916aa92649aa82803573bd5ad1c99cea864df0025f25d0",
+        "size": 44
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_preemption/src/main.c",
+        "sha256": "8165142b3c5ae5cc5cabc530786c0f8abfcca2628af80f59ff4967583ab44cc7",
+        "size": 5129
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_result_handoff/CMakeLists.txt",
+        "sha256": "d088c416a874b2a66aea8a93ae4e9ca6ab698e2ba8f5ba53ffa2ceb76f30c65e",
+        "size": 346
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_result_handoff/prj.conf",
+        "sha256": "8789b1d3ed57605b63916aa92649aa82803573bd5ad1c99cea864df0025f25d0",
+        "size": 44
+      },
+      {
+        "kind": "file",
+        "path": "firmware/app/tests/mesh_result_handoff/src/main.c",
+        "sha256": "477ed3d82624de0414d9f99a819aad85fc4de1276f5b813ef1147da807c5e344",
+        "size": 5310
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/button_action_handoff.h",
+        "sha256": "9c881ba32dd9bc07348034c08042894178ed601e9e82a3da6948a5d6404ab7ec",
+        "size": 2660
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/button_wake_recovery.h",
+        "sha256": "a75f7e27114e8948b11e3581d4ef2a4b1db6f0fba00c8e6193a929cc692a66d4",
+        "size": 1687
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/clicker_rtt_command.h",
+        "sha256": "2809aee8ecc9c5c7e5578bf86960db231e2001cffe1ff34b45e57a5e3415a8fd",
+        "size": 373
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/debug_log.h",
+        "sha256": "be274064833de7c3e49662bd9c0f753e550a0ff2e1593724c7e298b117cf3141",
+        "size": 477
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/device_identity.h",
+        "sha256": "5ee9618bd7d00358da6c19e47dbf31a1d14f250fd800f36d1b806f4a91badcdb",
+        "size": 1254
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/discovery_assignment.h",
+        "sha256": "c77ffc12379987b60f48cd9dafa429c2b18b35b21a4766f2f9086b2f040d0233",
+        "size": 17165
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/dwm3000_runtime.h",
+        "sha256": "db6ef2ff3a28758bfa5ca7e145cb7ae124c313bebebe22f286d5a416e26a8fcc",
+        "size": 8059
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/dwm3000_timing.h",
+        "sha256": "9865531b42cb93ddea9e53040a32f4abc4a95e8402ff7540749749080afad73b",
+        "size": 3680
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/firmware_delivery_loss.h",
+        "sha256": "7cea9bbdf329d7f6c2e99c291f3aa3f908ca848220cf7028c0784d35e9012d2e",
+        "size": 1258
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/firmware_events.h",
+        "sha256": "9229650102c09901e59140c97ec701f2bee1e8652f71c56ef0b2cb0c7a61048a",
+        "size": 11290
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/firmware_state_machines.h",
+        "sha256": "235f18176768da31b085cddad55d6e222e4c0c3976823554718c75df3689867f",
+        "size": 11997
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/gateway_ble_transport.h",
+        "sha256": "2936b78177a396d6d9bb2dc14a57acd18d67870520003496179e8e752ec0af78",
+        "size": 4347
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/gateway_command.h",
+        "sha256": "0c4154aaa3e027e9fc442ecc671f7ed36c24a8e967dd2e4b92a387d3bd3f6e6a",
+        "size": 24046
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/gateway_membership.h",
+        "sha256": "085e3e5159a2fc1bc9ad863046557d097a2e70978eeb884660495dd75f1ca3cb",
+        "size": 7082
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh.h",
+        "sha256": "67f83f72271504e456188c2e0745ee5bd08cc6fe95c7239bf4cfb7613f5b1992",
+        "size": 14540
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_capacity.h",
+        "sha256": "bae2685c77401e4114daa55ad37ab393c2048c1e2956c85b665a32c3f9ae4e64",
+        "size": 1436
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_event_owner.h",
+        "sha256": "b43f52f69e603539dd58c5cc59edf20dfeb4e94fec5edb476d64b84f8806f660",
+        "size": 6762
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_event_owner_registry.h",
+        "sha256": "6e71df5178a9edbdf532996e7e287a83d5035d18360e05d80803bd0e88debfaa",
+        "size": 2278
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_event_timing.h",
+        "sha256": "01e384228541e31d0ebf86f8ff7122ed50080ae7506555fb4450be34e8616fd3",
+        "size": 774
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_preemption.h",
+        "sha256": "b71bc1acd0f08983f2d96d8ba08208b0338c329e334c6077918faa87a8feac69",
+        "size": 861
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_radio_timing.h",
+        "sha256": "d09723709958959fa1ffd35ca4967be3bb6bc3d12047660a8fa98a2871242208",
+        "size": 1244
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_relay.h",
+        "sha256": "4440d394ff2ce4b35f8c8a5f2b102daa39c2c4811ed09564c7aa8b42306d8e83",
+        "size": 53801
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_route_path.h",
+        "sha256": "aa04fe0559a98fd290bd3441a555502dfb1e3248991f93f32fb60c674b352b26",
+        "size": 4318
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/mesh_runtime.h",
+        "sha256": "c5bd85c948256ed9fb4499b20861f401fedfe9f8e379bdb5ca1e33aac51b6f48",
+        "size": 4287
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/node_comm.h",
+        "sha256": "c7389eab34dabec6d70f33a6ffe3ddb8bfd1e05667870717db3a7c7c21e6526b",
+        "size": 15308
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/node_transaction.h",
+        "sha256": "a51f934730b1deed66b453c7f7678b635325dd0a8af5b84b7b8a5ce8ddd1780f",
+        "size": 6421
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/operation_policy.h",
+        "sha256": "a5f3902ec72a6e833c46f9a6f6c6d08458ba78e2271a4f8370856c0aa0e56e66",
+        "size": 8649
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/protocol.h",
+        "sha256": "7a18f6c3e5671886e402a8833a5322bfef346438d9f4a1747b94cf5f09f531a9",
+        "size": 29559
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/protocol_rx_lifecycle.h",
+        "sha256": "a6f74146eaa3e0125c9930af1fa7df67c4f0d76a096e3de56a8e0a28da221867",
+        "size": 3497
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/report.h",
+        "sha256": "f9d99eff4d8c7946a4de34c15b2f0bdc48a9d86df47769ffee513459b6f6e0cf",
+        "size": 7331
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/route.h",
+        "sha256": "15f56b70b8f61ab873169a443fbbd5372938ad73492c140a7b21ee366264125c",
+        "size": 4804
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/semantic_digest.h",
+        "sha256": "8267654a9cb9e2b959bddc698560ab07e2876ea77732864354f84b11a379c02d",
+        "size": 1331
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/serial_frame.h",
+        "sha256": "6974f55b57d67250f3ca177bfa0fa2da3aed002b2af3680d84e984ae2e5bc963",
+        "size": 877
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/stack_budget.h",
+        "sha256": "bda223012fabcb3b8f1df9783f269671ce433f9db0adbc3dbaf35e9722e2c0d8",
+        "size": 16945
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/stack_diag_transport.h",
+        "sha256": "991b2ddf755d3e0f52c9eb0af7379b2e9b3319bc60f90e54b7c476cfa641c812",
+        "size": 1074
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/status.h",
+        "sha256": "2f9e093d4eadd14a489d6797e2689e5cd7863cf8426ba1e0600babc67dfe1af1",
+        "size": 2026
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/survey.h",
+        "sha256": "23a8903da5d35ba5e4370948420872c7c0a1a8615c7ef9ac5cb6038fd102d545",
+        "size": 38777
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/survey_anchor_deadline.h",
+        "sha256": "3a7a0a94f5eb8aab9a209c2a589bce5a6d41309e2c939b80f0c9a1a947b1e817",
+        "size": 2543
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/survey_gateway_transaction.h",
+        "sha256": "cb4057ccae150c2c44fff5bc5268e915d0e317a8ebe361e412a2ea83a5e7a0a5",
+        "size": 8533
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/survey_pair_lease.h",
+        "sha256": "383f820740a8ba011f945758254eee958f168d3ded6ad94290f83aa01c6c42c8",
+        "size": 6746
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/survey_pair_round_runtime.h",
+        "sha256": "dd957c2ed60fdbe867f8a6b96d4e1b5370669f520a7ea14d48777ece374e79ad",
+        "size": 5590
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/survey_round_control.h",
+        "sha256": "cbeec8b34d1dabe789357b3505db62cd652a3c7267d5ea7709672530968f3ae2",
+        "size": 2909
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/uwb.h",
+        "sha256": "5bb375aed383609391b17281a4bdf2ce6e7537ccbaa9368c9046bde9749389aa",
+        "size": 22334
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/uwb_ble_courtesy.h",
+        "sha256": "7eeceb8af31b0d5714d57b0091ad8a4e9d3eea2b74fcd9da6502c091fd0f91b9",
+        "size": 1171
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/uwb_session.h",
+        "sha256": "be76b4c7df7d700468c65a13b9d52a2e4e31f229c3bc477a210fbaa5adf63c57",
+        "size": 10523
+      },
+      {
+        "kind": "file",
+        "path": "firmware/include/watchdog_adoption.h",
+        "sha256": "582545df8a560770930437549f30086491b284178a9d0108de0983b39a7b43a9",
+        "size": 1063
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/clicker_rtt_command.c",
+        "sha256": "081a68981dbfbd8cfcfc22f0c01fd9cee1c84340c4d69eddbda35e447d1179b2",
+        "size": 569
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/debug_log.c",
+        "sha256": "9309e35ef3c6d991a95ff5d48fd841ca7255273b1dca1700127c1d4921e2f3c6",
+        "size": 932
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/device_identity.c",
+        "sha256": "01842dc9ba12f780281a3b9f1aa21be570f21afd8ab9fa585548b0ddd4dcb097",
+        "size": 1353
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/discovery_assignment.c",
+        "sha256": "7ee565fb21adddda9d1b164184276c23cf76ed9725dbc867bff69daf5e31c0f4",
+        "size": 47807
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/dwm3000_runtime.c",
+        "sha256": "bd87b23cb2fe95915c0b42021537563031d4bf93757870d08da6df7fbcf52d50",
+        "size": 25847
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/dwm3000_timing.c",
+        "sha256": "064ee147d921d1af99e5da3248bac5b3529e705568ec75d7ecda23ab55bcba86",
+        "size": 8830
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_delivery_loss.c",
+        "sha256": "dce362ccc619f5888359ae6fc925942a501aa504d2b6fefa0581d8188916b3f2",
+        "size": 4873
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_events.c",
+        "sha256": "58715494d6416c72080caaf8a83be4b26b73f5a0c4e6c7e3e915927abd3969cc",
+        "size": 12758
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_state_click.c",
+        "sha256": "43fa7195e27c59ccddc1ee4b737364bc018e1fe58fcb2a2c7f54b688c1cf3208",
+        "size": 19967
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_state_control.c",
+        "sha256": "f3c7a486e3b8e0c39964d49a0692ee39c4d7b7e908bec9753821f5f468c10067",
+        "size": 29759
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_state_internal.h",
+        "sha256": "1d066e2516e9f5c9ccf81442cbbcfa9ebecd2a41727c0ee525e3ae01e1e7a481",
+        "size": 3028
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_state_mesh.c",
+        "sha256": "6871226ab696e49c04e734386ed11e57d8cc13e2e701edefff1f6d43551c72c1",
+        "size": 18878
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/firmware_state_radio.c",
+        "sha256": "4526e74bae23bffd81a1b06972b8c5e56bb9bf718ec6869ef80a1c994426c444",
+        "size": 27383
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/gateway_ble_transport.c",
+        "sha256": "d82d9cad0a0de45d6301bd1a8c440810d462b48e03adfd9a70431668cb530192",
+        "size": 9650
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/gateway_command.c",
+        "sha256": "062ace884747b95c3232b6c277ec87dc694692b393b2359fb06d3c1f516b1509",
+        "size": 98137
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/gateway_membership.c",
+        "sha256": "a61d5f81136c97ecccc8872829c4fef7af927bcf8b135cf2eeedb5da0cd34f10",
+        "size": 34436
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh.c",
+        "sha256": "fa1a82a144fcf7eff891a04c583d817a705d467e737345b1b518cd1e210f4e7a",
+        "size": 97563
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_event_owner.c",
+        "sha256": "8112efae6ddd4ca37957916d80fa4cc887573c674f6964634506e55a52308d3f",
+        "size": 18914
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_event_owner_registry.c",
+        "sha256": "3f301c7f866aecddbe4b6b86e8bedfa373af53b8134cffeae7518c59035c5b65",
+        "size": 7925
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_preemption.c",
+        "sha256": "ddbea5eae6a7b2f9a2851576b12556730f28c39143095bdcbd821abc5e05c86c",
+        "size": 3962
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay.c",
+        "sha256": "7ca7e829e5fdc4416c599ff2b235f48e0bc3e049c912ab6d365165f1d4be6ef0",
+        "size": 153476
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay_channel9.c",
+        "sha256": "7c1a038fb5593e01ecab1e899714703c298d84f7c60fbc3783ddd3b709ddc075",
+        "size": 13688
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay_channel9.h",
+        "sha256": "39d6de44420c90bdda34e028c246e5bd913cbac621f20865c93bf92a9fbff90e",
+        "size": 289
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay_custody.inc",
+        "sha256": "634dbd81e1ab29eea4449c77fa254060f9e40e8307a20e7723ae5b422272dcff",
+        "size": 129908
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay_delivery.inc",
+        "sha256": "eb94b0ae92f9dddf953b6b37adc0c134148863578e399e618f2bd501a3adc5ee",
+        "size": 94542
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay_route_rx.inc",
+        "sha256": "cf24569af84d9f5e787c6561b4cca137d9f3d4500ec6a10a8f05e7118a61dfe7",
+        "size": 82938
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_relay_routes.inc",
+        "sha256": "0af6a6c76fc53c2d54f37ebad6d810fdcb185846799de256ccbacf88e9e4d3bc",
+        "size": 60664
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_route_path.c",
+        "sha256": "b187598e19c0377b384c1685e675951d9a3e184ac35c354c124948efe750bfdb",
+        "size": 9193
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/mesh_runtime.c",
+        "sha256": "96973f8810476e2361a142ded84cbff9b932c0fb61baa2b4cb8b2d7a7dafd694",
+        "size": 11745
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/node_comm.c",
+        "sha256": "2dd8ff5fcec1bb095016609e64571cfe1edb3fdaf2a09f877000457f4b6c6a92",
+        "size": 70028
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/node_transaction.c",
+        "sha256": "53a5619dc713f571d52b7c03b892450133234eb5b15126c2c772d203c2109b1c",
+        "size": 22309
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/operation_policy.c",
+        "sha256": "6e6a1cbd311492909c9e638b83baa621db87d23a1ddb6447760fb18749e859f9",
+        "size": 19953
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/protocol.c",
+        "sha256": "7d8c3ddc130e0768dc7211c6d5ec516950b1a4e945fd1f56d4fd3e34c542b488",
+        "size": 68618
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/protocol_rx_lifecycle.c",
+        "sha256": "63815bea5fc6faf1e9ceb2d292f8d72397a91cb6b9e85cc88b1564108db68069",
+        "size": 6402
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/report.c",
+        "sha256": "b96fb46884a440b56bc9f6bb4a87dbf5ed200935c156d524ee1335e05f76b309",
+        "size": 34063
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/route.c",
+        "sha256": "55681a4f48f6b3ad8bed44a00d4353aa6f6b314162fe7cf5387a26a9b55df8b6",
+        "size": 18872
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/semantic_digest.c",
+        "sha256": "c9b9784462f6aa3a6654e7fa001c795d4d9f3ee1bcee0b3860a14829194632cd",
+        "size": 8078
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/serial_frame.c",
+        "sha256": "6d77c25d2b80e072a6e23603644c04b1248465af66612249d32877ce28c1d5ac",
+        "size": 2442
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/stack_budget.c",
+        "sha256": "6d3ea055a3327acbfdec48ef77cd4ef94679f84442aeba4a05142182924063d1",
+        "size": 8959
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/stack_diag_transport.c",
+        "sha256": "17522b59e82d31376f924d399a2859952d9dac1e43b88b368874fbbdcd5d86b8",
+        "size": 3640
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/status.c",
+        "sha256": "465002a64d6d984b9fa83ef9284707f84386cf7934af05b465614beb12de255f",
+        "size": 2053
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey.c",
+        "sha256": "c4be9e32b39877fa4861372214b068f20a5de5268ab1374e49b01d523c400f1e",
+        "size": 90332
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey_anchor_deadline.c",
+        "sha256": "ab81f95cf34a5d33117781bf23dc2ec039d51d6e61f8ba90435fcab2bcd49238",
+        "size": 6516
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey_gateway_transaction.c",
+        "sha256": "40a93da52c0b30cdedd2d469c9c2280ce0a90dcc54ad5219220eb9580cb42ab7",
+        "size": 25528
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey_pair_lease.c",
+        "sha256": "c87beba54b37da4b42eb1ffcb6679719546ec3e00e27d037ded6bf1e9e407db4",
+        "size": 27156
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey_pair_planner.c",
+        "sha256": "e196bd87d8183ae5813ac9b23a9c62863753f4a8e3a762cc72d24d315e555268",
+        "size": 88554
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey_pair_round_runtime.c",
+        "sha256": "617aa0940705eeb503b956e128cb901a7e4bd4f325885033763f077c79174b08",
+        "size": 20603
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/survey_round_control.c",
+        "sha256": "3d0a1d706e4e43430d2c4f27a630874502f3808e8107335d4591bec595ed9a5d",
+        "size": 9750
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/uwb.c",
+        "sha256": "cfa48c6bea0e51318e67d66f0ae94ef399180cb91563d429ad38c9fa9930e677",
+        "size": 77010
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/uwb_ble_courtesy.c",
+        "sha256": "1e3698126fe2faf92f919f0c0b682b40b8b827b087625382568d37b39bf2ee93",
+        "size": 2763
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/uwb_session.c",
+        "sha256": "dac5f357837f720f6ecaddf9ff9d578b2336a9ca0fecfd1e8ecccfa56f7a0d72",
+        "size": 49883
+      },
+      {
+        "kind": "file",
+        "path": "firmware/src/watchdog_adoption.c",
+        "sha256": "3be29a5b5590df8f5b04a98f4d84be9e34d491400ee3ed4a08ce727b505deee1",
+        "size": 2400
+      }
+    ],
+    "git_head": "9fc8f9a408bb34663d27963e5d79ab91b9779009",
+    "source_id": "833e76433ac3786051a353fbeab5589f4ca4e77840bc27ee77f69bc3a3d61f00",
+    "west_projects": [
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "308c171cb4b5eed266649012a68406487ec81fb2",
+        "name": "azure-sdk-for-c",
+        "path": "modules/lib/azure-sdk-for-c",
+        "requested_revision": "308c171cb4b5eed266649012a68406487ec81fb2"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "1f242f4ed7fc141fdfcfeca8d21c6d9e801179d7",
+        "name": "bsim",
+        "path": "tools/bsim",
+        "requested_revision": "1f242f4ed7fc141fdfcfeca8d21c6d9e801179d7"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "dec12fa3f0d790cafa8414a4c2930ea71ab72ffd",
+        "name": "canopennode",
+        "path": "modules/lib/canopennode",
+        "requested_revision": "dec12fa3f0d790cafa8414a4c2930ea71ab72ffd"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "3b32c76efee705af146124fb4190f71be5a4e36e",
+        "name": "chre",
+        "path": "modules/lib/chre",
+        "requested_revision": "3b32c76efee705af146124fb4190f71be5a4e36e"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "3873a08377d93a479105a75ac390d3bbcd31d690",
+        "name": "cirrus",
+        "path": "modules/hal/cirrus-logic",
+        "requested_revision": "3873a08377d93a479105a75ac390d3bbcd31d690"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "c6af068b7f05207b28d68880740e4b9ec1e4b50a",
+        "name": "cjson",
+        "path": "modules/lib/cjson",
+        "requested_revision": "c6af068b7f05207b28d68880740e4b9ec1e4b50a"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "f65066f15d8248e6dcb778efb8739904a4512087",
+        "name": "cmock",
+        "path": "test/cmock",
+        "requested_revision": "f65066f15d8248e6dcb778efb8739904a4512087"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "4b96cbb174678dcd3ca86e11e1f24bc5f8726da0",
+        "name": "cmsis",
+        "path": "modules/hal/cmsis",
+        "requested_revision": "4b96cbb174678dcd3ca86e11e1f24bc5f8726da0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "6489e771e9c405f1763b52d64a3f17a1ec488ace",
+        "name": "cmsis-dsp",
+        "path": "modules/lib/cmsis-dsp",
+        "requested_revision": "6489e771e9c405f1763b52d64a3f17a1ec488ace"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "ea987c1ca661be723de83bd159aed815d6cbd430",
+        "name": "cmsis-nn",
+        "path": "modules/lib/cmsis-nn",
+        "requested_revision": "ea987c1ca661be723de83bd159aed815d6cbd430"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "d5fad6bd094899101a4e5fd53af7298160ced6ab",
+        "name": "coremark",
+        "path": "modules/benchmark/coremark",
+        "requested_revision": "d5fad6bd094899101a4e5fd53af7298160ced6ab"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "b9ca3c7030518f07b7937dacf970d37a47865a76",
+        "name": "edtt",
+        "path": "tools/edtt",
+        "requested_revision": "b9ca3c7030518f07b7937dacf970d37a47865a76"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "427159bf95ea49b7680facffaa29ad506b42709b",
+        "name": "fatfs",
+        "path": "modules/fs/fatfs",
+        "requested_revision": "427159bf95ea49b7680facffaa29ad506b42709b"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "54bde38c6f6ffb3780b26ae728cf79426184384e",
+        "name": "hal_nordic",
+        "path": "modules/hal/nordic",
+        "requested_revision": "54bde38c6f6ffb3780b26ae728cf79426184384e"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "b2f548fe672f24122c7f92027b2c9eeea8a0483a",
+        "name": "hal_st",
+        "path": "modules/hal/st",
+        "requested_revision": "b2f548fe672f24122c7f92027b2c9eeea8a0483a"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "e5bcb2eac1bb9639ce13b4dafc78eb254e014342",
+        "name": "hal_wurthelektronik",
+        "path": "modules/hal/wurthelektronik",
+        "requested_revision": "e5bcb2eac1bb9639ce13b4dafc78eb254e014342"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "44285310338f423021cc7df2c1056256882a00cc",
+        "name": "hostap",
+        "path": "modules/lib/hostap",
+        "requested_revision": "44285310338f423021cc7df2c1056256882a00cc"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "1a5938ebaca4f13fe79ce074f5dee079783aa29f",
+        "name": "liblc3",
+        "path": "modules/lib/liblc3",
+        "requested_revision": "1a5938ebaca4f13fe79ce074f5dee079783aa29f"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "a6851ba6dba8c9e87d00c42f171a822f7a29639b",
+        "name": "libmetal",
+        "path": "modules/hal/libmetal",
+        "requested_revision": "a6851ba6dba8c9e87d00c42f171a822f7a29639b"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "009bcff0ed4853a53df8256039fa815bda6854dd",
+        "name": "littlefs",
+        "path": "modules/fs/littlefs",
+        "requested_revision": "009bcff0ed4853a53df8256039fa815bda6854dd"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "fb00b383072518c918e2258b0916c996f2d4eebe",
+        "name": "loramac-node",
+        "path": "modules/lib/loramac-node",
+        "requested_revision": "fb00b383072518c918e2258b0916c996f2d4eebe"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "2b498e6f36d6b82ae1da12c8b7742e318624ecf5",
+        "name": "lvgl",
+        "path": "modules/lib/gui/lvgl",
+        "requested_revision": "2b498e6f36d6b82ae1da12c8b7742e318624ecf5"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "11b8a1e22fa651b524494e55d22b69d3d9cebcfd",
+        "name": "lz4",
+        "path": "modules/lib/lz4",
+        "requested_revision": "11b8a1e22fa651b524494e55d22b69d3d9cebcfd"
+      },
+      {
+        "dirty_entries": [
+          {
+            "kind": "file",
+            "path": "firmware/CMakeLists.txt",
+            "sha256": "1c5a7335712e0ac22fb98d446c4dc34702ce4cc55351f565daee7e79d4cf3ca8",
+            "size": 97159
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/CMakeLists.txt",
+            "sha256": "bb98513938ddd2e674773109856646355647c4ac44fa96bcf855b8121092bef7",
+            "size": 24170
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_anchor.c",
+            "sha256": "7600d34dce6f68315479a813a1e196d1aea4eca5a7f8149d40ed38eb33ef3308",
+            "size": 32750
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_anchor_commands.inc",
+            "sha256": "669355ea835c4809983b89f113b7a0375275c1439abcbcc520d69c169f537a00",
+            "size": 188123
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_anchor_gateway_control.inc",
+            "sha256": "cac95fafc484ff895e85b8702271736caae7829e18662c6355e2dcba0391728d",
+            "size": 235494
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_anchor_gateway_survey.inc",
+            "sha256": "f798b527cad9d8496499a22b8eb9636827a9c1ae12628695f8a5f1c472dfccb7",
+            "size": 196549
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_anchor_radio.inc",
+            "sha256": "0e7a8079783ade90cc6d52acafd16f557c8921f3c67fd74b711c5a58196f690b",
+            "size": 134059
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_config.h",
+            "sha256": "52b2f25e968dc5310c2b205607f7f1b303e8e31cfbefcd0969b6ff23e113a721",
+            "size": 18893
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_gateway_ble.c",
+            "sha256": "9f94c51a4206ac02dcf293f6f612c934da872fcc3c20f40de7ef71b48cb949e7",
+            "size": 73962
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_gateway_ble.h",
+            "sha256": "29aa325727442e16b683990287df8e03f26ea5ebc5cb16ae969ef3fc3470f628",
+            "size": 14881
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_gateway_command_observability.c",
+            "sha256": "9fd3b7e12b6290ff7a8225f183933fe56745d815cb41893ebaba59d7094dfa43",
+            "size": 16418
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_gateway_command_observability.h",
+            "sha256": "5f7df24c49cc2c5910a8503b842c828fdbcc64fa358b5c5d8188697e8e55f3ae",
+            "size": 6548
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_gateway_result_runtime.inc",
+            "sha256": "4c04160c32453ebe9662e418e54908ee8b643fc1b9b91dd76ca1b82d8f0d07e9",
+            "size": 145438
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_gateway_survey_round.c",
+            "sha256": "669c3e623726ee5e1f120898f93d65a21561e45ae6ad9fa67af86c6a25cfacc6",
+            "size": 38749
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_c5_priority.c",
+            "sha256": "c3173b051697cfdd8a9da6f2e7c4b09169fe6cec4ce1cb17eab75d05e8e1f797",
+            "size": 17667
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_c5_priority.h",
+            "sha256": "68f875d60d32c553edd80bb38d05f71699f231d94cf135ce28876395c460dff7",
+            "size": 6568
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_report.c",
+            "sha256": "28a11656f091459c224d90fdc22274a6ade9988b96cc25aac20841640523148d",
+            "size": 57853
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_report_route_control.inc",
+            "sha256": "f878a4d217a36e312716f3ec884f9f99cc70dc4761e1bbcdedcd8a358a63a148",
+            "size": 140331
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_report_rx.inc",
+            "sha256": "fc92d007a6ecc488b9f80b9e43d6603090816836a9752523c1bfc207fc7829e2",
+            "size": 117710
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_report_transport.inc",
+            "sha256": "bbad411e53338af6cca7231db66b11d4258b5bb4043a694fedb64a8fae760a3e",
+            "size": 118472
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_rx_policy.c",
+            "sha256": "3e6018d67d1425571544847e792fd6920ef3f7b5ce855f53a108bc14e7f9be32",
+            "size": 5456
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_mesh_rx_policy.h",
+            "sha256": "a5a71960d0cb73f54ae65fdc803fd61e4413e86c5afcbd3c190b1b966ca181f6",
+            "size": 2657
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_node_comm.c",
+            "sha256": "8ba5200ee8216185648e4dd43e7b02d073cf034bb723df709bd471bb249b7fff",
+            "size": 175133
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/app_radio_guard.c",
+            "sha256": "565750eddbdc2014f27075564f7ce02c46470607aaf8db92b234954cc5768816",
+            "size": 8707
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/dwm3000_driver_io.inc",
+            "sha256": "0b1bfa923fdd25bad330406bd6a6e2908acef5a550d516f9e0eddec93d893bf6",
+            "size": 34476
+          },
+          {
+            "kind": "file",
+            "path": "firmware/app/src/main.c",
+            "sha256": "ad7a67bbfb93b4d9ced12af2328eca3b77898e4ea409a099345bcc6fc29c1347",
+            "size": 28346
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/discovery_assignment.h",
+            "sha256": "c77ffc12379987b60f48cd9dafa429c2b18b35b21a4766f2f9086b2f040d0233",
+            "size": 17165
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/mesh.h",
+            "sha256": "67f83f72271504e456188c2e0745ee5bd08cc6fe95c7239bf4cfb7613f5b1992",
+            "size": 14540
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/mesh_radio_timing.h",
+            "sha256": "d09723709958959fa1ffd35ca4967be3bb6bc3d12047660a8fa98a2871242208",
+            "size": 1244
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/node_comm.h",
+            "sha256": "c7389eab34dabec6d70f33a6ffe3ddb8bfd1e05667870717db3a7c7c21e6526b",
+            "size": 15308
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/operation_policy.h",
+            "sha256": "a5f3902ec72a6e833c46f9a6f6c6d08458ba78e2271a4f8370856c0aa0e56e66",
+            "size": 8649
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/protocol.h",
+            "sha256": "7a18f6c3e5671886e402a8833a5322bfef346438d9f4a1747b94cf5f09f531a9",
+            "size": 29559
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/protocol_rx_lifecycle.h",
+            "sha256": "a6f74146eaa3e0125c9930af1fa7df67c4f0d76a096e3de56a8e0a28da221867",
+            "size": 3497
+          },
+          {
+            "kind": "file",
+            "path": "firmware/include/survey.h",
+            "sha256": "23a8903da5d35ba5e4370948420872c7c0a1a8615c7ef9ac5cb6038fd102d545",
+            "size": 38777
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/discovery_assignment.c",
+            "sha256": "7ee565fb21adddda9d1b164184276c23cf76ed9725dbc867bff69daf5e31c0f4",
+            "size": 47807
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/mesh.c",
+            "sha256": "fa1a82a144fcf7eff891a04c583d817a705d467e737345b1b518cd1e210f4e7a",
+            "size": 97563
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/mesh_relay_custody.inc",
+            "sha256": "634dbd81e1ab29eea4449c77fa254060f9e40e8307a20e7723ae5b422272dcff",
+            "size": 129908
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/node_comm.c",
+            "sha256": "2dd8ff5fcec1bb095016609e64571cfe1edb3fdaf2a09f877000457f4b6c6a92",
+            "size": 70028
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/operation_policy.c",
+            "sha256": "6e6a1cbd311492909c9e638b83baa621db87d23a1ddb6447760fb18749e859f9",
+            "size": 19953
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/protocol_rx_lifecycle.c",
+            "sha256": "63815bea5fc6faf1e9ceb2d292f8d72397a91cb6b9e85cc88b1564108db68069",
+            "size": 6402
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/survey.c",
+            "sha256": "c4be9e32b39877fa4861372214b068f20a5de5268ab1374e49b01d523c400f1e",
+            "size": 90332
+          },
+          {
+            "kind": "file",
+            "path": "firmware/src/survey_gateway_transaction.c",
+            "sha256": "40a93da52c0b30cdedd2d469c9c2280ce0a90dcc54ad5219220eb9580cb42ab7",
+            "size": 25528
+          }
+        ],
+        "dirty_scope": "explicit_source_files",
+        "head": "9fc8f9a408bb34663d27963e5d79ab91b9779009",
+        "name": "manifest",
+        "path": "manifest",
+        "requested_revision": "HEAD"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "684c8128ad203c86d1f058913dcd73fde63e9eaf",
+        "name": "matter",
+        "path": "modules/lib/matter",
+        "requested_revision": "v2.9.0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "98603a8c91660beac00e0ee1d76198fb7c4ed29b",
+        "name": "mbedtls",
+        "path": "modules/crypto/mbedtls",
+        "requested_revision": "v3.6.2-ncs2"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "12e5ee106034972b0f1074d6f2261b2b39d1501b",
+        "name": "mcuboot",
+        "path": "bootloader/mcuboot",
+        "requested_revision": "v2.1.0-ncs3"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "47d69c572c44c19d23936193629e19372e22c7e2",
+        "name": "memfault-firmware-sdk",
+        "path": "modules/lib/memfault-firmware-sdk",
+        "requested_revision": "1.12.0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "71ace1f5caa03e56c8740a09863e685efb4b2360",
+        "name": "mipi-sys-t",
+        "path": "modules/debug/mipi-sys-t",
+        "requested_revision": "71ace1f5caa03e56c8740a09863e685efb4b2360"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "4474bd35bd39de067f0532a1b19ce3aed9ed9807",
+        "name": "nanopb",
+        "path": "modules/lib/nanopb",
+        "requested_revision": "4474bd35bd39de067f0532a1b19ce3aed9ed9807"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "93acc8bac4661e74e695eb1aea94c7c5262db2e2",
+        "name": "net-tools",
+        "path": "tools/net-tools",
+        "requested_revision": "93acc8bac4661e74e695eb1aea94c7c5262db2e2"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "7787b264984022cda64d9629278942053e6462a5",
+        "name": "nrf",
+        "path": "nrf",
+        "requested_revision": "v2.9.0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "3cfca0192ff84da919e9bc7978bcc2239cd6a395",
+        "name": "nrf_hw_models",
+        "path": "modules/bsim_hw_models/nrf_hw_models",
+        "requested_revision": "3cfca0192ff84da919e9bc7978bcc2239cd6a395"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "f6b950a3b5c0187fe499b0e518426d5bf88b7e68",
+        "name": "nrf_wifi",
+        "path": "modules/lib/nrf_wifi",
+        "requested_revision": "f6b950a3b5c0187fe499b0e518426d5bf88b7e68"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "756bcec432f49aa5def6f47d2d09272f8c4d9192",
+        "name": "nrfxlib",
+        "path": "nrfxlib",
+        "requested_revision": "v2.9.0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "21728cf8402ac567326d0d69eec891a2bfdb8ea3",
+        "name": "oberon-psa-crypto",
+        "path": "modules/crypto/oberon-psa-crypto",
+        "requested_revision": "21728cf8402ac567326d0d69eec891a2bfdb8ea3"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "b735edbc739ad59156eb55bb8ce2583d74537719",
+        "name": "open-amp",
+        "path": "modules/lib/open-amp",
+        "requested_revision": "b735edbc739ad59156eb55bb8ce2583d74537719"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "ee86dc26d71c9ef021fad8a28898829df772011a",
+        "name": "openthread",
+        "path": "modules/lib/openthread",
+        "requested_revision": "ncs-thread-reference-20241002"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "27746bbc246841852912fc3bb5b45094cd8a505a",
+        "name": "picolibc",
+        "path": "modules/lib/picolibc",
+        "requested_revision": "27746bbc246841852912fc3bb5b45094cd8a505a"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "3da9313e64806d352c519e3205e81cf959067588",
+        "name": "psa-arch-tests",
+        "path": "modules/tee/tf-m/psa-arch-tests",
+        "requested_revision": "3da9313e64806d352c519e3205e81cf959067588"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "751d36583a9ce1a640900c57e13c9b6b8f3a2ba2",
+        "name": "qcbor",
+        "path": "modules/tee/tf-m/qcbor",
+        "requested_revision": "751d36583a9ce1a640900c57e13c9b6b8f3a2ba2"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "b011c45b585e097d95d9cf93edf4f2e01588d3cd",
+        "name": "segger",
+        "path": "modules/debug/segger",
+        "requested_revision": "b011c45b585e097d95d9cf93edf4f2e01588d3cd"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "be0500992bd8c222118b651b88d1f3714855a3aa",
+        "name": "soc-hwmv1",
+        "path": "modules/soc-hwmv1",
+        "requested_revision": "be0500992bd8c222118b651b88d1f3714855a3aa"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "8f9ce9039e6fb8584dc915944b2bc275856757c0",
+        "name": "suit-generator",
+        "path": "modules/lib/suit-generator",
+        "requested_revision": "v2.9.0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "6802f3008cba16a74a8c65814af00808327a7ee7",
+        "name": "suit-processor",
+        "path": "modules/lib/suit-processor",
+        "requested_revision": "v2.9.0"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "d552e4f18b92032bd335d5e3aa312f6acd82a83b",
+        "name": "tf-m-tests",
+        "path": "modules/tee/tf-m/tf-m-tests",
+        "requested_revision": "d552e4f18b92032bd335d5e3aa312f6acd82a83b"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "1012a3ebee18c15ede5efc8332ee2fc37817670f",
+        "name": "tinycrypt",
+        "path": "modules/crypto/tinycrypt",
+        "requested_revision": "1012a3ebee18c15ede5efc8332ee2fc37817670f"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "f2bf78452629355e4180dc36756f6c1becc819fa",
+        "name": "trusted-firmware-m",
+        "path": "modules/tee/tf-m/trusted-firmware-m",
+        "requested_revision": "v2.1.1-ncs2"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "84ef879a46d7bfd9a423fbfb502b04289861f9ea",
+        "name": "uoscore-uedhoc",
+        "path": "modules/lib/uoscore-uedhoc",
+        "requested_revision": "84ef879a46d7bfd9a423fbfb502b04289861f9ea"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "af011c8a8d338ba529f17aed2cc2ef4c1c591a58",
+        "name": "wfa-qt-control-app",
+        "path": "modules/lib/wfa-qt-control-app",
+        "requested_revision": "af011c8a8d338ba529f17aed2cc2ef4c1c591a58"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "47f34dd7f5284e8750b5a715dee7f77c6c5bdc3f",
+        "name": "zcbor",
+        "path": "modules/lib/zcbor",
+        "requested_revision": "47f34dd7f5284e8750b5a715dee7f77c6c5bdc3f"
+      },
+      {
+        "dirty_entries": [
+          {
+            "kind": "file",
+            "path": "scripts/kconfig/kconfig.py",
+            "sha256": "463ddd274ed0bb22368dfd32d274bf789e58217fe2e90509e4e683392c1958fd",
+            "size": 13227
+          }
+        ],
+        "dirty_scope": "whole_project",
+        "head": "1f8f3dc291420c70cd39e77a5cdc954561d4a08f",
+        "name": "zephyr",
+        "path": "zephyr",
+        "requested_revision": "v3.7.99-ncs2"
+      },
+      {
+        "dirty_entries": [],
+        "dirty_scope": "whole_project",
+        "head": "ee1b287d9dd07208d2cc52284240ac25bb66eae3",
+        "name": "zscilib",
+        "path": "modules/lib/zscilib",
+        "requested_revision": "ee1b287d9dd07208d2cc52284240ac25bb66eae3"
+      }
+    ]
+  }
+}

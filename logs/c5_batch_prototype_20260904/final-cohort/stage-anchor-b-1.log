@@ -1,0 +1,12 @@
+-- west flash: rebuilding
+ninja: no work to do.
+-- west flash: using runner pyocd
+-- runners.pyocd: Flashing file: /home/tommie/Projects/IMEC2/build/mesh-anchor-2a/zephyr/zephyr.hex
+0000695 I Loading /home/tommie/Projects/IMEC2/build/mesh-anchor-2a/zephyr/zephyr.hex [load_cmd]
+0000863 I Erasing... [loader]
+[---|---|---|---|---|---|---|---|---|----]
+[========================================]
+0010698 I Programming... [loader]
+[---|---|---|---|---|---|---|---|---|----]
+[========================================]
+0015306 I Erased 401408 bytes (98 sectors), programmed 401408 bytes (98 pages), skipped 65536 bytes (16 pages) at 31.57 kB/s [loader]

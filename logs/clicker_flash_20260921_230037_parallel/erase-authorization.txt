@@ -1,0 +1,1 @@
+Continuation of user-approved erase-and-flash workflow: user requested three more after approving full-chip erasure for access-protected clickers. Protected original contents cannot be backed up. Selected probes: E46070D247394D36, E4645C15CB0F3B37, E4645C15CB365D30.

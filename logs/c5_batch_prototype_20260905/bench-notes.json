@@ -1,0 +1,45 @@
+{
+  "boards": [
+    {
+      "role": "anchor_a",
+      "probe": "E4645C15CB365D30",
+      "ficr": "46207f789b8ebb5a",
+      "node": "0x0f6d3a3bdac0f858",
+      "build": "mesh-anchor-3a",
+      "ram_free": 6336
+    },
+    {
+      "role": "anchor_b",
+      "probe": "E46070D247394D36",
+      "ficr": "dfd45768974427e1",
+      "node": "0x9699122bd60a64e3",
+      "build": "mesh-anchor-f1-3a",
+      "ram_free": 6400
+    },
+    {
+      "role": "anchor_c",
+      "probe": "E46070D247233537",
+      "ficr": "a378b0f6495e09ac",
+      "node": "0xea35f5b508104aae",
+      "build": "mesh-anchor-f1-3a",
+      "ram_free": 6400
+    },
+    {
+      "role": "clicker",
+      "probe": "E4645C15CB0F3B37",
+      "ficr": "888f75291076e82f",
+      "node": "0xc1c2306a5138ab2d",
+      "build": "mesh-clicker-rtt-3a",
+      "ram_free": 33328
+    }
+  ],
+  "gateway": {
+    "ble": "E4:16:B7:C7:E6:95",
+    "probe": null,
+    "build": "mesh-gateway-2a",
+    "ram_free": 5408
+  },
+  "minimum_anchors": 3,
+  "maximum_anchors": 4,
+  "storage_migration": "Only anchor_c: backed up 0x7a000..0x80000, confirmed role=1 records, erased that partition for clicker-to-anchor migration"
+}

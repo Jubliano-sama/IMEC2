@@ -1,0 +1,246 @@
+[34m0000483[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000512[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000716[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000722[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000722[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000723[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000727[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000729[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000731[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000732[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000734[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000736[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000739[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000742[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000742[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000742[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000745[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000749[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000751[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000769[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000769[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000771[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_GATEWAY_BLE event=connected err=0 uptime=302745
+DBG_GATEWAY_BLE event=param-request ret=0 interval=24-40 latency=0 timeout_ms=12000 uptime=302745
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=304068
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=110 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835970 seq=130 type=86 sequence=0 previous=0 uptime=304069
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=110 sample=110 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835970 seq=130 type=86 uptime=304069
+DBG_STACK_ISR_CONFIG size=8192 run=110 sample=110
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=110 sample=110
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=110 sample=110
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=110 sample=110
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=110 sample=110
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=110 sample=110
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=110 sample=110
+DBG_STACK_SAMPLE_END run=110 sample=110
+DBG_STACK_RUN_END epoch=13488825069779505465 run=110 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835970 seq=130 type=86 samples=1 sequence=0 previous=0 uptime=304098
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=304264
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=304265 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=111 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835971 seq=131 type=86 sequence=0 previous=0 uptime=304519
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=111 sample=111 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835971 seq=131 type=86 uptime=304519
+DBG_STACK_ISR_CONFIG size=8192 run=111 sample=111
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=111 sample=111
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=111 sample=111
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=111 sample=111
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=111 sample=111
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=111 sample=111
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=111 sample=111
+DBG_STACK_SAMPLE_END run=111 sample=111
+DBG_STACK_RUN_END epoch=13488825069779505465 run=111 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835971 seq=131 type=86 samples=1 sequence=0 previous=0 uptime=304534
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=304553
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=304554 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=112 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835972 seq=132 type=86 sequence=0 previous=0 uptime=305104
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=112 sample=112 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835972 seq=132 type=86 uptime=305104
+DBG_STACK_ISR_CONFIG size=8192 run=112 sample=112
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=112 sample=112
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=112 sample=112
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=112 sample=112
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=112 sample=112
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=112 sample=112
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=112 sample=112
+DBG_STACK_SAMPLE_END run=112 sample=112
+DBG_STACK_RUN_END epoch=13488825069779505465 run=112 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835972 seq=132 type=86 samples=1 sequence=0 previous=0 uptime=305121
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=305221
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=305232 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=113 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835974 seq=134 type=86 sequence=0 previous=0 uptime=305869
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=113 sample=113 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835974 seq=134 type=86 uptime=305869
+DBG_STACK_ISR_CONFIG size=8192 run=113 sample=113
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=113 sample=113
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=113 sample=113
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=113 sample=113
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=113 sample=113
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=113 sample=113
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=113 sample=113
+DBG_STACK_SAMPLE_END run=113 sample=113
+DBG_STACK_RUN_END epoch=13488825069779505465 run=113 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835974 seq=134 type=86 samples=1 sequence=0 previous=0 uptime=305889
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=306259
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=306260 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=114 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835976 seq=136 type=86 sequence=0 previous=0 uptime=306499
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=114 sample=114 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835976 seq=136 type=86 uptime=306499
+DBG_STACK_ISR_CONFIG size=8192 run=114 sample=114
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=114 sample=114
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=114 sample=114
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=114 sample=114
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=114 sample=114
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=114 sample=114
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=114 sample=114
+DBG_STACK_SAMPLE_END run=114 sample=114
+DBG_STACK_RUN_END epoch=13488825069779505465 run=114 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835976 seq=136 type=86 samples=1 sequence=0 previous=0 uptime=306523
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=115 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835976 seq=136 type=86 sequence=0 previous=0 uptime=307523
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=115 sample=115 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835976 seq=136 type=86 uptime=307523
+DBG_STACK_ISR_CONFIG size=8192 run=115 sample=115
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=115 sample=115
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=115 sample=115
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=115 sample=115
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=115 sample=115
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=115 sample=115
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=115 sample=115
+DBG_STACK_SAMPLE_END run=115 sample=115
+DBG_STACK_RUN_END epoch=13488825069779505465 run=115 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835976 seq=136 type=86 samples=1 sequence=0 previous=0 uptime=307546
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=116 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835978 seq=138 type=86 sequence=0 previous=0 uptime=307849
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=116 sample=116 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835978 seq=138 type=86 uptime=307849
+DBG_STACK_ISR_CONFIG size=8192 run=116 sample=116
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=116 sample=116
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=116 sample=116
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=116 sample=116
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=116 sample=116
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=116 sample=116
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=116 sample=116
+DBG_STACK_SAMPLE_END run=116 sample=116
+DBG_STACK_RUN_END epoch=13488825069779505465 run=116 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835978 seq=138 type=86 samples=1 sequence=0 previous=0 uptime=307872
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=308621
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=308622 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=117 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835980 seq=140 type=86 sequence=0 previous=0 uptime=308704
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=117 sample=117 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835980 seq=140 type=86 uptime=308704
+DBG_STACK_ISR_CONFIG size=8192 run=117 sample=117
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=117 sample=117
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=117 sample=117
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=117 sample=117
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=117 sample=117
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=117 sample=117
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=117 sample=117
+DBG_STACK_SAMPLE_END run=117 sample=117
+DBG_STACK_RUN_END epoch=13488825069779505465 run=117 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835980 seq=140 type=86 samples=1 sequence=0 previous=0 uptime=308721
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=118 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835981 seq=141 type=86 sequence=0 previous=0 uptime=309423
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=118 sample=118 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835981 seq=141 type=86 uptime=309424
+DBG_STACK_ISR_CONFIG size=8192 run=118 sample=118
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=118 sample=118
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=118 sample=118
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=118 sample=118
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=118 sample=118
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=118 sample=118
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=118 sample=118
+DBG_STACK_SAMPLE_END run=118 sample=118
+DBG_STACK_RUN_END epoch=13488825069779505465 run=118 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835981 seq=141 type=86 samples=1 sequence=0 previous=0 uptime=309440
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=119 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835982 seq=142 type=86 sequence=0 previous=0 uptime=309963
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=119 sample=119 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835982 seq=142 type=86 uptime=309964
+DBG_STACK_ISR_CONFIG size=8192 run=119 sample=119
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=119 sample=119
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=119 sample=119
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=119 sample=119
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=119 sample=119
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=119 sample=119
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=119 sample=119
+DBG_STACK_SAMPLE_END run=119 sample=119
+DBG_STACK_RUN_END epoch=13488825069779505465 run=119 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835982 seq=142 type=86 samples=1 sequence=0 previous=0 uptime=309983
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=312540
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=312540 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=120 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835983 seq=143 type=86 sequence=0 previous=0 uptime=312542
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=120 sample=120 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835983 seq=143 type=86 uptime=312542
+DBG_STACK_ISR_CONFIG size=8192 run=120 sample=120
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=120 sample=120
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=120 sample=120
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=120 sample=120
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=120 sample=120
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=120 sample=120
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=120 sample=120
+DBG_STACK_SAMPLE_END run=120 sample=120
+DBG_STACK_RUN_END epoch=13488825069779505465 run=120 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835983 seq=143 type=86 samples=1 sequence=0 previous=0 uptime=312570
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=121 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835984 seq=144 type=86 sequence=0 previous=0 uptime=313383
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=121 sample=121 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835984 seq=144 type=86 uptime=313384
+DBG_STACK_ISR_CONFIG size=8192 run=121 sample=121
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=121 sample=121
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=121 sample=121
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=121 sample=121
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=121 sample=121
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=121 sample=121
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=121 sample=121
+DBG_STACK_SAMPLE_END run=121 sample=121
+DBG_STACK_RUN_END epoch=13488825069779505465 run=121 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835984 seq=144 type=86 samples=1 sequence=0 previous=0 uptime=313406
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=318023
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=318024 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=122 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835985 seq=145 type=86 sequence=0 previous=0 uptime=318025
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=122 sample=122 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835985 seq=145 type=86 uptime=318025
+DBG_STACK_ISR_CONFIG size=8192 run=122 sample=122
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=122 sample=122
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=122 sample=122
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=122 sample=122
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=122 sample=122
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=122 sample=122
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=122 sample=122
+DBG_STACK_SAMPLE_END run=122 sample=122
+DBG_STACK_RUN_END epoch=13488825069779505465 run=122 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835985 seq=145 type=86 samples=1 sequence=0 previous=0 uptime=318050
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=123 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835986 seq=146 type=86 sequence=0 previous=0 uptime=318693
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=123 sample=123 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835986 seq=146 type=86 uptime=318694
+DBG_STACK_ISR_CONFIG size=8192 run=123 sample=123
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=123 sample=123
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=123 sample=123
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=123 sample=123
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=123 sample=123
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=123 sample=123
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=123 sample=123
+DBG_STACK_SAMPLE_END run=123 sample=123
+DBG_STACK_RUN_END epoch=13488825069779505465 run=123 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835986 seq=146 type=86 samples=1 sequence=0 previous=0 uptime=318713
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=325920
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=325921 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ASSIGN_START_BLOCK gate=publication
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=124 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835987 seq=147 type=86 sequence=0 previous=0 uptime=325922
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=124 sample=124 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=28835987 seq=147 type=86 uptime=325923
+DBG_STACK_ISR_CONFIG size=8192 run=124 sample=124
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=124 sample=124
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=124 sample=124
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=124 sample=124
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=124 sample=124
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=124 sample=124
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=124 sample=124
+DBG_STACK_SAMPLE_END run=124 sample=124
+DBG_STACK_RUN_END epoch=13488825069779505465 run=124 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=28835987 seq=147 type=86 samples=1 sequence=0 previous=0 uptime=325947
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=125 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=41028463 seq=2927 type=65 sequence=0 previous=0 uptime=326523
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=125 sample=125 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=41028463 seq=2927 type=65 uptime=326524
+DBG_STACK_ISR_CONFIG size=8192 run=125 sample=125
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=125 sample=125
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=125 sample=125
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=125 sample=125
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=125 sample=125
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=125 sample=125
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=125 sample=125
+DBG_STACK_SAMPLE_END run=125 sample=125
+DBG_STACK_RUN_END epoch=13488825069779505465 run=125 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=41028463 seq=2927 type=65 samples=1 sequence=0 previous=0 uptime=326540
+DBG_STACK_RUN_BEGIN epoch=13488825069779505465 run=126 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835988 seq=148 type=86 sequence=0 previous=0 uptime=327288
+DBG_STACK_SAMPLE_BEGIN epoch=13488825069779505465 run=126 sample=126 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835988 seq=148 type=86 uptime=327288
+DBG_STACK_ISR_CONFIG size=8192 run=126 sample=126
+DBG_STACK name=BT RX WQ tid=0x2000fe18 used=760 free=776 size=1536 ret=0 run=126 sample=126
+DBG_STACK name=mesh_route tid=0x2000d560 used=5888 free=2304 size=8192 ret=0 run=126 sample=126
+DBG_STACK name=sysworkq tid=0x20010d70 used=2408 free=2072 size=4480 ret=0 run=126 sample=126
+DBG_STACK name=MPSL Work tid=0x20010b28 used=440 free=584 size=1024 ret=0 run=126 sample=126
+DBG_STACK name=logging tid=0x2000f920 used=544 free=1504 size=2048 ret=0 run=126 sample=126
+DBG_STACK name=idle tid=0x20010c00 used=64 free=256 size=320 ret=0 run=126 sample=126
+DBG_STACK_SAMPLE_END run=126 sample=126
+DBG_STACK_RUN_END epoch=13488825069779505465 run=126 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=28835988 seq=148 type=86 samples=1 sequence=0 previous=0 uptime=327308
+DBG_GATEWAY_BLE event=disconnected reason=19 uptime=330662
+DBG_GATEWAY_BLE event=recovery round=1 delay_ms=472 reason=disconnected uptime=330662

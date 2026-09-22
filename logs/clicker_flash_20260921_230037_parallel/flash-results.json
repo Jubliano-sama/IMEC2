@@ -1,0 +1,41 @@
+[
+  {
+    "probe": "E46070D247394D36",
+    "ficr": "0xe05517bda628dce6",
+    "role": "mesh_clicker",
+    "hex_sha256": "8733d894b8be53b8ea9a72d10d352b06f2b3179cb9552b76144e0eb206fb9fc4",
+    "readback_verified_bytes": 435432,
+    "flash_started_monotonic": 54977.03343398,
+    "flash_finished_monotonic": 54992.931639838,
+    "storage_handling": "full-chip unlock erase under continued approved workflow; original protected data could not be backed up",
+    "node_id": "0xa91852fee7669fe4",
+    "startup_checked": true,
+    "startup_log": "startup/clicker_4d36.log"
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "ficr": "0x1ab9ae846d358193",
+    "role": "mesh_clicker",
+    "hex_sha256": "8733d894b8be53b8ea9a72d10d352b06f2b3179cb9552b76144e0eb206fb9fc4",
+    "readback_verified_bytes": 435432,
+    "flash_started_monotonic": 54977.017889027,
+    "flash_finished_monotonic": 54993.23644182,
+    "storage_handling": "full-chip unlock erase under continued approved workflow; original protected data could not be backed up",
+    "node_id": "0x53f4ebc72c7bc291",
+    "startup_checked": true,
+    "startup_log": "startup/clicker_3b37.log"
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "ficr": "0x40dbef975afd22e3",
+    "role": "mesh_clicker",
+    "hex_sha256": "8733d894b8be53b8ea9a72d10d352b06f2b3179cb9552b76144e0eb206fb9fc4",
+    "readback_verified_bytes": 435432,
+    "flash_started_monotonic": 54977.053668678,
+    "flash_finished_monotonic": 54993.447271474,
+    "storage_handling": "full-chip unlock erase under continued approved workflow; original protected data could not be backed up",
+    "node_id": "0x0996aad41bb361e1",
+    "startup_checked": true,
+    "startup_log": "startup/clicker_5d30.log"
+  }
+]

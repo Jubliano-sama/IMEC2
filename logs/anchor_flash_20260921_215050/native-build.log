@@ -1,0 +1,625 @@
+-- Configuring done (0.2s)
+-- Generating done (0.2s)
+-- Build files have been written to: /home/tommie/Projects/IMEC2/firmware/build
+[  0%] Building C object CMakeFiles/test_app_radio_guard.dir/app/src/app_radio_guard.c.o
+[  0%] Building C object CMakeFiles/test_app_watchdog_action_lease.dir/tests/test_app_watchdog_action_lease.c.o
+[  0%] Built target test_button_wake_recovery
+[  1%] Building C object CMakeFiles/test_button_action_handoff.dir/tests/test_button_action_handoff.c.o
+[  2%] Built target test_anchor_command_result_ram_custody
+[  2%] Built target test_app_stack_diag_record
+[  2%] Built target test_app_anchor_command_completion
+[  2%] Building C object CMakeFiles/core.dir/src/discovery_assignment.c.o
+[  3%] Building C object CMakeFiles/test_app_radio_guard.dir/tests/test_app_radio_guard.c.o
+[  4%] Building C object CMakeFiles/core.dir/src/dwm3000_runtime.c.o
+[  4%] Building C object CMakeFiles/test_app_stack_diag_commit.dir/tests/test_app_stack_diag_commit.c.o
+[  4%] Built target test_app_mesh_async_route_request
+[  4%] Building C object CMakeFiles/core.dir/src/dwm3000_timing.c.o
+[  4%] Linking C executable test_app_watchdog_action_lease
+[  4%] Linking C executable test_button_action_handoff
+[  4%] Linking C executable test_app_radio_guard
+[  4%] Building C object CMakeFiles/test_app_terminal_restart.dir/tests/test_app_terminal_restart.c.o
+[  4%] Building C object CMakeFiles/test_dwm3000_port_spi_model.dir/tests/mesh_integration/test_dwm3000_port_spi_model.c.o
+[  4%] Built target test_app_gateway_operation_owner
+[  5%] Linking C executable test_app_stack_diag_commit
+[  5%] Built target test_app_watchdog_action_lease
+[  5%] Building C object CMakeFiles/test_dwm3000_port_spi_model.dir/app/src/dwm3000_port.c.o
+[  5%] Built target test_button_action_handoff
+[  5%] Built target test_app_radio_guard
+[  5%] Linking C executable test_app_terminal_restart
+[  5%] Building C object CMakeFiles/core.dir/src/enumeration_response_lane.c.o
+[  6%] Building C object CMakeFiles/test_dwm3000_receive_error_boundary.dir/tests/test_dwm3000_receive_error_boundary.c.o
+[  6%] Building C object CMakeFiles/test_dwm3000_reset_readiness.dir/tests/test_dwm3000_reset_readiness.c.o
+[  7%] Building C object CMakeFiles/test_dwm3000_retained_config.dir/tests/test_dwm3000_retained_config.c.o
+[  7%] Building C object CMakeFiles/core.dir/src/firmware_delivery_loss.c.o
+[  7%] Built target test_app_stack_diag_commit
+[  7%] Building C object CMakeFiles/core.dir/src/gateway_ble_transport.c.o
+[  8%] Linking C executable test_dwm3000_port_spi_model
+[  8%] Built target test_app_terminal_restart
+[  9%] Building C object CMakeFiles/core.dir/src/protocol.c.o
+[  9%] Building C object CMakeFiles/test_dwm3000_receive_error_boundary.dir/app/src/app_wake_train_politeness.c.o
+[  9%] Building C object CMakeFiles/core.dir/src/gateway_membership.c.o
+[  9%] Building C object CMakeFiles/core.dir/src/gateway_command.c.o
+[  9%] Built target test_dwm3000_port_spi_model
+[  9%] Linking C executable test_dwm3000_reset_readiness
+[  9%] Building C object CMakeFiles/core.dir/src/uwb.c.o
+[  9%] Linking C executable test_dwm3000_retained_config
+[ 10%] Building C object CMakeFiles/core.dir/src/uwb_rf_scope.c.o
+[ 10%] Linking C executable test_dwm3000_receive_error_boundary
+[ 10%] Building C object CMakeFiles/core.dir/src/uwb_ble_courtesy.c.o
+[ 10%] Built target test_dwm3000_reset_readiness
+[ 10%] Built target test_dwm3000_retained_config
+[ 10%] Building C object CMakeFiles/core.dir/src/uwb_session.c.o
+[ 10%] Building C object CMakeFiles/core.dir/src/mesh.c.o
+[ 10%] Built target test_dwm3000_receive_error_boundary
+[ 10%] Building C object CMakeFiles/core.dir/src/mesh_event_owner.c.o
+[ 11%] Building C object CMakeFiles/core.dir/src/mesh_event_owner_registry.c.o
+[ 11%] Building C object CMakeFiles/core.dir/src/mesh_route_path.c.o
+[ 11%] Building C object CMakeFiles/core.dir/src/node_transaction.c.o
+[ 12%] Building C object CMakeFiles/core.dir/src/mesh_preemption.c.o
+[ 12%] Building C object CMakeFiles/core.dir/src/operation_policy.c.o
+[ 12%] Building C object CMakeFiles/core.dir/src/mesh_runtime.c.o
+[ 12%] Building C object CMakeFiles/core.dir/src/mesh_relay.c.o
+[ 12%] Building C object CMakeFiles/core.dir/src/mesh_relay_channel9.c.o
+[ 13%] Building C object CMakeFiles/core.dir/src/report.c.o
+[ 13%] Building C object CMakeFiles/core.dir/src/serial_frame.c.o
+[ 13%] Building C object CMakeFiles/core.dir/src/stack_budget.c.o
+[ 13%] Building C object CMakeFiles/core.dir/src/status.c.o
+[ 14%] Building C object CMakeFiles/core.dir/src/survey.c.o
+[ 14%] Building C object CMakeFiles/core.dir/src/survey_protocol.c.o
+[ 14%] Building C object CMakeFiles/core.dir/src/survey_response_lane.c.o
+[ 14%] Building C object CMakeFiles/core.dir/src/route.c.o
+[ 15%] Linking C static library libcore.a
+[ 16%] Built target core
+[ 16%] Building C object CMakeFiles/test_app_anchor_actions.dir/tests/test_app_anchor_actions.c.o
+[ 16%] Building C object CMakeFiles/test_firmware_state_machines.dir/tests/test_firmware_state_machines.c.o
+[ 17%] Linking C executable test_clicker_rtt_command
+[ 17%] Linking C executable test_firmware_events
+[ 18%] Building C object CMakeFiles/test_app_anchor_click_event_runtime.dir/app/src/app_anchor_click_event_runtime.c.o
+[ 18%] Linking C executable test_app_node_comm_delivery_state
+[ 18%] Building C object CMakeFiles/test_protocol.dir/tests/test_protocol.c.o
+[ 18%] Building C object CMakeFiles/test_app_clicker_event_runtime.dir/app/src/app_clicker_event_runtime.c.o
+[ 18%] Built target test_clicker_rtt_command
+[ 18%] Building C object CMakeFiles/test_app_anchor_click_event_runtime.dir/tests/test_app_anchor_click_event_runtime.c.o
+[ 19%] Built target test_firmware_events
+[ 20%] Building C object CMakeFiles/test_app_clicker_event_runtime.dir/tests/test_app_clicker_event_runtime.c.o
+[ 20%] Built target test_app_node_comm_delivery_state
+[ 20%] Linking C executable test_protocol_rx_lifecycle
+[ 20%] Building C object CMakeFiles/test_enumeration_survey_state_alignment_scenarios.dir/tests/mesh_integration/test_enumeration_survey_state_alignment_scenarios.c.o
+[ 20%] Building C object CMakeFiles/test_uwb_rf_scope.dir/tests/test_uwb_rf_scope.c.o
+[ 20%] Building C object CMakeFiles/test_app_anchor_actions.dir/app/src/app_anchor_actions.c.o
+[ 20%] Linking C executable test_app_anchor_click_event_runtime
+[ 20%] Linking C executable test_firmware_state_machines
+[ 20%] Linking C executable test_app_clicker_event_runtime
+[ 20%] Built target test_protocol_rx_lifecycle
+[ 20%] Linking C executable test_protocol
+[ 20%] Linking C executable test_uwb_rf_scope
+[ 20%] Linking C executable test_app_anchor_actions
+[ 20%] Built target test_app_anchor_click_event_runtime
+[ 20%] Building C object CMakeFiles/test_mesh_event_owner.dir/tests/test_mesh_event_owner.c.o
+[ 20%] Built target test_firmware_state_machines
+[ 20%] Built target test_app_clicker_event_runtime
+[ 20%] Building C object CMakeFiles/test_mesh_event_owner_registry.dir/tests/test_mesh_event_owner_registry.c.o
+[ 20%] Built target test_protocol
+[ 20%] Linking C executable test_enumeration_survey_state_alignment_scenarios
+[ 20%] Built target test_uwb_rf_scope
+[ 20%] Building C object CMakeFiles/test_mesh_packet_age.dir/tests/test_mesh_packet_age.c.o
+[ 20%] Building C object CMakeFiles/test_operation_policy.dir/tests/test_operation_policy.c.o
+[ 20%] Built target test_app_anchor_actions
+[ 20%] Building C object CMakeFiles/test_app_operation_policy.dir/app/src/app_operation_policy.c.o
+[ 21%] Building C object CMakeFiles/test_discovery_assignment.dir/tests/test_discovery_assignment.c.o
+[ 21%] Building C object CMakeFiles/test_enumeration_response_lane.dir/tests/test_enumeration_response_lane.c.o
+[ 21%] Linking C executable test_mesh_event_owner_registry
+[ 21%] Linking C executable test_mesh_packet_age
+[ 21%] Built target test_enumeration_survey_state_alignment_scenarios
+[ 21%] Linking C executable test_operation_policy
+[ 21%] Building C object CMakeFiles/test_app_operation_policy.dir/tests/test_app_operation_policy.c.o
+[ 22%] Linking C executable test_mesh_event_owner
+[ 22%] Building C object CMakeFiles/test_enumeration_downlinks.dir/tests/test_enumeration_downlinks.c.o
+[ 22%] Built target test_mesh_packet_age
+[ 22%] Built target test_mesh_event_owner_registry
+[ 22%] Built target test_operation_policy
+[ 22%] Linking C executable test_app_operation_policy
+[ 22%] Building C object CMakeFiles/test_survey.dir/tests/test_survey.c.o
+[ 22%] Building C object CMakeFiles/test_survey_response_lane.dir/tests/test_survey_response_lane.c.o
+[ 22%] Built target test_mesh_event_owner
+[ 22%] Linking C executable test_enumeration_response_lane
+[ 23%] Building C object CMakeFiles/test_survey_protocol.dir/tests/test_survey_protocol.c.o
+[ 24%] Linking C executable test_enumeration_downlinks
+[ 24%] Building C object CMakeFiles/test_flood_parent_learning.dir/tests/test_flood_parent_learning.c.o
+[ 24%] Built target test_app_operation_policy
+[ 24%] Built target test_enumeration_response_lane
+[ 24%] Linking C executable test_survey
+[ 24%] Linking C executable test_discovery_assignment
+[ 24%] Linking C executable test_semantic_digest
+[ 24%] Linking C executable test_node_comm
+[ 24%] Built target test_enumeration_downlinks
+[ 24%] Linking C executable test_survey_response_lane
+[ 24%] Linking C executable test_survey_protocol
+[ 25%] Linking C executable test_flood_parent_learning
+[ 25%] Built target test_survey
+[ 26%] Building C object CMakeFiles/test_node_transaction.dir/tests/test_node_transaction.c.o
+[ 26%] Built target test_semantic_digest
+[ 26%] Built target test_discovery_assignment
+[ 26%] Built target test_node_comm
+[ 26%] Built target test_survey_protocol
+[ 26%] Built target test_survey_response_lane
+[ 26%] Linking C executable test_watchdog_adoption
+[ 26%] Building C object CMakeFiles/test_app_durable_anchor_assignment.dir/app/src/app_durable_state.c.o
+[ 26%] Built target test_flood_parent_learning
+[ 26%] Building C object CMakeFiles/test_app_durable_state.dir/app/src/app_click_event_sequence.c.o
+[ 26%] Building C object CMakeFiles/test_app_durable_gateway_assignment.dir/app/src/app_durable_state.c.o
+[ 27%] Building C object CMakeFiles/test_app_durable_anchor_assignment.dir/tests/test_app_durable_anchor_assignment.c.o
+[ 28%] Linking C executable test_stack_diag_transport
+[ 28%] Building C object CMakeFiles/test_app_node_comm_adapter.dir/app/src/app_node_comm.c.o
+[ 28%] Built target test_watchdog_adoption
+[ 28%] Building C object CMakeFiles/test_app_node_comm_adapter.dir/tests/test_app_node_comm_adapter.c.o
+[ 28%] Building C object CMakeFiles/test_app_durable_state.dir/app/src/app_durable_state.c.o
+[ 28%] Linking C executable test_node_transaction
+[ 28%] Built target test_stack_diag_transport
+[ 28%] Building C object CMakeFiles/test_app_durable_state.dir/app/src/app_gateway_control_sequence.c.o
+[ 28%] Building C object CMakeFiles/test_app_durable_state.dir/tests/test_app_durable_state.c.o
+[ 28%] Built target test_node_transaction
+[ 28%] Linking C executable test_app_durable_anchor_assignment
+[ 28%] Building C object CMakeFiles/test_app_durable_gateway_assignment.dir/tests/test_app_durable_gateway_assignment.c.o
+[ 29%] Building C object CMakeFiles/test_app_node_comm_gateway_adapter.dir/app/src/app_node_comm.c.o
+[ 29%] Building C object CMakeFiles/test_app_node_comm_transmitter_adapter.dir/app/src/app_node_comm.c.o
+[ 29%] Built target test_app_durable_anchor_assignment
+[ 29%] Linking C executable test_device_identity
+[ 29%] Building C object CMakeFiles/test_app_node_comm_gateway_route_refresh.dir/app/src/app_mesh_flood.c.o
+[ 30%] Linking C executable test_app_durable_gateway_assignment
+[ 31%] Linking C executable test_app_durable_state
+[ 32%] Building C object CMakeFiles/test_app_node_comm_gateway_route_refresh.dir/app/src/app_node_comm_gateway_route_refresh.c.o
+[ 32%] Built target test_device_identity
+[ 32%] Built target test_app_durable_gateway_assignment
+[ 32%] Building C object CMakeFiles/test_app_node_comm_transmitter_adapter.dir/app/src/app_node_comm_sync.c.o
+[ 32%] Building C object CMakeFiles/test_app_node_comm_gateway_route_refresh.dir/tests/test_app_node_comm_gateway_route_refresh.c.o
+[ 32%] Built target test_app_durable_state
+[ 32%] Building C object CMakeFiles/test_status.dir/tests/test_status.c.o
+[ 32%] Building C object CMakeFiles/test_app_node_comm_transmitter_adapter.dir/tests/test_app_node_comm_adapter.c.o
+[ 33%] Building C object CMakeFiles/test_app_node_comm_transmitter_adapter.dir/app/src/app_mesh_smoke_fast.c.o
+[ 33%] Linking C executable test_status
+[ 33%] Building C object CMakeFiles/test_app_node_comm_gateway_adapter.dir/tests/test_app_node_comm_adapter.c.o
+[ 33%] Built target test_status
+[ 33%] Linking C executable test_battery_status
+[ 33%] Building C object CMakeFiles/test_gateway_command.dir/tests/test_gateway_command.c.o
+[ 33%] Linking C executable test_app_node_comm_gateway_route_refresh
+[ 33%] Building C object CMakeFiles/gateway_gui_protocol_oracle.dir/tests/mesh_integration/gateway_gui_protocol_oracle.c.o
+[ 33%] Building C object CMakeFiles/product_contract_oracle.dir/app/src/app_mesh_c5_priority.c.o
+[ 33%] Built target test_battery_status
+[ 33%] Building C object CMakeFiles/product_contract_oracle.dir/app/src/app_mesh_route_request_policy.c.o
+[ 33%] Linking C executable gateway_gui_protocol_oracle
+[ 33%] Built target test_app_node_comm_gateway_route_refresh
+[ 33%] Linking C executable test_app_node_comm_adapter
+[ 34%] Building C object CMakeFiles/test_gateway_command_lifecycle_invariants.dir/app/src/app_gateway_command_ingress.c.o
+[ 35%] Building C object CMakeFiles/product_contract_oracle.dir/tests/mesh_integration/product_contract_oracle.c.o
+[ 35%] Built target gateway_gui_protocol_oracle
+[ 35%] Building C object CMakeFiles/test_gateway_membership.dir/tests/test_gateway_membership.c.o
+[ 36%] Building C object CMakeFiles/test_gateway_eack_policy.dir/app/src/app_gateway_eack_policy.c.o
+[ 36%] Building C object CMakeFiles/test_gateway_command_lifecycle_invariants.dir/app/src/app_gateway_command_lifecycle.c.o
+[ 37%] Built target test_app_node_comm_adapter
+[ 37%] Linking C executable product_contract_oracle
+[ 37%] Building C object CMakeFiles/test_gateway_collection_eack.dir/app/src/app_gateway_collection_eack.c.o
+[ 37%] Building C object CMakeFiles/test_gateway_eack_policy.dir/tests/test_gateway_eack_policy.c.o
+[ 37%] Linking C executable test_gateway_membership
+[ 37%] Building C object CMakeFiles/test_gateway_command_lifecycle_invariants.dir/tests/mesh_integration/test_gateway_command_lifecycle_invariants.c.o
+[ 37%] Built target product_contract_oracle
+[ 38%] Building C object CMakeFiles/test_gateway_collection_eack.dir/app/src/app_gateway_eack_policy.c.o
+[ 38%] Building C object CMakeFiles/test_app_gateway_collection_recovery.dir/app/src/app_gateway_collection_recovery.c.o
+[ 38%] Linking C executable test_gateway_command_lifecycle_invariants
+[ 38%] Built target test_gateway_membership
+[ 38%] Building C object CMakeFiles/test_app_gateway_collection_recovery.dir/tests/test_app_gateway_collection_recovery.c.o
+[ 38%] Linking C executable test_gateway_eack_policy
+[ 38%] Building C object CMakeFiles/test_gateway_collection_eack.dir/tests/test_gateway_collection_eack.c.o
+[ 38%] Linking C executable test_gateway_command
+[ 38%] Built target test_gateway_command_lifecycle_invariants
+[ 38%] Built target test_gateway_eack_policy
+[ 38%] Building C object CMakeFiles/test_app_gateway_eack_retry.dir/app/src/app_gateway_eack_retry.c.o
+[ 39%] Linking C executable test_app_gateway_collection_recovery
+[ 39%] Building C object CMakeFiles/test_app_gateway_ble_stream.dir/app/src/app_gateway_ble_stream.c.o
+[ 40%] Building C object CMakeFiles/test_app_gateway_command_result.dir/app/src/app_gateway_command_result.c.o
+[ 40%] Built target test_gateway_command
+[ 40%] Building C object CMakeFiles/test_app_gateway_ble_stream.dir/app/src/app_gateway_command_observability.c.o
+[ 40%] Linking C executable test_gateway_collection_eack
+[ 40%] Built target test_app_gateway_collection_recovery
+[ 40%] Building C object CMakeFiles/test_app_gateway_eack_retry.dir/app/src/app_mesh_rf_retry.c.o
+[ 41%] Building C object CMakeFiles/test_app_gateway_eack_retry.dir/app/src/app_wake_train_politeness.c.o
+[ 41%] Linking C executable test_app_node_comm_transmitter_adapter
+[ 41%] Building C object CMakeFiles/test_app_gateway_command_result.dir/tests/test_app_gateway_command_result.c.o
+[ 41%] Building C object CMakeFiles/test_app_gateway_eack_retry.dir/tests/test_app_gateway_eack_retry.c.o
+[ 41%] Built target test_gateway_collection_eack
+[ 41%] Linking C executable test_app_node_comm_gateway_adapter
+[ 42%] Building C object CMakeFiles/test_app_gateway_ble_stream.dir/tests/test_app_gateway_ble_stream.c.o
+[ 42%] Building C object CMakeFiles/test_app_gateway_command_observability.dir/app/src/app_gateway_command_observability.c.o
+[ 43%] Building C object CMakeFiles/test_app_stack_workload_diag.dir/app/src/app_stack_workload_diag.c.o
+[ 43%] Built target test_app_node_comm_transmitter_adapter
+[ 44%] Building C object CMakeFiles/test_app_gateway_assignment_publisher.dir/app/src/app_gateway_assignment_publisher.c.o
+[ 44%] Building C object CMakeFiles/test_app_gateway_command_observability.dir/tests/test_app_gateway_command_observability.c.o
+[ 44%] Linking C executable test_app_gateway_command_result
+[ 44%] Built target test_app_node_comm_gateway_adapter
+[ 44%] Building C object CMakeFiles/test_app_stack_workload_diag.dir/tests/test_app_stack_workload_diag.c.o
+[ 44%] Linking C executable test_app_gateway_eack_retry
+[ 44%] Building C object CMakeFiles/test_app_gateway_assignment_publisher.dir/app/src/app_gateway_command_observability.c.o
+[ 44%] Built target test_app_gateway_command_result
+[ 44%] Linking C executable test_app_gateway_command_observability
+[ 44%] Building C object CMakeFiles/test_app_gateway_assignment_publisher.dir/tests/test_app_gateway_assignment_publisher.c.o
+[ 44%] Built target test_app_gateway_eack_retry
+[ 44%] Building C object CMakeFiles/test_app_stack_workload_diag_disabled.dir/app/src/app_stack_workload_diag.c.o
+[ 44%] Building C object CMakeFiles/test_app_mesh_smoke_fast.dir/app/src/app_mesh_smoke_fast.c.o
+[ 44%] Building C object CMakeFiles/test_app_mesh_smoke_fast.dir/tests/test_app_mesh_smoke_fast.c.o
+[ 44%] Built target test_app_gateway_command_observability
+[ 44%] Linking C executable test_app_gateway_ble_stream
+[ 44%] Building C object CMakeFiles/test_app_stack_workload_diag_disabled.dir/tests/test_app_stack_workload_diag_disabled.c.o
+[ 45%] Building C object CMakeFiles/test_app_mesh_c5_priority.dir/app/src/app_mesh_c5_priority.c.o
+[ 45%] Linking C executable test_app_stack_workload_diag
+[ 45%] Linking C executable test_app_mesh_scheduler_liveness
+[ 45%] Linking C executable test_app_mesh_smoke_fast
+[ 45%] Linking C executable test_app_stack_workload_diag_disabled
+[ 45%] Linking C executable test_app_gateway_assignment_publisher
+[ 45%] Built target test_app_gateway_ble_stream
+[ 45%] Building C object CMakeFiles/test_app_gateway_command_ingress.dir/app/src/app_gateway_command_ingress.c.o
+[ 45%] Built target test_app_stack_workload_diag
+[ 45%] Building C object CMakeFiles/test_app_gateway_command_ingress.dir/app/src/app_mesh_c5_priority.c.o
+[ 46%] Building C object CMakeFiles/test_app_gateway_command_ingress.dir/app/src/app_mesh_gateway_command_flow.c.o
+[ 47%] Built target test_app_mesh_scheduler_liveness
+[ 47%] Building C object CMakeFiles/test_app_mesh_c5_priority.dir/app/src/app_mesh_route_request_policy.c.o
+[ 47%] Built target test_app_mesh_smoke_fast
+[ 47%] Built target test_app_stack_workload_diag_disabled
+[ 47%] Building C object CMakeFiles/test_app_mesh_c5_priority.dir/tests/test_app_mesh_c5_priority.c.o
+[ 47%] Built target test_app_gateway_assignment_publisher
+[ 47%] Building C object CMakeFiles/test_app_gateway_command_ingress.dir/app/src/app_mesh_route_request_policy.c.o
+[ 47%] Building C object CMakeFiles/test_app_gateway_command_ingress.dir/tests/test_app_gateway_command_ingress.c.o
+[ 47%] Building C object CMakeFiles/test_app_gateway_command_lifecycle.dir/app/src/app_gateway_command_ingress.c.o
+[ 47%] Building C object CMakeFiles/test_app_mesh_gateway_command_flow.dir/app/src/app_mesh_gateway_command_flow.c.o
+[ 47%] Building C object CMakeFiles/test_app_mesh_flood.dir/app/src/app_mesh_flood.c.o
+[ 47%] Building C object CMakeFiles/test_app_gateway_command_lifecycle.dir/app/src/app_gateway_command_lifecycle.c.o
+[ 48%] Building C object CMakeFiles/test_app_wake_train_politeness.dir/app/src/app_wake_train_politeness.c.o
+[ 48%] Building C object CMakeFiles/test_app_mesh_rf_retry.dir/app/src/app_mesh_rf_retry.c.o
+[ 48%] Linking C executable test_app_gateway_command_ingress
+[ 48%] Building C object CMakeFiles/test_app_mesh_gateway_command_flow.dir/tests/test_app_mesh_gateway_command_flow.c.o
+[ 48%] Building C object CMakeFiles/test_app_wake_train_politeness.dir/tests/test_app_wake_train_politeness.c.o
+[ 48%] Building C object CMakeFiles/test_app_gateway_command_lifecycle.dir/tests/test_app_gateway_command_lifecycle.c.o
+[ 48%] Building C object CMakeFiles/test_app_mesh_flood.dir/tests/test_app_mesh_flood.c.o
+[ 48%] Linking C executable test_app_mesh_direct_gateway_retry
+[ 48%] Building C object CMakeFiles/test_app_mesh_rf_retry.dir/app/src/app_mesh_route_request_policy.c.o
+[ 48%] Linking C executable test_app_mesh_c5_priority
+[ 48%] Built target test_app_gateway_command_ingress
+[ 48%] Linking C executable test_app_wake_train_politeness
+[ 48%] Linking C executable test_app_mesh_gateway_command_flow
+[ 49%] Linking C executable test_app_gateway_command_lifecycle
+[ 49%] Building C object CMakeFiles/test_app_mesh_rf_retry.dir/app/src/app_wake_train_politeness.c.o
+[ 50%] Built target test_app_mesh_direct_gateway_retry
+[ 50%] Linking C executable test_app_mesh_flood
+[ 50%] Built target test_app_mesh_c5_priority
+[ 50%] Building C object CMakeFiles/test_app_mesh_c5_batch.dir/app/src/app_gateway_ble_stream.c.o
+[ 50%] Built target test_app_wake_train_politeness
+[ 50%] Building C object CMakeFiles/test_app_mesh_event_retry.dir/app/src/app_mesh_rf_retry.c.o
+[ 51%] Linking C executable test_app_mesh_rf_retry
+[ 51%] Building C object CMakeFiles/test_app_mesh_c5_batch.dir/app/src/app_gateway_command_observability.c.o
+[ 51%] Built target test_app_gateway_command_lifecycle
+[ 52%] Building C object CMakeFiles/test_app_mesh_c5_batch.dir/app/src/app_mesh_ch9_ack.c.o
+[ 52%] Built target test_app_mesh_gateway_command_flow
+[ 52%] Building C object CMakeFiles/test_app_mesh_c5_batch.dir/app/src/app_wake_train_politeness.c.o
+[ 52%] Building C object CMakeFiles/test_app_mesh_event_retry.dir/app/src/app_wake_train_politeness.c.o
+[ 52%] Built target test_app_mesh_flood
+[ 52%] Building C object CMakeFiles/test_app_mesh_event_retry.dir/tests/test_app_mesh_event_retry.c.o
+[ 52%] Built target test_app_mesh_rf_retry
+[ 52%] Building C object CMakeFiles/test_app_mesh_c5_batch.dir/tests/test_app_mesh_c5_batch.c.o
+[ 53%] Building C object CMakeFiles/test_app_mesh_enumeration_scan_handoff.dir/app/src/app_mesh_flood.c.o
+[ 53%] Building C object CMakeFiles/test_app_hia_table_survey.dir/tests/test_app_hia_table_survey.c.o
+[ 53%] Building C object CMakeFiles/test_app_gateway_assignment_hia.dir/tests/test_app_gateway_assignment_hia.c.o
+[ 54%] Building C object CMakeFiles/test_app_survey_cancel_rx.dir/tests/test_app_survey_cancel_rx.c.o
+[ 54%] Building C object CMakeFiles/test_app_mesh_enumeration_scan_handoff.dir/tests/test_app_mesh_enumeration_scan_handoff.c.o
+[ 54%] Building C object CMakeFiles/test_app_survey_response_recovery.dir/tests/test_app_survey_response_recovery.c.o
+[ 54%] Building C object CMakeFiles/test_app_survey_response_recovery.dir/app/src/app_wake_train_politeness.c.o
+[ 55%] Linking C executable test_app_mesh_event_retry
+[ 56%] Building C object CMakeFiles/test_app_survey_slot_deadlines.dir/tests/test_app_survey_slot_deadlines.c.o
+[ 56%] Built target test_app_mesh_event_retry
+[ 56%] Linking C executable test_app_survey_response_recovery
+[ 56%] Linking C executable test_app_mesh_enumeration_scan_handoff
+[ 57%] Linking C executable test_app_hia_table_survey
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_click_preempt.dir/tests/test_app_mesh_direct_probe_click_preempt.c.o
+[ 58%] Building C object CMakeFiles/test_app_gateway_assignment_hia.dir/app/src/app_operation_policy.c.o
+[ 58%] Built target test_app_survey_response_recovery
+[ 58%] Built target test_app_mesh_enumeration_scan_handoff
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_click_preempt.dir/app/src/app_mesh_direct_gateway_retry.c.o
+[ 58%] Linking C executable test_app_mesh_c5_batch
+[ 58%] Building C object CMakeFiles/test_app_survey_cancel_rx.dir/app/src/app_wake_train_politeness.c.o
+[ 58%] Built target test_app_hia_table_survey
+[ 58%] Building C object CMakeFiles/test_app_survey_cancel_rx.dir/app/src/app_mesh_c5_priority.c.o
+[ 58%] Building C object CMakeFiles/test_app_survey_cancel_rx.dir/app/src/app_mesh_route_request_policy.c.o
+[ 58%] Building C object CMakeFiles/test_app_survey_slot_deadlines.dir/app/src/app_wake_train_politeness.c.o
+[ 58%] Linking C executable test_app_gateway_assignment_hia
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_click_preempt.dir/app/src/app_mesh_route_request_policy.c.o
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_c5_0.dir/tests/test_app_mesh_direct_probe_c5.c.o
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_c5_1.dir/tests/test_app_mesh_direct_probe_c5.c.o
+[ 58%] Built target test_app_mesh_c5_batch
+[ 58%] Linking C executable test_app_survey_slot_deadlines
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_c5_1.dir/app/src/app_mesh_direct_gateway_retry.c.o
+[ 58%] Linking C executable test_app_survey_cancel_rx
+[ 58%] Building C object CMakeFiles/test_mesh_deferred_route_reply.dir/tests/test_mesh_deferred_route_reply.c.o
+[ 58%] Built target test_app_gateway_assignment_hia
+[ 58%] Linking C executable test_app_mesh_direct_probe_click_preempt
+[ 58%] Building C object CMakeFiles/test_app_mesh_direct_probe_c5_0.dir/app/src/app_mesh_direct_gateway_retry.c.o
+[ 58%] Built target test_app_survey_slot_deadlines
+[ 58%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/tests/test_app_mesh_reactive_route_listeners.c.o
+[ 58%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/app/src/app_mesh_c5_priority.c.o
+[ 59%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/app/src/app_mesh_route_reply_ack.c.o
+[ 59%] Built target test_app_survey_cancel_rx
+[ 59%] Built target test_app_mesh_direct_probe_click_preempt
+[ 59%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/app/src/app_mesh_rx_policy.c.o
+[ 59%] Building C object CMakeFiles/test_app_mesh_direct_probe_c5_0.dir/app/src/app_mesh_ch9_ack.c.o
+[ 59%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/app/src/app_wake_train_politeness.c.o
+[ 59%] Building C object CMakeFiles/test_app_mesh_direct_probe_c5_1.dir/app/src/app_mesh_ch9_ack.c.o
+[ 59%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/app/src/app_mesh_route_request_policy.c.o
+[ 59%] Building C object CMakeFiles/test_app_mesh_reactive_route_listeners.dir/app/src/app_mesh_smoke_fast.c.o
+[ 59%] Building C object CMakeFiles/test_mesh_deferred_route_reply.dir/app/src/app_mesh_route_reply_ack.c.o
+[ 59%] Building C object CMakeFiles/test_app_gateway_ble_rx.dir/tests/test_app_gateway_ble_rx.c.o
+[ 59%] Building C object CMakeFiles/test_app_watchdog_runtime.dir/tests/test_app_watchdog_runtime.c.o
+[ 59%] Building C object CMakeFiles/test_gateway_compact_rx_recovery.dir/tests/mesh_integration/test_gateway_compact_rx_recovery.c.o
+[ 59%] Linking C executable test_mesh_deferred_route_reply
+[ 60%] Linking C executable test_app_mesh_direct_probe_c5_0
+[ 60%] Linking C executable test_app_mesh_direct_probe_c5_1
+[ 61%] Building C object CMakeFiles/test_app_survey_publication.dir/tests/test_app_survey_publication.c.o
+[ 61%] Linking C executable test_app_gateway_ble_rx
+[ 61%] Built target test_mesh_deferred_route_reply
+[ 61%] Building C object CMakeFiles/test_gateway_compact_rx_recovery.dir/app/src/app_mesh_rx_policy.c.o
+[ 62%] Linking C executable test_app_watchdog_runtime
+[ 62%] Built target test_app_mesh_direct_probe_c5_0
+[ 62%] Building C object CMakeFiles/test_enumeration_c5_contention_scenarios.dir/tests/mesh_integration/test_enumeration_c5_contention_scenarios.c.o
+[ 62%] Built target test_app_gateway_ble_rx
+[ 62%] Built target test_app_mesh_direct_probe_c5_1
+[ 62%] Building C object CMakeFiles/test_app_mesh_rx_policy.dir/app/src/app_mesh_rx_policy.c.o
+[ 62%] Building C object CMakeFiles/test_app_mesh_rx_policy.dir/tests/test_app_mesh_rx_policy.c.o
+[ 62%] Linking C executable test_gateway_compact_rx_recovery
+[ 62%] Built target test_app_watchdog_runtime
+[ 63%] Linking C executable test_app_mesh_reactive_route_listeners
+[ 63%] Building C object CMakeFiles/test_app_discovery_assignment_policy.dir/tests/test_app_discovery_assignment_policy.c.o
+[ 63%] Building C object CMakeFiles/test_uwb.dir/tests/test_uwb.c.o
+[ 63%] Built target test_gateway_compact_rx_recovery
+[ 63%] Linking C executable test_enumeration_c5_contention_scenarios
+[ 63%] Linking C executable test_app_mesh_rx_policy
+[ 63%] Building C object CMakeFiles/test_uwb_ble_courtesy.dir/tests/test_uwb_ble_courtesy.c.o
+[ 63%] Built target test_app_mesh_reactive_route_listeners
+[ 64%] Building C object CMakeFiles/test_uwb_session.dir/tests/test_uwb_session.c.o
+[ 64%] Built target test_app_mesh_rx_policy
+[ 64%] Linking C executable test_uwb_ble_courtesy
+[ 64%] Building C object CMakeFiles/test_route.dir/tests/test_route.c.o
+[ 64%] Built target test_enumeration_c5_contention_scenarios
+[ 64%] Linking C executable test_app_survey_publication
+[ 64%] Building C object CMakeFiles/test_mesh.dir/tests/test_mesh.c.o
+[ 65%] Building C object CMakeFiles/test_mesh_route_path.dir/tests/test_mesh_route_path.c.o
+[ 65%] Built target test_uwb_ble_courtesy
+[ 65%] Built target test_app_survey_publication
+[ 65%] Linking C executable test_app_discovery_assignment_policy
+[ 66%] Building C object CMakeFiles/test_mesh_preemption.dir/tests/test_mesh_preemption.c.o
+[ 66%] Linking C executable test_mesh_route_path
+[ 66%] Building C object CMakeFiles/test_app_mesh_preemption.dir/app/src/app_mesh_preemption.c.o
+[ 66%] Linking C executable test_route
+[ 67%] Linking C executable test_uwb
+[ 67%] Built target test_app_discovery_assignment_policy
+[ 67%] Built target test_mesh_route_path
+[ 68%] Building C object CMakeFiles/test_app_mesh_preemption.dir/tests/test_app_mesh_preemption.c.o
+[ 68%] Building C object CMakeFiles/test_app_mesh_collection_deferral.dir/app/src/app_mesh_collection_deferral.c.o
+[ 68%] Building C object CMakeFiles/test_app_mesh_collection_deferral.dir/tests/test_app_mesh_collection_deferral.c.o
+[ 68%] Linking C executable test_mesh_preemption
+[ 68%] Built target test_uwb
+[ 68%] Built target test_route
+[ 69%] Linking C executable test_mesh
+[ 69%] Linking C executable test_app_mesh_tx_handoff_gate
+[ 69%] Linking C executable test_app_mesh_route_ready_handoff
+[ 69%] Linking C executable test_app_mesh_route_reply_ack
+[ 69%] Linking C executable test_app_mesh_collection_deferral
+[ 69%] Built target test_mesh_preemption
+[ 69%] Linking C executable test_app_mesh_preemption
+[ 69%] Built target test_mesh
+[ 70%] Built target test_app_mesh_tx_handoff_gate
+[ 70%] Built target test_app_mesh_route_ready_handoff
+[ 71%] Building C object CMakeFiles/test_app_mesh_route_wait_tx.dir/app/src/app_mesh_route_wait_tx.c.o
+[ 71%] Building C object CMakeFiles/test_app_mesh_route_wait_tx.dir/tests/test_app_mesh_route_wait_tx.c.o
+[ 72%] Built target test_app_mesh_route_reply_ack
+[ 72%] Building C object CMakeFiles/test_app_mesh_route_request_policy.dir/app/src/app_mesh_route_request_policy.c.o
+[ 72%] Linking C executable test_uwb_session
+[ 72%] Built target test_app_mesh_preemption
+[ 72%] Built target test_app_mesh_collection_deferral
+[ 72%] Building C object CMakeFiles/test_app_mesh_route_request_policy.dir/tests/test_app_mesh_route_request_policy.c.o
+[ 73%] Building C object CMakeFiles/test_app_mesh_gateway_ack_policy.dir/app/src/app_mesh_gateway_ack_policy.c.o
+[ 73%] Building C object CMakeFiles/test_app_mesh_gateway_ack_policy.dir/tests/test_app_mesh_gateway_ack_policy.c.o
+[ 73%] Building C object CMakeFiles/test_app_mesh_ch9_ack.dir/app/src/app_mesh_ch9_ack.c.o
+[ 73%] Linking C executable test_app_mesh_route_wait_tx
+[ 73%] Building C object CMakeFiles/test_mesh_relay.dir/tests/test_mesh_relay.c.o
+[ 73%] Built target test_uwb_session
+[ 73%] Building C object CMakeFiles/test_mesh_c5_delivery.dir/tests/test_mesh_c5_delivery.c.o
+[ 73%] Linking C executable test_app_mesh_route_request_policy
+[ 73%] Linking C executable test_app_mesh_gateway_ack_policy
+[ 73%] Building C object CMakeFiles/test_app_mesh_ch9_ack.dir/tests/test_app_mesh_ch9_ack.c.o
+[ 73%] Building C object CMakeFiles/test_mesh_outbox_class_matrix.dir/tests/test_mesh_outbox_class_matrix.c.o
+[ 73%] Built target test_app_mesh_route_wait_tx
+[ 73%] Built target test_app_mesh_route_request_policy
+[ 73%] Built target test_app_mesh_gateway_ack_policy
+[ 74%] Linking C executable test_mesh_outbox_class_matrix
+[ 74%] Building C object CMakeFiles/test_mesh_route_adv_policy.dir/tests/test_mesh_route_adv_policy.c.o
+[ 75%] Building C object CMakeFiles/test_mesh_downlink_capacity.dir/tests/test_mesh_downlink_capacity.c.o
+[ 75%] Building C object CMakeFiles/test_mesh_result_grant_retry_scenarios.dir/tests/mesh_integration/test_mesh_result_grant_retry_scenarios.c.o
+[ 75%] Built target test_mesh_outbox_class_matrix
+[ 75%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim.c.o
+[ 75%] Linking C executable test_mesh_downlink_capacity
+[ 76%] Linking C executable test_mesh_c5_delivery
+[ 77%] Building C object CMakeFiles/test_serial_frame.dir/tests/test_serial_frame.c.o
+[ 78%] Linking C executable test_mesh_result_grant_retry_scenarios
+[ 78%] Built target test_mesh_downlink_capacity
+[ 78%] Built target test_mesh_c5_delivery
+[ 78%] Linking C executable test_serial_frame
+[ 79%] Linking C executable test_app_mesh_ch9_ack
+[ 79%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_connection.c.o
+[ 80%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_events.c.o
+[ 80%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_invariants.c.o
+[ 80%] Linking C executable test_mesh_route_adv_policy
+[ 80%] Built target test_mesh_result_grant_retry_scenarios
+[ 80%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_radio.c.o
+[ 80%] Built target test_serial_frame
+[ 80%] Built target test_app_mesh_ch9_ack
+[ 80%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_relay.c.o
+[ 81%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_scheduler.c.o
+[ 81%] Built target test_mesh_route_adv_policy
+[ 81%] Building C object CMakeFiles/mesh_sim.dir/sim/mesh_sim_trace.c.o
+[ 81%] Building C object CMakeFiles/test_report.dir/tests/test_report.c.o
+[ 81%] Building C object CMakeFiles/test_packet_initializers.dir/tests/test_packet_initializers.c.o
+[ 81%] Linking C executable test_debug_log
+[ 81%] Building C object CMakeFiles/test_dwm3000_models.dir/tests/mesh_integration/test_dwm3000_models.c.o
+[ 82%] Linking C executable test_packet_initializers
+[ 82%] Building C object CMakeFiles/test_multi_anchor_timing_invariants.dir/tests/mesh_integration/test_multi_anchor_timing_invariants.c.o
+[ 83%] Building C object CMakeFiles/test_gateway_ble_transport_model.dir/tests/mesh_integration/test_gateway_ble_transport_model.c.o
+[ 83%] Built target test_debug_log
+[ 83%] Linking C static library libmesh_sim.a
+[ 83%] Built target test_packet_initializers
+[ 83%] Building C object CMakeFiles/test_stack_budget_model.dir/tests/mesh_integration/test_stack_budget_model.c.o
+[ 84%] Linking C executable test_report
+[ 84%] Building C object CMakeFiles/test_mesh_discovery_assignment_adversarial_scenarios.dir/tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c.o
+[ 84%] Linking C executable test_dwm3000_models
+[ 84%] Linking C executable test_gateway_ble_transport_model
+[ 85%] Linking C executable test_multi_anchor_timing_invariants
+[ 85%] Built target mesh_sim
+[ 85%] Built target test_report
+[ 85%] Built target test_dwm3000_models
+[ 85%] Building C object CMakeFiles/test_assignment_claim_fresh_handle_scenarios.dir/tests/mesh_integration/test_assignment_claim_fresh_handle_scenarios.c.o
+[ 85%] Linking C executable test_stack_budget_model
+[ 85%] Built target test_gateway_ble_transport_model
+[ 85%] Building C object CMakeFiles/test_mesh_protocol_lifecycle_scenarios.dir/tests/mesh_integration/test_mesh_protocol_lifecycle_scenarios.c.o
+[ 85%] Built target test_multi_anchor_timing_invariants
+[ 85%] Building C object CMakeFiles/test_mesh_gateway_control_stress_scenarios.dir/app/src/app_gateway_command_ingress.c.o
+[ 85%] Linking C executable test_node_comm_delivery_stress_scenarios
+[ 85%] Building C object CMakeFiles/test_mesh_route_recovery_scenarios.dir/tests/mesh_integration/test_mesh_route_recovery_scenarios.c.o
+[ 85%] Built target test_stack_budget_model
+[ 85%] Linking C executable test_assignment_claim_fresh_handle_scenarios
+[ 85%] Built target test_node_comm_delivery_stress_scenarios
+[ 86%] Building C object CMakeFiles/test_mesh_gateway_control_stress_scenarios.dir/app/src/app_gateway_command_lifecycle.c.o
+[ 86%] Building C object CMakeFiles/test_mesh_direct_probe_recovery_scenarios.dir/tests/mesh_integration/test_mesh_direct_probe_recovery_scenarios.c.o
+[ 86%] Built target test_assignment_claim_fresh_handle_scenarios
+[ 86%] Building C object CMakeFiles/test_mesh_route_formation_scenarios.dir/tests/mesh_integration/test_mesh_route_formation_scenarios.c.o
+[ 87%] Linking C executable test_mesh_protocol_lifecycle_scenarios
+[ 87%] Building C object CMakeFiles/test_mesh_gateway_control_stress_scenarios.dir/app/src/app_gateway_command_observability.c.o
+[ 88%] Linking C executable test_mesh_direct_probe_recovery_scenarios
+[ 88%] Building C object CMakeFiles/test_mesh_forcedhop_connection_scenarios.dir/app/src/app_mesh_c5_priority.c.o
+[ 88%] Linking C executable test_mesh_discovery_assignment_adversarial_scenarios
+[ 88%] Linking C executable test_mesh_route_recovery_scenarios
+[ 88%] Built target test_mesh_direct_probe_recovery_scenarios
+[ 88%] Building C object CMakeFiles/test_mesh_gateway_control_stress_scenarios.dir/app/src/app_mesh_flood.c.o
+[ 88%] Built target test_mesh_protocol_lifecycle_scenarios
+[ 88%] Building C object CMakeFiles/test_mesh_gateway_control_stress_scenarios.dir/app/src/app_mesh_rx_policy.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_forcedhop_connection_scenarios.dir/app/src/app_mesh_ch9_ack.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_forcedhop_connection_scenarios.dir/app/src/app_mesh_route_request_policy.c.o
+[ 89%] Built target test_mesh_discovery_assignment_adversarial_scenarios
+[ 89%] Built target test_mesh_route_recovery_scenarios
+[ 89%] Building C object CMakeFiles/test_mesh_forcedhop_connection_scenarios.dir/tests/mesh_integration/test_mesh_forcedhop_connection_scenarios.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_gateway_control_stress_scenarios.dir/tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_network_stress_scenarios.dir/tests/mesh_integration/test_mesh_network_stress_scenarios.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_click_collision_sweep.dir/tests/mesh_integration/test_mesh_click_collision_sweep.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_click_report_delivery_sweep.dir/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c.o
+[ 89%] Building C object CMakeFiles/test_mesh_click_protocol_chain_scenarios.dir/app/src/app_gateway_ble_stream.c.o
+[ 89%] Linking C executable test_mesh_click_report_delivery_sweep
+[ 89%] Linking C executable test_mesh_click_collision_sweep
+[ 89%] Linking C executable test_mesh_gateway_control_stress_scenarios
+[ 89%] Linking C executable test_mesh_route_formation_scenarios
+[ 89%] Linking C executable test_mesh_forcedhop_connection_scenarios
+[ 89%] Built target test_mesh_click_report_delivery_sweep
+[ 89%] Built target test_mesh_click_collision_sweep
+[ 89%] Built target test_mesh_gateway_control_stress_scenarios
+[ 90%] Building C object CMakeFiles/test_mesh_click_protocol_chain_scenarios.dir/app/src/app_gateway_command_observability.c.o
+[ 90%] Building C object CMakeFiles/test_mesh_click_protocol_chain_scenarios.dir/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c.o
+[ 90%] Built target test_mesh_route_formation_scenarios
+[ 90%] Building C object CMakeFiles/test_dwm3000_range_receive_filter.dir/tests/test_dwm3000_range_receive_filter.c.o
+[ 90%] Building C object CMakeFiles/test_gateway_ch9_back_to_back_scenarios.dir/tests/mesh_integration/test_gateway_ch9_back_to_back_scenarios.c.o
+[ 90%] Building C object CMakeFiles/test_dwm3000_range_receive_filter.dir/app/src/dwm3000_driver_handler_contract.c.o
+[ 90%] Built target test_mesh_forcedhop_connection_scenarios
+[ 90%] Building C object CMakeFiles/test_dwm3000_range_absolute_rx.dir/tests/test_dwm3000_range_absolute_rx.c.o
+[ 90%] Linking C executable test_mesh_network_stress_scenarios
+[ 90%] Building C object CMakeFiles/test_dwm3000_driver_handler_boundary.dir/app/src/dwm3000_driver_handler_contract.c.o
+[ 90%] Linking C executable test_gateway_ch9_back_to_back_scenarios
+[ 91%] Building C object CMakeFiles/test_mesh_gateway_ble_scenarios.dir/app/src/app_gateway_ble_stream.c.o
+[ 91%] Built target test_mesh_network_stress_scenarios
+[ 91%] Building C object CMakeFiles/test_dwm3000_driver_handler_boundary.dir/app/src/dwm3000_driver_test_seam.c.o
+[ 91%] Linking C executable test_mesh_click_protocol_chain_scenarios
+[ 91%] Building C object CMakeFiles/test_dwm3000_driver_handler_boundary.dir/tests/mesh_integration/test_dwm3000_driver_handler_boundary.c.o
+[ 91%] Built target test_gateway_ch9_back_to_back_scenarios
+[ 91%] Linking C executable test_dwm3000_range_absolute_rx
+[ 91%] Linking C executable test_dwm3000_range_receive_filter
+[ 91%] Building C object CMakeFiles/test_gateway_ble_pressure_scenarios.dir/app/src/app_gateway_ble_stream.c.o
+[ 91%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_gateway_command_ingress.c.o
+[ 91%] Building C object CMakeFiles/test_mesh_gateway_ble_scenarios.dir/app/src/app_gateway_command_observability.c.o
+[ 91%] Built target test_dwm3000_range_absolute_rx
+[ 92%] Linking C executable test_dwm3000_driver_handler_boundary
+[ 92%] Built target test_mesh_click_protocol_chain_scenarios
+[ 92%] Building C object CMakeFiles/test_mesh_gateway_ble_scenarios.dir/tests/mesh_integration/test_mesh_gateway_ble_scenarios.c.o
+[ 92%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_gateway_command_lifecycle.c.o
+[ 92%] Built target test_dwm3000_range_receive_filter
+[ 92%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_arbitration_zephyr.c.o
+[ 92%] Built target test_dwm3000_driver_handler_boundary
+[ 92%] Building C object CMakeFiles/test_gateway_ble_pressure_scenarios.dir/app/src/app_gateway_command_observability.c.o
+[ 92%] Building C object CMakeFiles/test_gateway_command_observability_scenarios.dir/app/src/app_gateway_command_observability.c.o
+[ 92%] Building C object CMakeFiles/test_mesh_watchdog_lease_scenarios.dir/tests/mesh_integration/test_mesh_watchdog_lease_scenarios.c.o
+[ 93%] Linking C executable test_watchdog_adoption_scenarios
+[ 93%] Building C object CMakeFiles/test_gateway_command_observability_scenarios.dir/tests/mesh_integration/test_gateway_command_observability_scenarios.c.o
+[ 93%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_c5_priority.c.o
+[ 93%] Linking C executable test_mesh_relay
+[ 93%] Building C object CMakeFiles/test_gateway_ble_pressure_scenarios.dir/tests/mesh_integration/test_gateway_ble_pressure_scenarios.c.o
+[ 93%] Built target test_watchdog_adoption_scenarios
+[ 93%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_ch9_ack.c.o
+[ 94%] Linking C executable test_gateway_command_observability_scenarios
+[ 95%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_command_orchestrator.c.o
+[ 95%] Linking C executable test_mesh_gateway_ble_scenarios
+[ 95%] Built target test_mesh_relay
+[ 95%] Built target test_gateway_command_observability_scenarios
+[ 95%] Linking C executable test_mesh_watchdog_lease_scenarios
+[ 95%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_flood.c.o
+[ 95%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_gateway_command_flow.c.o
+[ 95%] Building C object CMakeFiles/test_mesh_sim_trace_scheduler.dir/tests/mesh_integration/test_mesh_sim_trace_scheduler.c.o
+[ 95%] Linking C executable test_gateway_ble_pressure_scenarios
+[ 95%] Building C object CMakeFiles/test_mesh_sim_fault_scenarios.dir/tests/mesh_integration/test_mesh_sim_fault_scenarios.c.o
+[ 95%] Built target test_mesh_gateway_ble_scenarios
+[ 95%] Building C object CMakeFiles/test_mesh_post_operation_liveness_scenarios.dir/tests/mesh_integration/test_mesh_post_operation_liveness_scenarios.c.o
+[ 95%] Built target test_mesh_watchdog_lease_scenarios
+[ 95%] Building C object CMakeFiles/test_mesh_event_control_rf_scenarios.dir/tests/mesh_integration/test_mesh_event_control_rf_scenarios.c.o
+[ 96%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_preemption.c.o
+[ 96%] Built target test_gateway_ble_pressure_scenarios
+[ 96%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/app/src/app_mesh_route_request_policy.c.o
+[ 96%] Building C object CMakeFiles/test_mesh_contact_response_scenarios.dir/tests/mesh_integration/test_mesh_contact_response_scenarios.c.o
+[ 96%] Linking C executable test_mesh_sim_trace_scheduler
+[ 96%] Building C object CMakeFiles/mesh_stress.dir/tests/mesh_integration/mesh_stress_runner.c.o
+[ 96%] Building C object CMakeFiles/test_mesh_app_arbitration_scenarios.dir/tests/mesh_integration/test_mesh_app_arbitration_scenarios.c.o
+[ 96%] Building C object CMakeFiles/test_mesh_result_custody_rf_scenarios.dir/tests/mesh_integration/test_mesh_result_custody_rf_scenarios.c.o
+[ 96%] Linking C executable test_mesh_post_operation_liveness_scenarios
+[ 96%] Built target test_mesh_sim_trace_scheduler
+[ 96%] Linking C executable test_mesh_sim_fault_scenarios
+[ 97%] Building C object CMakeFiles/test_mesh_integration.dir/tests/mesh_integration/test_mesh_integration.c.o
+[ 98%] Linking C executable test_mesh_contact_response_scenarios
+[ 98%] Built target test_mesh_post_operation_liveness_scenarios
+[ 98%] Built target test_mesh_sim_fault_scenarios
+[ 98%] Building C object CMakeFiles/test_mesh_production_scenarios.dir/tests/mesh_integration/test_mesh_production_scenarios.c.o
+[ 98%] Linking C executable test_mesh_event_control_rf_scenarios
+[ 98%] Linking C executable mesh_stress
+[ 98%] Linking C executable test_mesh_app_arbitration_scenarios
+[ 98%] Building C object CMakeFiles/test_mesh_runtime_priority_scenarios.dir/tests/mesh_integration/test_mesh_runtime_priority_scenarios.c.o
+[ 98%] Built target test_mesh_contact_response_scenarios
+[ 99%] Building C object CMakeFiles/test_mesh_wake_scenarios.dir/tests/mesh_integration/test_mesh_wake_scenarios.c.o
+[ 99%] Linking C executable test_mesh_integration
+[ 99%] Built target test_mesh_event_control_rf_scenarios
+[ 99%] Built target mesh_stress
+[ 99%] Built target test_mesh_app_arbitration_scenarios
+[ 99%] Linking C executable test_mesh_result_custody_rf_scenarios
+[ 99%] Building C object CMakeFiles/test_mesh_forcedhop_enumeration_wake_scenarios.dir/tests/mesh_integration/test_mesh_forcedhop_enumeration_wake_scenarios.c.o
+[ 99%] Building C object CMakeFiles/test_mesh_discovery_scenarios.dir/tests/mesh_integration/test_mesh_discovery_scenarios.c.o
+[ 99%] Building C object CMakeFiles/test_mesh_assignment_control_timing_scenarios.dir/tests/mesh_integration/test_mesh_assignment_control_timing_scenarios.c.o
+[ 99%] Linking C executable test_mesh_production_scenarios
+[100%] Linking C executable test_mesh_runtime_priority_scenarios
+[100%] Built target test_mesh_integration
+[100%] Built target test_mesh_result_custody_rf_scenarios
+[100%] Linking C executable test_mesh_wake_scenarios
+[100%] Built target test_mesh_production_scenarios
+[100%] Built target test_mesh_runtime_priority_scenarios
+[100%] Linking C executable test_mesh_forcedhop_enumeration_wake_scenarios
+[100%] Linking C executable test_mesh_assignment_control_timing_scenarios
+[100%] Linking C executable test_mesh_discovery_scenarios
+[100%] Built target test_mesh_wake_scenarios
+[100%] Built target test_mesh_forcedhop_enumeration_wake_scenarios
+[100%] Built target test_mesh_assignment_control_timing_scenarios
+[100%] Built target test_mesh_discovery_scenarios

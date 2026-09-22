@@ -1,0 +1,10 @@
+-- west flash: using runner pyocd
+-- runners.pyocd: Flashing file: build/mesh-clicker-rtt-3a/zephyr/zephyr.hex
+0000872 I Loading /home/tommie/Projects/IMEC2/build/mesh-clicker-rtt-3a/zephyr/zephyr.hex [load_cmd]
+0001046 I Erasing... [loader]
+[---|---|---|---|---|---|---|---|---|----]
+[========================================]
+0010894 I Programming... [loader]
+[---|---|---|---|---|---|---|---|---|----]
+[========================================]
+0015978 I Erased 417792 bytes (102 sectors), programmed 417792 bytes (102 pages), skipped 16384 bytes (4 pages) at 28.40 kB/s [loader]

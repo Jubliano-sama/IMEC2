@@ -1,0 +1,13 @@
+Test project /home/tommie/Projects/IMEC2/firmware/build
+    Start 94: mesh_c5_control_lane_invariants
+1/1 Test #94: mesh_c5_control_lane_invariants ...   Passed    0.03 sec
+
+100% tests passed out of 1
+
+Label Time Summary:
+communication       =   0.03 sec*proc (1 test)
+hardware_models     =   0.03 sec*proc (1 test)
+mesh_integration    =   0.03 sec*proc (1 test)
+static_analysis     =   0.03 sec*proc (1 test)
+
+Total Test time (real) =   0.03 sec

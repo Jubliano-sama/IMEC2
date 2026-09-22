@@ -1,0 +1,22 @@
+Test project /home/tommie/Projects/IMEC2/firmware/build
+    Start 100: app_mesh_c5_batch
+1/4 Test #100: app_mesh_c5_batch ................   Passed    0.00 sec
+    Start 110: route
+2/4 Test #110: route ............................   Passed    0.00 sec
+    Start 131: mesh_relay
+3/4 Test #131: mesh_relay .......................   Passed    0.01 sec
+    Start 132: mesh_c5_delivery
+4/4 Test #132: mesh_c5_delivery .................   Passed    0.00 sec
+
+100% tests passed out of 4
+
+Label Time Summary:
+channel5            =   0.00 sec*proc (1 test)
+communication       =   0.02 sec*proc (3 tests)
+hardware_models     =   0.02 sec*proc (3 tests)
+mesh_integration    =   0.02 sec*proc (3 tests)
+production_seam     =   0.00 sec*proc (1 test)
+protocol            =   0.02 sec*proc (2 tests)
+routing             =   0.02 sec*proc (2 tests)
+
+Total Test time (real) =   0.02 sec

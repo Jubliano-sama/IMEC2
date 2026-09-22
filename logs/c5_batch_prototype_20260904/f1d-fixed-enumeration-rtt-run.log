@@ -1,0 +1,55 @@
+logging to logs/c5_batch_prototype_20260904/f1d-fixed-enumeration-rtt
+attached gateway (E46070D247233537)
+attached anchor_a (E4645C15CB365D30)
+attached anchor_b (E46070D247394D36)
+attached clicker (E4645C15CB0F3B37)
+Error during board uninit:
+Probe error during disconnect:
+close anchor_a: 
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/bench_rtt.py", line 197, in <module>
+    main()
+    ~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/bench_rtt.py", line 170, in main
+    p.poll()
+    ~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/bench_rtt.py", line 72, in poll
+    data = channel.read()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/debug/rtt.py", line 226, in read
+    write_off, read_off = self._target.read_memory_block32(self._offsets_addr, 2)
+                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/core/soc_target.py", line 244, in read_memory_block32
+    return self.selected_core_or_raise.read_memory_block32(addr, size)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/coresight/cortex_m.py", line 648, in read_memory_block32
+    data = self.ap.read_memory_block32(addr, size)
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/utility/concurrency.py", line 29, in _locking
+    return func(self, *args, **kwargs)
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/coresight/ap.py", line 1292, in _read_memory_block32
+    resp += self._read_block32_page(addr, n//4)
+            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/coresight/ap.py", line 1250, in _read_block32_page
+    resp = self.dp.read_ap_multiple(self.address.address + self._reg_offset + MEM_AP_DRW, size)
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/coresight/dap.py", line 1005, in read_ap_multiple
+    return read_ap_multiple_cb()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/coresight/dap.py", line 995, in read_ap_multiple_cb
+    return result_cb()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/probe/cmsis_dap_probe.py", line 658, in read_ap_repeat_callback
+    values = result()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/probe/pydapaccess/dap_access_cmsis_dap.py", line 1123, in reg_read_repeat_cb
+    res = transfer.get_result()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/probe/pydapaccess/dap_access_cmsis_dap.py", line 161, in get_result
+    self.daplink.flush()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/utility/concurrency.py", line 29, in _locking
+    return func(self, *args, **kwargs)
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/probe/pydapaccess/dap_access_cmsis_dap.py", line 887, in flush
+    self._read_packet()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/utility/concurrency.py", line 29, in _locking
+    return func(self, *args, **kwargs)
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/probe/pydapaccess/dap_access_cmsis_dap.py", line 1166, in _read_packet
+    raw_data = self._interface.read()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/pyocd/probe/pydapaccess/interface/pyusb_v2_backend.py", line 243, in read
+    data = self.rcv_data.get(True, self.DEFAULT_USB_TIMEOUT_S)
+KeyboardInterrupt

@@ -1,0 +1,26 @@
+[
+  {
+    "role": "anchor_a",
+    "probe": "E4645C15CB365D30",
+    "ficr_bytes": "5abb8e9b787f2046"
+  },
+  {
+    "role": "anchor_b",
+    "probe": "E46070D247394D36",
+    "ficr_bytes": "e12744976857d4df"
+  },
+  {
+    "role": "anchor_d",
+    "probe": "E4645C15CB0F3B37",
+    "ficr_bytes": "2fe8761029758f88",
+    "storage_backup": "logs/production_roles_20260905/E4645C15CB0F3B37-before-role-change-storage.bin",
+    "storage_sha256": "ba99bc3d84755df556f310e4a7d1954062445f1e21262c47ed5d0e519d5d5d7a"
+  },
+  {
+    "role": "clicker",
+    "probe": "E46070D247233537",
+    "ficr_bytes": "ac095e49f6b078a3",
+    "storage_backup": "logs/production_roles_20260905/E46070D247233537-before-role-change-storage.bin",
+    "storage_sha256": "51edf7a499ebc9e0eb2012cb6fae6652021b99b476f035ee63d0021fb552141b"
+  }
+]

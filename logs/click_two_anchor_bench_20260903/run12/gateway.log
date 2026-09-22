@@ -1,0 +1,1434 @@
+34732.505 [0] DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:090e2d7da136b20aee44836a5c83ea4ae3325f996115a59716a285aecdb257b7 epoch=913355943229487002 uptime=2
+34732.505 [0] mesh node identity: ficr=0x849bec898d90a69a node=0x9999888877776666 preset=mesh_gateway
+34732.505 [0] DBG_LED_SELFTEST_CH5_RX
+34732.505 [0] DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+34732.505 [0] DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1008
+34732.505 [0] DBG_GATEWAY_BOOT stage=ble_begin uptime=1022
+34732.505 [0] DBG_GATEWAY_BLE stage=entry enabled=1 uptime=1022
+34732.505 [0] DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=1028
+34732.505 [0] DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=1030
+34732.505 [0] DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=1030
+34732.505 [0] DBG_GATEWAY_BOOT stage=ch9_begin uptime=1030
+34732.505 [0] DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+34732.505 [0] DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=1030
+34732.505 [0] DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+34732.505 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+34732.505 [0] DBG_UWB_TX_CH5
+34732.510 [1] *** Booting nRF Connect SDK v2.9.0-7787b2649840 ***
+34732.510 [1] *** Using Zephyr OS v3.7.99-1f8f3dc29142 ***
+34732.669 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=85128 end=85629 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34732.669 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34732.669 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=85631 rem=500 frames=0 errors=0
+34733.144 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=85631 end=86132 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34733.144 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34733.144 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=86134 rem=500 frames=0 errors=0
+34733.662 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=86134 end=86635 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34733.662 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34733.662 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=86637 rem=500 frames=0 errors=0
+34734.154 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=86637 end=87138 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34734.154 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34734.154 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=87140 rem=500 frames=0 errors=0
+34734.654 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=87140 end=87641 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34734.654 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34734.654 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=87643 rem=500 frames=0 errors=0
+34735.159 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=87643 end=88144 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34735.159 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34735.159 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=88146 rem=500 frames=0 errors=0
+34735.669 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=88146 end=88647 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34735.669 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34735.669 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=88649 rem=500 frames=0 errors=0
+34736.191 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=88649 end=89150 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34736.191 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34736.191 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=89152 rem=500 frames=0 errors=0
+34736.678 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=89152 end=89653 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34736.678 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34736.678 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=89655 rem=500 frames=0 errors=0
+34737.168 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=89655 end=90156 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34737.168 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34737.168 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=90158 rem=500 frames=0 errors=0
+34737.702 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=90158 end=90659 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34737.702 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34737.702 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=90661 rem=500 frames=0 errors=0
+34738.176 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=90661 end=91162 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34738.176 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34738.176 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=91164 rem=500 frames=0 errors=0
+34738.698 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=91164 end=91665 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34738.698 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34738.698 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=91667 rem=500 frames=0 errors=0
+34739.206 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=91667 end=92168 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34739.206 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34739.206 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=92170 rem=500 frames=0 errors=0
+34739.703 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=92170 end=92671 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34739.703 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34739.703 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=92673 rem=500 frames=0 errors=0
+34740.195 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=92673 end=93174 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34740.195 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.195 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93176 rem=500 frames=0 errors=0
+34740.697 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93176 end=93677 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34740.697 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.697 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93679 rem=500 frames=0 errors=0
+34740.858 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93679 end=93833 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34740.858 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34740.858 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.858 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93834 rem=345 frames=0 errors=1
+34740.858 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93834 end=93839 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34740.858 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=345 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34740.858 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.858 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93840 rem=339 frames=0 errors=2
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93840 end=93846 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=339 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34740.910 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93853 end=93859 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34740.910 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93860 rem=489 frames=0 errors=2
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93860 end=93865 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34740.910 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34740.910 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93906 end=93910 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34740.962 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93911 rem=496 frames=0 errors=1
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93911 end=93916 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=496 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34740.962 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93917 rem=489 frames=0 errors=2
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93917 end=93922 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34740.962 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34740.962 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93956 end=93961 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.031 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93964 rem=500 frames=0 errors=0
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93964 end=93968 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.031 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=93969 rem=495 frames=0 errors=1
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=93969 end=93974 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.031 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.031 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94027 end=94033 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.095 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94034 rem=489 frames=0 errors=2
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94034 end=94039 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.095 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94041 rem=500 frames=0 errors=0
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94041 end=94045 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.095 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.095 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94091 end=94097 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.169 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94099 rem=500 frames=0 errors=0
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94099 end=94103 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.169 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94104 rem=495 frames=0 errors=1
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94104 end=94109 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.169 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.169 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94162 end=94167 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.251 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94169 rem=489 frames=0 errors=2
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94169 end=94174 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.251 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94176 rem=500 frames=0 errors=0
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94176 end=94180 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.251 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.251 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94245 end=94251 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.329 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94253 rem=500 frames=0 errors=0
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94253 end=94257 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.329 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94258 rem=495 frames=0 errors=1
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94258 end=94264 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.329 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.329 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.394 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94323 end=94328 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34741.394 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34741.394 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.394 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.394 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.394 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94331 rem=500 frames=0 errors=0
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94331 end=94399 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.455 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94400 rem=431 frames=0 errors=1
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94400 end=94418 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=431 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.455 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94419 rem=412 frames=0 errors=2
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94419 end=94430 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=412 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34741.455 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34741.495 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.940 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94432 end=94933 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34741.971 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34741.971 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=94935 rem=500 frames=0 errors=0
+34742.075 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=94935 end=95035 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.075 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.075 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.075 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95036 rem=399 frames=0 errors=1
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95036 end=95092 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=399 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.142 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95093 rem=342 frames=0 errors=2
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95093 end=95100 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=342 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34742.142 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95103 rem=500 frames=0 errors=0
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95103 end=95108 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.142 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.142 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95135 end=95141 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.226 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95142 rem=493 frames=0 errors=1
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95142 end=95159 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.226 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95160 rem=476 frames=0 errors=2
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95160 end=95167 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34742.226 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34742.226 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95208 end=95224 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.317 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95225 rem=476 frames=0 errors=2
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95225 end=95232 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34742.317 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95235 rem=500 frames=0 errors=0
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95235 end=95240 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.317 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.317 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95307 end=95323 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.415 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95324 rem=476 frames=0 errors=2
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95324 end=95331 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34742.415 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95333 rem=500 frames=0 errors=0
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95333 end=95339 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34742.415 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34742.415 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95406 end=95422 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.514 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95423 rem=476 frames=0 errors=2
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95423 end=95430 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34742.514 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95432 rem=500 frames=0 errors=0
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95432 end=95438 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34742.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34742.514 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.685 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95472 end=95621 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+34742.685 [0] DBG_UWB_RX_CH5
+34742.685 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 flags=0x24 ple
+34742.685 [0] DBG_UWB_RX_CH5
+34742.685 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 q=1
+34742.685 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34742.685 [0] DBG_GWLAT_DECODE at=95622 rx=95618 q=1 fl=0x24 more=0
+34742.685 [0] DBG_GWLAT_HUNT_END at=95622 frames=1 ret=0
+34742.685 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=95623 ret=0
+34742.685 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34742.685 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34742.685 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34742.685 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9699122bd60a64e3 purpose=unknown reason=c5-control-rx
+34742.685 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=unknown reason=c5-control-rx
+34742.685 [0] DBG_GWLAT_DRAIN_ENTER at=95625 rx=95625 msg=0x20 ctl=0
+34742.685 [0] DBG_GWLAT_RESV at=95626 ret=1 ok=1
+34742.763 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=1 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 sequence=0 previous=0 uptime=95677
+34742.763 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=1 sample=1 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 uptime=95682
+34742.763 [0] DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+34742.763 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=1 sample=1
+34742.763 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=1 sample=1
+34742.763 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=1 sample=1
+34742.763 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=1 sample=1
+34742.763 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=1 sample=1
+34742.825 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=1 sample=1
+34742.825 [0] DBG_STACK_SAMPLE_END run=1 sample=1
+34742.825 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=1 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=7 short_drops=1880 sequence=0 previous=0 uptime=95761
+34742.825 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95647 end=95765 ret=0 fail=0 status=0x00006f00 len=299 frames=1
+34742.825 [0] DBG_UWB_RX_CH5
+34742.825 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+34742.825 [0] DBG_UWB_RX_CH5
+34742.825 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+34742.825 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34742.825 [0] DBG_GWLAT_DECODE at=95767 rx=95763 q=1 fl=0x24 more=0
+34742.825 [0] DBG_GWLAT_HUNT_END at=95767 frames=2 ret=0
+34742.825 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=95768 ret=0
+34742.825 [0] DBG_UWB_TX_CH5
+34742.889 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=2 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 sequence=0 previous=0 uptime=95822
+34742.889 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=2 sample=2 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 uptime=95823
+34742.889 [0] DBG_STACK_ISR_CONFIG size=8192 run=2 sample=2
+34742.889 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=2 sample=2
+34742.889 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=2 sample=2
+34742.889 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=2 sample=2
+34742.889 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=2 sample=2
+34742.889 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=2 sample=2
+34742.926 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=2 sample=2
+34742.926 [0] DBG_STACK_SAMPLE_END run=2 sample=2
+34742.926 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=2 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=7 short_drops=1907 sequence=0 previous=0 uptime=95887
+34742.990 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95792 end=95973 ret=-116 fail=0 status=0x00000000 len=0 frames=2
+34742.990 [0] DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+34742.990 [0] DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+34742.990 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34742.990 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=95974 rem=500 frames=0 errors=0
+34743.518 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=95974 end=96475 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34743.518 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34743.518 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=96477 rem=500 frames=0 errors=0
+34743.994 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=96477 end=96978 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34743.994 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34743.994 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=96980 rem=500 frames=0 errors=0
+34744.501 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=96980 end=97481 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34744.501 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34744.501 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=97483 rem=500 frames=0 errors=0
+34744.997 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=97483 end=97984 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34744.997 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34744.997 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=97986 rem=500 frames=0 errors=0
+34745.506 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=97986 end=98487 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34745.506 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34745.506 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=98489 rem=500 frames=0 errors=0
+34746.021 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=98489 end=98990 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34746.021 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34746.021 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=98992 rem=500 frames=0 errors=0
+34746.522 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=98992 end=99493 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34746.522 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34746.522 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=99495 rem=500 frames=0 errors=0
+34747.048 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=99495 end=99996 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34747.048 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34747.048 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=99998 rem=500 frames=0 errors=0
+34747.520 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=99998 end=100499 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34747.520 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34747.520 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=100501 rem=500 frames=0 errors=0
+34748.033 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=100501 end=101002 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34748.033 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34748.033 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=101004 rem=500 frames=0 errors=0
+34748.525 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=101004 end=101505 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34748.525 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34748.525 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=101507 rem=500 frames=0 errors=0
+34749.034 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=101507 end=102008 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34749.034 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34749.034 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=102010 rem=500 frames=0 errors=0
+34749.565 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=102010 end=102511 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34749.565 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34749.565 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=102513 rem=500 frames=0 errors=0
+34750.044 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=102513 end=103014 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34750.044 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34750.044 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=103016 rem=500 frames=0 errors=0
+34750.559 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=103016 end=103517 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34750.559 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34750.559 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=103519 rem=500 frames=0 errors=0
+34751.012 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=103519 end=103994 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.012 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.012 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.012 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=103995 rem=24 frames=0 errors=1
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=103995 end=104000 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=24 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.065 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104001 rem=18 frames=0 errors=2
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104001 end=104006 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=18 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.065 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104009 end=104013 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.065 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.065 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104014 rem=495 frames=0 errors=1
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104059 end=104064 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.118 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104067 rem=500 frames=0 errors=0
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104067 end=104071 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.118 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104072 rem=494 frames=0 errors=1
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104072 end=104077 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.118 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104111 end=104116 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.172 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104117 rem=488 frames=0 errors=2
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104117 end=104122 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.172 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104125 rem=500 frames=0 errors=0
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104125 end=104129 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.172 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104169 end=104174 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.223 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104175 rem=489 frames=0 errors=2
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104175 end=104180 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.223 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104182 rem=500 frames=0 errors=0
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104182 end=104186 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.223 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.278 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104221 rem=500 frames=0 errors=0
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104221 end=104225 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.278 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104226 rem=495 frames=0 errors=1
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104226 end=104232 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.278 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104233 rem=488 frames=0 errors=2
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104233 end=104238 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.278 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.278 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104271 end=104277 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.347 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104279 rem=500 frames=0 errors=0
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104279 end=104283 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.347 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104284 rem=495 frames=0 errors=1
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104284 end=104290 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.347 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104342 end=104347 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.433 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104349 rem=489 frames=0 errors=2
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104349 end=104354 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.433 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104356 rem=500 frames=0 errors=0
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104356 end=104360 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.433 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104426 end=104432 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34751.515 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104434 rem=500 frames=0 errors=0
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104434 end=104438 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.515 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104439 rem=495 frames=0 errors=1
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104439 end=104445 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.515 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104492 end=104560 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.625 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104561 rem=431 frames=0 errors=1
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104561 end=104579 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=431 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34751.625 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=104580 rem=412 frames=0 errors=2
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104580 end=104591 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=412 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34751.625 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34752.103 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=104594 end=105094 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34752.134 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.134 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105096 rem=500 frames=0 errors=0
+34752.237 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105096 end=105198 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.237 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.237 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.237 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105199 rem=398 frames=0 errors=1
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105199 end=105255 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=398 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.297 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105256 rem=340 frames=0 errors=2
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105256 end=105263 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=340 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34752.297 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105265 rem=500 frames=0 errors=0
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105265 end=105271 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.297 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105290 end=105297 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34752.384 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105299 rem=500 frames=0 errors=0
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105299 end=105305 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.384 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105306 rem=493 frames=0 errors=1
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105306 end=105321 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.384 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105371 end=105387 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34752.472 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105389 rem=476 frames=0 errors=2
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105389 end=105396 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34752.472 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105398 rem=500 frames=0 errors=0
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105398 end=105403 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.472 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105463 end=105469 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.565 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105470 rem=493 frames=0 errors=1
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105470 end=105486 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.565 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105488 rem=476 frames=0 errors=2
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105488 end=105494 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34752.565 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34752.655 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105562 rem=500 frames=0 errors=0
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105562 end=105568 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34752.655 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105569 rem=494 frames=0 errors=1
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105569 end=105585 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34752.655 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=105586 rem=476 frames=0 errors=2
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105586 end=105593 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34752.655 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34752.655 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34752.837 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105635 end=105752 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+34752.837 [0] DBG_UWB_RX_CH5
+34752.837 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+34752.837 [0] DBG_UWB_RX_CH5
+34752.837 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+34752.837 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34752.837 [0] DBG_GWLAT_DECODE at=105753 rx=105749 q=1 fl=0x24 more=0
+34752.837 [0] DBG_GWLAT_HUNT_END at=105753 frames=1 ret=0
+34752.837 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=105754 ret=0
+34752.837 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34752.837 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34752.837 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34752.837 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=expired
+34752.837 [0] DBG_C5_CONTACT phase=open state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34752.837 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34752.913 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=3 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 sequence=0 previous=0 uptime=105809
+34752.913 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=3 sample=3 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 uptime=105834
+34752.913 [0] DBG_STACK_ISR_CONFIG size=8192 run=3 sample=3
+34752.913 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=3 sample=3
+34752.913 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=3 sample=3
+34752.913 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=3 sample=3
+34752.913 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=3 sample=3
+34752.913 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=3 sample=3
+34752.973 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=3 sample=3
+34752.973 [0] DBG_STACK_SAMPLE_END run=3 sample=3
+34752.973 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=3 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=7 short_drops=2299 sequence=0 previous=0 uptime=105911
+34752.973 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105779 end=105933 ret=0 fail=0 status=0x00006f00 len=299 frames=1
+34752.973 [0] DBG_UWB_RX_CH5
+34752.973 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 flags=0x24 ple
+34752.973 [0] DBG_UWB_RX_CH5
+34752.973 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 q=1
+34752.973 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34752.973 [0] DBG_GWLAT_DECODE at=105935 rx=105931 q=1 fl=0x24 more=0
+34752.973 [0] DBG_GWLAT_HUNT_END at=105935 frames=2 ret=0
+34752.973 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=105936 ret=0
+34753.037 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=4 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 sequence=0 previous=0 uptime=105991
+34753.037 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=4 sample=4 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 uptime=105991
+34753.037 [0] DBG_STACK_ISR_CONFIG size=8192 run=4 sample=4
+34753.037 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=4 sample=4
+34753.037 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=4 sample=4
+34753.037 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=4 sample=4
+34753.037 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=4 sample=4
+34753.037 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=4 sample=4
+34753.074 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=4 sample=4
+34753.074 [0] DBG_STACK_SAMPLE_END run=4 sample=4
+34753.074 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=4 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=7 short_drops=2327 sequence=0 previous=0 uptime=106035
+34753.163 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=105961 end=106136 ret=-116 fail=0 status=0x00000000 len=0 frames=2
+34753.163 [0] DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+34753.163 [0] DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+34753.163 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34753.163 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=106137 rem=500 frames=0 errors=0
+34753.651 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=106137 end=106638 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34753.651 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34753.651 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=106640 rem=500 frames=0 errors=0
+34754.167 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=106640 end=107141 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34754.167 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34754.167 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=107143 rem=500 frames=0 errors=0
+34754.661 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=107143 end=107644 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34754.661 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34754.661 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=107646 rem=500 frames=0 errors=0
+34755.176 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=107646 end=108147 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34755.176 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34755.176 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=108149 rem=500 frames=0 errors=0
+34755.614 [0] DBG_GATEWAY_BLE event=connected err=0 uptime=108595
+34755.614 [0] DBG_GATEWAY_BLE event=param-request ret=0 interval=24-40 latency=0 timeout_ms=12000 uptime=108595
+34755.672 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=108149 end=108650 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34755.672 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34755.672 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=108652 rem=500 frames=0 errors=0
+34756.166 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=108652 end=109153 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34756.166 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34756.166 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=109155 rem=500 frames=0 errors=0
+34756.411 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=5 kind=ble_backpressure owner=system_workqueue queue=6 custody=6 credit=0 retry=0 drain=6 src=11068027678940948070 dst=11068027678940948070 session=1380838990 seq=61006 type=65 sequence=0 previous=0 uptime=109376
+34756.411 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=5 sample=5 kind=ble_backpressure owner=system_workqueue queue=6 custody=6 credit=0 retry=0 drain=6 src=11068027678940948070 dst=11068027678940948070 session=1380838990 seq=61006 type=65 uptime=109377
+34756.411 [0] DBG_STACK_ISR_CONFIG size=8192 run=5 sample=5
+34756.411 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=5 sample=5
+34756.411 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=5 sample=5
+34756.411 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=5 sample=5
+34756.411 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=5 sample=5
+34756.411 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=5 sample=5
+34756.448 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=5 sample=5
+34756.448 [0] DBG_STACK_SAMPLE_END run=5 sample=5
+34756.448 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=5 kind=ble_backpressure owner=system_workqueue outcome=ack queue=6 custody=0 credit=1 retry=0 drain=6 src=11068027678940948070 dst=11068027678940948070 session=1380838990 seq=61006 type=65 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=7 short_drops=2327 sequence=0 previous=0 uptime=109408
+34756.684 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=109155 end=109656 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34756.684 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34756.684 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=109658 rem=500 frames=0 errors=0
+34756.954 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=109916
+34756.954 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=6 kind=ble_backpressure owner=system_workqueue queue=5 custody=5 credit=0 retry=0 drain=5 src=11068027678940948070 dst=11068027678940948070 session=18612229 seq=5 type=86 sequence=0 previous=0 uptime=109917
+34756.954 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=6 sample=6 kind=ble_backpressure owner=system_workqueue queue=5 custody=5 credit=0 retry=0 drain=5 src=11068027678940948070 dst=11068027678940948070 session=18612229 seq=5 type=86 uptime=109918
+34756.954 [0] DBG_STACK_ISR_CONFIG size=8192 run=6 sample=6
+34756.954 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=6 sample=6
+34756.954 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=6 sample=6
+34756.954 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=6 sample=6
+34756.954 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=6 sample=6
+34756.992 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=6 sample=6
+34756.992 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=6 sample=6
+34756.992 [0] DBG_STACK_SAMPLE_END run=6 sample=6
+34756.992 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=6 kind=ble_backpressure owner=system_workqueue outcome=ack queue=5 custody=0 credit=1 retry=0 drain=5 src=11068027678940948070 dst=11068027678940948070 session=18612229 seq=5 type=86 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=12 short_drops=2327 sequence=0 previous=0 uptime=109952
+34757.455 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=109923 end=110424 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34757.455 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34757.455 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=110426 rem=500 frames=0 errors=0
+34757.529 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=110501
+34757.529 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=7 kind=ble_backpressure owner=system_workqueue queue=4 custody=4 credit=0 retry=0 drain=4 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 sequence=0 previous=0 uptime=110503
+34757.529 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=7 sample=7 kind=ble_backpressure owner=system_workqueue queue=4 custody=4 credit=0 retry=0 drain=4 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 uptime=110503
+34757.529 [0] DBG_STACK_ISR_CONFIG size=8192 run=7 sample=7
+34757.529 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=7 sample=7
+34757.529 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=7 sample=7
+34757.529 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=7 sample=7
+34757.529 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=7 sample=7
+34757.593 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=7 sample=7
+34757.593 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=7 sample=7
+34757.593 [0] DBG_STACK_SAMPLE_END run=7 sample=7
+34757.593 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=7 sample=8 kind=ble_backpressure owner=system_workqueue queue=4 custody=4 credit=0 retry=0 drain=4 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 uptime=110526
+34757.593 [0] DBG_STACK_ISR_CONFIG size=8192 run=7 sample=8
+34757.593 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=7 sample=8
+34757.593 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=7 sample=8
+34757.593 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=7 sample=8
+34757.593 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=7 sample=8
+34757.593 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=7 sample=8
+34757.659 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=7 sample=8
+34757.659 [0] DBG_STACK_SAMPLE_END run=7 sample=8
+34757.659 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=7 kind=ble_backpressure owner=system_workqueue outcome=ack queue=4 custody=0 credit=1 retry=0 drain=4 src=10851724756609819875 dst=11068027678940948070 session=2042129742 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=17 short_drops=2327 sequence=0 previous=0 uptime=110591
+34758.048 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=110509 end=111009 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34758.048 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34758.048 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=111011 rem=500 frames=0 errors=0
+34758.113 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=111041
+34758.113 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=8 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 sequence=0 previous=0 uptime=111043
+34758.113 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=8 sample=9 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 uptime=111043
+34758.113 [0] DBG_STACK_ISR_CONFIG size=8192 run=8 sample=9
+34758.113 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=8 sample=9
+34758.113 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=8 sample=9
+34758.113 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=8 sample=9
+34758.113 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=8 sample=9
+34758.170 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=8 sample=9
+34758.170 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=8 sample=9
+34758.170 [0] DBG_STACK_SAMPLE_END run=8 sample=9
+34758.170 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=8 sample=10 kind=ble_backpressure owner=system_workqueue queue=3 custody=3 credit=0 retry=0 drain=3 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 uptime=111111
+34758.170 [0] DBG_STACK_ISR_CONFIG size=8192 run=8 sample=10
+34758.170 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=8 sample=10
+34758.170 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=8 sample=10
+34758.170 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=8 sample=10
+34758.170 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=8 sample=10
+34758.170 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=8 sample=10
+34758.210 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=8 sample=10
+34758.210 [0] DBG_STACK_SAMPLE_END run=8 sample=10
+34758.210 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=8 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=1111608711777941592 dst=11068027678940948070 session=2042129742 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=22 short_drops=2327 sequence=0 previous=0 uptime=111168
+34758.574 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=111048 end=111549 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34758.574 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34758.574 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=111551 rem=500 frames=0 errors=0
+34758.671 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=111626
+34758.671 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=9 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 sequence=0 previous=0 uptime=111628
+34758.671 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=9 sample=11 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 uptime=111628
+34758.671 [0] DBG_STACK_ISR_CONFIG size=8192 run=9 sample=11
+34758.671 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=9 sample=11
+34758.671 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=9 sample=11
+34758.671 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=9 sample=11
+34758.671 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=9 sample=11
+34758.717 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=9 sample=11
+34758.717 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=9 sample=11
+34758.717 [0] DBG_STACK_SAMPLE_END run=9 sample=11
+34758.717 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=9 sample=12 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 uptime=111669
+34758.717 [0] DBG_STACK_ISR_CONFIG size=8192 run=9 sample=12
+34758.717 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=9 sample=12
+34758.717 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=9 sample=12
+34758.717 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=9 sample=12
+34758.717 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=9 sample=12
+34758.717 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=9 sample=12
+34758.754 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=9 sample=12
+34758.754 [0] DBG_STACK_SAMPLE_END run=9 sample=12
+34758.754 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=9 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=1111608711777941592 dst=11068027678940948070 session=730607971 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=27 short_drops=2327 sequence=0 previous=0 uptime=111714
+34759.154 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=112121
+34759.154 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=10 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 sequence=0 previous=0 uptime=112123
+34759.154 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=10 sample=13 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 uptime=112123
+34759.154 [0] DBG_STACK_ISR_CONFIG size=8192 run=10 sample=13
+34759.154 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=10 sample=13
+34759.154 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=10 sample=13
+34759.154 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=10 sample=13
+34759.154 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=10 sample=13
+34759.199 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=10 sample=13
+34759.199 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=10 sample=13
+34759.199 [0] DBG_STACK_SAMPLE_END run=10 sample=13
+34759.199 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=10 sample=14 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 uptime=112152
+34759.199 [0] DBG_STACK_ISR_CONFIG size=8192 run=10 sample=14
+34759.199 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=10 sample=14
+34759.199 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=10 sample=14
+34759.199 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=10 sample=14
+34759.199 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=344 free=680 size=1024 ret=0 run=10 sample=14
+34759.199 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=10 sample=14
+34759.234 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=10 sample=14
+34759.234 [0] DBG_STACK_SAMPLE_END run=10 sample=14
+34759.234 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=10 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=730607971 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=32 short_drops=2327 sequence=0 previous=0 uptime=112197
+34759.643 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=112128 end=112629 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34759.643 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34759.643 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=112631 rem=500 frames=0 errors=0
+34759.679 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=112661
+34759.679 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=112631 end=112662 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+34759.679 [0] DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=112663 rem=500 frames=0
+34759.679 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+34759.679 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34759.679 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=112665 rem=500 frames=0 errors=0
+34760.187 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=112665 end=113166 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34760.187 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34760.187 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=113168 rem=500 frames=0 errors=0
+34760.717 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=113168 end=113669 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34760.717 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34760.717 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=113671 rem=500 frames=0 errors=0
+34761.185 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=113671 end=114156 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.185 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.185 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.185 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114157 rem=14 frames=0 errors=1
+34761.185 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114157 end=114163 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.185 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=14 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.185 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.185 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114164 rem=8 frames=0 errors=2
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114164 end=114169 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=8 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.242 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.242 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114183 rem=489 frames=0 errors=2
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114183 end=114188 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.242 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.242 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.242 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114234 end=114240 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.294 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114241 rem=489 frames=0 errors=2
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114241 end=114246 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.294 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114249 rem=500 frames=0 errors=0
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114249 end=114253 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.294 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.346 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114292 rem=495 frames=0 errors=1
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114292 end=114298 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.346 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114299 rem=489 frames=0 errors=2
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114299 end=114304 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.346 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.346 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114306 rem=500 frames=0 errors=0
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.395 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114345 rem=500 frames=0 errors=0
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114345 end=114349 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.395 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114350 rem=495 frames=0 errors=1
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114350 end=114356 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.395 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.395 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114357 rem=488 frames=0 errors=2
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114389 end=114394 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.446 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114395 rem=488 frames=0 errors=2
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114395 end=114401 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.446 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114403 rem=500 frames=0 errors=0
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114403 end=114407 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.446 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114442 end=114446 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.514 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114447 rem=495 frames=0 errors=1
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114447 end=114452 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.514 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114453 rem=489 frames=0 errors=2
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114453 end=114459 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.514 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114511 end=114516 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.592 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114519 rem=500 frames=0 errors=0
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114519 end=114523 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.592 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114524 rem=494 frames=0 errors=1
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114524 end=114529 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.592 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114588 end=114593 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34761.671 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114596 rem=500 frames=0 errors=0
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114596 end=114600 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34761.671 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114601 rem=495 frames=0 errors=1
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114601 end=114606 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.671 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114653 end=114722 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.771 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114723 rem=431 frames=0 errors=1
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114723 end=114741 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=431 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.771 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=114742 rem=411 frames=0 errors=2
+34761.771 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114742 end=114753 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34761.815 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=411 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34761.815 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34761.815 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34762.291 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=114755 end=115256 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34762.291 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.291 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115258 rem=500 frames=0 errors=0
+34762.394 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115258 end=115358 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.394 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.394 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.394 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115359 rem=399 frames=0 errors=1
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115359 end=115415 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=399 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34762.453 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115417 rem=342 frames=0 errors=2
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115417 end=115423 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=342 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34762.453 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115426 rem=500 frames=0 errors=0
+34762.453 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115426 end=115431 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115449 end=115456 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=477 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34762.530 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115459 rem=500 frames=0 errors=0
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115459 end=115464 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.530 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115465 rem=493 frames=0 errors=1
+34762.530 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115465 end=115481 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115525 end=115530 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.618 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115531 rem=493 frames=0 errors=1
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115531 end=115547 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.618 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115548 rem=476 frames=0 errors=2
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115548 end=115555 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34762.618 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115614 end=115621 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=477 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34762.709 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115624 rem=500 frames=0 errors=0
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115624 end=115629 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.709 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115631 rem=493 frames=0 errors=1
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115631 end=115646 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.709 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115697 end=115712 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.804 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115713 rem=477 frames=0 errors=2
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115713 end=115720 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=477 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34762.804 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=115723 rem=500 frames=0 errors=0
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115723 end=115728 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34762.804 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34763.117 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=115796 end=116054 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+34763.117 [0] DBG_UWB_RX_CH5
+34763.117 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+34763.117 [0] DBG_UWB_RX_CH5
+34763.117 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+34763.117 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34763.117 [0] DBG_GWLAT_DECODE at=116055 rx=116051 q=1 fl=0x24 more=0
+34763.117 [0] DBG_GWLAT_HUNT_END at=116056 frames=1 ret=0
+34763.117 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=116056 ret=0
+34763.117 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34763.117 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34763.117 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34763.117 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9699122bd60a64e3 purpose=unknown reason=replace
+34763.117 [0] DBG_C5_CONTACT phase=open state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34763.117 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34763.163 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=11 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 sequence=0 previous=0 uptime=116065
+34763.163 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=11 sample=15 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 uptime=116116
+34763.163 [0] DBG_STACK_ISR_CONFIG size=8192 run=11 sample=15
+34763.163 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=11 sample=15
+34763.163 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=11 sample=15
+34763.163 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=11 sample=15
+34763.163 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=11 sample=15
+34763.163 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=11 sample=15
+34763.209 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=11 sample=15
+34763.209 [0] DBG_STACK_SAMPLE_END run=11 sample=15
+34763.209 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=12 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 sequence=0 previous=0 uptime=116161
+34763.209 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=12 sample=16 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 uptime=116161
+34763.209 [0] DBG_STACK_ISR_CONFIG size=8192 run=12 sample=16
+34763.209 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=12 sample=16
+34763.209 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=12 sample=16
+34763.209 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=12 sample=16
+34763.254 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=12 sample=16
+34763.254 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=12 sample=16
+34763.254 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=12 sample=16
+34763.254 [0] DBG_STACK_SAMPLE_END run=12 sample=16
+34763.254 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=12 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=45 short_drops=2702 sequence=0 previous=0 uptime=116207
+34763.254 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=11 sample=17 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 uptime=116208
+34763.254 [0] DBG_STACK_ISR_CONFIG size=8192 run=11 sample=17
+34763.298 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=11 sample=17
+34763.298 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=11 sample=17
+34763.298 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=11 sample=17
+34763.298 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=11 sample=17
+34763.298 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=11 sample=17
+34763.298 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=11 sample=17
+34763.298 [0] DBG_STACK_SAMPLE_END run=11 sample=17
+34763.298 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=11 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=2988102932 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=45 short_drops=2702 sequence=0 previous=0 uptime=116254
+34763.360 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=116083 end=116298 ret=-116 fail=0 status=0x00000000 len=0 frames=1
+34763.360 [0] DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+34763.360 [0] DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+34763.360 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34763.360 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=116299 rem=500 frames=0 errors=0
+34763.839 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=116299 end=116800 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34763.839 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=116801
+34763.839 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34763.839 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=116804 rem=500 frames=0 errors=0
+34763.839 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=116804 end=116805 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+34763.839 [0] DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=116806 rem=500 frames=0
+34763.839 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+34763.839 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34763.839 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=116808 rem=500 frames=0 errors=0
+34764.351 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=116808 end=117308 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34764.351 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34764.351 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=117310 rem=500 frames=0 errors=0
+34764.839 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=117310 end=117811 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34764.839 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34764.839 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=117813 rem=500 frames=0 errors=0
+34765.185 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=117813 end=118158 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+34765.185 [0] DBG_UWB_RX_CH5
+34765.185 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+34765.185 [0] DBG_UWB_RX_CH5
+34765.185 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+34765.185 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34765.185 [0] DBG_GWLAT_DECODE at=118159 rx=118155 q=1 fl=0x24 more=0
+34765.185 [0] DBG_GWLAT_HUNT_END at=118160 frames=1 ret=0
+34765.185 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=118160 ret=0
+34765.185 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34765.185 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34765.185 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34765.185 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=expired
+34765.185 [0] DBG_C5_CONTACT phase=open state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34765.185 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34765.270 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=118181 end=118204 ret=0 fail=0 status=0x00006f00 len=299 frames=1
+34765.270 [0] DBG_UWB_RX_CH5
+34765.270 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 flags=0x24 ple
+34765.270 [0] DBG_UWB_RX_CH5
+34765.270 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 q=1
+34765.270 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34765.270 [0] DBG_GWLAT_DECODE at=118206 rx=118202 q=1 fl=0x24 more=0
+34765.270 [0] DBG_GWLAT_HUNT_END at=118206 frames=2 ret=0
+34765.270 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=118206 ret=0
+34765.270 [0] DBG_COORD state=gateway-rx owner=gateway-ch9-continuous-rx reason=gateway-rx rx=1 tx=0 relay=0 route=0 ack=0 qack=0
+34765.270 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34765.270 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34765.270 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34765.270 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=replace
+34765.270 [0] DBG_GWLAT_DRAIN_ENTER at=118209 rx=118209 msg=0x20 ctl=0
+34765.355 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=13 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 sequence=0 previous=0 uptime=118215
+34765.355 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=13 sample=18 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 uptime=118267
+34765.355 [0] DBG_STACK_ISR_CONFIG size=8192 run=13 sample=18
+34765.355 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=13 sample=18
+34765.355 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=13 sample=18
+34765.355 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=13 sample=18
+34765.355 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=13 sample=18
+34765.355 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=13 sample=18
+34765.419 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=13 sample=18
+34765.419 [0] DBG_STACK_SAMPLE_END run=13 sample=18
+34765.419 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=14 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 sequence=0 previous=0 uptime=118352
+34765.419 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=14 sample=19 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 uptime=118353
+34765.419 [0] DBG_STACK_ISR_CONFIG size=8192 run=14 sample=19
+34765.419 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=14 sample=19
+34765.419 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=14 sample=19
+34765.419 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=14 sample=19
+34765.463 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=14 sample=19
+34765.463 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=14 sample=19
+34765.463 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=14 sample=19
+34765.463 [0] DBG_STACK_SAMPLE_END run=14 sample=19
+34765.463 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=14 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=63 short_drops=2729 sequence=0 previous=0 uptime=118417
+34765.463 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=13 sample=20 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 uptime=118418
+34765.463 [0] DBG_STACK_ISR_CONFIG size=8192 run=13 sample=20
+34765.509 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=13 sample=20
+34765.509 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=13 sample=20
+34765.509 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=13 sample=20
+34765.509 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=13 sample=20
+34765.509 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=13 sample=20
+34765.509 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=13 sample=20
+34765.509 [0] DBG_STACK_SAMPLE_END run=13 sample=20
+34765.509 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=13 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=2988102932 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=63 short_drops=2729 sequence=0 previous=0 uptime=118463
+34765.844 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=118323 end=118824 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34765.844 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34765.844 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=118826 rem=500 frames=0 errors=0
+34765.985 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=118961
+34765.985 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=118826 end=118963 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+34765.985 [0] DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=118963 rem=500 frames=0
+34765.985 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+34765.985 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34765.985 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=118965 rem=500 frames=0 errors=0
+34766.480 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=118965 end=119466 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34766.480 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34766.480 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=119468 rem=500 frames=0 errors=0
+34766.992 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=119468 end=119969 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34766.992 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34766.992 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=119971 rem=500 frames=0 errors=0
+34767.542 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=119971 end=120472 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34767.542 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34767.542 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=120474 rem=500 frames=0 errors=0
+34768.031 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=120474 end=120975 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34768.031 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34768.031 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=120977 rem=500 frames=0 errors=0
+34768.495 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=120977 end=121478 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34768.495 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34768.495 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=121480 rem=500 frames=0 errors=0
+34769.011 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=121480 end=121981 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34769.011 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34769.011 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=121983 rem=500 frames=0 errors=0
+34769.493 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=121983 end=122484 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34769.524 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34769.524 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=122486 rem=500 frames=0 errors=0
+34770.014 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=122486 end=122987 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34770.014 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34770.014 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=122989 rem=500 frames=0 errors=0
+34770.503 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=122989 end=123490 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34770.503 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34770.503 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=123492 rem=500 frames=0 errors=0
+34771.126 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=123492 end=123993 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34771.126 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.126 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=123995 rem=500 frames=0 errors=0
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=123995 end=124314 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.351 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124315 rem=180 frames=0 errors=1
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124315 end=124321 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=180 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.351 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124322 rem=174 frames=0 errors=2
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124322 end=124327 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=174 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.351 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.400 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124349 rem=500 frames=0 errors=0
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124349 end=124353 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.400 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124354 rem=495 frames=0 errors=1
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124354 end=124359 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.400 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124360 rem=489 frames=0 errors=2
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124360 end=124366 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.400 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.400 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124392 end=124398 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.450 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124399 rem=489 frames=0 errors=2
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124399 end=124404 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.450 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124407 rem=500 frames=0 errors=0
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124407 end=124411 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.450 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124445 end=124449 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.527 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124450 rem=495 frames=0 errors=1
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124450 end=124456 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.527 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124457 rem=489 frames=0 errors=2
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124457 end=124462 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.527 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124523 end=124527 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.614 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124528 rem=495 frames=0 errors=1
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124528 end=124533 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=495 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.614 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124534 rem=489 frames=0 errors=2
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124534 end=124540 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.614 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.701 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124612 rem=489 frames=0 errors=2
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124612 end=124617 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=489 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.701 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124619 rem=500 frames=0 errors=0
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124619 end=124624 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.701 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124625 rem=495 frames=0 errors=1
+34771.701 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124625 end=124630 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.701 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124697 end=124701 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.786 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124702 rem=494 frames=0 errors=1
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124702 end=124707 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.786 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124708 rem=488 frames=0 errors=2
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124708 end=124714 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.786 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124779 end=124784 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.869 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124785 rem=488 frames=0 errors=2
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124785 end=124791 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=488 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34771.869 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124793 rem=500 frames=0 errors=0
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124793 end=124797 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34771.869 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34771.925 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124813 end=124881 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.925 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.925 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.925 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124882 rem=430 frames=0 errors=1
+34771.925 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124882 end=124900 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.925 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=430 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.925 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34771.925 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=124901 rem=411 frames=0 errors=2
+34771.972 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124901 end=124912 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34771.972 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=411 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34771.972 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34771.972 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34772.448 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=124914 end=125415 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34772.448 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.448 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125417 rem=500 frames=0 errors=0
+34772.551 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125417 end=125517 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+34772.551 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+34772.551 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.551 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125518 rem=399 frames=0 errors=1
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125518 end=125574 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=399 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.605 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125576 rem=342 frames=0 errors=2
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125576 end=125583 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=342 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34772.605 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.605 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125585 rem=500 frames=0 errors=0
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125585 end=125591 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125592 end=125607 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.682 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125608 rem=477 frames=0 errors=2
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125608 end=125615 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=477 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34772.682 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.682 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125618 rem=500 frames=0 errors=0
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125675 end=125682 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34772.770 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125684 rem=500 frames=0 errors=0
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125684 end=125689 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.770 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125691 rem=494 frames=0 errors=1
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125691 end=125706 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.770 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125757 end=125772 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=486 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34772.858 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125775 rem=500 frames=0 errors=0
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125775 end=125780 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.858 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125781 rem=493 frames=0 errors=1
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125781 end=125788 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.858 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=493 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125848 end=125855 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.948 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125856 rem=485 frames=0 errors=2
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125856 end=125871 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=485 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+34772.948 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125874 rem=500 frames=0 errors=0
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125874 end=125879 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34772.948 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34773.042 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125940 end=125945 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34773.042 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34773.042 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34773.042 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125947 rem=494 frames=0 errors=1
+34773.042 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125947 end=125954 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+34773.042 [0] DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=494 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+34773.042 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34773.042 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=125955 rem=486 frames=0 errors=2
+34773.278 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=125955 end=126215 ret=0 fail=0 status=0x00006f00 len=286 frames=0
+34773.278 [0] DBG_UWB_RX_CH5
+34773.278 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+34773.278 [0] DBG_UWB_RX_CH5
+34773.278 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+34773.278 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34773.278 [0] DBG_GWLAT_DECODE at=126217 rx=126213 q=1 fl=0x24 more=0
+34773.278 [0] DBG_GWLAT_HUNT_END at=126217 frames=1 ret=0
+34773.278 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=126217 ret=0
+34773.278 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34773.278 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34773.278 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34773.278 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9699122bd60a64e3 purpose=unknown reason=replace
+34773.278 [0] DBG_C5_CONTACT phase=open state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34773.278 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=c5-control-rx
+34773.325 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=15 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 sequence=0 previous=0 uptime=126226
+34773.325 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=15 sample=21 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 uptime=126275
+34773.325 [0] DBG_STACK_ISR_CONFIG size=8192 run=15 sample=21
+34773.325 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=15 sample=21
+34773.325 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=15 sample=21
+34773.325 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=15 sample=21
+34773.325 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=15 sample=21
+34773.325 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=15 sample=21
+34773.370 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=15 sample=21
+34773.370 [0] DBG_STACK_SAMPLE_END run=15 sample=21
+34773.370 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=16 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 sequence=0 previous=0 uptime=126322
+34773.370 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=16 sample=22 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 uptime=126322
+34773.370 [0] DBG_STACK_ISR_CONFIG size=8192 run=16 sample=22
+34773.370 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=16 sample=22
+34773.370 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=16 sample=22
+34773.370 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=16 sample=22
+34773.415 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=16 sample=22
+34773.415 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=16 sample=22
+34773.415 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=16 sample=22
+34773.415 [0] DBG_STACK_SAMPLE_END run=16 sample=22
+34773.415 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=16 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=76 short_drops=3096 sequence=0 previous=0 uptime=126368
+34773.415 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=15 sample=23 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 uptime=126369
+34773.415 [0] DBG_STACK_ISR_CONFIG size=8192 run=15 sample=23
+34773.460 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=15 sample=23
+34773.460 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=15 sample=23
+34773.460 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=15 sample=23
+34773.460 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=360 free=664 size=1024 ret=0 run=15 sample=23
+34773.460 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=15 sample=23
+34773.460 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=15 sample=23
+34773.460 [0] DBG_STACK_SAMPLE_END run=15 sample=23
+34773.460 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=15 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1676581161 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=76 short_drops=3096 sequence=0 previous=0 uptime=126415
+34773.516 [0] DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+34773.516 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34773.858 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=126836
+34773.858 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=126450 end=126837 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+34773.858 [0] DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=126838 rem=500 frames=0
+34773.858 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+34773.858 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34773.858 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=126840 rem=500 frames=0 errors=0
+34774.363 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=126840 end=127340 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34774.363 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34774.363 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=127342 rem=500 frames=0 errors=0
+34774.876 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=127342 end=127843 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34774.876 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34774.876 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=127845 rem=500 frames=0 errors=0
+34775.368 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=127845 end=128331 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+34775.368 [0] DBG_UWB_RX_CH5
+34775.368 [0] DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 flags=0x24 ple
+34775.368 [0] DBG_UWB_RX_CH5
+34775.368 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 q=1
+34775.368 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x20
+34775.368 [0] DBG_GWLAT_DECODE at=128332 rx=128328 q=1 fl=0x24 more=0
+34775.368 [0] DBG_GWLAT_HUNT_END at=128333 frames=1 ret=0
+34775.368 [0] DBG_GATEWAY_CH9_RX_RELEASE_IDLE at=128333 ret=0
+34775.368 [0] DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+34775.368 [0] DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+34775.368 [0] DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+34775.368 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x0f6d3a3bdac0f858 purpose=unknown reason=replace
+34775.368 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9699122bd60a64e3 purpose=unknown reason=c5-control-rx
+34775.368 [0] DBG_GWLAT_DRAIN_ENTER at=128336 rx=128336 msg=0x20 ctl=0
+34775.368 [0] DBG_GWLAT_RESV at=128337 ret=1 ok=1
+34775.450 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=17 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 sequence=0 previous=0 uptime=128342
+34775.450 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=17 sample=24 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 uptime=128366
+34775.450 [0] DBG_STACK_ISR_CONFIG size=8192 run=17 sample=24
+34775.450 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=17 sample=24
+34775.450 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=17 sample=24
+34775.450 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=17 sample=24
+34775.450 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=376 free=648 size=1024 ret=0 run=17 sample=24
+34775.450 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=17 sample=24
+34775.514 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=17 sample=24
+34775.514 [0] DBG_STACK_SAMPLE_END run=17 sample=24
+34775.514 [0] DBG_STACK_RUN_BEGIN epoch=913355943229487002 run=18 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 sequence=0 previous=0 uptime=128447
+34775.514 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=18 sample=25 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 uptime=128448
+34775.514 [0] DBG_STACK_ISR_CONFIG size=8192 run=18 sample=25
+34775.514 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=18 sample=25
+34775.514 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=18 sample=25
+34775.514 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=18 sample=25
+34775.573 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=376 free=648 size=1024 ret=0 run=18 sample=25
+34775.573 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=18 sample=25
+34775.573 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=18 sample=25
+34775.573 [0] DBG_STACK_SAMPLE_END run=18 sample=25
+34775.573 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=18 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=125 short_drops=3106 sequence=0 previous=0 uptime=128512
+34775.573 [0] DBG_STACK_SAMPLE_BEGIN epoch=913355943229487002 run=17 sample=26 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 uptime=128513
+34775.573 [0] DBG_STACK_ISR_CONFIG size=8192 run=17 sample=26
+34775.625 [0] DBG_STACK name=BT RX WQ tid=0x2000eda8 used=1380 free=412 size=1792 ret=0 run=17 sample=26
+34775.625 [0] DBG_STACK name=mesh_route tid=0x2000c538 used=4392 free=3992 size=8384 ret=0 run=17 sample=26
+34775.625 [0] DBG_STACK name=sysworkq tid=0x2000fd00 used=2008 free=6504 size=8512 ret=0 run=17 sample=26
+34775.625 [0] DBG_STACK name=MPSL Work tid=0x2000fab8 used=376 free=648 size=1024 ret=0 run=17 sample=26
+34775.625 [0] DBG_STACK name=logging tid=0x2000e8b0 used=480 free=1056 size=1536 ret=0 run=17 sample=26
+34775.625 [0] DBG_STACK name=idle tid=0x2000fb90 used=64 free=256 size=320 ret=0 run=17 sample=26
+34775.625 [0] DBG_STACK_SAMPLE_END run=17 sample=26
+34775.625 [0] DBG_STACK_RUN_END epoch=913355943229487002 run=17 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=10851724756609819875 dst=11068027678940948070 session=1676581161 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=125 short_drops=3106 sequence=0 previous=0 uptime=128573
+34775.895 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=128414 end=128860 ret=-116 fail=0 status=0x00000000 len=0 frames=1
+34775.895 [0] DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+34775.895 [0] DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+34775.895 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34775.895 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=128862 rem=500 frames=0 errors=0
+34776.072 [0] DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=129041
+34776.072 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=128862 end=129043 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+34776.072 [0] DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=129043 rem=500 frames=0
+34776.072 [0] DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+34776.072 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34776.072 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=129045 rem=500 frames=0 errors=0
+34776.566 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=129045 end=129546 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34776.566 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34776.566 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=129548 rem=500 frames=0 errors=0
+34777.085 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=129548 end=130049 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34777.085 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34777.085 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=130051 rem=500 frames=0 errors=0
+34777.583 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=130051 end=130552 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34777.583 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34777.583 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=130554 rem=500 frames=0 errors=0
+34778.075 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=130554 end=131055 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34778.075 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34778.075 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=131057 rem=500 frames=0 errors=0
+34778.594 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=131057 end=131558 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34778.594 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34778.594 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=131560 rem=500 frames=0 errors=0
+34779.080 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=131560 end=132061 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34779.080 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34779.080 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=132063 rem=500 frames=0 errors=0
+34779.584 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=132063 end=132564 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34779.584 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34779.584 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=132566 rem=500 frames=0 errors=0
+34780.080 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=132566 end=133067 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34780.080 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34780.080 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=133069 rem=500 frames=0 errors=0
+34780.603 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=133069 end=133570 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34780.603 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34780.603 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=133572 rem=500 frames=0 errors=0
+34781.094 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=133572 end=134073 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34781.094 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34781.094 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=134075 rem=500 frames=0 errors=0
+34781.610 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=134075 end=134576 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34781.610 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34781.610 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=134578 rem=500 frames=0 errors=0
+34782.107 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=134578 end=135079 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+34782.107 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+34782.107 [0] DBG_GATEWAY_CH9_RX_CONT_ARM now=135081 rem=500 frames=0 errors=0

@@ -1,0 +1,10 @@
+50155.374 [0] DBG_STACK_BOOT preset=mesh_clicker build=imec-stack-v1:mesh_clicker:926892790a23f0f901ed0d4298d3dc772f6e826cdc85c99dc174bd76f9552c15 epoch=7305350163733118686 uptime=2
+50155.377 [1] *** Booting nRF Connect SDK v2.9.0-7787b2649840 ***
+50155.377 [1] *** Using Zephyr OS v3.7.99-1f8f3dc29142 ***
+50155.566 [0] mesh node identity: ficr=0x26dc39f01da1f06d node=0x6f917cb35cefb36f preset=mesh_clicker
+50155.566 [0] DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+50155.591 [0] DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1012
+50155.591 [0] DBG_CLICKER_BUTTON signal=2 source=irq_sample at=1018 action=0 ret=0
+50155.591 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+50155.591 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+50156.568 [1] local debug input skipped for retained clicker idle

@@ -1,0 +1,1 @@
+Initial preflight used the pyOCD default auto_unlock=True. Two APPROTECT warnings were emitted, and boards on probes E46070D247394D36 and E4645C15CB365D30 then had blank storage. Their original contents were not backed up before automatic unlock/mass erase. Subsequent operations use auto_unlock=False.

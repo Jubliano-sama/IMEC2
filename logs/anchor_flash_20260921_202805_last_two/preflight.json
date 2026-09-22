@@ -1,0 +1,30 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "reachable": true,
+    "ficr": "0xddc6576302758373",
+    "new_board": true,
+    "storage_sha256": "47c1e930a7de809ed1eb77af1b7d026e6925a0d9e7df30a06e474dd057613adf",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xddc6576302758373",
+        "count": 4
+      }
+    ]
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "reachable": true,
+    "ficr": "0xe99e94d01e918e9b",
+    "new_board": true,
+    "storage_sha256": "31d4256f07670b2d72695a55674c7429512fd7b3586f92f32041d1900be61f5b",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xe99e94d01e918e9b",
+        "count": 4
+      }
+    ]
+  }
+]

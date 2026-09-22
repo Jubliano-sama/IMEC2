@@ -1,0 +1,32 @@
+{
+  "anchor_a": {
+    "build": "mesh-anchor-3a",
+    "ram_free_bytes": 6336,
+    "bin_sha256": "85d41a648a258a2e4064bbd62609975e33a0746ff3905d55939256ec0dc5b922"
+  },
+  "anchor_b": {
+    "build": "mesh-anchor-f1-3a",
+    "ram_free_bytes": 6400,
+    "bin_sha256": "258db69b93c40be0b77fa6930ee836edbd4feeaf323bb331e9041d7e5ddb5cd6"
+  },
+  "anchor_c_f1": {
+    "build": "mesh-anchor-f1-3a",
+    "ram_free_bytes": 6400,
+    "bin_sha256": "258db69b93c40be0b77fa6930ee836edbd4feeaf323bb331e9041d7e5ddb5cd6"
+  },
+  "anchor_c_f2": {
+    "build": "mesh-anchor-f2-3a",
+    "ram_free_bytes": 6400,
+    "bin_sha256": "9de55ccd9daf79574b87b05812168925e214a5bcc98ebc724db627fd2d756ace"
+  },
+  "clicker": {
+    "build": "mesh-clicker-rtt-3a",
+    "ram_free_bytes": 33328,
+    "bin_sha256": "838da8980340f99fe9882d075c330c7dc9de43778b070ea1990e91765f704baf"
+  },
+  "gateway_build_only": {
+    "build": "mesh-gateway-2a",
+    "ram_free_bytes": 5408,
+    "bin_sha256": "95b1736f200e9df2cddaf2d5cb3e81ab7764cb5aa6dd066ac6887c64ff9a769f"
+  }
+}

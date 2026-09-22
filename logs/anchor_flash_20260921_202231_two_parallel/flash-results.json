@@ -1,0 +1,80 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "reachable": true,
+    "ficr": "0xeccb411ad01c0d43",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "1c056a225f7e55e8dacda76c47996283d14a00a04f0b75f30cefe9461b46401d",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xeccb411ad01c0d43",
+        "count": 4
+      }
+    ],
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "flash_started_monotonic": 45507.420582571,
+    "flash_finished_monotonic": 45524.736027712,
+    "elapsed_seconds": 21.791529707996233,
+    "storage_migration": "backed up clicker storage; erased and verified six storage sectors",
+    "node_id": "0xa586045991524e41",
+    "startup_checked": true,
+    "scan_cycles": 65,
+    "startup_log": "startup/anchor_3537.log"
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "reachable": true,
+    "ficr": "0xf92c40599992d2d9",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "7ef0c47a3fee55983282b72183a349f48b8ac9a2e1e6d6fe029472297697178c",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xf92c40599992d2d9",
+        "count": 4
+      }
+    ],
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "flash_started_monotonic": 45507.413911645,
+    "flash_finished_monotonic": 45524.963803363,
+    "elapsed_seconds": 21.91049668999767,
+    "storage_migration": "backed up clicker storage; erased and verified six storage sectors",
+    "node_id": "0xb061051ad8dc91db",
+    "startup_checked": true,
+    "scan_cycles": 64,
+    "startup_log": "startup/anchor_3b37.log"
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "reachable": true,
+    "ficr": "0x592f7f0631d1c602",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "df3398147db7f068600ccc772589530579156ea7a24a7c7f1b706350a60735f9",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0x592f7f0631d1c602",
+        "count": 4
+      }
+    ],
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "flash_started_monotonic": 45507.499733849,
+    "flash_finished_monotonic": 45525.07545649,
+    "elapsed_seconds": 22.06909082999482,
+    "storage_migration": "backed up clicker storage; erased and verified six storage sectors",
+    "node_id": "0x10623a45709f8500",
+    "startup_checked": true,
+    "scan_cycles": 61,
+    "startup_log": "startup/anchor_5d30.log"
+  }
+]

@@ -1,0 +1,375 @@
+-- west build: generating a build system
+Loading Zephyr default modules (Zephyr base).
+-- Application: /home/tommie/Projects/IMEC2/firmware/app
+-- CMake version: 4.4.3
+-- Found Python3: /home/tommie/Projects/IMEC2/.venv/bin/python (found suitable version "3.13.11", minimum required is "3.8") found components: Interpreter
+-- Cache files will be written to: /home/tommie/.cache/zephyr
+-- Zephyr version: 3.7.99 (/home/tommie/Projects/IMEC2/zephyr)
+-- Found west (found suitable version "1.5.0", minimum required is "0.14.0")
+-- Board: nrf52833dk, qualifiers: nrf52833
+-- Found host-tools: zephyr 0.16.8 (/home/tommie/zephyr-sdk-0.16.8)
+-- Found toolchain: zephyr 0.16.8 (/home/tommie/zephyr-sdk-0.16.8)
+-- Found Dtc: /usr/bin/dtc (found suitable version "1.8.1", minimum required is "1.4.6")
+-- Found BOARD.dts: /home/tommie/Projects/IMEC2/zephyr/boards/nordic/nrf52833dk/nrf52833dk_nrf52833.dts
+-- Found devicetree overlay: /home/tommie/Projects/IMEC2/firmware/app/app.overlay
+-- Generated zephyr.dts: /home/tommie/Projects/IMEC2/build/production-anchor-20260905/zephyr/zephyr.dts
+-- Generated devicetree_generated.h: /home/tommie/Projects/IMEC2/build/production-anchor-20260905/zephyr/include/generated/zephyr/devicetree_generated.h
+-- Including generated dts.cmake file: /home/tommie/Projects/IMEC2/build/production-anchor-20260905/zephyr/dts.cmake
+Parsing /home/tommie/Projects/IMEC2/firmware/app/Kconfig
+Loaded configuration '/home/tommie/Projects/IMEC2/zephyr/boards/nordic/nrf52833dk/nrf52833dk_nrf52833_defconfig'
+Merged configuration '/home/tommie/Projects/IMEC2/firmware/app/prj.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/firmware/app/conf/mesh-anchor.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/firmware/app/conf/mesh-route-test.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/build/production-anchor-20260905/imec-mesh-route-test-name.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/firmware/app/conf/mesh-stack-diagnostics.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/build/production-anchor-20260905/imec-durable-state.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/build/production-anchor-20260905/imec-durable-state.conf'
+Merged configuration '/home/tommie/Projects/IMEC2/build/production-anchor-20260905/imec-mesh-route-test-name.conf'
+Configuration saved to '/home/tommie/Projects/IMEC2/build/production-anchor-20260905/zephyr/.config'
+Kconfig header saved to '/home/tommie/Projects/IMEC2/build/production-anchor-20260905/zephyr/include/generated/zephyr/autoconf.h'
+-- Found GnuLd: /home/tommie/zephyr-sdk-0.16.8/arm-zephyr-eabi/arm-zephyr-eabi/bin/ld.bfd (found version "2.38")
+-- The C compiler identification is GNU 12.2.0
+-- The CXX compiler identification is GNU 12.2.0
+-- The ASM compiler identification is GNU
+-- Found assembler: /home/tommie/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc
+-- Setting build type to 'MinSizeRel' as none was specified.
+-- Using ccache: /usr/bin/ccache
+CMake Warning at /home/tommie/Projects/IMEC2/zephyr/CMakeLists.txt:2133 (message):
+  __ASSERT() statements are globally ENABLED
+
+
+-- Configuring done (3.2s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/tommie/Projects/IMEC2/build/production-anchor-20260905
+-- west build: building application
+[1/291] Preparing syscall dependency handling
+
+[2/291] Generating ../../zephyr/include/generated/zephyr_commit.h
+[3/291] Generating ../../zephyr/include/generated/ncs_commit.h
+[4/291] Generating ../../zephyr/include/generated/ncs_version.h
+[5/291] Generating include/generated/zephyr/version.h
+-- Zephyr version: 3.7.99 (/home/tommie/Projects/IMEC2/zephyr), build: 1f8f3dc29142
+[6/291] Generating misc/generated/syscalls_subdirs.trigger
+[7/291] Generating misc/generated/syscalls.json, misc/generated/struct_tags.json
+[8/291] Generating include/generated/zephyr/syscall_dispatch.c, include/generated/zephyr/syscall_list.h
+[9/291] Generating include/generated/zephyr/driver-validation.h
+[10/291] Generating include/generated/zephyr/kobj-types-enum.h, include/generated/zephyr/otype-to-str.h, include/generated/zephyr/otype-to-size.h
+[11/291] Building C object zephyr/CMakeFiles/offsets.dir/arch/arm/core/offsets/offsets.c.obj
+[12/291] Generating include/generated/zephyr/offsets.h
+[13/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/battery_status.c.obj
+[14/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/stack_diag_transport.c.obj
+[15/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/watchdog_adoption.c.obj
+[16/291] Building C object CMakeFiles/app.dir/src/app_anchor_click_event_runtime.c.obj
+[17/291] Building C object zephyr/arch/common/CMakeFiles/isr_tables.dir/isr_tables.c.obj
+[18/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/semantic_digest.c.obj
+[19/291] Building C object CMakeFiles/app.dir/src/app_clicker_event_runtime.c.obj
+[20/291] Building C object CMakeFiles/app.dir/src/app_click_event_sequence.c.obj
+[21/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/node_transaction.c.obj
+[22/291] Building C object CMakeFiles/app.dir/src/app_device_identity.c.obj
+[23/291] Building C object CMakeFiles/app.dir/src/app_battery_indicator.c.obj
+[24/291] Building C object CMakeFiles/app.dir/src/app_gateway_control_sequence.c.obj
+[25/291] Building C object CMakeFiles/app.dir/src/app_gateway_collection_eack.c.obj
+[26/291] Building C object CMakeFiles/app.dir/src/app_gateway_eack_policy.c.obj
+[27/291] Building C object CMakeFiles/app.dir/src/app_radio_guard.c.obj
+[28/291] Building C object CMakeFiles/app.dir/src/app_gateway_command_observability.c.obj
+[29/291] Building C object CMakeFiles/app.dir/src/app_gateway_eack_retry.c.obj
+[30/291] Building C object CMakeFiles/app.dir/src/app_gateway_command_result.c.obj
+[31/291] Building C object CMakeFiles/app.dir/src/app_gateway_collection_recovery.c.obj
+[32/291] Building C object CMakeFiles/app.dir/src/app_ml.c.obj
+[33/291] Building C object CMakeFiles/app.dir/src/app_mesh_command_orchestrator.c.obj
+[34/291] Building C object CMakeFiles/app.dir/src/app_gateway_ble_stream.c.obj
+[35/291] Building C object CMakeFiles/app.dir/src/app_board.c.obj
+[36/291] Building C object CMakeFiles/app.dir/src/app_mesh_c5_priority.c.obj
+[37/291] Building C object CMakeFiles/app.dir/src/app_gateway_ble.c.obj
+/home/tommie/Projects/IMEC2/firmware/app/src/app_gateway_ble.c:2139:13: warning: 'gateway_ble_resume_rx' defined but not used [-Wunused-function]
+ 2139 | static void gateway_ble_resume_rx(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_gateway_ble.c:398:
+WEST_TOPDIR/firmware/app/src/app_gateway_ble.c:2071:12: warning: 'gateway_validate_raw_result_bundle' defined but not used [-Wunused-function]
+/home/tommie/Projects/IMEC2/firmware/app/src/app_gateway_ble.c:239:13: warning: 'gateway_observability_mark_sent_state' defined but not used [-Wunused-function]
+  239 | static void gateway_observability_mark_sent_state(uint32_t event_seq)
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/app/src/app_gateway_ble.c:222:13: warning: 'gateway_observability_snapshot_state' defined but not used [-Wunused-function]
+  222 | static bool gateway_observability_snapshot_state(
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/app/src/app_gateway_ble.c:210:13: warning: 'gateway_observability_pending_terminal_state' defined but not used [-Wunused-function]
+  210 | static bool gateway_observability_pending_terminal_state(
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[38/291] Building C object CMakeFiles/app.dir/src/app_gateway_command_ingress.c.obj
+[39/291] Building C object CMakeFiles/app.dir/src/app_mesh_smoke_fast.c.obj
+[40/291] Building C object CMakeFiles/app.dir/src/app_node_comm_sync.c.obj
+[41/291] Building C object CMakeFiles/app.dir/src/app_node_comm_gateway_control.c.obj
+[42/291] Building C object CMakeFiles/app.dir/src/main.c.obj
+[43/291] Building C object CMakeFiles/app.dir/src/app_radio_recovery.c.obj
+[44/291] Building C object CMakeFiles/app.dir/src/app_mesh_gateway_command_flow.c.obj
+[45/291] Building C object CMakeFiles/app.dir/src/app_durable_state.c.obj
+[46/291] Building C object CMakeFiles/app.dir/src/app_mesh_rx_policy.c.obj
+[47/291] Building C object CMakeFiles/app.dir/src/app_gateway_command_lifecycle.c.obj
+[48/291] Building C object CMakeFiles/app.dir/src/app_mesh_direct_gateway_retry.c.obj
+[49/291] Building C object CMakeFiles/app.dir/src/app_mesh_tx_handoff_gate.c.obj
+[50/291] Building C object CMakeFiles/app.dir/src/app_gateway_assignment_publisher.c.obj
+[51/291] Building C object CMakeFiles/app.dir/src/app_mesh_collection_deferral.c.obj
+[52/291] Building C object CMakeFiles/app.dir/src/app_mesh_preemption.c.obj
+[53/291] Building C object CMakeFiles/app.dir/src/app_mesh_flood.c.obj
+[54/291] Building C object CMakeFiles/app.dir/src/app_mesh_route_ready_handoff.c.obj
+[55/291] Building C object CMakeFiles/app.dir/src/app_mesh_route_reply_ack.c.obj
+[56/291] Building C object CMakeFiles/app.dir/src/app_operation_policy.c.obj
+[57/291] Building C object CMakeFiles/app.dir/src/app_mesh_arbitration_zephyr.c.obj
+[58/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/node_comm.c.obj
+[59/291] Building C object CMakeFiles/app.dir/src/app_mesh_route_request_policy.c.obj
+[60/291] Building C object CMakeFiles/app.dir/src/app_mesh_gateway_ack_policy.c.obj
+[61/291] Building C object CMakeFiles/app.dir/src/app_mesh_route_wait_tx.c.obj
+[62/291] Building C object CMakeFiles/app.dir/src/app_state.c.obj
+[63/291] Building C object CMakeFiles/app.dir/src/app_wake_train_politeness.c.obj
+[64/291] Building C object CMakeFiles/app.dir/src/app_mesh_direct_probe_diag.c.obj
+[65/291] Building C object CMakeFiles/app.dir/src/app_mesh_test.c.obj
+[66/291] Building C object CMakeFiles/app.dir/src/app_mesh_async_route_request.c.obj
+[67/291] Building C object CMakeFiles/app.dir/src/app_mesh_result_handoff.c.obj
+[68/291] Building C object CMakeFiles/app.dir/src/app_mesh_rf_retry.c.obj
+[69/291] Building C object CMakeFiles/app.dir/src/app_stack_diag_record.c.obj
+[70/291] Building C object CMakeFiles/app.dir/src/app_anchor_command_completion.c.obj
+[71/291] Building C object CMakeFiles/app.dir/src/dwm3000_driver_handler_contract.c.obj
+[72/291] Building C object CMakeFiles/app.dir/src/app_mesh_event_retry.c.obj
+[73/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/debug_log.c.obj
+[74/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/device_identity.c.obj
+[75/291] Building C object CMakeFiles/app.dir/src/app_anchor_ranging.c.obj
+[76/291] Building C object CMakeFiles/app.dir/src/app_mesh_ch9_ack.c.obj
+[77/291] Building C object CMakeFiles/app.dir/src/dwm3000_sdk_port.c.obj
+[78/291] Building C object CMakeFiles/app.dir/src/app_stack_diag.c.obj
+[79/291] Building C object CMakeFiles/app.dir/src/app_node_comm_gateway_route_refresh.c.obj
+[80/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/protocol_rx_lifecycle.c.obj
+[81/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/gateway_ble_transport.c.obj
+[82/291] Building C object CMakeFiles/app.dir/src/app_stack_workload_diag.c.obj
+[83/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/dwm3000_timing.c.obj
+[84/291] Building C object CMakeFiles/app.dir/src/app_mesh_report_encode.c.obj
+[85/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_events.c.obj
+[86/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_delivery_loss.c.obj
+[87/291] Building C object CMakeFiles/app.dir/src/app_watchdog.c.obj
+[88/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_state_radio.c.obj
+[89/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_state_control.c.obj
+[90/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_state_click.c.obj
+[91/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/uwb_rf_scope.c.obj
+[92/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/enumeration_response_lane.c.obj
+[93/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/uwb_ble_courtesy.c.obj
+[94/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_state_mesh.c.obj
+[95/291] Building C object CMakeFiles/app.dir/src/dwm3000_port.c.obj
+[96/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_packet_age.c.obj
+[97/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_preemption.c.obj
+[98/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_event_owner_registry.c.obj
+[99/291] Building C object CMakeFiles/app.dir/src/app_survey.c.obj
+/home/tommie/Projects/IMEC2/firmware/app/src/app_survey.c:1414:13: warning: 'gateway_work_handler' defined but not used [-Wunused-function]
+ 1414 | static void gateway_work_handler(struct k_work *work)
+      |             ^~~~~~~~~~~~~~~~~~~~
+[100/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/dwm3000_examples_and_sdk/decadriver/deca_device.c.obj
+[101/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/gateway_membership.c.obj
+[102/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/discovery_assignment.c.obj
+[103/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/protocol.c.obj
+[104/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_event_owner.c.obj
+[105/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_route_path.c.obj
+[106/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/serial_frame.c.obj
+[107/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/status.c.obj
+[108/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/operation_policy.c.obj
+[109/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc32c_sw.c.obj
+[110/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_relay_channel9.c.obj
+[111/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc32_sw.c.obj
+[112/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/gateway_command.c.obj
+[113/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc24_sw.c.obj
+[114/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc16_sw.c.obj
+[115/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc7_sw.c.obj
+[116/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc8_sw.c.obj
+[117/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/crc/crc4_sw.c.obj
+[118/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/uwb_session.c.obj
+[119/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/uwb.c.obj
+[120/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/report.c.obj
+[121/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/survey_protocol.c.obj
+[122/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/sem.c.obj
+[123/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/route.c.obj
+[124/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/printk.c.obj
+[125/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/survey_response_lane.c.obj
+[126/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/survey.c.obj
+[127/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/thread_entry.c.obj
+[128/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/hex.c.obj
+[129/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/dec.c.obj
+[130/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/heap/heap.c.obj
+[131/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/cbprintf_packaged.c.obj
+[132/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/poweroff.c.obj
+[133/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/assert.c.obj
+[134/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/reboot.c.obj
+[135/291] Building C object zephyr/CMakeFiles/zephyr.dir/misc/generated/configs.c.obj
+[136/291] Building C object CMakeFiles/app.dir/src/app_node_comm.c.obj
+[137/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/notify.c.obj
+[138/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/cbprintf_complete.c.obj
+[139/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/timeutil.c.obj
+[140/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/logging/log_cache.c.obj
+[141/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/os/mpsc_pbuf.c.obj
+[142/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh.c.obj
+[143/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/rb.c.obj
+[144/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/mem_mgmt/mem_attr.c.obj
+[145/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/logging/backends/log_backend_rtt.c.obj
+[146/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/tracing/tracing_none.c.obj
+[147/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/pm/device_system_managed.c.obj
+[148/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/storage/flash_map/flash_map.c.obj
+[149/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/bitarray.c.obj
+[150/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/logging/log_mgmt.c.obj
+[151/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/logging/log_output.c.obj
+[152/291] Building C object zephyr/CMakeFiles/zephyr.dir/lib/utils/onoff.c.obj
+[153/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/logging/log_msg.c.obj
+[154/291] Linking C static library zephyr/arch/common/libisr_tables.a
+[155/291] Building ASM object zephyr/arch/arch/arm/core/CMakeFiles/arch__arm__core.dir/nmi_on_reset.S.obj
+[156/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/pm/device.c.obj
+[157/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/storage/flash_map/flash_map_layout.c.obj
+[158/291] Building ASM object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/fault_s.S.obj
+[159/291] Generating linker_zephyr_pre0.cmd
+[160/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/logging/log_core.c.obj
+[161/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/storage/flash_map/flash_map_default.c.obj
+[162/291] Building C object zephyr/arch/common/CMakeFiles/arch__common.dir/sw_isr_common.c.obj
+[163/291] Building C object zephyr/CMakeFiles/zephyr.dir/home/tommie/Projects/IMEC2/nrf/lib/boot_banner/banner.c.obj
+[164/291] Building C object zephyr/arch/arch/arm/core/CMakeFiles/arch__arm__core.dir/nmi.c.obj
+[165/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/exc_exit.c.obj
+[166/291] Building ASM object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/reset.S.obj
+[167/291] Building ASM object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/vector_table.S.obj
+[168/291] Building C object zephyr/CMakeFiles/zephyr.dir/drivers/flash/flash_util.c.obj
+[169/291] Building C object zephyr/arch/arch/arm/core/CMakeFiles/arch__arm__core.dir/tls.c.obj
+[170/291] Building ASM object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/swap_helper.S.obj
+[171/291] Building C object zephyr/arch/arch/arm/core/CMakeFiles/arch__arm__core.dir/fatal.c.obj
+[172/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/fpu.c.obj
+[173/291] Building ASM object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/__aeabi_read_tp.S.obj
+[174/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/swap.c.obj
+[175/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/irq_manage.c.obj
+[176/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/scb.c.obj
+[177/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/thread_abort.c.obj
+[178/291] Building C object zephyr/CMakeFiles/zephyr.dir/subsys/fs/nvs/nvs.c.obj
+[179/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/irq_init.c.obj
+[180/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/prep_c.c.obj
+[181/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/thread.c.obj
+[182/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/cpu_idle.c.obj
+[183/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/isr_wrapper.c.obj
+[184/291] Building C object zephyr/arch/arch/arm/core/mpu/CMakeFiles/arch__arm__core__mpu.dir/arm_core_mpu.c.obj
+[185/291] Building C object zephyr/soc/soc/nrf52833/CMakeFiles/soc__nordic.dir/validate_binding_headers.c.obj
+[186/291] Building C object zephyr/lib/libc/common/CMakeFiles/lib__libc__common.dir/source/stdlib/abort.c.obj
+[187/291] Building C object zephyr/arch/arch/arm/core/mpu/CMakeFiles/arch__arm__core__mpu.dir/arm_mpu_regions.c.obj
+[188/291] Building C object zephyr/soc/soc/nrf52833/CMakeFiles/soc__nordic.dir/validate_enabled_instances.c.obj
+[189/291] Building C object zephyr/lib/libc/picolibc/CMakeFiles/lib__libc__picolibc.dir/libc-hooks.c.obj
+[190/291] Building C object zephyr/soc/soc/nrf52833/CMakeFiles/soc__nordic.dir/validate_base_addresses.c.obj
+[191/291] Building C object zephyr/lib/libc/common/CMakeFiles/lib__libc__common.dir/source/stdlib/malloc.c.obj
+[192/291] Building C object zephyr/soc/soc/nrf52833/CMakeFiles/soc__nordic.dir/common/poweroff.c.obj
+[193/291] Building C object zephyr/drivers/flash/CMakeFiles/drivers__flash.dir/flash_page_layout.c.obj
+[194/291] Building C object zephyr/arch/arch/arm/core/mpu/CMakeFiles/arch__arm__core__mpu.dir/arm_mpu.c.obj
+[195/291] Building C object zephyr/subsys/random/CMakeFiles/subsys__random.dir/random_entropy_device.c.obj
+[196/291] Building C object zephyr/soc/soc/nrf52833/CMakeFiles/soc__nordic.dir/nrf52/soc.c.obj
+[197/291] Building C object zephyr/drivers/adc/CMakeFiles/drivers__adc.dir/adc_common.c.obj
+[198/291] Building C object zephyr/arch/arch/arm/core/cortex_m/CMakeFiles/arch__arm__core__cortex_m.dir/fault.c.obj
+[199/291] Building C object zephyr/drivers/entropy/CMakeFiles/drivers__entropy.dir/entropy_nrf5.c.obj
+[200/291] Building C object zephyr/drivers/pinctrl/CMakeFiles/drivers__pinctrl.dir/common.c.obj
+[201/291] Building C object zephyr/drivers/hwinfo/CMakeFiles/drivers__hwinfo.dir/hwinfo_weak_impl.c.obj
+[202/291] Building C object zephyr/drivers/hwinfo/CMakeFiles/drivers__hwinfo.dir/hwinfo_nrf.c.obj
+[203/291] Building C object zephyr/drivers/flash/CMakeFiles/drivers__flash.dir/soc_flash_nrf.c.obj
+[204/291] Building C object zephyr/drivers/adc/CMakeFiles/drivers__adc.dir/adc_nrfx_saadc.c.obj
+[205/291] Building C object zephyr/drivers/clock_control/CMakeFiles/drivers__clock_control.dir/clock_control_nrf.c.obj
+[206/291] Building C object zephyr/drivers/timer/CMakeFiles/drivers__timer.dir/sys_clock_init.c.obj
+[207/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/mdk/system_nrf52833.c.obj
+[208/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/helpers/nrfx_flag32_allocator.c.obj
+[209/291] Building C object zephyr/drivers/watchdog/CMakeFiles/drivers__watchdog.dir/wdt_nrfx.c.obj
+[210/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/nrfx_glue.c.obj
+[211/291] Building C object CMakeFiles/app.dir/src/dwm3000_driver.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/dwm3000_driver.c:600:
+WEST_TOPDIR/firmware/app/src/dwm3000_driver.c:1706:12: warning: 'wait_status' defined but not used [-Wunused-function]
+[212/291] Building C object zephyr/drivers/timer/CMakeFiles/drivers__timer.dir/nrf_rtc_timer.c.obj
+[213/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/helpers/nrfx_ram_ctrl.c.obj
+[214/291] Building C object modules/segger/CMakeFiles/modules__segger.dir/SEGGER_RTT_zephyr.c.obj
+[215/291] Building C object zephyr/drivers/gpio/CMakeFiles/drivers__gpio.dir/gpio_nrfx.c.obj
+[216/291] Building C object zephyr/drivers/spi/CMakeFiles/drivers__spi.dir/spi_nrfx_common.c.obj
+[217/291] Building C object zephyr/drivers/pinctrl/CMakeFiles/drivers__pinctrl.dir/pinctrl_nrf.c.obj
+[218/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/drivers/src/nrfx_nvmc.c.obj
+[219/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/main_weak.c.obj
+[220/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/init_static.c.obj
+[221/291] Building C object modules/segger/CMakeFiles/modules__segger.dir/home/tommie/Projects/IMEC2/modules/debug/segger/SEGGER/SEGGER_RTT.c.obj
+[222/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/device.c.obj
+[223/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/busy_wait.c.obj
+[224/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/banner.c.obj
+[225/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/version.c.obj
+[226/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/drivers/src/nrfx_clock.c.obj
+[227/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/errno.c.obj
+[228/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/float.c.obj
+[229/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/kheap.c.obj
+[230/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/idle.c.obj
+[231/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/fatal.c.obj
+[232/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/mem_slab.c.obj
+[233/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/init.c.obj
+[234/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/mailbox.c.obj
+[235/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/drivers/src/nrfx_wdt.c.obj
+[236/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/queue.c.obj
+[237/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/msg_q.c.obj
+[238/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/stack.c.obj
+[239/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/sem.c.obj
+[240/291] Building C object CMakeFiles/app.dir/src/app_clicker.c.obj
+[241/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/priority_queues.c.obj
+[242/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/system_work_q.c.obj
+[243/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/condvar.c.obj
+[244/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/spinlock_validate.c.obj
+[245/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/timeslicing.c.obj
+[246/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/xip.c.obj
+[247/291] Building C object zephyr/CMakeFiles/zephyr_pre0.dir/misc/empty_file.c.obj
+[248/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/thread.c.obj
+[249/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/mutex.c.obj
+[250/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/thread_monitor.c.obj
+[251/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/timer.c.obj
+[252/291] Linking C static library zephyr/libzephyr.a
+[253/291] Linking C static library zephyr/arch/common/libarch__common.a
+[254/291] Linking C static library zephyr/arch/arch/arm/core/mpu/libarch__arm__core__mpu.a
+[255/291] Linking C static library zephyr/arch/arch/arm/core/cortex_m/libarch__arm__core__cortex_m.a
+[256/291] Linking C static library zephyr/arch/arch/arm/core/libarch__arm__core.a
+[257/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/mempool.c.obj
+[258/291] Linking C static library zephyr/lib/libc/picolibc/liblib__libc__picolibc.a
+[259/291] Linking C static library zephyr/soc/soc/nrf52833/libsoc__nordic.a
+[260/291] Linking C static library zephyr/lib/libc/common/liblib__libc__common.a
+[261/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/dynamic_disabled.c.obj
+[262/291] Linking C static library zephyr/drivers/adc/libdrivers__adc.a
+[263/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/timeout.c.obj
+[264/291] Linking C static library zephyr/subsys/random/libsubsys__random.a
+[265/291] Linking C static library zephyr/drivers/entropy/libdrivers__entropy.a
+[266/291] Linking C static library zephyr/drivers/clock_control/libdrivers__clock_control.a
+[267/291] Linking C static library zephyr/drivers/flash/libdrivers__flash.a
+[268/291] Linking C static library zephyr/drivers/gpio/libdrivers__gpio.a
+[269/291] Linking C static library zephyr/drivers/hwinfo/libdrivers__hwinfo.a
+[270/291] Linking C static library zephyr/drivers/pinctrl/libdrivers__pinctrl.a
+[271/291] Linking C static library zephyr/drivers/timer/libdrivers__timer.a
+[272/291] Linking C static library zephyr/drivers/watchdog/libdrivers__watchdog.a
+[273/291] Building C object zephyr/drivers/spi/CMakeFiles/drivers__spi.dir/spi_nrfx_spim.c.obj
+[274/291] Linking C static library modules/segger/libmodules__segger.a
+[275/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/work.c.obj
+[276/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/drivers/src/nrfx_spim.c.obj
+[277/291] Linking C static library zephyr/drivers/spi/libdrivers__spi.a
+[278/291] Building C object zephyr/kernel/CMakeFiles/kernel.dir/sched.c.obj
+[279/291] Linking C static library zephyr/kernel/libkernel.a
+[280/291] Building C object modules/hal_nordic/nrfx/CMakeFiles/modules__hal_nordic__nrfx.dir/home/tommie/Projects/IMEC2/modules/hal/nordic/nrfx/drivers/src/nrfx_gpiote.c.obj
+[281/291] Linking C static library modules/hal_nordic/nrfx/libmodules__hal_nordic__nrfx.a
+[282/291] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c.obj
+[283/291] Building C object CMakeFiles/app.dir/src/app_anchor.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_anchor.c:564:
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9274:13: warning: 'anchor_operation_high_duty_boost_begin' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9052:13: warning: 'anchor_enumeration_rx_matches_table' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:6617:13: warning: 'anchor_relay_tx_active' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_anchor.c:563:
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9712:13: warning: 'gateway_route_refresh_observe' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:7787:13: warning: 'gateway_route_refresh_prearm_snapshot' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_anchor.c:562:
+WEST_TOPDIR/firmware/app/src/app_anchor.c:3548:12: warning: 'command_find_u16_tlv' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:2795:12: warning: 'anchor_schedule_late_discovery_claim' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:860:12: warning: 'anchor_send_command_result' defined but not used [-Wunused-function]
+[284/291] Building C object CMakeFiles/app.dir/src/app_mesh_report.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1442:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2208:12: warning: 'mesh_gateway_preflight_semantic_delivery' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2102:12: warning: 'mesh_gateway_commit_preflighted_semantic_delivery' defined but not used [-Wunused-function]
+[285/291] Linking C static library app/libapp.a
+[286/291] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[287/291] Generating linker.cmd
+[288/291] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[289/291] Building C object zephyr/CMakeFiles/zephyr_final.dir/misc/empty_file.c.obj
+[290/291] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[291/291] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      454132 B       488 KB     90.88%
+             RAM:      124736 B       128 KB     95.17%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/Projects/IMEC2/build/production-anchor-20260905/zephyr/zephyr.elf for board: nrf52833dk

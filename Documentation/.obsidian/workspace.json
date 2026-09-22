@@ -20,8 +20,21 @@
               "icon": "lucide-file",
               "title": "IMEC2_Firmware_State_Machine_Design"
             }
+          },
+          {
+            "id": "2b6fdca60828f343",
+            "type": "leaf",
+            "state": {
+              "type": "release-notes",
+              "state": {
+                "currentVersion": "1.13.7"
+              },
+              "icon": "lucide-book-up",
+              "title": "Release Notes 1.13.7"
+            }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -188,7 +201,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "9292d7b884686e8c",
+  "active": "2b6fdca60828f343",
   "lastOpenFiles": [
     "UWB+BLE Architecture.md",
     "IMEC2_Firmware_State_Machine_Design.md"

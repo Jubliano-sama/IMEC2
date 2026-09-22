@@ -1,0 +1,13 @@
+{
+  "probe": "E4645C15CB365D30",
+  "previous_probe": "E46070D247233537",
+  "ficr": "0xddc6576302758373",
+  "storage_sha256": "753c4b9c16362abcd967a0b56be3fa39bbb6527485814075944f93c0944285a5",
+  "durable_roles": [
+    {
+      "role": 1,
+      "device": "0xddc6576302758373",
+      "count": 6
+    }
+  ]
+}

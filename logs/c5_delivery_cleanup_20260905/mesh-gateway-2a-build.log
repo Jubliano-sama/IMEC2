@@ -1,0 +1,127 @@
+[1/58] Building C object CMakeFiles/app.dir/src/app_gateway_eack_policy.c.obj
+[2/58] Building C object CMakeFiles/app.dir/src/app_gateway_collection_eack.c.obj
+[3/58] Building C object CMakeFiles/app.dir/src/app_ml.c.obj
+[4/58] Building C object CMakeFiles/app.dir/src/app_gateway_eack_retry.c.obj
+[5/58] Building C object CMakeFiles/app.dir/src/app_gateway_collection_recovery.c.obj
+[6/58] Building C object CMakeFiles/app.dir/src/app_mesh_command_orchestrator.c.obj
+[7/58] Building C object CMakeFiles/app.dir/src/app_device_identity.c.obj
+[8/58] Building C object CMakeFiles/app.dir/src/app_click_event_sequence.c.obj
+[9/58] Building C object CMakeFiles/app.dir/src/app_mesh_c5_priority.c.obj
+[10/58] Building C object CMakeFiles/app.dir/src/app_mesh_test.c.obj
+[11/58] Building C object CMakeFiles/app.dir/src/app_gateway_control_sequence.c.obj
+[12/58] Building C object CMakeFiles/app.dir/src/app_gateway_command_ingress.c.obj
+[13/58] Building C object CMakeFiles/app.dir/src/app_gateway_command_lifecycle.c.obj
+[14/58] Building C object CMakeFiles/app.dir/src/app_gateway_ble_stream.c.obj
+[15/58] Building C object CMakeFiles/app.dir/src/app_radio_guard.c.obj
+[16/58] Building C object CMakeFiles/app.dir/src/app_mesh_gateway_command_flow.c.obj
+[17/58] Building C object CMakeFiles/app.dir/src/app_node_comm_gateway_control.c.obj
+[18/58] Building C object CMakeFiles/app.dir/src/app_mesh_flood.c.obj
+[19/58] Building C object CMakeFiles/app.dir/src/app_mesh_result_handoff.c.obj
+[20/58] Building C object CMakeFiles/app.dir/src/app_board.c.obj
+/home/tommie/Projects/IMEC2/firmware/app/src/app_board.c:193:12: warning: 'battery_adc_divider_enable' defined but not used [-Wunused-function]
+  193 | static int battery_adc_divider_enable(void)
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/app/src/app_board.c:178:12: warning: 'battery_adc_finish' defined but not used [-Wunused-function]
+  178 | static int battery_adc_finish(int primary_ret)
+      |            ^~~~~~~~~~~~~~~~~~
+[21/58] Building C object CMakeFiles/app.dir/src/app_mesh_preemption.c.obj
+[22/58] Building C object CMakeFiles/app.dir/src/app_mesh_collection_deferral.c.obj
+[23/58] Building C object CMakeFiles/app.dir/src/app_gateway_assignment_publisher.c.obj
+[24/58] Building C object CMakeFiles/app.dir/src/app_node_comm_gateway_route_refresh.c.obj
+[25/58] Building C object CMakeFiles/app.dir/src/main.c.obj
+[26/58] Building C object CMakeFiles/app.dir/src/app_state.c.obj
+[27/58] Building C object CMakeFiles/app.dir/src/app_durable_state.c.obj
+[28/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/firmware_delivery_loss.c.obj
+[29/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_preemption.c.obj
+[30/58] Building C object CMakeFiles/app.dir/src/app_stack_workload_diag.c.obj
+[31/58] Building C object CMakeFiles/app.dir/src/app_mesh_ch9_ack.c.obj
+[32/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_relay_channel9.c.obj
+[33/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/enumeration_response_lane.c.obj
+[34/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/operation_policy.c.obj
+[35/58] Building C object CMakeFiles/app.dir/src/app_stack_diag.c.obj
+[36/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/gateway_membership.c.obj
+[37/58] Building C object CMakeFiles/app.dir/src/app_mesh_report_encode.c.obj
+[38/58] Building C object CMakeFiles/app.dir/src/app_watchdog.c.obj
+[39/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/survey_response_lane.c.obj
+[40/58] Building C object CMakeFiles/app.dir/src/app_survey.c.obj
+/home/tommie/Projects/IMEC2/firmware/app/src/app_survey.c:1199:13: warning: 'anchor_work_handler' defined but not used [-Wunused-function]
+ 1199 | static void anchor_work_handler(struct k_work *work)
+      |             ^~~~~~~~~~~~~~~~~~~
+[41/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/survey.c.obj
+[42/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/discovery_assignment.c.obj
+[43/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/survey_protocol.c.obj
+[44/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/route.c.obj
+[45/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/gateway_command.c.obj
+[46/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh.c.obj
+[47/58] Building C object CMakeFiles/app.dir/src/app_node_comm.c.obj
+[48/58] Building C object CMakeFiles/app.dir/src/app_gateway_ble.c.obj
+[49/58] Building C object CMakeFiles/app.dir/src/app_clicker.c.obj
+[50/58] Building C object CMakeFiles/app.dir/home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c:4562:
+WEST_TOPDIR/firmware/src/mesh_relay.c:5325:12: warning: 'handle_gateway_route_adv' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c:4561:
+WEST_TOPDIR/firmware/src/mesh_relay.c:2629:12: warning: 'result_bundle_enqueue_command_result' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/src/mesh_relay.c:2585:13: warning: 'command_result_can_bundle' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/src/mesh_relay.c:2253:13: warning: 'outbox_record_mark_collection_closed' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/src/mesh_relay.c:2227:13: warning: 'outbox_record_mark_collection_retry' defined but not used [-Wunused-function]
+/home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c:4202:12: warning: 'build_route_request_forward' defined but not used [-Wunused-function]
+ 4202 | static int build_route_request_forward(uint64_t local_id,
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c:4194:13: warning: 'route_solicit_forward_allowed' defined but not used [-Wunused-function]
+ 4194 | static bool route_solicit_forward_allowed(const struct flood_seen_entry *entry)
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/src/mesh_relay.c:4132:33: warning: 'route_solicit_flood_note' defined but not used [-Wunused-function]
+ 4132 | static struct flood_seen_entry *route_solicit_flood_note(
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~
+[51/58] Building C object CMakeFiles/app.dir/src/app_anchor.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_anchor.c:564:
+WEST_TOPDIR/firmware/app/src/app_anchor.c:10878:12: warning: 'anchor_delivery_gateway_confirmed' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:10870:12: warning: 'anchor_delivery_gateway_accepted' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9587:12: warning: 'anchor_compact_enumeration_handle_raw' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9539:12: warning: 'anchor_compact_enumeration_try_tx' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9274:13: warning: 'anchor_operation_high_duty_boost_begin' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9208:12: warning: 'anchor_enumeration_rx_consume_survey_handoff' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:9052:13: warning: 'anchor_enumeration_rx_matches_table' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:8684:12: warning: 'anchor_enumeration_rx_prearm' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:8319:13: warning: 'anchor_handle_mesh_click_wake_claim' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:6617:13: warning: 'anchor_relay_tx_active' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_anchor.c:563:
+WEST_TOPDIR/firmware/app/src/app_anchor.c:5590:17: warning: 'gateway_discovery_assignment_arm_claim_ack_settle_locked' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:5367:13: warning: 'gateway_discovery_assignment_refresh_adaptive_deadline_locked' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:4549:12: warning: 'gateway_discovery_assignment_wake_now' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_anchor.c:562:
+WEST_TOPDIR/firmware/app/src/app_anchor.c:5164:12: warning: 'anchor_handle_local_command' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:3548:12: warning: 'command_find_u16_tlv' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:2795:12: warning: 'anchor_schedule_late_discovery_claim' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:2764:12: warning: 'anchor_survey_upstream' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:860:12: warning: 'anchor_send_command_result' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_anchor.c:554:12: warning: 'anchor_checked_work_reschedule' defined but not used [-Wunused-function]
+[52/58] Building C object CMakeFiles/app.dir/src/app_mesh_report.c.obj
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1449:
+/home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report_c5_batch.inc:561:13: warning: 'mesh_report_delivery_active' defined but not used [-Wunused-function]
+  561 | static bool mesh_report_delivery_active(void) { return false; }
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report_c5_batch.inc:560:12: warning: 'mesh_report_delivery_step' defined but not used [-Wunused-function]
+  560 | static int mesh_report_delivery_step(void) { return -ENOTSUP; }
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1447:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:14609:12: warning: 'mesh_complete_terminal_release' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:14478:12: warning: 'mesh_complete_gateway_ack_confirm' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1446:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:12650:13: warning: 'mesh_channel9_peer_timing_exists' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:12298:12: warning: 'mesh_try_close_channel9_connection' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:10561:13: warning: 'mesh_outbound_is_topology_ack_confirm' defined but not used [-Wunused-function]
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:9989:12: warning: 'mesh_send_event_control' defined but not used [-Wunused-function]
+In file included from /home/tommie/Projects/IMEC2/firmware/app/src/app_mesh_report.c:1442:
+WEST_TOPDIR/firmware/app/src/app_mesh_report.c:2020:12: warning: 'mesh_report_anchor_handle_local_command' defined but not used [-Wunused-function]
+[53/58] Linking C static library app/libapp.a
+[54/58] Linking C executable zephyr/zephyr_pre0.elf; Logical command for additional byproducts on target: zephyr_pre0
+[55/58] Generating linker.cmd
+[56/58] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[57/58] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[58/58] Linking C executable zephyr/zephyr.elf
+Memory region         Used Size  Region Size  %age Used
+           FLASH:      470520 B       488 KB     94.16%
+             RAM:      125664 B       128 KB     95.87%
+        IDT_LIST:          0 GB        32 KB      0.00%
+Generating files from /home/tommie/Projects/IMEC2/build/mesh-gateway-2a/zephyr/zephyr.elf for board: nrf52833dk

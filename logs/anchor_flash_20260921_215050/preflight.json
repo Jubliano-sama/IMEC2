@@ -1,0 +1,26 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "ficr": "0xb423da08310677f6",
+    "storage_sha256": "a03c0459cdd5a8f441e656f7da2e88f17a67a9e22c5453f43a482bb9a2bb65b9",
+    "storage_blank": false
+  },
+  {
+    "probe": "E46070D247394D36",
+    "ficr": "0x636c31ee31bdd9f7",
+    "storage_sha256": "a2a150f11e8a6bca19e9912b7657de3be4eee3e7b5028dda09ff416dd25015a5",
+    "storage_blank": false
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "ficr": "0x6d286c02bda5c581",
+    "storage_sha256": "48dddf716f1f1f1542bd37ffe44eb7f029c9ba2610387f6dd586a8b81c850ae5",
+    "storage_blank": false
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "ficr": "0x86837690927387c7",
+    "storage_sha256": "adacd3ef716bcc16e01f0b96a48229d79746157d750f7f9cdfbce4fb41305e6f",
+    "storage_blank": false
+  }
+]

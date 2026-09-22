@@ -1,0 +1,23 @@
+{
+  "anchor_a": {
+    "attempts": 37,
+    "largest_retained_batch": 3,
+    "successful_peers": [
+      "0x9999888877776666"
+    ]
+  },
+  "anchor_b": {
+    "attempts": 37,
+    "largest_retained_batch": 2,
+    "successful_peers": [
+      "0xf6d3a3bdac0f858"
+    ]
+  },
+  "anchor_c": {
+    "attempts": 48,
+    "largest_retained_batch": 2,
+    "successful_peers": [
+      "0xf6d3a3bdac0f858"
+    ]
+  }
+}

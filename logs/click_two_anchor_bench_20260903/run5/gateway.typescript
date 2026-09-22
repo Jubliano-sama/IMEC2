@@ -1,0 +1,1415 @@
+[34m0000485[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000508[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000520[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000521[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000522[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000526[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000540[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000556[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000562[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000563[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000566[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000568[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000572[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000572[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000572[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000574[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000579[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000581[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000600[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000600[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000601[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=925517 end=925952 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=925975 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=925975 end=926081 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=926103 rem=372 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=926103 end=926476 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_UWB_TX_CH5
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1205475 end=1205975 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1205998 rem=500 frames=0 errors=0
+DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=1206034
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1205998 end=1206035 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=1206036 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1206059 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1206059 end=1206559 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1206583 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1206583 end=1207084 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1207107 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1207107 end=1207608 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1207632 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1207632 end=1208133 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1208156 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1208156 end=1208657 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1208681 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1208681 end=1209182 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1209206 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1209206 end=1209707 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1209731 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1209731 end=1210232 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1210256 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1210256 end=1210757 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1210781 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1210781 end=1211282 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1211306 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1211306 end=1211807 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1211830 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1211830 end=1212331 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1212355 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1212355 end=1212856 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1212879 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1212879 end=1213380 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1213404 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1213404 end=1213904 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1213927 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1213927 end=1214428 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1214452 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1214452 end=1214953 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1214976 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1214976 end=1215477 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1215501 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1215501 end=1216002 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216025 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216025 end=1216526 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216550 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216550 end=1216648 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216671 rem=379 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216671 end=1216674 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=379 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216697 rem=353 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216697 end=1216700 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=353 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216724 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216724 end=1216726 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216749 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216749 end=1216752 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216775 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216775 end=1216778 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216802 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216802 end=1216803 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216826 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216826 end=1216829 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216851 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216851 end=1216854 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216878 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216878 end=1216880 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216902 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216902 end=1216906 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216928 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216928 end=1216932 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216956 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216956 end=1216957 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1216980 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1216980 end=1216983 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217005 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217005 end=1217009 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217032 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217032 end=1217035 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217057 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217057 end=1217060 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217082 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217082 end=1217086 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217109 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217109 end=1217111 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217133 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217133 end=1217136 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217159 rem=451 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217159 end=1217214 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=451 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217238 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217238 end=1217245 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217268 rem=470 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217268 end=1217739 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217763 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217763 end=1217850 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217872 rem=390 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217872 end=1217907 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=390 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217929 rem=333 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217929 end=1217940 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=333 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217964 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217964 end=1217974 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1217996 rem=468 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1217996 end=1218006 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=468 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218029 rem=435 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218029 end=1218039 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=435 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218063 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218063 end=1218072 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218094 rem=468 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218094 end=1218105 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=468 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218127 rem=436 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218127 end=1218139 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=436 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218162 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218162 end=1218171 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218194 rem=469 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218194 end=1218204 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=469 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218227 rem=436 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218227 end=1218238 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=436 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218262 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218262 end=1218270 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1218293 rem=469 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218293 end=1218373 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+DBG_UWB_RX_CH5
+DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+DBG_MESH_RX_DEFERRED q=1 msg=0x20
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=20 cap=1020
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=20
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=19
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=301 payload=299 status=0x00006f00 rearm=0 extended=1
+DBG_UWB_RX_CH5
+DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 flags=0x24 ple
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0x9699122bd60a64e3 dst=0x9999888877776666 prev=0x9699122bd60a64e3 seq=1 q=2
+DBG_MESH_RX_DEFERRED q=2 msg=0x20
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=20 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=1218397 e=1218417 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_MESH_RX_DIRECT_WAIT q=2 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=2 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=2
+DBG_STACK_RUN_BEGIN epoch=851442580962669920 run=23 kind=gateway_report_ingress owner=mesh_route queue=1 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 sequence=0 previous=0 uptime=1218422
+DBG_STACK_SAMPLE_BEGIN epoch=851442580962669920 run=23 sample=23 kind=gateway_report_ingress owner=mesh_route queue=1 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 uptime=1218422
+DBG_STACK_ISR_CONFIG size=8192 run=23 sample=23
+DBG_STACK name=BT RX WQ tid=0x2000ecf0 used=1416 free=376 size=1792 ret=0 run=23 sample=23
+DBG_STACK name=mesh_route tid=0x2000c4d8 used=5448 free=2936 size=8384 ret=0 run=23 sample=23
+DBG_STACK name=sysworkq tid=0x2000fc48 used=2112 free=6400 size=8512 ret=0 run=23 sample=23
+DBG_STACK name=MPSL Work tid=0x2000fa00 used=432 free=592 size=1024 ret=0 run=23 sample=23
+DBG_STACK name=logging tid=0x2000e7f8 used=480 free=1056 size=1536 ret=0 run=23 sample=23
+DBG_STACK name=idle tid=0x2000fad8 used=64 free=256 size=320 ret=0 run=23 sample=23
+DBG_STACK_SAMPLE_END run=23 sample=23
+DBG_STACK_RUN_END epoch=851442580962669920 run=23 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=169 short_drops=12668 sequence=0 previous=0 uptime=1218448
+DBG_STACK_RUN_BEGIN epoch=851442580962669920 run=24 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 sequence=0 previous=0 uptime=1218449
+DBG_STACK_SAMPLE_BEGIN epoch=851442580962669920 run=24 sample=24 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 uptime=1218459
+DBG_STACK_ISR_CONFIG size=8192 run=24 sample=24
+DBG_STACK name=BT RX WQ tid=0x2000ecf0 used=1416 free=376 size=1792 ret=0 run=24 sample=24
+DBG_STACK name=mesh_route tid=0x2000c4d8 used=5448 free=2936 size=8384 ret=0 run=24 sample=24
+DBG_STACK name=sysworkq tid=0x2000fc48 used=2112 free=6400 size=8512 ret=0 run=24 sample=24
+DBG_STACK name=MPSL Work tid=0x2000fa00 used=432 free=592 size=1024 ret=0 run=24 sample=24
+DBG_STACK name=logging tid=0x2000e7f8 used=480 free=1056 size=1536 ret=0 run=24 sample=24
+DBG_STACK name=idle tid=0x2000fad8 used=64 free=256 size=320 ret=0 run=24 sample=24
+DBG_STACK_SAMPLE_END run=24 sample=24
+DBG_STACK_SAMPLE_BEGIN epoch=851442580962669920 run=24 sample=25 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 uptime=1218485
+DBG_STACK_ISR_CONFIG size=8192 run=24 sample=25
+DBG_STACK name=BT RX WQ tid=0x2000ecf0 used=1416 free=376 size=1792 ret=0 run=24 sample=25
+DBG_STACK name=mesh_route tid=0x2000c4d8 used=5448 free=2936 size=8384 ret=0 run=24 sample=25
+DBG_STACK name=sysworkq tid=0x2000fc48 used=2112 free=6400 size=8512 ret=0 run=24 sample=25
+DBG_STACK name=MPSL Work tid=0x2000fa00 used=432 free=592 size=1024 ret=0 run=24 sample=25
+DBG_STACK name=logging tid=0x2000e7f8 used=480 free=1056 size=1536 ret=0 run=24 sample=25
+DBG_STACK name=idle tid=0x2000fad8 used=64 free=256 size=320 ret=0 run=24 sample=25
+DBG_STACK_SAMPLE_END run=24 sample=25
+DBG_STACK_RUN_END epoch=851442580962669920 run=24 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=1051724970 seq=1 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=183 short_drops=12668 sequence=0 previous=0 uptime=1218501
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1218492 end=1218992 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=0 now=1218994
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1219017 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1219017 end=1219517 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1219541 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1219541 end=1220042 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1220065 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1220065 end=1220566 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1220590 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1220590 end=1221091 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1221114 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1221114 end=1221615 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1221639 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1221639 end=1222140 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1222163 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1222163 end=1222193 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1222216 rem=448 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1222216 end=1222495 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=448 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1222518 rem=146 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1222518 end=1222665 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1222689 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1222689 end=1222867 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1222889 rem=299 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1222889 end=1223189 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1223213 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1223213 end=1223412 ret=-5 fail=4 status=0x00010f00 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00010f00 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1223435 rem=278 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1223435 end=1223714 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1223738 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1223738 end=1224002 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1224024 rem=214 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1224024 end=1224239 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1224263 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1224263 end=1224497 ret=-5 fail=4 status=0x00010f00 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00010f00 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1224520 rem=243 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1224520 end=1224764 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1224788 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1224788 end=1225096 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1225118 rem=170 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1225118 end=1225289 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1225313 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1225313 end=1225813 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1225837 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1225837 end=1226338 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1226362 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1226362 end=1226580 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1226603 rem=259 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1226603 end=1226863 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1226886 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1226886 end=1227387 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1227411 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1227411 end=1227912 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1227935 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1227935 end=1228273 ret=-5 fail=4 status=0x00010f00 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00010f00 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1228296 rem=140 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1228296 end=1228436 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1228460 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1228460 end=1228921 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1228944 rem=16 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1228944 end=1228960 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1228983 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1228983 end=1229484 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1229508 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1229508 end=1229573 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1229596 rem=412 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1229596 end=1230009 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1230032 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1230032 end=1230325 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1230348 rem=185 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1230348 end=1230373 ret=-5 fail=4 status=0x00010f00 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=185 errors=2 frames=0 reinit=1 status=0x00010f00 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1230396 rem=137 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1230396 end=1230534 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1230558 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1230558 end=1230901 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1230924 rem=134 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1230924 end=1231058 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1231081 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1231081 end=1231582 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1231606 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1231606 end=1231712 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1231735 rem=371 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1231735 end=1232107 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1232130 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1232130 end=1232228 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1232251 rem=380 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1232251 end=1232632 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1232656 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1232656 end=1232819 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1232841 rem=314 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1232841 end=1233156 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1233179 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1233179 end=1233329 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1233352 rem=328 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1233352 end=1233681 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1233705 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1233705 end=1233991 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1234013 rem=191 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1234013 end=1234205 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1234229 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1234229 end=1234576 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1234599 rem=130 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1234599 end=1234730 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1234754 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1234754 end=1235245 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1235269 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1235269 end=1235770 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1235794 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1235794 end=1235921 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1235943 rem=350 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1235943 end=1236294 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236318 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236318 end=1236649 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236672 rem=146 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236672 end=1236675 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=146 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236698 rem=120 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236698 end=1236700 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=120 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236725 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236725 end=1236726 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236749 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236749 end=1236752 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236775 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236775 end=1236778 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236802 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236802 end=1236803 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236826 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236826 end=1236829 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236851 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236851 end=1236854 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236878 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236878 end=1236880 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236902 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236902 end=1236905 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236927 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236927 end=1236931 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236955 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236955 end=1236957 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1236979 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1236979 end=1236983 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237005 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237005 end=1237009 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237032 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237032 end=1237034 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237056 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237056 end=1237060 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237082 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237082 end=1237086 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237110 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237110 end=1237112 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237135 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237135 end=1237138 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237160 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237160 end=1237215 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237239 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237239 end=1237740 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237764 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237764 end=1237852 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237874 rem=390 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237874 end=1237904 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+DBG_UWB_RX_CH5
+DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 flags=0x24 plen=
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=1 q=1
+DBG_MESH_RX_DEFERRED q=1 msg=0x20
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=20 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=1237907 e=1237927 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_GATEWAY_ACK_GUARD ms=10 seq=6 owner=control
+DBG_COORD state=idle owner=gateway-ack-c5 reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_C5_TX_CONFIG ret=0 ext=1 len=105 msg=32 reason=gateway-ack-c5
+DBG_MESH_TX_AGE msg=32 seq=6 age=6 enc=1237962 rf=1237963 gap=1 air=6
+DBG_MESH_TX_STAGE stage=start msg=32 seq=6 ch=5 seen=1 at=1237963
+DBG_MESH_TX_STAGE stage=complete msg=32 seq=6 ch=5 seen=1 at=1237968 ret=0
+DBG_MESH_TX_STAGE stage=park msg=32 seq=6 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_REARM_DEFER delay=0 ret=1 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=6 dst=0xf6d3a3bdac0f858 next=0xf6d3a3bdac0f858
+DBG_MESH_RX_DRAIN_EXIT owner=gateway-ch9-continuous-rx handled=1 q=0
+DBG_MESH_RX_DIRECT_EXIT handled=1 q=0 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1237992 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1237992 end=1238251 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238274 rem=219 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238274 end=1238276 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=219 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238299 rem=194 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238299 end=1238302 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=194 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238326 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238326 end=1238328 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238351 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238351 end=1238354 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238376 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238376 end=1238380 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238404 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238404 end=1238406 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238428 rem=476 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238428 end=1238431 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=476 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238454 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238454 end=1238457 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238481 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238481 end=1238483 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238506 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238506 end=1238509 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238532 rem=450 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238532 end=1238535 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=450 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238559 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238559 end=1238561 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238584 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238584 end=1238587 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238610 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238610 end=1238612 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238637 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238637 end=1238645 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238668 rem=469 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238668 end=1238671 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=469 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238694 rem=443 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238694 end=1238697 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=443 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238721 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238721 end=1238723 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238746 rem=475 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238746 end=1238749 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=475 errors=2 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238772 rem=449 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238772 end=1238819 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=449 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238842 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238842 end=1238850 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1238872 rem=470 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1238872 end=1239343 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239367 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239367 end=1239455 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239478 rem=389 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239478 end=1239512 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=389 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239535 rem=332 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239535 end=1239545 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=332 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239569 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239569 end=1239578 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239601 rem=468 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239601 end=1239611 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=468 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239634 rem=435 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239634 end=1239644 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=435 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239668 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239668 end=1239678 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239701 rem=467 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239701 end=1239711 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=467 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239733 rem=435 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239733 end=1239743 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=435 errors=3 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239767 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239767 end=1239776 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239799 rem=468 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239799 end=1239809 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=468 errors=2 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239832 rem=435 frames=0 errors=2
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239832 end=1239842 ret=-5 fail=4 status=0x00001300 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=435 errors=3 frames=0 reinit=1 status=0x00001300 phy=4 pac=1 sfd=2 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239866 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239866 end=1239875 ret=-5 fail=4 status=0x00001700 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=500 errors=1 frames=0 reinit=1 status=0x00001700 phy=4 pac=1 sfd=2 phr=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1239897 rem=468 frames=0 errors=1
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1239897 end=1239975 ret=0 fail=0 status=0x00006f00 len=299 frames=0
+DBG_UWB_RX_CH5
+DBG_GATEWAY_RX_DECODE ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=12 flags=0x24 plen
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x20 src=0xf6d3a3bdac0f858 dst=0x9999888877776666 prev=0xf6d3a3bdac0f858 seq=12 q=1
+DBG_MESH_RX_DEFERRED q=1 msg=0x20
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=20 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=1239978 e=1239998 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_STACK_RUN_BEGIN epoch=851442580962669920 run=25 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 sequence=0 previous=0 uptime=1240003
+DBG_STACK_SAMPLE_BEGIN epoch=851442580962669920 run=25 sample=26 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 uptime=1240003
+DBG_STACK_ISR_CONFIG size=8192 run=25 sample=26
+DBG_STACK name=BT RX WQ tid=0x2000ecf0 used=1416 free=376 size=1792 ret=0 run=25 sample=26
+DBG_STACK name=mesh_route tid=0x2000c4d8 used=5448 free=2936 size=8384 ret=0 run=25 sample=26
+DBG_STACK name=sysworkq tid=0x2000fc48 used=2112 free=6400 size=8512 ret=0 run=25 sample=26
+DBG_STACK name=MPSL Work tid=0x2000fa00 used=432 free=592 size=1024 ret=0 run=25 sample=26
+DBG_STACK name=logging tid=0x2000e7f8 used=544 free=992 size=1536 ret=0 run=25 sample=26
+DBG_STACK name=idle tid=0x2000fad8 used=64 free=256 size=320 ret=0 run=25 sample=26
+DBG_STACK_SAMPLE_END run=25 sample=26
+DBG_STACK_RUN_BEGIN epoch=851442580962669920 run=26 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 sequence=0 previous=0 uptime=1240025
+DBG_STACK_SAMPLE_BEGIN epoch=851442580962669920 run=26 sample=27 kind=gateway_report_ingress owner=mesh_route queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 uptime=1240026
+DBG_STACK_ISR_CONFIG size=8192 run=26 sample=27
+DBG_STACK name=BT RX WQ tid=0x2000ecf0 used=1416 free=376 size=1792 ret=0 run=26 sample=27
+DBG_STACK name=mesh_route tid=0x2000c4d8 used=5448 free=2936 size=8384 ret=0 run=26 sample=27
+DBG_STACK name=sysworkq tid=0x2000fc48 used=2112 free=6400 size=8512 ret=0 run=26 sample=27
+DBG_STACK name=MPSL Work tid=0x2000fa00 used=432 free=592 size=1024 ret=0 run=26 sample=27
+DBG_STACK name=logging tid=0x2000e7f8 used=544 free=992 size=1536 ret=0 run=26 sample=27
+DBG_STACK name=idle tid=0x2000fad8 used=64 free=256 size=320 ret=0 run=26 sample=27
+DBG_STACK_SAMPLE_END run=26 sample=27
+DBG_STACK_RUN_END epoch=851442580962669920 run=26 kind=gateway_report_ingress owner=mesh_route outcome=ack queue=0 custody=1 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=183 short_drops=12668 sequence=0 previous=0 uptime=1240054
+DBG_STACK_SAMPLE_BEGIN epoch=851442580962669920 run=25 sample=28 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 uptime=1240055
+DBG_STACK_ISR_CONFIG size=8192 run=25 sample=28
+DBG_STACK name=BT RX WQ tid=0x2000ecf0 used=1416 free=376 size=1792 ret=0 run=25 sample=28
+DBG_STACK name=mesh_route tid=0x2000c4d8 used=5448 free=2936 size=8384 ret=0 run=25 sample=28
+DBG_STACK name=sysworkq tid=0x2000fc48 used=2112 free=6400 size=8512 ret=0 run=25 sample=28
+DBG_STACK name=MPSL Work tid=0x2000fa00 used=432 free=592 size=1024 ret=0 run=25 sample=28
+DBG_STACK name=logging tid=0x2000e7f8 used=544 free=992 size=1536 ret=0 run=25 sample=28
+DBG_STACK name=idle tid=0x2000fad8 used=64 free=256 size=320 ret=0 run=25 sample=28
+DBG_STACK_SAMPLE_END run=25 sample=28
+DBG_STACK_RUN_END epoch=851442580962669920 run=25 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=1111608711777941592 dst=11068027678940948070 session=3845118001 seq=12 type=32 samples=2 attempts=2 errors=0 last_error=0 mutex_drops=186 short_drops=12668 sequence=0 previous=0 uptime=1240081
+DBG_MESH_TX_AGE msg=32 seq=7 age=6 enc=1240092 rf=1240093 gap=1 air=6
+DBG_MESH_TX_STAGE stage=start msg=32 seq=7 ch=5 seen=1 at=1240093
+DBG_MESH_TX_STAGE stage=complete msg=32 seq=7 ch=5 seen=1 at=1240098 ret=0
+DBG_UWB_TX_CH5
+DBG_GATEWAY_ACK_TX_LED
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1240123 rem=500 frames=0 errors=0
+DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=1 scan=1 now=1240594
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1240123 end=1240596 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=1240596 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1240620 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1240620 end=1241120 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1241143 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1241143 end=1241644 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1241668 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1241668 end=1242168 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1242192 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1242192 end=1242693 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1242717 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1242717 end=1243218 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1243242 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1243242 end=1243743 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1243767 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1243767 end=1244268 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1244292 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1244292 end=1244793 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1244816 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1244816 end=1245317 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1245341 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1245341 end=1245842 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1245865 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1245865 end=1246366 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1246390 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1246390 end=1246891 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1246914 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1246914 end=1247415 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1247439 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1247439 end=1247940 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1247963 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1247963 end=1248464 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1248488 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1248488 end=1248989 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1249012 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1249012 end=1249513 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1249537 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1249537 end=1250037 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1250060 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1250060 end=1250561 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1250585 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1250585 end=1251086 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1251109 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1251109 end=1251610 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1251634 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1251634 end=1252134 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1252157 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1252157 end=1252658 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1252682 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1252682 end=1253183 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1253207 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1253207 end=1253708 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1253732 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1253732 end=1254233 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1254257 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1254257 end=1254757 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1254781 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1254781 end=1255282 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1255306 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1255306 end=1255807 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1255830 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1255830 end=1256331 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1256355 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1256355 end=1256856 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1256879 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1256879 end=1257380 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1257404 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1257404 end=1257905 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1257928 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1257928 end=1258429 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1258453 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1258453 end=1258953 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1258976 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1258976 end=1259477 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1259501 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1259501 end=1260002 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1260025 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1260025 end=1260526 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1260550 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=1260550 end=1261051 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4097
+DBG_GATEWAY_CH9_RX_CONT_ARM now=1261074 rem=500 frames=0 errors=0

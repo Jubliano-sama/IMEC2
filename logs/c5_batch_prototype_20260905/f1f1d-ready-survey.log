@@ -1,0 +1,113 @@
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connecting", "elapsed_s": 0.1, "error": "", "status": "Disconnected", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: reconnecting E4:16:B7:C7:E6:95
+GUI_LOG level=error message=BLE connect failed: BleakDeviceNotFoundError: Device with address E4:16:B7:C7:E6:95 was not found.
+GUI_STATE {"command_active": false, "connection": "reconnecting", "elapsed_s": 15.105, "error": "BLE connect failed: BleakDeviceNotFoundError: Device with address E4:16:B7:C7:E6:95 was not found.", "status": "Transport or protocol error", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_LOG level=error message=Attempting automatic reconnect to E4:16:B7:C7:E6:95...
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connecting", "elapsed_s": 16.605, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Transport or protocol error", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: reconnecting E4:16:B7:C7:E6:95
+GUI_LOG level=error message=Auto-reconnect failed: BleakDeviceNotFoundError: Device with address E4:16:B7:C7:E6:95 was not found.
+GUI_STATE {"command_active": false, "connection": "reconnecting", "elapsed_s": 31.713, "error": "Auto-reconnect failed: BleakDeviceNotFoundError: Device with address E4:16:B7:C7:E6:95 was not found.", "status": "Transport or protocol error", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_LOG level=error message=Attempting automatic reconnect to E4:16:B7:C7:E6:95...
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connecting", "elapsed_s": 33.214, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Transport or protocol error", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: connected E4:16:B7:C7:E6:95
+GUI_LOG level=error message=Ignored stale survey generation 3: survey event arrived without an active GUI run
+HOST_PACKET stale_survey=3 current=None
+GUI_LOG level=error message=Ignored stale survey generation 3: survey event arrived without an active GUI run
+HOST_PACKET stale_survey=3 current=None
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 34.414, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received SURVEY_EVENT seq=14", "survey_phase": "idle"}
+GUI_ONE_SURVEY_STARTED gateway=0x9999888877776666
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 34.515, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_LOG level=tx message=BLE write complete for Survey Enumeration Here I Am: 56 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+HOST_PACKET gateway_event stage=2 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 34.715, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=67", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 34.815, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=68", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 34.915, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=69", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.015, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=70", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.115, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=71", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.215, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=72", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.315, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=73", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.415, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.615, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=74", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.716, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=75", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 35.816, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 37.016, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=76", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 37.216, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=77", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 37.316, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 39.116, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=78", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 39.217, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=79", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 39.317, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 44.718, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=80", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 44.818, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=81", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 44.918, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=5 status=3 reason=2 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 52.02, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=83", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 52.12, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "enumerating"}
+HOST_PACKET gateway_event stage=3 status=0 reason=0 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 57.524, "error": "Attempting automatic reconnect to E4:16:B7:C7:E6:95...", "status": "Received GATEWAY_COMMAND_EVENT seq=84", "survey_phase": "enumerating"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET command=FORCE_REDISCOVERY status=5 (TIMEOUT) reason=116
+GUI_LOG level=error message=FORCE_REDISCOVERY was rejected with TIMEOUT
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 57.724, "error": "FORCE_REDISCOVERY was rejected with TIMEOUT", "status": "Received COMMAND_RESULT seq=2", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+HOST_PACKET gateway_event stage=12 status=5 reason=9 anchor=0x0000000000000000 previous=0x0000000000000000 hop=0 slot=255 progress=0/0 success=0 failure=0 duplicates=0
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 57.824, "error": "FORCE_REDISCOVERY was rejected with TIMEOUT", "status": "Received GATEWAY_COMMAND_EVENT seq=85", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 57.925, "error": "FORCE_REDISCOVERY was rejected with TIMEOUT", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "idle"}
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/tommie/Projects/IMEC2/tools/gateway_gui/survey_hil.py", line 517, in <module>
+    main()
+    ~~~~^^
+  File "/home/tommie/Projects/IMEC2/tools/gateway_gui/survey_hil.py", line 513, in main
+    raise SystemExit(run(args))
+                     ~~~^^^^^^
+  File "/home/tommie/Projects/IMEC2/tools/gateway_gui/survey_hil.py", line 439, in run
+    root.mainloop()
+    ~~~~~~~~~~~~~^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/tkinter/__init__.py", line 1599, in mainloop
+    self.tk.mainloop(n)
+    ~~~~~~~~~~~~~~~~^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/tkinter/__init__.py", line 2069, in __call__
+    def __call__(self, *args):
+    
+KeyboardInterrupt

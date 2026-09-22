@@ -1,0 +1,20 @@
+[
+  {
+    "probe": "E46070D247394D36",
+    "locked": true,
+    "reachable": true,
+    "error": "'SoCTarget has no selected core'"
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "locked": true,
+    "reachable": true,
+    "error": "'SoCTarget has no selected core'"
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "locked": true,
+    "reachable": true,
+    "error": "'SoCTarget has no selected core'"
+  }
+]

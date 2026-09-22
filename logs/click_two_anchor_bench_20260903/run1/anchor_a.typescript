@@ -1,0 +1,945 @@
+[34m0000556[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000626[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000639[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000640[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000642[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000648[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000665[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000681[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000683[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000684[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000686[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000689[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000693[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000693[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000693[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000695[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000699[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000701[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000724[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000724[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000724[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=99 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=155978
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=99 sample=99 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=155978
+DBG_STACK_ISR_CONFIG size=8192 run=99 sample=99
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=99 sample=99
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=99 sample=99
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=99 sample=99
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=99 sample=99
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=99 sample=99
+DBG_STACK_SAMPLE_END run=99 sample=99
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=347112 e=347122 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=99 sample=544 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=347123
+DBG_STACK_ISR_CONFIG size=8192 run=99 sample=544
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=99 sample=544
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=99 sample=544
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=99 sample=544
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=99 sample=544
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=99 sample=544
+DBG_STACK_SAMPLE_END run=99 sample=544
+DBG_STACK_RUN_END epoch=1420485382383164947 run=99 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=2 attempts=446 errors=444 last_error=-11 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=347127
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=347515 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=347537 e=347547 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10528 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=100 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=347548
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=100 sample=545 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=347549
+DBG_STACK_ISR_CONFIG size=8192 run=100 sample=545
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=100 sample=545
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=100 sample=545
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=100 sample=545
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=100 sample=545
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=100 sample=545
+DBG_STACK_SAMPLE_END run=100 sample=545
+DBG_STACK_RUN_END epoch=1420485382383164947 run=100 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=347573
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=347977 e=347987 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=101 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=347988
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=101 sample=546 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=347989
+DBG_STACK_ISR_CONFIG size=8192 run=101 sample=546
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=101 sample=546
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=101 sample=546
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=101 sample=546
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=101 sample=546
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=101 sample=546
+DBG_STACK_SAMPLE_END run=101 sample=546
+DBG_STACK_RUN_END epoch=1420485382383164947 run=101 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=348001
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=348419 e=348429 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=102 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=348430
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=102 sample=547 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=348431
+DBG_STACK_ISR_CONFIG size=8192 run=102 sample=547
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=102 sample=547
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=102 sample=547
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=102 sample=547
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=102 sample=547
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=102 sample=547
+DBG_STACK_SAMPLE_END run=102 sample=547
+DBG_STACK_RUN_END epoch=1420485382383164947 run=102 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=348447
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=348827 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=348850 e=348860 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=103 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=348862
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=103 sample=548 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=348862
+DBG_STACK_ISR_CONFIG size=8192 run=103 sample=548
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=103 sample=548
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=103 sample=548
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=103 sample=548
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=103 sample=548
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=103 sample=548
+DBG_STACK_SAMPLE_END run=103 sample=548
+DBG_STACK_RUN_END epoch=1420485382383164947 run=103 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=348873
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=349288 e=349298 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=104 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=349299
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=104 sample=549 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=349300
+DBG_STACK_ISR_CONFIG size=8192 run=104 sample=549
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=104 sample=549
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=104 sample=549
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=104 sample=549
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=104 sample=549
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=104 sample=549
+DBG_STACK_SAMPLE_END run=104 sample=549
+DBG_STACK_RUN_END epoch=1420485382383164947 run=104 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=349327
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=349730 e=349740 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=105 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=349741
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=105 sample=550 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=349742
+DBG_STACK_ISR_CONFIG size=8192 run=105 sample=550
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=105 sample=550
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=105 sample=550
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=105 sample=550
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=105 sample=550
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=105 sample=550
+DBG_STACK_SAMPLE_END run=105 sample=550
+DBG_STACK_RUN_END epoch=1420485382383164947 run=105 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=349770
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=350150 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=350173 e=350183 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10711 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=106 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=350184
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=106 sample=551 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=350185
+DBG_STACK_ISR_CONFIG size=8192 run=106 sample=551
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=106 sample=551
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=106 sample=551
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=106 sample=551
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=106 sample=551
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=106 sample=551
+DBG_STACK_SAMPLE_END run=106 sample=551
+DBG_STACK_RUN_END epoch=1420485382383164947 run=106 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=350208
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=350612 e=350622 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=107 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=350623
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=107 sample=552 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=350624
+DBG_STACK_ISR_CONFIG size=8192 run=107 sample=552
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=107 sample=552
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=107 sample=552
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=107 sample=552
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=107 sample=552
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=107 sample=552
+DBG_STACK_SAMPLE_END run=107 sample=552
+DBG_STACK_RUN_END epoch=1420485382383164947 run=107 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=350647
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=351050 e=351060 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=108 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=351061
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=108 sample=553 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=351062
+DBG_STACK_ISR_CONFIG size=8192 run=108 sample=553
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=108 sample=553
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=108 sample=553
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=108 sample=553
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=108 sample=553
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=108 sample=553
+DBG_STACK_SAMPLE_END run=108 sample=553
+DBG_STACK_RUN_END epoch=1420485382383164947 run=108 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=351086
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=351467 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=351490 e=351500 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=109 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=351501
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=109 sample=554 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=351502
+DBG_STACK_ISR_CONFIG size=8192 run=109 sample=554
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=109 sample=554
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=109 sample=554
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=109 sample=554
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=109 sample=554
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=109 sample=554
+DBG_STACK_SAMPLE_END run=109 sample=554
+DBG_STACK_RUN_END epoch=1420485382383164947 run=109 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=351531
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=351933 e=351943 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=110 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=351944
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=110 sample=555 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=351945
+DBG_STACK_ISR_CONFIG size=8192 run=110 sample=555
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=110 sample=555
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=110 sample=555
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=110 sample=555
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=110 sample=555
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=110 sample=555
+DBG_STACK_SAMPLE_END run=110 sample=555
+DBG_STACK_RUN_END epoch=1420485382383164947 run=110 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=351971
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=352374 e=352384 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=111 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=352385
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=111 sample=556 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=352386
+DBG_STACK_ISR_CONFIG size=8192 run=111 sample=556
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=111 sample=556
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=111 sample=556
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=111 sample=556
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=111 sample=556
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=111 sample=556
+DBG_STACK_SAMPLE_END run=111 sample=556
+DBG_STACK_RUN_END epoch=1420485382383164947 run=111 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=352414
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=352794 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=352817 e=352827 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=112 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=352829
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=112 sample=557 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=352829
+DBG_STACK_ISR_CONFIG size=8192 run=112 sample=557
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=112 sample=557
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=112 sample=557
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=112 sample=557
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=112 sample=557
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=112 sample=557
+DBG_STACK_SAMPLE_END run=112 sample=557
+DBG_STACK_RUN_END epoch=1420485382383164947 run=112 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=352855
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=353258 e=353268 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=113 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=353269
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=113 sample=558 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=353270
+DBG_STACK_ISR_CONFIG size=8192 run=113 sample=558
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=113 sample=558
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=113 sample=558
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=113 sample=558
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=113 sample=558
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=113 sample=558
+DBG_STACK_SAMPLE_END run=113 sample=558
+DBG_STACK_RUN_END epoch=1420485382383164947 run=113 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=353296
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=353700 e=353710 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=114 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=353711
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=114 sample=559 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=353712
+DBG_STACK_ISR_CONFIG size=8192 run=114 sample=559
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=114 sample=559
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=114 sample=559
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=114 sample=559
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=114 sample=559
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=114 sample=559
+DBG_STACK_SAMPLE_END run=114 sample=559
+DBG_STACK_RUN_END epoch=1420485382383164947 run=114 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=353740
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=354120 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=354143 e=354153 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10742 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=115 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=354154
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=115 sample=560 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=354155
+DBG_STACK_ISR_CONFIG size=8192 run=115 sample=560
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=115 sample=560
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=115 sample=560
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=115 sample=560
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=115 sample=560
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=115 sample=560
+DBG_STACK_SAMPLE_END run=115 sample=560
+DBG_STACK_RUN_END epoch=1420485382383164947 run=115 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=354183
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=354586 e=354596 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=116 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=354597
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=116 sample=561 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=354598
+DBG_STACK_ISR_CONFIG size=8192 run=116 sample=561
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=116 sample=561
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=116 sample=561
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=116 sample=561
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=116 sample=561
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=116 sample=561
+DBG_STACK_SAMPLE_END run=116 sample=561
+DBG_STACK_RUN_END epoch=1420485382383164947 run=116 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=354626
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=355029 e=355039 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=117 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=355040
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=117 sample=562 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=355041
+DBG_STACK_ISR_CONFIG size=8192 run=117 sample=562
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=117 sample=562
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=117 sample=562
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=117 sample=562
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=117 sample=562
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=117 sample=562
+DBG_STACK_SAMPLE_END run=117 sample=562
+DBG_STACK_RUN_END epoch=1420485382383164947 run=117 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=355068
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=355448 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=355470 e=355480 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10528 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=118 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=355481
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=118 sample=563 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=355482
+DBG_STACK_ISR_CONFIG size=8192 run=118 sample=563
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=118 sample=563
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=118 sample=563
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=118 sample=563
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=118 sample=563
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=118 sample=563
+DBG_STACK_SAMPLE_END run=118 sample=563
+DBG_STACK_RUN_END epoch=1420485382383164947 run=118 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=355505
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=355909 e=355919 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=119 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=355920
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=119 sample=564 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=355921
+DBG_STACK_ISR_CONFIG size=8192 run=119 sample=564
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=119 sample=564
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=119 sample=564
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=119 sample=564
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=119 sample=564
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=119 sample=564
+DBG_STACK_SAMPLE_END run=119 sample=564
+DBG_STACK_RUN_END epoch=1420485382383164947 run=119 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=355932
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=356350 e=356360 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=120 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=356361
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=120 sample=565 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=356362
+DBG_STACK_ISR_CONFIG size=8192 run=120 sample=565
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=120 sample=565
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=120 sample=565
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=120 sample=565
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=120 sample=565
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=120 sample=565
+DBG_STACK_SAMPLE_END run=120 sample=565
+DBG_STACK_RUN_END epoch=1420485382383164947 run=120 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=356373
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=356770 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=356792 e=356802 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10437 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=121 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=356803
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=121 sample=566 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=356804
+DBG_STACK_ISR_CONFIG size=8192 run=121 sample=566
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=121 sample=566
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=121 sample=566
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=121 sample=566
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=121 sample=566
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=121 sample=566
+DBG_STACK_SAMPLE_END run=121 sample=566
+DBG_STACK_RUN_END epoch=1420485382383164947 run=121 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=356816
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=357235 e=357245 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=122 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=357246
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=122 sample=567 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=357247
+DBG_STACK_ISR_CONFIG size=8192 run=122 sample=567
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=122 sample=567
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=122 sample=567
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=122 sample=567
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=122 sample=567
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=122 sample=567
+DBG_STACK_SAMPLE_END run=122 sample=567
+DBG_STACK_RUN_END epoch=1420485382383164947 run=122 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=357257
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=357676 e=357686 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=123 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=357687
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=123 sample=568 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=357688
+DBG_STACK_ISR_CONFIG size=8192 run=123 sample=568
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=123 sample=568
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=123 sample=568
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=123 sample=568
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=123 sample=568
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=123 sample=568
+DBG_STACK_SAMPLE_END run=123 sample=568
+DBG_STACK_RUN_END epoch=1420485382383164947 run=123 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=357698
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=358095 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=358118 e=358128 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10742 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=124 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=358129
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=124 sample=569 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=358130
+DBG_STACK_ISR_CONFIG size=8192 run=124 sample=569
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=124 sample=569
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=124 sample=569
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=124 sample=569
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=124 sample=569
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=124 sample=569
+DBG_STACK_SAMPLE_END run=124 sample=569
+DBG_STACK_RUN_END epoch=1420485382383164947 run=124 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=358155
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=358558 e=358568 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=125 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=358569
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=125 sample=570 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=358570
+DBG_STACK_ISR_CONFIG size=8192 run=125 sample=570
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=125 sample=570
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=125 sample=570
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=125 sample=570
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=125 sample=570
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=125 sample=570
+DBG_STACK_SAMPLE_END run=125 sample=570
+DBG_STACK_RUN_END epoch=1420485382383164947 run=125 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=358596
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=358999 e=359009 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=126 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=359010
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=126 sample=571 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=359011
+DBG_STACK_ISR_CONFIG size=8192 run=126 sample=571
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=126 sample=571
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=126 sample=571
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=126 sample=571
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=126 sample=571
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=126 sample=571
+DBG_STACK_SAMPLE_END run=126 sample=571
+DBG_STACK_RUN_END epoch=1420485382383164947 run=126 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=359038
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=359418 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=359440 e=359450 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10467 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=127 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=359451
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=127 sample=572 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=359452
+DBG_STACK_ISR_CONFIG size=8192 run=127 sample=572
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=127 sample=572
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=127 sample=572
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=127 sample=572
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=127 sample=572
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=127 sample=572
+DBG_STACK_SAMPLE_END run=127 sample=572
+DBG_STACK_RUN_END epoch=1420485382383164947 run=127 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=359476
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=359879 e=359889 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=128 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=359890
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=128 sample=573 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=359891
+DBG_STACK_ISR_CONFIG size=8192 run=128 sample=573
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=128 sample=573
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=128 sample=573
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=128 sample=573
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=128 sample=573
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=128 sample=573
+DBG_STACK_SAMPLE_END run=128 sample=573
+DBG_STACK_RUN_END epoch=1420485382383164947 run=128 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=359917
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=360319 e=360329 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=129 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=360330
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=129 sample=574 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=360331
+DBG_STACK_ISR_CONFIG size=8192 run=129 sample=574
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=129 sample=574
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=129 sample=574
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=129 sample=574
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=129 sample=574
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=129 sample=574
+DBG_STACK_SAMPLE_END run=129 sample=574
+DBG_STACK_RUN_END epoch=1420485382383164947 run=129 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=360358
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=360738 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=360761 e=360771 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=130 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=360773
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=130 sample=575 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=360773
+DBG_STACK_ISR_CONFIG size=8192 run=130 sample=575
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=130 sample=575
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=130 sample=575
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=130 sample=575
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=130 sample=575
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=130 sample=575
+DBG_STACK_SAMPLE_END run=130 sample=575
+DBG_STACK_RUN_END epoch=1420485382383164947 run=130 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=360795
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=361199 e=361209 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=131 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=361210
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=131 sample=576 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=361211
+DBG_STACK_ISR_CONFIG size=8192 run=131 sample=576
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=131 sample=576
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=131 sample=576
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=131 sample=576
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=131 sample=576
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=131 sample=576
+DBG_STACK_SAMPLE_END run=131 sample=576
+DBG_STACK_RUN_END epoch=1420485382383164947 run=131 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=361236
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=361640 e=361650 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=132 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=361651
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=132 sample=577 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=361652
+DBG_STACK_ISR_CONFIG size=8192 run=132 sample=577
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=132 sample=577
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=132 sample=577
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=132 sample=577
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=132 sample=577
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=132 sample=577
+DBG_STACK_SAMPLE_END run=132 sample=577
+DBG_STACK_RUN_END epoch=1420485382383164947 run=132 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=361676
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=362057 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=362080 e=362090 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=11108 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=133 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=362092
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=133 sample=578 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=362092
+DBG_STACK_ISR_CONFIG size=8192 run=133 sample=578
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=133 sample=578
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=133 sample=578
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=133 sample=578
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=133 sample=578
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=133 sample=578
+DBG_STACK_SAMPLE_END run=133 sample=578
+DBG_STACK_RUN_END epoch=1420485382383164947 run=133 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=362119
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=362522 e=362532 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=134 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=362533
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=134 sample=579 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=362534
+DBG_STACK_ISR_CONFIG size=8192 run=134 sample=579
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=134 sample=579
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=134 sample=579
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=134 sample=579
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=134 sample=579
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=134 sample=579
+DBG_STACK_SAMPLE_END run=134 sample=579
+DBG_STACK_RUN_END epoch=1420485382383164947 run=134 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=362561
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=362964 e=362974 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=135 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=362975
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=135 sample=580 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=362976
+DBG_STACK_ISR_CONFIG size=8192 run=135 sample=580
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=135 sample=580
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=135 sample=580
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=135 sample=580
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=135 sample=580
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=135 sample=580
+DBG_STACK_SAMPLE_END run=135 sample=580
+DBG_STACK_RUN_END epoch=1420485382383164947 run=135 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=363004
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=363385 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=363406 e=363416 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10284 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=136 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=363417
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=136 sample=581 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=363418
+DBG_STACK_ISR_CONFIG size=8192 run=136 sample=581
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=136 sample=581
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=136 sample=581
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=136 sample=581
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=136 sample=581
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=136 sample=581
+DBG_STACK_SAMPLE_END run=136 sample=581
+DBG_STACK_RUN_END epoch=1420485382383164947 run=136 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=363444
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=363847 e=363857 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=137 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=363858
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=137 sample=582 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=363859
+DBG_STACK_ISR_CONFIG size=8192 run=137 sample=582
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=137 sample=582
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=137 sample=582
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=137 sample=582
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=137 sample=582
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=137 sample=582
+DBG_STACK_SAMPLE_END run=137 sample=582
+DBG_STACK_RUN_END epoch=1420485382383164947 run=137 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=363883
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=364286 e=364296 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=138 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=364297
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=138 sample=583 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=364298
+DBG_STACK_ISR_CONFIG size=8192 run=138 sample=583
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=138 sample=583
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=138 sample=583
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=138 sample=583
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=138 sample=583
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=138 sample=583
+DBG_STACK_SAMPLE_END run=138 sample=583
+DBG_STACK_RUN_END epoch=1420485382383164947 run=138 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=364324
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=364704 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=364727 e=364737 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=139 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=364738
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=139 sample=584 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=364739
+DBG_STACK_ISR_CONFIG size=8192 run=139 sample=584
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=139 sample=584
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=139 sample=584
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=139 sample=584
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=139 sample=584
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=139 sample=584
+DBG_STACK_SAMPLE_END run=139 sample=584
+DBG_STACK_RUN_END epoch=1420485382383164947 run=139 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=364750
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=365167 e=365177 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=140 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=365178
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=140 sample=585 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=365179
+DBG_STACK_ISR_CONFIG size=8192 run=140 sample=585
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=140 sample=585
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=140 sample=585
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=140 sample=585
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=140 sample=585
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=140 sample=585
+DBG_STACK_SAMPLE_END run=140 sample=585
+DBG_STACK_RUN_END epoch=1420485382383164947 run=140 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=365206
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=365609 e=365619 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=141 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=365620
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=141 sample=586 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=365621
+DBG_STACK_ISR_CONFIG size=8192 run=141 sample=586
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=141 sample=586
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=141 sample=586
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=141 sample=586
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=141 sample=586
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=141 sample=586
+DBG_STACK_SAMPLE_END run=141 sample=586
+DBG_STACK_RUN_END epoch=1420485382383164947 run=141 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=365649
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=366029 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=366052 e=366062 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10742 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=142 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=366063
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=142 sample=587 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=366064
+DBG_STACK_ISR_CONFIG size=8192 run=142 sample=587
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=142 sample=587
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=142 sample=587
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=142 sample=587
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=142 sample=587
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=142 sample=587
+DBG_STACK_SAMPLE_END run=142 sample=587
+DBG_STACK_RUN_END epoch=1420485382383164947 run=142 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=366075
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=366495 e=366505 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=143 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=366506
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=143 sample=588 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=366507
+DBG_STACK_ISR_CONFIG size=8192 run=143 sample=588
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=143 sample=588
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=143 sample=588
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=143 sample=588
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=143 sample=588
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=143 sample=588
+DBG_STACK_SAMPLE_END run=143 sample=588
+DBG_STACK_RUN_END epoch=1420485382383164947 run=143 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=366531
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=366934 e=366944 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=144 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=366945
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=144 sample=589 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=366946
+DBG_STACK_ISR_CONFIG size=8192 run=144 sample=589
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=144 sample=589
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=144 sample=589
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=144 sample=589
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=144 sample=589
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=144 sample=589
+DBG_STACK_SAMPLE_END run=144 sample=589
+DBG_STACK_RUN_END epoch=1420485382383164947 run=144 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=366960
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=367341 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=367363 e=367373 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10467 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=145 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=367374
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=145 sample=590 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=367375
+DBG_STACK_ISR_CONFIG size=8192 run=145 sample=590
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=145 sample=590
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=145 sample=590
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=145 sample=590
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=145 sample=590
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=145 sample=590
+DBG_STACK_SAMPLE_END run=145 sample=590
+DBG_STACK_RUN_END epoch=1420485382383164947 run=145 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=367404
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=367807 e=367817 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=146 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=367818
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=146 sample=591 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=367819
+DBG_STACK_ISR_CONFIG size=8192 run=146 sample=591
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=146 sample=591
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=146 sample=591
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=146 sample=591
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=146 sample=591
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=146 sample=591
+DBG_STACK_SAMPLE_END run=146 sample=591
+DBG_STACK_RUN_END epoch=1420485382383164947 run=146 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=367846
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=368249 e=368259 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=147 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=368260
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=147 sample=592 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=368261
+DBG_STACK_ISR_CONFIG size=8192 run=147 sample=592
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=147 sample=592
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=147 sample=592
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=147 sample=592
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=147 sample=592
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=147 sample=592
+DBG_STACK_SAMPLE_END run=147 sample=592
+DBG_STACK_RUN_END epoch=1420485382383164947 run=147 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=368289
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=368669 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=368692 e=368702 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=148 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=368703
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=148 sample=593 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=368704
+DBG_STACK_ISR_CONFIG size=8192 run=148 sample=593
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=148 sample=593
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=148 sample=593
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=148 sample=593
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=148 sample=593
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=148 sample=593
+DBG_STACK_SAMPLE_END run=148 sample=593
+DBG_STACK_RUN_END epoch=1420485382383164947 run=148 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=368730
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=369133 e=369143 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=149 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=369144
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=149 sample=594 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=369145
+DBG_STACK_ISR_CONFIG size=8192 run=149 sample=594
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=149 sample=594
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=149 sample=594
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=149 sample=594
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=149 sample=594
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=149 sample=594
+DBG_STACK_SAMPLE_END run=149 sample=594
+DBG_STACK_RUN_END epoch=1420485382383164947 run=149 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=369171
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=369574 e=369584 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=150 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=369585
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=150 sample=595 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=369586
+DBG_STACK_ISR_CONFIG size=8192 run=150 sample=595
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=150 sample=595
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=150 sample=595
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=150 sample=595
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=150 sample=595
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=150 sample=595
+DBG_STACK_SAMPLE_END run=150 sample=595
+DBG_STACK_RUN_END epoch=1420485382383164947 run=150 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=369612
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=369992 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=370015 e=370025 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10925 complete=1000
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=151 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=370027
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=151 sample=596 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=370027
+DBG_STACK_ISR_CONFIG size=8192 run=151 sample=596
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=151 sample=596
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=151 sample=596
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=151 sample=596
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=151 sample=596
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=151 sample=596
+DBG_STACK_SAMPLE_END run=151 sample=596
+DBG_STACK_RUN_END epoch=1420485382383164947 run=151 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=370053
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=370455 e=370465 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=152 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=370466
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=152 sample=597 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=370467
+DBG_STACK_ISR_CONFIG size=8192 run=152 sample=597
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=152 sample=597
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=152 sample=597
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=152 sample=597
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=152 sample=597
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=152 sample=597
+DBG_STACK_SAMPLE_END run=152 sample=597
+DBG_STACK_RUN_END epoch=1420485382383164947 run=152 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=370495
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=370898 e=370908 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+DBG_STACK_RUN_BEGIN epoch=1420485382383164947 run=153 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=370909
+DBG_STACK_SAMPLE_BEGIN epoch=1420485382383164947 run=153 sample=598 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=370910
+DBG_STACK_ISR_CONFIG size=8192 run=153 sample=598
+DBG_STACK name=anchor_uwb_scan tid=0x2000c668 used=3364 free=6620 size=9984 ret=0 run=153 sample=598
+DBG_STACK name=mesh_route tid=0x2000adb8 used=5420 free=4052 size=9472 ret=0 run=153 sample=598
+DBG_STACK name=sysworkq tid=0x2000d5e0 used=336 free=5040 size=5376 ret=0 run=153 sample=598
+DBG_STACK name=logging tid=0x2000cb20 used=544 free=1504 size=2048 ret=0 run=153 sample=598
+DBG_STACK name=idle tid=0x2000d3b0 used=64 free=256 size=320 ret=0 run=153 sample=598
+DBG_STACK_SAMPLE_END run=153 sample=598
+DBG_STACK_RUN_END epoch=1420485382383164947 run=153 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=40 short_drops=4072 sequence=0 previous=0 uptime=370937
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380

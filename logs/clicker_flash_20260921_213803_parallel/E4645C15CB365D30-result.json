@@ -1,0 +1,17 @@
+{
+  "probe": "E4645C15CB365D30",
+  "reachable": true,
+  "ficr": "0xecfd972519999c1c",
+  "storage_blank": true,
+  "storage_sha256": "1df8949b2e345ab8c00cb81fb6b83686e20a4080f969e5cd8b8d520a07cdaba2",
+  "durable_roles": [],
+  "role": "mesh_clicker",
+  "hex_sha256": "8733d894b8be53b8ea9a72d10d352b06f2b3179cb9552b76144e0eb206fb9fc4",
+  "readback_verified_bytes": 435432,
+  "flash_started_monotonic": 50120.281924509,
+  "flash_finished_monotonic": 50136.760866488,
+  "storage_handling": "initial auto-unlock erased prior contents",
+  "node_id": "0xa5b0d26658d7df1e",
+  "startup_checked": true,
+  "startup_log": "startup/clicker_5d30.log"
+}

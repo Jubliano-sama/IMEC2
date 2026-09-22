@@ -1,0 +1,444 @@
+Test project /home/tommie/Projects/IMEC2/firmware/build
+        Start   1: preset_cache
+  1/182 Test   #1: preset_cache ...............................................   Passed    0.28 sec
+        Start   2: app_anchor_actions
+  2/182 Test   #2: app_anchor_actions .........................................   Passed    0.01 sec
+        Start   3: anchor_identify_owner
+  3/182 Test   #3: anchor_identify_owner ......................................   Passed    0.06 sec
+        Start   4: firmware_events
+  4/182 Test   #4: firmware_events ............................................   Passed    0.00 sec
+        Start   5: firmware_state_machines
+  5/182 Test   #5: firmware_state_machines ....................................   Passed    0.00 sec
+        Start   6: app_clicker_event_runtime
+  6/182 Test   #6: app_clicker_event_runtime ..................................   Passed    0.00 sec
+        Start   7: clicker_rtt_command
+  7/182 Test   #7: clicker_rtt_command ........................................   Passed    0.00 sec
+        Start   8: app_anchor_click_event_runtime
+  8/182 Test   #8: app_anchor_click_event_runtime .............................   Passed    0.00 sec
+        Start   9: app_node_comm_delivery_state
+  9/182 Test   #9: app_node_comm_delivery_state ...............................   Passed    0.00 sec
+        Start  11: protocol_rx_lifecycle
+ 10/182 Test  #11: protocol_rx_lifecycle ......................................   Passed    0.00 sec
+        Start  12: enumeration_survey_state_alignment_scenarios
+ 11/182 Test  #12: enumeration_survey_state_alignment_scenarios ...............   Passed    0.00 sec
+        Start  13: uwb_rf_scope
+ 12/182 Test  #13: uwb_rf_scope ...............................................   Passed    0.00 sec
+        Start  14: uwb_rf_scope_source_invariants
+ 13/182 Test  #14: uwb_rf_scope_source_invariants .............................   Passed    0.04 sec
+        Start  15: enumeration_slot_sim_self_test
+ 14/182 Test  #15: enumeration_slot_sim_self_test .............................   Passed    0.12 sec
+        Start  16: enumeration_rx_lifecycle_source_invariants
+ 15/182 Test  #16: enumeration_rx_lifecycle_source_invariants .................   Passed    0.25 sec
+        Start  17: gateway_survey_status_recovery
+ 16/182 Test  #17: gateway_survey_status_recovery .............................   Passed    0.15 sec
+        Start  18: protocol_listener_click_preemption_source_invariants
+ 17/182 Test  #18: protocol_listener_click_preemption_source_invariants .......   Passed    0.03 sec
+        Start  19: mesh_event_owner
+ 18/182 Test  #19: mesh_event_owner ...........................................   Passed    0.01 sec
+        Start  20: mesh_event_owner_registry
+ 19/182 Test  #20: mesh_event_owner_registry ..................................   Passed    0.00 sec
+        Start  21: mesh_packet_age
+ 20/182 Test  #21: mesh_packet_age ............................................   Passed    0.00 sec
+        Start  22: operation_policy
+ 21/182 Test  #22: operation_policy ...........................................   Passed    0.00 sec
+        Start  23: app_operation_policy
+ 22/182 Test  #23: app_operation_policy .......................................   Passed    0.00 sec
+        Start  25: enumeration_response_lane
+ 23/182 Test  #25: enumeration_response_lane ..................................   Passed    0.00 sec
+        Start  26: enumeration_downlinks
+ 24/182 Test  #26: enumeration_downlinks ......................................   Passed    0.00 sec
+        Start  27: survey
+ 25/182 Test  #27: survey .....................................................   Passed    0.00 sec
+        Start  28: survey_response_lane
+ 26/182 Test  #28: survey_response_lane .......................................   Passed    0.09 sec
+        Start  29: survey_protocol
+ 27/182 Test  #29: survey_protocol ............................................   Passed    0.00 sec
+        Start  30: flood_parent_learning
+ 28/182 Test  #30: flood_parent_learning ......................................   Passed    0.00 sec
+        Start  31: semantic_digest
+ 29/182 Test  #31: semantic_digest ............................................   Passed    0.01 sec
+        Start  32: node_comm
+ 30/182 Test  #32: node_comm ..................................................   Passed    0.04 sec
+        Start  33: node_transaction
+ 31/182 Test  #33: node_transaction ...........................................   Passed    0.08 sec
+        Start  34: watchdog_adoption
+ 32/182 Test  #34: watchdog_adoption ..........................................   Passed    0.00 sec
+        Start  35: app_watchdog_action_lease
+ 33/182 Test  #35: app_watchdog_action_lease ..................................   Passed    0.00 sec
+        Start  36: app_radio_guard
+ 34/182 Test  #36: app_radio_guard ............................................   Passed    0.00 sec
+        Start  37: production_seam_click_handoff
+ 35/182 Test  #37: production_seam_click_handoff ..............................   Passed    5.06 sec
+        Start  38: production_seam_click_preempt_priority
+ 36/182 Test  #38: production_seam_click_preempt_priority .....................   Passed    4.83 sec
+        Start  39: click_preempt_priority_source_invariants
+ 37/182 Test  #39: click_preempt_priority_source_invariants ...................   Passed    0.05 sec
+        Start  40: production_seam_gateway_result_actions
+ 38/182 Test  #40: production_seam_gateway_result_actions .....................   Passed    6.20 sec
+        Start  41: production_seam_gateway_result_action_source
+ 39/182 Test  #41: production_seam_gateway_result_action_source ...............   Passed    0.07 sec
+        Start  42: production_seam_gateway_relay_specialization_trace
+ 40/182 Test  #42: production_seam_gateway_relay_specialization_trace .........   Passed    0.21 sec
+        Start  43: app_durable_state
+ 41/182 Test  #43: app_durable_state ..........................................   Passed    0.03 sec
+        Start  44: app_durable_anchor_assignment
+ 42/182 Test  #44: app_durable_anchor_assignment ..............................   Passed    0.00 sec
+        Start  45: app_durable_gateway_assignment
+ 43/182 Test  #45: app_durable_gateway_assignment .............................   Passed    0.00 sec
+        Start  46: anchor_assignment_persistence_source_invariants
+ 44/182 Test  #46: anchor_assignment_persistence_source_invariants ............   Passed    0.05 sec
+        Start  47: durable_state_source_invariants
+ 45/182 Test  #47: durable_state_source_invariants ............................   Passed    0.09 sec
+        Start  48: stack_diag_transport
+ 46/182 Test  #48: stack_diag_transport .......................................   Passed    0.00 sec
+        Start  49: app_node_comm_adapter
+ 47/182 Test  #49: app_node_comm_adapter ......................................   Passed    0.00 sec
+        Start  50: app_node_comm_gateway_adapter
+ 48/182 Test  #50: app_node_comm_gateway_adapter ..............................   Passed    0.01 sec
+        Start  51: app_node_comm_transmitter_adapter
+ 49/182 Test  #51: app_node_comm_transmitter_adapter ..........................   Passed    0.01 sec
+        Start  52: app_node_comm_gateway_route_refresh
+ 50/182 Test  #52: app_node_comm_gateway_route_refresh ........................   Passed    0.00 sec
+        Start  54: production_device_identity_source_invariants
+ 51/182 Test  #54: production_device_identity_source_invariants ...............   Passed    0.03 sec
+        Start  56: battery_status
+ 52/182 Test  #56: battery_status .............................................   Passed    0.00 sec
+        Start  57: production_battery_indicator_source_invariants
+ 53/182 Test  #57: production_battery_indicator_source_invariants .............   Passed    0.14 sec
+        Start  58: button_wake_recovery
+ 54/182 Test  #58: button_wake_recovery .......................................   Passed    0.00 sec
+        Start  59: button_action_handoff
+ 55/182 Test  #59: button_action_handoff ......................................   Passed    0.00 sec
+        Start  61: gateway_gui_cross_layer
+ 56/182 Test  #61: gateway_gui_cross_layer ....................................   Passed    0.15 sec
+        Start  62: product_contract_matrix
+ 57/182 Test  #62: product_contract_matrix ....................................   Passed    0.04 sec
+        Start  63: gateway_command_lifecycle_invariants
+ 58/182 Test  #63: gateway_command_lifecycle_invariants .......................   Passed    0.00 sec
+        Start  67: app_gateway_collection_recovery
+ 59/182 Test  #67: app_gateway_collection_recovery ............................   Passed    0.00 sec
+        Start  68: gateway_collection_recovery_source_invariants
+ 60/182 Test  #68: gateway_collection_recovery_source_invariants ..............   Passed    0.04 sec
+        Start  69: app_gateway_eack_retry
+ 61/182 Test  #69: app_gateway_eack_retry .....................................   Passed    0.00 sec
+        Start  70: app_gateway_ble_stream
+ 62/182 Test  #70: app_gateway_ble_stream .....................................   Passed    0.00 sec
+        Start  71: app_gateway_command_result
+ 63/182 Test  #71: app_gateway_command_result .................................   Passed    0.00 sec
+        Start  72: app_anchor_command_completion
+ 64/182 Test  #72: app_anchor_command_completion ..............................   Passed    0.00 sec
+        Start  73: anchor_command_result_ram_custody
+ 65/182 Test  #73: anchor_command_result_ram_custody ..........................   Passed    0.00 sec
+        Start  74: anchor_command_result_ram_custody_source_invariants
+ 66/182 Test  #74: anchor_command_result_ram_custody_source_invariants ........   Passed    0.07 sec
+        Start  76: app_gateway_assignment_publisher
+ 67/182 Test  #76: app_gateway_assignment_publisher ...........................   Passed    0.00 sec
+        Start  77: node_comm_source_boundary
+ 68/182 Test  #77: node_comm_source_boundary ..................................   Passed    0.18 sec
+        Start  78: mesh_terminal_custody_source_invariants
+ 69/182 Test  #78: mesh_terminal_custody_source_invariants ....................   Passed    0.07 sec
+        Start  79: mesh_ram_reboot_contract_source_invariants
+ 70/182 Test  #79: mesh_ram_reboot_contract_source_invariants .................   Passed    0.06 sec
+        Start  80: route_refresh_source_boundary
+ 71/182 Test  #80: route_refresh_source_boundary ..............................   Passed    0.26 sec
+        Start  81: route_control_wire_source_boundary
+ 72/182 Test  #81: route_control_wire_source_boundary .........................   Passed    0.04 sec
+        Start  82: app_stack_workload_diag
+ 73/182 Test  #82: app_stack_workload_diag ....................................   Passed    0.01 sec
+        Start  85: app_stack_diag_commit
+ 74/182 Test  #85: app_stack_diag_commit ......................................   Passed    0.00 sec
+        Start  86: ddd_rf_observability_contract
+ 75/182 Test  #86: ddd_rf_observability_contract ..............................   Passed    0.04 sec
+        Start  88: app_mesh_c5_priority
+ 76/182 Test  #88: app_mesh_c5_priority .......................................   Passed    0.00 sec
+        Start  89: app_mesh_scheduler_liveness
+ 77/182 Test  #89: app_mesh_scheduler_liveness ................................   Passed    0.00 sec
+        Start  90: app_mesh_async_route_request
+ 78/182 Test  #90: app_mesh_async_route_request ...............................   Passed    0.00 sec
+        Start  93: app_mesh_gateway_command_flow
+ 79/182 Test  #93: app_mesh_gateway_command_flow ..............................   Passed    0.00 sec
+        Start  95: app_wake_train_politeness
+ 80/182 Test  #95: app_wake_train_politeness ..................................   Passed    0.00 sec
+        Start  96: app_mesh_rf_retry
+ 81/182 Test  #96: app_mesh_rf_retry ..........................................   Passed    0.00 sec
+        Start  97: app_mesh_direct_gateway_retry
+ 82/182 Test  #97: app_mesh_direct_gateway_retry ..............................   Passed    0.00 sec
+        Start  98: app_mesh_event_retry
+ 83/182 Test  #98: app_mesh_event_retry .......................................   Passed    0.00 sec
+        Start  99: mesh_c5_control_lane_invariants
+ 84/182 Test  #99: mesh_c5_control_lane_invariants ............................   Passed    0.03 sec
+        Start 100: mesh_event_proposal_arbitration_source_invariants
+ 85/182 Test #100: mesh_event_proposal_arbitration_source_invariants ..........   Passed    0.05 sec
+        Start 101: mesh_event_identity_replay_source_invariants
+ 86/182 Test #101: mesh_event_identity_replay_source_invariants ...............   Passed    0.02 sec
+        Start 102: mesh_rf_retry_source_invariants
+ 87/182 Test #102: mesh_rf_retry_source_invariants ............................   Passed    0.99 sec
+        Start 103: mesh_route_repair_owner_source_invariants
+ 88/182 Test #103: mesh_route_repair_owner_source_invariants ..................   Passed    0.19 sec
+        Start 104: c5_deferred_ack_source_invariants
+ 89/182 Test #104: c5_deferred_ack_source_invariants ..........................   Passed    0.04 sec
+        Start 105: app_mesh_c5_batch
+ 90/182 Test #105: app_mesh_c5_batch ..........................................   Passed    0.00 sec
+        Start 106: app_mesh_enumeration_scan_handoff
+ 91/182 Test #106: app_mesh_enumeration_scan_handoff ..........................   Passed    0.00 sec
+        Start 107: app_hia_table_survey
+ 92/182 Test #107: app_hia_table_survey .......................................   Passed    0.00 sec
+        Start 108: app_gateway_assignment_hia
+ 93/182 Test #108: app_gateway_assignment_hia .................................   Passed    0.00 sec
+        Start 109: app_survey_cancel_rx
+ 94/182 Test #109: app_survey_cancel_rx .......................................   Passed    0.00 sec
+        Start 110: app_survey_response_recovery
+ 95/182 Test #110: app_survey_response_recovery ...............................   Passed    0.01 sec
+        Start 111: app_survey_slot_deadlines
+ 96/182 Test #111: app_survey_slot_deadlines ..................................   Passed    0.00 sec
+        Start 112: app_mesh_direct_probe_click_preempt
+ 97/182 Test #112: app_mesh_direct_probe_click_preempt ........................   Passed    0.00 sec
+        Start 113: app_mesh_direct_probe_c5_0
+ 98/182 Test #113: app_mesh_direct_probe_c5_0 .................................   Passed    0.00 sec
+        Start 114: app_mesh_direct_probe_c5_1
+ 99/182 Test #114: app_mesh_direct_probe_c5_1 .................................   Passed    0.00 sec
+        Start 115: mesh_deferred_route_reply
+100/182 Test #115: mesh_deferred_route_reply ..................................   Passed    0.00 sec
+        Start 116: app_mesh_reactive_route_listeners
+101/182 Test #116: app_mesh_reactive_route_listeners ..........................   Passed    0.01 sec
+        Start 117: app_watchdog_runtime
+102/182 Test #117: app_watchdog_runtime .......................................   Passed    0.00 sec
+        Start 118: app_terminal_restart
+103/182 Test #118: app_terminal_restart .......................................   Passed    0.00 sec
+        Start 119: app_gateway_ble_rx
+104/182 Test #119: app_gateway_ble_rx .........................................   Passed    0.00 sec
+        Start 120: gateway_compact_rx_recovery
+105/182 Test #120: gateway_compact_rx_recovery ................................   Passed    0.00 sec
+        Start 121: app_survey_publication
+106/182 Test #121: app_survey_publication .....................................   Passed    0.00 sec
+        Start 122: enumeration_c5_contention_scenarios
+107/182 Test #122: enumeration_c5_contention_scenarios ........................   Passed    2.76 sec
+        Start 123: mesh_forwarded_ack_late_authorization_source_invariants
+108/182 Test #123: mesh_forwarded_ack_late_authorization_source_invariants ....   Passed    0.19 sec
+        Start 124: mesh_route_wake_boost_source_invariants
+109/182 Test #124: mesh_route_wake_boost_source_invariants ....................   Passed    0.04 sec
+        Start 126: app_discovery_assignment_policy
+110/182 Test #126: app_discovery_assignment_policy ............................   Passed    0.00 sec
+        Start 132: mesh_route_path
+111/182 Test #132: mesh_route_path ............................................   Passed    0.00 sec
+        Start 133: mesh_preemption
+112/182 Test #133: mesh_preemption ............................................   Passed    0.00 sec
+        Start 134: app_mesh_preemption
+113/182 Test #134: app_mesh_preemption ........................................   Passed    0.00 sec
+        Start 142: app_mesh_ch9_ack
+114/182 Test #142: app_mesh_ch9_ack ...........................................   Passed    0.00 sec
+        Start 143: dwm3000_port_spi_model
+115/182 Test #143: dwm3000_port_spi_model .....................................   Passed    0.00 sec
+        Start 144: dwm3000_receive_source_invariants
+116/182 Test #144: dwm3000_receive_source_invariants ..........................   Passed    0.12 sec
+        Start 145: clicker_button_wake_source_invariants
+117/182 Test #145: clicker_button_wake_source_invariants ......................   Passed    0.21 sec
+        Start 146: anchor_click_discovery_slot_source_invariants
+118/182 Test #146: anchor_click_discovery_slot_source_invariants ..............   Passed    0.03 sec
+        Start 147: clicker_retained_idle_failure_source_invariants
+119/182 Test #147: clicker_retained_idle_failure_source_invariants ............   Passed    0.03 sec
+        Start 148: clicker_wake_deadline_source_invariants
+120/182 Test #148: clicker_wake_deadline_source_invariants ....................   Passed    0.07 sec
+        Start 149: clicker_range_stack_diag_source_invariants
+121/182 Test #149: clicker_range_stack_diag_source_invariants .................   Passed    0.02 sec
+        Start 150: debug_rtt_drop_accounting_source_invariants
+122/182 Test #150: debug_rtt_drop_accounting_source_invariants ................   Passed    0.02 sec
+        Start 151: ml_clicker_role_isolation_source_invariants
+123/182 Test #151: ml_clicker_role_isolation_source_invariants ................   Passed    0.02 sec
+        Start 152: mesh_relay
+124/182 Test #152: mesh_relay .................................................   Passed    0.01 sec
+        Start 153: mesh_c5_delivery
+125/182 Test #153: mesh_c5_delivery ...........................................   Passed    0.00 sec
+        Start 154: mesh_outbox_class_matrix
+126/182 Test #154: mesh_outbox_class_matrix ...................................   Passed    0.00 sec
+        Start 155: mesh_clicker_on_demand_rx_source_invariants
+127/182 Test #155: mesh_clicker_on_demand_rx_source_invariants ................   Passed    0.05 sec
+        Start 156: mesh_route_adv_policy
+128/182 Test #156: mesh_route_adv_policy ......................................   Passed    0.00 sec
+        Start 157: mesh_downlink_capacity
+129/182 Test #157: mesh_downlink_capacity .....................................   Passed    0.00 sec
+        Start 158: mesh_result_grant_retry_scenarios
+130/182 Test #158: mesh_result_grant_retry_scenarios ..........................   Passed    0.07 sec
+        Start 159: mesh_result_custody_rf_scenarios
+131/182 Test #159: mesh_result_custody_rf_scenarios ...........................   Passed    0.01 sec
+        Start 162: app_gateway_operation_owner
+132/182 Test #162: app_gateway_operation_owner ................................   Passed    0.00 sec
+        Start 165: dwm3000_models
+133/182 Test #165: dwm3000_models .............................................   Passed    0.01 sec
+        Start 166: multi_anchor_timing_invariants
+134/182 Test #166: multi_anchor_timing_invariants .............................   Passed    2.74 sec
+        Start 167: gateway_ble_transport_model
+135/182 Test #167: gateway_ble_transport_model ................................   Passed    0.01 sec
+        Start 168: stack_budget_model
+136/182 Test #168: stack_budget_model .........................................   Passed    0.00 sec
+        Start 169: forcedhop_ram_policy
+137/182 Test #169: forcedhop_ram_policy .......................................   Passed    0.06 sec
+        Start 170: mesh_report_role_storage
+138/182 Test #170: mesh_report_role_storage ...................................   Passed    0.09 sec
+        Start 171: provision_mesh_anchor
+139/182 Test #171: provision_mesh_anchor ......................................   Passed    0.09 sec
+        Start 172: clicker_hil
+140/182 Test #172: clicker_hil ................................................   Passed    0.07 sec
+        Start 176: mesh_wake_scenarios
+141/182 Test #176: mesh_wake_scenarios ........................................   Passed    0.71 sec
+        Start 177: mesh_forcedhop_enumeration_wake_scenarios
+142/182 Test #177: mesh_forcedhop_enumeration_wake_scenarios ..................   Passed    0.02 sec
+        Start 179: mesh_assignment_control_timing_scenarios
+143/182 Test #179: mesh_assignment_control_timing_scenarios ...................   Passed    0.01 sec
+        Start 180: mesh_discovery_assignment_adversarial_scenarios
+144/182 Test #180: mesh_discovery_assignment_adversarial_scenarios ............   Passed    0.00 sec
+        Start 181: assignment_claim_fresh_handle_scenarios
+145/182 Test #181: assignment_claim_fresh_handle_scenarios ....................   Passed    0.00 sec
+        Start 182: mesh_protocol_lifecycle_scenarios
+146/182 Test #182: mesh_protocol_lifecycle_scenarios ..........................   Passed    0.00 sec
+        Start 183: mesh_gateway_control_stress_scenarios
+147/182 Test #183: mesh_gateway_control_stress_scenarios ......................   Passed    0.01 sec
+        Start 184: node_comm_delivery_stress_scenarios
+148/182 Test #184: node_comm_delivery_stress_scenarios ........................   Passed    0.00 sec
+        Start 188: mesh_forcedhop_connection_scenarios
+149/182 Test #188: mesh_forcedhop_connection_scenarios ........................   Passed    0.75 sec
+        Start 190: mesh_click_collision_sweep
+150/182 Test #190: mesh_click_collision_sweep .................................   Passed    0.79 sec
+        Start 191: mesh_click_report_delivery_sweep
+151/182 Test #191: mesh_click_report_delivery_sweep ...........................   Passed    0.06 sec
+        Start 192: mesh_click_protocol_chain_scenarios
+152/182 Test #192: mesh_click_protocol_chain_scenarios ........................   Passed    0.01 sec
+        Start 193: gateway_ch9_back_to_back_scenarios
+153/182 Test #193: gateway_ch9_back_to_back_scenarios .........................   Passed    0.00 sec
+        Start 194: dwm3000_receive_error_boundary
+154/182 Test #194: dwm3000_receive_error_boundary .............................   Passed    0.00 sec
+        Start 195: dwm3000_reset_readiness
+155/182 Test #195: dwm3000_reset_readiness ....................................   Passed    0.00 sec
+        Start 196: dwm3000_retained_config
+156/182 Test #196: dwm3000_retained_config ....................................   Passed    0.00 sec
+        Start 197: dwm3000_range_receive_filter
+157/182 Test #197: dwm3000_range_receive_filter ...............................   Passed    0.00 sec
+        Start 198: dwm3000_range_absolute_rx
+158/182 Test #198: dwm3000_range_absolute_rx ..................................   Passed    0.00 sec
+        Start 199: dwm3000_driver_handler_boundary
+159/182 Test #199: dwm3000_driver_handler_boundary ............................   Passed    0.00 sec
+        Start 200: mesh_gateway_ble_scenarios
+160/182 Test #200: mesh_gateway_ble_scenarios .................................   Passed    0.00 sec
+        Start 201: gateway_ble_pressure_scenarios
+161/182 Test #201: gateway_ble_pressure_scenarios .............................   Passed    0.00 sec
+        Start 202: gateway_command_observability_scenarios
+162/182 Test #202: gateway_command_observability_scenarios ....................   Passed    0.00 sec
+        Start 205: watchdog_adoption_scenarios
+163/182 Test #205: watchdog_adoption_scenarios ................................   Passed    0.00 sec
+        Start 207: mesh_sim_fault_scenarios
+164/182 Test #207: mesh_sim_fault_scenarios ...................................   Passed    0.03 sec
+        Start 208: mesh_post_operation_liveness_scenarios
+165/182 Test #208: mesh_post_operation_liveness_scenarios .....................   Passed    0.00 sec
+        Start 209: control_failure_click_serviceability_source_invariants
+166/182 Test #209: control_failure_click_serviceability_source_invariants .....   Passed    0.21 sec
+        Start 210: mesh_event_control_rf_scenarios
+167/182 Test #210: mesh_event_control_rf_scenarios ............................   Passed    0.02 sec
+        Start 211: mesh_contact_response_scenarios
+168/182 Test #211: mesh_contact_response_scenarios ............................   Passed    0.01 sec
+        Start 212: mesh_stress_one_hop
+169/182 Test #212: mesh_stress_one_hop ........................................   Passed    0.00 sec
+        Start 213: mesh_stress_busy_line
+170/182 Test #213: mesh_stress_busy_line ......................................   Passed    0.00 sec
+        Start 214: mesh_stress_busy_line_reset
+171/182 Test #214: mesh_stress_busy_line_reset ................................   Passed    0.01 sec
+        Start 215: mesh_stress_busy_line_midflight_reset_regression
+172/182 Test #215: mesh_stress_busy_line_midflight_reset_regression ...........   Passed    0.00 sec
+        Start 216: mesh_stress_connection_expiry_during_route_tx_regression
+173/182 Test #216: mesh_stress_connection_expiry_during_route_tx_regression ...   Passed    0.00 sec
+        Start 217: mesh_stress_one_hop_fault_replay
+174/182 Test #217: mesh_stress_one_hop_fault_replay ...........................   Passed    0.00 sec
+        Start 218: mesh_stress_busy_line_ack_loss_regression
+175/182 Test #218: mesh_stress_busy_line_ack_loss_regression ..................   Passed    0.00 sec
+        Start 219: mesh_stress_busy_line_route_repair_regression
+176/182 Test #219: mesh_stress_busy_line_route_repair_regression ..............   Passed    0.00 sec
+        Start 220: mesh_stress_busy_line_runtime_cleanup_regression
+177/182 Test #220: mesh_stress_busy_line_runtime_cleanup_regression ...........   Passed    0.00 sec
+        Start 221: mesh_stress_busy_line_ack_downlink_regression
+178/182 Test #221: mesh_stress_busy_line_ack_downlink_regression ..............   Passed    0.00 sec
+        Start 222: mesh_stress_busy_line_batch_liveness_regression
+179/182 Test #222: mesh_stress_busy_line_batch_liveness_regression ............   Passed    0.00 sec
+        Start 223: mesh_stress_busy_line_contact_reservation_regression
+180/182 Test #223: mesh_stress_busy_line_contact_reservation_regression .......   Passed    0.00 sec
+        Start 224: mesh_stress_queue_full
+181/182 Test #224: mesh_stress_queue_full .....................................   Passed    0.00 sec
+        Start 225: mesh_stress_exact_failure_replay
+182/182 Test #225: mesh_stress_exact_failure_replay ...........................   Passed    0.74 sec
+
+100% tests passed out of 182
+
+Label Time Summary:
+architecture         =   0.00 sec*proc (2 tests)
+assignment           =   0.66 sec*proc (16 tests)
+backpressure         =   0.15 sec*proc (1 test)
+ble                  =   0.06 sec*proc (7 tests)
+boot                 =   0.00 sec*proc (1 test)
+channel5             =   2.96 sec*proc (9 tests)
+click                =   6.49 sec*proc (26 tests)
+collision            =   0.79 sec*proc (1 test)
+commands             =   0.07 sec*proc (2 tests)
+communication        =   9.79 sec*proc (54 tests)
+composition          =   5.06 sec*proc (1 test)
+configuration        =   0.28 sec*proc (1 test)
+connection           =   0.78 sec*proc (4 tests)
+contamination        =   0.00 sec*proc (1 test)
+control              =   0.01 sec*proc (1 test)
+custody              =   6.51 sec*proc (13 tests)
+delivery             =   0.91 sec*proc (9 tests)
+deployment           =   0.18 sec*proc (3 tests)
+ds_twr               =   0.00 sec*proc (3 tests)
+dwm3000              =   0.00 sec*proc (1 test)
+enumeration          =   2.89 sec*proc (9 tests)
+faults               =   0.09 sec*proc (12 tests)
+forcedhop            =   0.90 sec*proc (8 tests)
+future_facade        =   5.06 sec*proc (1 test)
+gateway              =   6.53 sec*proc (8 tests)
+gateway_command      =   0.57 sec*proc (11 tests)
+gateway_gui          =   0.20 sec*proc (2 tests)
+hardware_models      =  30.53 sec*proc (182 tests)
+host_tools           =   0.07 sec*proc (1 test)
+identity             =   0.03 sec*proc (1 test)
+liveness             =   0.26 sec*proc (9 tests)
+longevity            =   0.00 sec*proc (1 test)
+memory               =   0.02 sec*proc (1 test)
+mesh_integration     =  30.42 sec*proc (178 tests)
+ml                   =   0.02 sec*proc (1 test)
+multi_node           =   0.05 sec*proc (10 tests)
+network_stress       =   0.91 sec*proc (10 tests)
+one_hop              =   0.01 sec*proc (2 tests)
+persistence          =   0.18 sec*proc (6 tests)
+policy               =   0.04 sec*proc (1 test)
+power                =   0.49 sec*proc (9 tests)
+preemption           =   0.00 sec*proc (3 tests)
+production_seam      =  16.45 sec*proc (28 tests)
+protocol             =   0.17 sec*proc (27 tests)
+protocol_matrix      =  21.77 sec*proc (44 tests)
+queue                =   0.00 sec*proc (1 test)
+queues               =   0.01 sec*proc (2 tests)
+radio                =  10.67 sec*proc (32 tests)
+ram_custody          =   0.07 sec*proc (3 tests)
+reboot               =   0.24 sec*proc (6 tests)
+recovery             =   0.08 sec*proc (13 tests)
+replay               =   0.78 sec*proc (10 tests)
+reset                =   0.02 sec*proc (3 tests)
+route                =   1.76 sec*proc (13 tests)
+route_refresh        =   0.00 sec*proc (1 test)
+routes               =   0.01 sec*proc (2 tests)
+routing              =   0.15 sec*proc (10 tests)
+scale                =   2.76 sec*proc (1 test)
+simulator            =   3.35 sec*proc (32 tests)
+source_invariants    =   0.07 sec*proc (1 test)
+specialization       =   0.21 sec*proc (1 test)
+stack                =   0.17 sec*proc (3 tests)
+stack_evidence       =   0.03 sec*proc (4 tests)
+state                =   5.89 sec*proc (31 tests)
+static_analysis      =   3.62 sec*proc (34 tests)
+status               =   0.14 sec*proc (2 tests)
+stress               =   1.65 sec*proc (17 tests)
+survey               =   0.51 sec*proc (14 tests)
+timing               =   3.27 sec*proc (21 tests)
+topology             =   0.04 sec*proc (1 test)
+wake                 =   3.59 sec*proc (8 tests)
+watchdog             =   0.17 sec*proc (7 tests)
+workqueue            =   9.94 sec*proc (4 tests)
+
+Total Test time (real) =  30.58 sec

@@ -1,0 +1,533 @@
+[34m0000567[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000610[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000622[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000623[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000624[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000630[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000644[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000660[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000669[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000670[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000673[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000675[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000679[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000679[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000679[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000682[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000687[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000689[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000712[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000712[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000713[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_clicker build=imec-stack-v1:mesh_clicker:50ca640f721dedb12c3ffd61bd89978741c266e58a2807c82e63921d318ff4c2 epoch=7783510727254551481 uptime=2
+mesh node identity: ficr=0x888f75291076e82f node=0xc1c2306a5138ab2d preset=mesh_clicker
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1011
+DBG_CLICKER_BUTTON signal=2 source=irq_sample at=1017 action=0 ret=0
+DBG_CLICKER_RTT ready=1 commands=CLICK,LONG,READY
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+
+DBG_CLICKER_RTT command=INVALID accepted=0
+READY
+DBG_CLICKER_RTT ready=1 commands=CLICK,LONG,READY
+
+DBG_CLICKER_RTT command=INVALID accepted=0
+CLICK
+DBG_CLICKER_RTT command=CLICK accepted=1 ret=0
+DBG_CLICKER_CLICK state=START
+DBG_BLE_COURTESY_START evt=16842753 att=1 finish_ms=2110
+DBG_BLE_COURTESY_ADV_STARTED
+DBG_BLE_COURTESY_SCAN_STARTED sense_ms=150 interval=40 window=32
+DBG_BLE_COURTESY_DECISION evt=16842753 att=1 defer=0 wait_ms=0
+DBG_BLE_COURTESY_END stage=hold ret=0 reports=3 decoded=0 peers=0 higher=0 wait=0
+DBG_BLE_COURTESY_ADV_HELD
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=1 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CLICKER_DISCOVERY_REPLY anchor=0xf6d3a3bdac0f858 slot=1 quality=100 candidates=1
+DBG_CLICKER_DISCOVERY_REPLY anchor=0x9699122bd60a64e3 slot=2 quality=100 candidates=2
+DBG_CLICKER_DISCOVERY rx=2 decoded=2 candidates=2 malformed=0 rejected=0 window=608 ret=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CLICKER_RANGE state=START evt=16842753 att=1 selected=2
+DBG_STACK_RUN_BEGIN epoch=7783510727254551481 run=1 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=13961775027989293869 dst=1111608711777941592 session=16842753 seq=1 type=16 sequence=0 previous=0 uptime=81234
+DBG_DS_INIT stage=arm evt=16842753 seq=1 round=0 now=81284 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81301 seq=1 round=0 tx_time=0x01367c8c final_tx=0x367ccbd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xf98c2dd9 resp_rx=0x1804800a q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81307 seq=1 round=0
+DBG_DS_INIT stage=arm evt=16842753 seq=2 round=0 now=81317 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81334 seq=2 round=0 tx_time=0x01b2f744 final_tx=0xb2f783d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x7606ebd9 resp_rx=0x947f37fb q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81340 seq=2 round=0
+DBG_DS_INIT stage=arm evt=16842753 seq=2 round=1 now=81351 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81367 seq=2 round=1 tx_time=0x02334874 final_tx=0x3348b3d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xf65815d9 resp_rx=0x14d06808 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81373 seq=2 round=1
+DBG_DS_INIT stage=arm evt=16842753 seq=3 round=1 now=81383 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81400 seq=3 round=1 tx_time=0x02afc4f6 final_tx=0xafc535d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x72d49dd9 resp_rx=0x914ce9c9 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81406 seq=3 round=1
+DBG_DS_INIT stage=arm evt=16842753 seq=3 round=2 now=81416 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81433 seq=3 round=2 tx_time=0x032cb6b1 final_tx=0x2cb6efd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xefc653d9 resp_rx=0x0e3ea54c q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81439 seq=3 round=2
+DBG_DS_INIT stage=arm evt=16842753 seq=4 round=2 now=81449 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81466 seq=4 round=2 tx_time=0x03a914d8 final_tx=0xa91517d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x6c247fd9 resp_rx=0x8a9ccb83 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81472 seq=4 round=2
+DBG_DS_INIT stage=arm evt=16842753 seq=4 round=3 now=81482 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81499 seq=4 round=3 tx_time=0x04290ddd final_tx=0x290e1bd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xec1d7fd9 resp_rx=0x0a95d17e q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81505 seq=4 round=3
+DBG_DS_INIT stage=arm evt=16842753 seq=5 round=3 now=81515 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81532 seq=5 round=3 tx_time=0x04a5ed57 final_tx=0xa5ed95d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x68fcffd9 resp_rx=0x87754b5f q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81538 seq=5 round=3
+DBG_DS_INIT stage=arm evt=16842753 seq=5 round=4 now=81548 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81565 seq=5 round=4 tx_time=0x05225d23 final_tx=0x225d61d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xe56cc3d9 resp_rx=0x03e516cf q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81571 seq=5 round=4
+DBG_DS_INIT stage=arm evt=16842753 seq=6 round=4 now=81582 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81598 seq=6 round=4 tx_time=0x05a2b01b final_tx=0xa2b059d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x65bfc3d9 resp_rx=0x84380f19 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81604 seq=6 round=4
+DBG_DS_INIT stage=arm evt=16842753 seq=6 round=5 now=81614 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81631 seq=6 round=5 tx_time=0x061f0bdd final_tx=0x1f0c1bd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xe21b7dd9 resp_rx=0x0093d104 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81637 seq=6 round=5
+DBG_DS_INIT stage=arm evt=16842753 seq=7 round=5 now=81647 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=81664 seq=7 round=5 tx_time=0x069be179 final_tx=0x9be1b7d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x5ef121d9 resp_rx=0x7d696d09 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=81670 seq=7 round=5
+DBG_STACK_SAMPLE_BEGIN epoch=7783510727254551481 run=1 sample=1 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=13961775027989293869 dst=1111608711777941592 session=16842753 seq=1 type=16 uptime=81671
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+DBG_STACK name=BT RX WQ tid=0x2000ad68 used=312 free=712 size=1024 ret=0 run=1 sample=1
+DBG_STACK name=clicker_action tid=0x20003788 used=5040 free=3152 size=8192 ret=0 run=1 sample=1
+DBG_STACK name=mesh_route tid=0x20008d58 used=192 free=6592 size=6784 ret=0 run=1 sample=1
+DBG_STACK name=sysworkq tid=0x2000b5a0 used=536 free=5608 size=6144 ret=0 run=1 sample=1
+DBG_STACK name=MPSL Work tid=0x2000b358 used=492 free=532 size=1024 ret=0 run=1 sample=1
+DBG_STACK name=logging tid=0x20009c70 used=480 free=1568 size=2048 ret=0 run=1 sample=1
+DBG_STACK name=idle tid=0x2000b430 used=64 free=256 size=320 ret=0 run=1 sample=1
+DBG_STACK_SAMPLE_END run=1 sample=1
+DBG_STACK_RUN_END epoch=7783510727254551481 run=1 kind=click_activity owner=clicker_action outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=13961775027989293869 dst=1111608711777941592 session=16842753 seq=1 type=16 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=2 short_drops=0 sequence=0 previous=0 uptime=81676
+DBG_CLICKER_RANGE state=END evt=16842753 att=1 ret=0 unique=2
+DBG_CLICKER_CLICK state=COMPLETE ret=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=1 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+
+DBG_CLICKER_RTT command=INVALID accepted=0
+CLICK
+DBG_CLICKER_RTT command=CLICK accepted=1 ret=0
+DBG_CLICKER_CLICK state=START
+DBG_BLE_COURTESY_START evt=16842754 att=1 finish_ms=2110
+DBG_BLE_COURTESY_ADV_STARTED
+DBG_BLE_COURTESY_SCAN_STARTED sense_ms=150 interval=40 window=32
+DBG_BLE_COURTESY_DECISION evt=16842754 att=1 defer=0 wait_ms=0
+DBG_BLE_COURTESY_END stage=hold ret=0 reports=4 decoded=0 peers=0 higher=0 wait=0
+DBG_BLE_COURTESY_ADV_HELD
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=1 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CLICKER_DISCOVERY_REPLY anchor=0xf6d3a3bdac0f858 slot=1 quality=100 candidates=1
+DBG_CLICKER_DISCOVERY_REPLY anchor=0x9699122bd60a64e3 slot=2 quality=100 candidates=2
+DBG_CLICKER_DISCOVERY rx=2 decoded=2 candidates=2 malformed=0 rejected=0 window=608 ret=2
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_CLICKER_RANGE state=START evt=16842754 att=1 selected=2
+DBG_STACK_RUN_BEGIN epoch=7783510727254551481 run=2 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=13961775027989293869 dst=1111608711777941592 session=16842754 seq=1 type=16 sequence=0 previous=0 uptime=101230
+DBG_DS_INIT stage=arm evt=16842754 seq=1 round=0 now=101280 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101297 seq=1 round=0 tx_time=0x013623df final_tx=0x36241dd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xf9337fd9 resp_rx=0x17abd338 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101303 seq=1 round=0
+DBG_DS_INIT stage=arm evt=16842754 seq=2 round=0 now=101313 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101330 seq=2 round=0 tx_time=0x01b26440 final_tx=0xb2647fd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x7573e7d9 resp_rx=0x93ec33e3 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101336 seq=2 round=0
+DBG_DS_INIT stage=arm evt=16842754 seq=2 round=1 now=101346 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101363 seq=2 round=1 tx_time=0x0232990b final_tx=0x329949d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xf5a8abd9 resp_rx=0x1420fee7 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101369 seq=2 round=1
+DBG_DS_INIT stage=arm evt=16842754 seq=3 round=1 now=101379 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101396 seq=3 round=1 tx_time=0x02aed835 final_tx=0xaed873d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x71e7ddd9 resp_rx=0x90602974 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101402 seq=3 round=1
+DBG_DS_INIT stage=arm evt=16842754 seq=3 round=2 now=101412 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101428 seq=3 round=2 tx_time=0x032b54d6 final_tx=0x2b5515d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xee6475d9 resp_rx=0x0cdcc9a7 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101435 seq=3 round=2
+DBG_DS_INIT stage=arm evt=16842754 seq=4 round=2 now=101445 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101462 seq=4 round=2 tx_time=0x03aba555 final_tx=0xaba593d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x6eb4fdd9 resp_rx=0x8d2d4909 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101468 seq=4 round=2
+DBG_DS_INIT stage=arm evt=16842754 seq=4 round=3 now=101478 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101495 seq=4 round=3 tx_time=0x04282145 final_tx=0x282183d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xeb30e5d9 resp_rx=0x09a93932 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101501 seq=4 round=3
+DBG_DS_INIT stage=arm evt=16842754 seq=5 round=3 now=101511 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101527 seq=5 round=3 tx_time=0x04a47e7b final_tx=0xa47eb9d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x678e21d9 resp_rx=0x86066e92 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101534 seq=5 round=3
+DBG_DS_INIT stage=arm evt=16842754 seq=5 round=4 now=101544 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101561 seq=5 round=4 tx_time=0x0524d107 final_tx=0x24d145d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xe7e0a7d9 resp_rx=0x0658faa2 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101567 seq=5 round=4
+DBG_DS_INIT stage=arm evt=16842754 seq=6 round=4 now=101577 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101594 seq=6 round=4 tx_time=0x05a16a10 final_tx=0xa16a4fd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x6479b7d9 resp_rx=0x82f2041a q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101600 seq=6 round=4
+DBG_DS_INIT stage=arm evt=16842754 seq=6 round=5 now=101610 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101627 seq=6 round=5 tx_time=0x061e2d5e final_tx=0x1e2d9dd9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0xe13cfdd9 resp_rx=0xffb551b0 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101633 seq=6 round=5
+DBG_DS_INIT stage=arm evt=16842754 seq=7 round=5 now=101644 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=101660 seq=7 round=5 tx_time=0x069e98b2 final_tx=0x9e98f1d9 report=0
+DBG_DS_INIT stage=final-raw poll_tx=0x61a859d9 resp_rx=0x8020a5a6 q=100
+DBG_DS_INIT stage=done ret=0 status=0 now=101666 seq=7 round=5
+DBG_STACK_SAMPLE_BEGIN epoch=7783510727254551481 run=2 sample=2 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=13961775027989293869 dst=1111608711777941592 session=16842754 seq=1 type=16 uptime=101668
+DBG_STACK_ISR_CONFIG size=8192 run=2 sample=2
+DBG_STACK name=BT RX WQ tid=0x2000ad68 used=312 free=712 size=1024 ret=0 run=2 sample=2
+DBG_STACK name=clicker_action tid=0x20003788 used=5056 free=3136 size=8192 ret=0 run=2 sample=2
+DBG_STACK name=mesh_route tid=0x20008d58 used=192 free=6592 size=6784 ret=0 run=2 sample=2
+DBG_STACK name=sysworkq tid=0x2000b5a0 used=536 free=5608 size=6144 ret=0 run=2 sample=2
+DBG_STACK name=MPSL Work tid=0x2000b358 used=492 free=532 size=1024 ret=0 run=2 sample=2
+DBG_STACK name=logging tid=0x20009c70 used=480 free=1568 size=2048 ret=0 run=2 sample=2
+DBG_STACK name=idle tid=0x2000b430 used=64 free=256 size=320 ret=0 run=2 sample=2
+DBG_STACK_SAMPLE_END run=2 sample=2
+DBG_STACK_RUN_END epoch=7783510727254551481 run=2 kind=click_activity owner=clicker_action outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=13961775027989293869 dst=1111608711777941592 session=16842754 seq=1 type=16 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=2 short_drops=0 sequence=0 previous=0 uptime=101673
+DBG_CLICKER_RANGE state=END evt=16842754 att=1 ret=0 unique=2
+DBG_CLICKER_CLICK state=COMPLETE ret=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=1 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0

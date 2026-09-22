@@ -1,0 +1,18 @@
+{
+  "injected_clicks": 20,
+  "completed_clicks": 18,
+  "failed_attempts": [
+    "-116",
+    "-116"
+  ],
+  "unique_reports": 36,
+  "host_receipts": 36,
+  "each_report_receipted": true,
+  "sessions": 18,
+  "two_reports_each_session": true,
+  "all_six_samples": true,
+  "successful_batches": [
+    "0x9999888877776666 count=2 sent=0x3 acked=0x3 ret=0",
+    "0xf6d3a3bdac0f858 count=2 sent=0x3 acked=0x3 ret=0"
+  ]
+}

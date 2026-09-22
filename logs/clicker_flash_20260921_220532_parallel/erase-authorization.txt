@@ -1,0 +1,1 @@
+User explicitly approved: Erase and flash all three. Targets: E46070D247394D36, E4645C15CB0F3B37, E4645C15CB365D30. Full-chip unlock erase authorized; protected original contents cannot be backed up.

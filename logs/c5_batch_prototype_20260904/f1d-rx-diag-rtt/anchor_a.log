@@ -1,0 +1,2448 @@
+53224.146 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53224.146 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53224.146 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=117639 e=117649 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53224.146 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53224.146 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=73 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=117651
+53224.146 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=73 sample=73 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=117651
+53224.146 [0] DBG_STACK_ISR_CONFIG size=8192 run=73 sample=73
+53224.146 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=73 sample=73
+53224.146 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=73 sample=73
+53224.146 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53224.146 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53224.303 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53224.303 [0] DBG_ANCHOR_CH5_SCAN_ARM now=140036 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53224.331 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53224.331 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=140044 e=140054 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53224.331 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10437 complete=1000
+53224.331 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53224.701 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53224.736 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53224.736 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=140444 e=140454 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53224.736 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53224.736 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=74 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=140456
+53224.736 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=74 sample=74 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=140456
+53224.736 [0] DBG_STACK_ISR_CONFIG size=8192 run=74 sample=74
+53224.736 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=74 sample=74
+53224.736 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=74 sample=74
+53224.736 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=74 sample=74
+53224.764 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=74 sample=74
+53224.764 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=74 sample=74
+53224.764 [0] DBG_STACK_SAMPLE_END run=74 sample=74
+53224.764 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=74 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=63 short_drops=558 sequence=0 previous=0 uptime=140476
+53225.106 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53225.133 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53225.133 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=140844 e=140854 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53225.133 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53225.512 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53225.512 [0] DBG_ANCHOR_CH5_SCAN_ARM now=141236 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53225.512 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53225.539 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=141244 e=141254 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53225.539 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10833 complete=1000
+53225.539 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53225.900 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53225.932 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53225.932 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=141644 e=141654 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53225.932 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53225.932 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=75 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=141655
+53225.932 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=75 sample=75 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=141656
+53225.932 [0] DBG_STACK_ISR_CONFIG size=8192 run=75 sample=75
+53225.932 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=75 sample=75
+53225.932 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=75 sample=75
+53225.932 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=75 sample=75
+53225.969 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=75 sample=75
+53225.969 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=75 sample=75
+53225.969 [0] DBG_STACK_SAMPLE_END run=75 sample=75
+53225.969 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=75 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=63 short_drops=558 sequence=0 previous=0 uptime=141673
+53226.310 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53226.310 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53226.335 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=142044 e=142054 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53226.335 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53226.710 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53226.710 [0] DBG_ANCHOR_CH5_SCAN_ARM now=142435 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53226.710 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53226.737 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=142444 e=142454 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53226.737 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53226.737 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53227.100 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53227.131 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53227.131 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=142844 e=142854 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53227.131 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53227.131 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=76 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=142855
+53227.131 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=76 sample=76 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=142856
+53227.131 [0] DBG_STACK_ISR_CONFIG size=8192 run=76 sample=76
+53227.131 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=76 sample=76
+53227.131 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=76 sample=76
+53227.131 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=76 sample=76
+53227.160 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=76 sample=76
+53227.160 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=76 sample=76
+53227.160 [0] DBG_STACK_SAMPLE_END run=76 sample=76
+53227.160 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=76 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=63 short_drops=558 sequence=0 previous=0 uptime=142871
+53227.502 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53227.529 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53227.529 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=143244 e=143254 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53227.529 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53227.921 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53227.921 [0] DBG_ANCHOR_CH5_SCAN_ARM now=143636 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53227.921 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53227.921 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=143644 e=143654 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53227.921 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53227.921 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53228.317 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53228.317 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53228.348 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=144044 e=144054 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53228.348 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53228.348 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=77 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=144056
+53228.348 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=77 sample=77 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=144056
+53228.348 [0] DBG_STACK_ISR_CONFIG size=8192 run=77 sample=77
+53228.348 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=77 sample=77
+53228.348 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=77 sample=77
+53228.348 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=77 sample=77
+53228.378 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=77 sample=77
+53228.378 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=77 sample=77
+53228.378 [0] DBG_STACK_SAMPLE_END run=77 sample=77
+53228.378 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=77 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=63 short_drops=558 sequence=0 previous=0 uptime=144088
+53228.718 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53228.718 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53228.718 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=144444 e=144454 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53228.746 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53229.123 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53229.123 [0] DBG_ANCHOR_CH5_SCAN_ARM now=144836 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53229.123 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53229.123 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=144844 e=144854 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53229.123 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53229.123 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53229.528 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53229.528 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53229.528 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=145244 e=145254 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53229.528 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53229.528 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=78 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=145256
+53229.528 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=78 sample=78 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=145256
+53229.528 [0] DBG_STACK_ISR_CONFIG size=8192 run=78 sample=78
+53229.528 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=78 sample=78
+53229.528 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=78 sample=78
+53229.559 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=78 sample=78
+53229.559 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=78 sample=78
+53229.559 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=78 sample=78
+53229.559 [0] DBG_STACK_SAMPLE_END run=78 sample=78
+53229.559 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=78 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=63 short_drops=558 sequence=0 previous=0 uptime=145269
+53229.917 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53229.917 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53229.943 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=145644 e=145654 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53229.943 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53230.326 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53230.326 [0] DBG_ANCHOR_CH5_SCAN_ARM now=146036 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53230.326 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53230.326 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=146044 e=146054 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53230.326 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10437 complete=1000
+53230.326 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53230.728 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53230.728 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53230.728 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=146444 e=146454 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53230.728 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=79 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=146456
+53230.728 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=79 sample=79 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=146456
+53230.728 [0] DBG_STACK_ISR_CONFIG size=8192 run=79 sample=79
+53230.728 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=79 sample=79
+53230.728 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=79 sample=79
+53230.728 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=79 sample=79
+53230.756 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=79 sample=79
+53230.756 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=79 sample=79
+53230.756 [0] DBG_STACK_SAMPLE_END run=79 sample=79
+53230.756 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=79 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=64 short_drops=558 sequence=0 previous=0 uptime=146468
+53231.121 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53231.121 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53231.121 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=146847 e=146857 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53231.146 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53231.504 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53231.504 [0] DBG_ANCHOR_CH5_SCAN_ARM now=147239 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53231.531 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53231.531 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=147247 e=147257 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53231.531 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10833 complete=1000
+53231.531 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53231.915 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53231.915 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53231.946 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=147647 e=147657 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53231.946 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53231.946 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=80 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=147658
+53231.946 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=80 sample=80 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=147659
+53231.946 [0] DBG_STACK_ISR_CONFIG size=8192 run=80 sample=80
+53231.946 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=80 sample=80
+53231.946 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=80 sample=80
+53231.946 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=80 sample=80
+53231.975 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=80 sample=80
+53231.975 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=80 sample=80
+53231.975 [0] DBG_STACK_SAMPLE_END run=80 sample=80
+53231.975 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=80 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=64 short_drops=558 sequence=0 previous=0 uptime=147687
+53232.324 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53232.324 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53232.324 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=148047 e=148057 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53232.324 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53232.725 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53232.725 [0] DBG_ANCHOR_CH5_SCAN_ARM now=148438 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53232.725 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53232.725 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=148447 e=148457 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53232.725 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10711 complete=1000
+53232.725 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53233.109 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53233.141 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53233.141 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53233.141 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1000
+53233.141 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=76 payload=74 status=0x00006f00 rearm=0 extended=1
+53233.141 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=74 fail=0 pre=1 q=100 rx_us=10223 complete=1000
+53233.141 [0] DBG_UWB_RX_CH5
+53233.141 [0] DBG_ANCHOR_CH5_FRAME len=74 q=100 wake_ret=0
+53233.141 [0] DBG_ANCHOR_ROUTE_WAKE_DISPATCH src=0x9999888877776666 evt=149342 attempt=1 flags=0x92 len=74 q=100
+53233.141 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=gateway_command_flood reason=replace
+53233.141 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=81 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=148859
+53233.171 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=81 sample=81 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=148859
+53233.171 [0] DBG_STACK_ISR_CONFIG size=8192 run=81 sample=81
+53233.171 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=81 sample=81
+53233.171 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=81 sample=81
+53233.171 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=81 sample=81
+53233.171 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=81 sample=81
+53233.171 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=81 sample=81
+53233.171 [0] DBG_STACK_SAMPLE_END run=81 sample=81
+53233.200 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=81 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=71 short_drops=558 sequence=0 previous=0 uptime=148884
+53236.757 [0] DBG_ROUTE_REPLY_RX_FRAME
+53236.757 [0] DBG_GATEWAY_ROUTE_ADV_RX
+53236.757 [0] DBG_UWB_RX_CH5
+53236.757 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=3 q=1
+53236.757 [0] DBG_ROUTE_ADV_QUEUED q=1 prev=0x9999888877776666 seq=3
+53236.757 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x3c
+53236.757 [0] DBG_C5_GATEWAY_OPERATION_RETAINED msg=0x3c seq=3 click_waiting=0
+53236.791 [0] DBG_COORD state=mesh-rx owner=uwb-rx reason=mesh-rx rx=1 tx=0 relay=0 route=0 ack=0 qack=0
+53236.791 [0] DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=10 wait=0 q=1
+53236.791 [0] DBG_MESH_RX_WORK_WAIT q=1
+53236.791 [0] DBG_MESH_RX_WORK_ENTER q=1
+53236.791 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53236.791 [0] DBG_RX_HANDLE msg=0x3c act=0x20040001 st=0 q=0 sel=1 next=0x9999888877776666 hop=0
+53236.791 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=replace
+53236.791 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9999888877776666 purpose=route_contact_refresh reason=c5-control-rx
+53236.791 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=route_contact_refresh reason=c5-control-rx
+53236.791 [0] DBG_ANCHOR_CH5_SCAN_ARM now=152497 win=2000 complete=15 interval=380 wait=0 tx=0 response=0
+53236.791 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53236.791 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53237.065 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53237.065 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53237.065 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=167 payload=165 status=0x00006f00 rearm=0 extended=1
+53237.065 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=165 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53237.065 [0] DBG_UWB_RX_CH5
+53237.065 [0] DBG_ANCHOR_CH5_FRAME len=165 q=100 wake_ret=-8
+53237.065 [0] DBG_UWB_RX_CH5
+53237.065 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=3 q=1
+53237.065 [0] DBG_ROUTE_ADV_QUEUED q=1 prev=0x9999888877776666 seq=3
+53237.065 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x3c
+53237.065 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53237.065 [0] DBG_MESH_RX_SUBMIT ret=2 q=1 routeq=1
+53237.065 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53237.065 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53237.065 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53237.184 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=82 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=152897
+53237.184 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=82 sample=82 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=152897
+53237.184 [0] DBG_STACK_ISR_CONFIG size=8192 run=82 sample=82
+53237.184 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=82 sample=82
+53237.184 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=82 sample=82
+53237.184 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=82 sample=82
+53237.184 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=82 sample=82
+53237.184 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=82 sample=82
+53237.214 [0] DBG_STACK_SAMPLE_END run=82 sample=82
+53237.214 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=82 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=74 short_drops=568 sequence=0 previous=0 uptime=152925
+53238.103 [0] DBG_ENUM_CONTROL_BURST state=begin msg=3c seq=3 active=1
+53238.139 [0] DBG_ENUM_RELAY_SCAN_PREEMPT msg=3c seq=3 active=1
+53238.139 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-140 len=0 fail=0 pre=0 q=0 rx_us=2000000 complete=15
+53238.139 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53238.139 [0] DBG_ROUTE_ADV_FORWARD_DONE ret=-16 seq=3
+53238.139 [0] DBG_RX_HANDLE msg=0x3c act=0x00000040 st=-9 q=0 sel=1 next=0x9999888877776666 hop=0
+53238.139 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9999888877776666 purpose=route_contact_refresh reason=c5-control-rx
+53238.139 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=route_contact_refresh reason=c5-control-rx
+53238.139 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=2 q=0
+53238.139 [0] DBG_MESH_RX_WORK_EXIT handled=2 q=0
+53238.139 [0] DBG_COORD state=idle owner=report-tx reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+53238.139 [0] DBG_MESH_RX_WORK_WAIT q=0
+53238.139 [0] DBG_MESH_RX_WORK_ENTER q=0
+53238.139 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+53238.139 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+53238.139 [0] DBG_MESH_RX_WORK_EXIT handled=0 q=0
+53238.139 [0] DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=10 wait=0 q=0
+53238.139 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53238.538 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=83 kind=anchor_scan owner=anchor_uwb_scan queue=1 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=154241
+53238.538 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=83 sample=83 kind=anchor_scan owner=anchor_uwb_scan queue=1 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=154241
+53238.538 [0] DBG_STACK_ISR_CONFIG size=8192 run=83 sample=83
+53238.538 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=83 sample=83
+53238.538 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=83 sample=83
+53238.538 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=83 sample=83
+53238.538 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=83 sample=83
+53238.538 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=83 sample=83
+53238.573 [0] DBG_STACK_SAMPLE_END run=83 sample=83
+53238.573 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=83 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=1 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=74 short_drops=571 sequence=0 previous=0 uptime=154279
+53239.111 [1] [00:02:33.841,766] <wrn> app_mesh_report: mesh C5 flood wake train failed
+53239.137 [1] : msg=0x3c ret=-16 reason=gateway-route-adv-forward
+53240.151 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=153862 e=155863 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53240.151 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53240.711 [0] DBG_ENUM_CONTROL_BURST state=begin msg=3c seq=3 active=1
+53240.711 [0] DBG_ENUM_RELAY_SCAN_PREEMPT msg=3c seq=3 active=1
+53240.711 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-140 len=0 fail=0 pre=0 q=0 rx_us=4001190 complete=15
+53240.711 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.711 [0] DBG_WAKE_TRAIN_GUARD_OK
+53240.711 [0] DBG_WAKE_TRAIN_CONFIG_BEGIN
+53240.711 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53240.711 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53240.740 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.740 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21057
+53240.740 [0] DBG_WAKE_TRAIN_CONFIG_OK
+53240.740 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.740 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.740 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.740 [0] DBG_UWB_TX_CH5
+53240.740 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.740 [0] DBG_UWB_TX_CH5
+53240.740 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.740 [0] DBG_UWB_TX_CH5
+53240.740 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.769 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.769 [0] DBG_UWB_TX_CH5
+53240.769 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.769 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.769 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.769 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.769 [0] DBG_UWB_TX_CH5
+53240.769 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.769 [0] DBG_UWB_TX_CH5
+53240.769 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.769 [0] DBG_UWB_TX_CH5
+53240.769 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.769 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.804 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.804 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.804 [0] DBG_UWB_TX_CH5
+53240.804 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.804 [0] DBG_UWB_TX_CH5
+53240.804 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.804 [0] DBG_UWB_TX_CH5
+53240.804 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.804 [0] DBG_UWB_TX_CH5
+53240.804 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.804 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.804 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.804 [0] DBG_UWB_TX_CH5
+53240.804 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.834 [0] DBG_UWB_TX_CH5
+53240.834 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.834 [0] DBG_UWB_TX_CH5
+53240.834 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.834 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.834 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.834 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.834 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.834 [0] DBG_UWB_TX_CH5
+53240.834 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.867 [0] DBG_UWB_TX_CH5
+53240.867 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.867 [0] DBG_UWB_TX_CH5
+53240.867 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.867 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.867 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.867 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.867 [0] DBG_UWB_TX_CH5
+53240.867 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.867 [0] DBG_UWB_TX_CH5
+53240.867 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.867 [0] DBG_UWB_TX_CH5
+53240.867 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.894 [0] DBG_UWB_TX_CH5
+53240.894 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.894 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.894 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.894 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.894 [0] DBG_UWB_TX_CH5
+53240.894 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.894 [0] DBG_UWB_TX_CH5
+53240.894 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.894 [0] DBG_UWB_TX_CH5
+53240.894 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.894 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.930 [0] DBG_UWB_TX_CH5
+53240.930 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.930 [0] DBG_UWB_TX_CH5
+53240.930 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.930 [0] DBG_UWB_TX_CH5
+53240.930 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.930 [0] DBG_UWB_TX_CH5
+53240.930 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.930 [0] DBG_UWB_TX_CH5
+53240.930 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.965 [0] DBG_UWB_TX_CH5
+53240.965 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.965 [0] DBG_UWB_TX_CH5
+53240.965 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.965 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53240.965 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53240.965 [0] DBG_SCAN_SKIPPED reason=blocked
+53240.965 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53240.965 [0] DBG_UWB_TX_CH5
+53240.965 [0] DBG_TX_WAKE_CLAIM_SENT
+53240.965 [0] DBG_UWB_TX_CH5
+53240.965 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.005 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.005 [0] DBG_UWB_TX_CH5
+53241.005 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.005 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.005 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.005 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.005 [0] DBG_UWB_TX_CH5
+53241.005 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.005 [0] DBG_UWB_TX_CH5
+53241.005 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.005 [0] DBG_UWB_TX_CH5
+53241.005 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.005 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.005 [0] DBG_UWB_TX_CH5
+53241.005 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.005 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.005 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.005 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.047 [0] DBG_UWB_TX_CH5
+53241.047 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.047 [0] DBG_UWB_TX_CH5
+53241.047 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.047 [0] DBG_UWB_TX_CH5
+53241.047 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.047 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.047 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.047 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.047 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.047 [0] DBG_UWB_TX_CH5
+53241.047 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.047 [0] DBG_UWB_TX_CH5
+53241.047 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.047 [0] DBG_UWB_TX_CH5
+53241.047 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.047 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.075 [0] DBG_UWB_TX_CH5
+53241.075 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.075 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.075 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.075 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.075 [0] DBG_UWB_TX_CH5
+53241.075 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.075 [0] DBG_UWB_TX_CH5
+53241.075 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.075 [0] DBG_UWB_TX_CH5
+53241.075 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.075 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.075 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.075 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.110 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.110 [0] DBG_UWB_TX_CH5
+53241.110 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.110 [0] DBG_UWB_TX_CH5
+53241.110 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.110 [0] DBG_UWB_TX_CH5
+53241.110 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.110 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=84 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=156828
+53241.110 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=84 sample=84 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=156829
+53241.110 [0] DBG_STACK_ISR_CONFIG size=8192 run=84 sample=84
+53241.110 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=84 sample=84
+53241.110 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=84 sample=84
+53241.110 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=84 sample=84
+53241.142 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=84 sample=84
+53241.142 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=84 sample=84
+53241.142 [0] DBG_STACK_SAMPLE_END run=84 sample=84
+53241.142 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=84 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=88 short_drops=571 sequence=0 previous=0 uptime=156851
+53241.142 [0] DBG_UWB_TX_CH5
+53241.142 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.142 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.142 [0] DBG_UWB_TX_CH5
+53241.142 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.142 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.142 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.142 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.142 [0] DBG_UWB_TX_CH5
+53241.142 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.174 [0] DBG_UWB_TX_CH5
+53241.174 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.174 [0] DBG_UWB_TX_CH5
+53241.174 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.174 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.174 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.174 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.174 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.174 [0] DBG_UWB_TX_CH5
+53241.174 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.174 [0] DBG_UWB_TX_CH5
+53241.174 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.174 [0] DBG_UWB_TX_CH5
+53241.174 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.203 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.203 [0] DBG_UWB_TX_CH5
+53241.203 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.203 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.203 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.203 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.203 [0] DBG_UWB_TX_CH5
+53241.203 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.203 [0] DBG_UWB_TX_CH5
+53241.203 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.203 [0] DBG_UWB_TX_CH5
+53241.203 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.203 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.234 [0] DBG_UWB_TX_CH5
+53241.234 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.234 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.234 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.234 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.234 [0] DBG_UWB_TX_CH5
+53241.234 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.234 [0] DBG_UWB_TX_CH5
+53241.234 [0] DBG_TX_WAKE_CLAIM_SENT
+53241.234 [0] DBG_WAKE_TRAIN_TIMING evt=156429 start=156451 first=156458 last=156953 end=156954 sent=71 ret=0
+53241.234 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53241.234 [0] DBG_C5_CONTROL_FOLLOWUP_TURNAROUND delay=60 msg=3c reason=gateway-route-adv-forward
+53241.234 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.234 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.234 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.234 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.234 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.265 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.265 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.265 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.265 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.265 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.265 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.296 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.296 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.296 [0] DBG_ENUM_CONTROL_BURST state=begin msg=3c seq=3 active=1
+53241.296 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53241.296 [0] DBG_ENUM_CONTROL_BURST state=begin msg=3c seq=3 active=1
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.296 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.296 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.296 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53241.333 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53241.333 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.333 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21240
+53241.333 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53241.333 [0] DBG_C5_TX_CONFIG ret=0 at=157040 ext=1 len=173 msg=3c reason=bounded-c5-flood
+53241.333 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53241.333 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.333 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53241.333 [0] DBG_MESH_TX_AGE msg=3c seq=3 age=8342 enc=157041 rf=157042 gap=1 air=3
+53241.333 [0] DBG_MESH_TX_STAGE stage=start msg=3c seq=3 ch=5 seen=1 at=157042
+53241.333 [0] DBG_MESH_TX_STAGE stage=complete msg=3c seq=3 ch=5 seen=1 at=157045 ret=0
+53241.333 [0] DBG_MESH_TX_STAGE stage=park msg=3c seq=3 ch=5 park_ret=0 release_ret=0
+53241.333 [0] DBG_UWB_TX_CH5
+53241.333 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53241.333 [0] DBG_C5_FLOOD_WAIT now=157047 wake=157655 first=157655 msg=3c attempt=3/3 reason=gateway-route-adv-forward
+53241.333 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.333 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.333 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.372 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.372 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.372 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.372 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.372 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.372 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.403 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.403 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.403 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.403 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.403 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.434 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.434 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.434 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.434 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.434 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.434 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.465 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.465 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.465 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.465 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.465 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.496 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.496 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.496 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.496 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.496 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.496 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.539 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.539 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.539 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.539 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.539 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.539 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.571 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.571 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.571 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.571 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.571 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.603 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.603 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.603 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.603 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.603 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.603 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.603 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.635 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.635 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.635 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.635 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.635 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.669 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.669 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.669 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.669 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.669 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.669 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.703 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.703 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.703 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.703 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.703 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.736 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.736 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.736 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.736 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.736 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.736 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.768 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.804 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.804 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.835 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.835 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.835 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.835 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.835 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.867 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.867 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.867 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.867 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.867 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.867 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.898 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.898 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.898 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.898 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.898 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.930 [0] DBG_ENUM_CONTROL_BURST state=begin msg=3c seq=3 active=1
+53241.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53241.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53241.967 [0] DBG_MESH_TX_STAGE stage=park msg=3c seq=3 ch=5 park_ret=0 release_ret=0
+53241.967 [0] DBG_UWB_TX_CH5
+53241.967 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53241.967 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53241.967 [0] DBG_ANCHOR_CH5_SCAN_ARM now=157686 win=2000 complete=15 interval=380 wait=0 tx=0 response=0
+53241.967 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53241.967 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53242.949 [1] [00:02:37.671,173] <err> app_mesh_report: deferred C5 flood exhausted: msg=0x3c ret=-5 attempts=0 age_ms=3830
+53243.964 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=157695 e=159695 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53243.964 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=14
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=13 rearm=1
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=12
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=11 rearm=2
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=7
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=6 rearm=3
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=5
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=4 rearm=4
+53245.154 [0] DBG_DWM_CH5_RX_ACTIVITY_FAIL ret=0 status=0x00000100 last=0x00000100 fail=3 activity=1 rearm=4
+53245.154 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53245.190 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.190 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53245.190 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=1020
+53245.190 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53245.190 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1000
+53245.190 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=76 payload=74 status=0x00006f00 rearm=0 extended=1
+53245.190 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53245.190 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.226 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53245.226 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53245.226 [0] DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=49 outcome=miss ret=0
+53245.226 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-5 len=74 fail=3 pre=1 q=100 rx_us=4001007 complete=15
+53245.226 [0] DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=-5 fail=3 reason=frame_timeout rx_us=4001007 cooldown=100
+53245.226 [0] DBG_DWM_INVALIDATE tag=dwm3000_driver_force_recovery active_phy=4 configured=1 awake=1
+53245.226 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+53245.226 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.226 [0] DBG_PROTOCOL_RX_RECOVERED owner=enumeration ret=-5 failure=3
+53245.226 [0] DBG_DWM_CH5_RX_HUNT_START acq=1312 complete=15 cap=1020
+53245.226 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.226 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53245.226 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=14 rearm=1
+53245.226 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x00001700 fail=4 remain=13 rearm=2
+53245.226 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=10
+53245.265 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53245.265 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.265 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53245.265 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=1020
+53245.265 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53245.265 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1000
+53245.265 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=76 payload=74 status=0x00006f00 rearm=0 extended=1
+53245.265 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53245.300 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.300 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53245.300 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53245.300 [0] DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=53 outcome=miss ret=0
+53245.300 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-5 len=74 fail=3 pre=1 q=100 rx_us=5313007 complete=15
+53245.300 [0] DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=-5 fail=3 reason=frame_timeout rx_us=5313007 cooldown=100
+53245.300 [0] DBG_DWM_INVALIDATE tag=dwm3000_driver_force_recovery active_phy=4 configured=1 awake=1
+53245.300 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+53245.339 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.339 [0] DBG_PROTOCOL_RX_RECOVERED owner=enumeration ret=-5 failure=3
+53245.339 [0] DBG_DWM_CH5_RX_HUNT_START acq=1220 complete=15 cap=1020
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=14 rearm=1
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x00001300 fail=4 remain=13 rearm=2
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=10
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=9 rearm=3
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=8
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=7 rearm=4
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=3
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=2 rearm=5
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1
+53245.339 [0] DBG_DWM_CH5_RX_ACTIVITY_FAIL ret=0 status=0x04000100 last=0x04000100 fail=2 activity=1 rearm=5
+53245.373 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20966
+53245.373 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=1020
+53245.373 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53245.373 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1000
+53245.373 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=76 payload=74 status=0x00006f00 rearm=0 extended=1
+53245.373 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53245.373 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.413 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21026
+53245.413 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53245.413 [0] DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=53 outcome=miss ret=0
+53245.413 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-5 len=74 fail=2 pre=1 q=100 rx_us=6533007 complete=15
+53245.413 [0] DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=-5 fail=2 reason=sfd_timeout rx_us=6533007 cooldown=100
+53245.413 [0] DBG_DWM_INVALIDATE tag=dwm3000_driver_force_recovery active_phy=4 configured=1 awake=1
+53245.413 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+53245.413 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.413 [0] DBG_PROTOCOL_RX_RECOVERED owner=enumeration ret=-5 failure=2
+53245.413 [0] DBG_DWM_CH5_RX_HUNT_START acq=1129 complete=15 cap=1020
+53245.413 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.413 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=14
+53245.413 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=14 rearm=1
+53245.413 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=13
+53245.413 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=11 rearm=2
+53245.450 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.450 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53245.450 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=1020
+53245.450 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53245.450 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1000
+53245.450 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=76 payload=74 status=0x00006f00 rearm=0 extended=1
+53245.450 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53245.485 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.485 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21027
+53245.485 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53245.485 [0] DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=47 outcome=miss ret=0
+53245.485 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-5 len=74 fail=2 pre=1 q=100 rx_us=7662007 complete=15
+53245.485 [0] DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=-5 fail=2 reason=sfd_timeout rx_us=7662007 cooldown=100
+53245.485 [0] DBG_DWM_INVALIDATE tag=dwm3000_driver_force_recovery active_phy=4 configured=1 awake=1
+53245.485 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+53245.485 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.485 [0] DBG_PROTOCOL_RX_RECOVERED owner=enumeration ret=-5 failure=2
+53245.485 [0] DBG_DWM_CH5_RX_HUNT_START acq=1044 complete=15 cap=1020
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=14 rearm=1
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=13
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=8 rearm=3
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=7
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=6 rearm=4
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=2
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=1 rearm=5
+53245.529 [0] DBG_DWM_CH5_RX_ACTIVITY_FAIL ret=0 status=0x00000100 last=0x00000100 fail=3 activity=1 rearm=5
+53245.529 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53245.529 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.529 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21026
+53245.529 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=1020
+53245.574 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53245.574 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.574 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21026
+53245.574 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53245.574 [0] DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=47 outcome=miss ret=0
+53245.574 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-5 len=74 fail=3 pre=1 q=100 rx_us=8706007 complete=15
+53245.574 [0] DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=-5 fail=3 reason=frame_timeout rx_us=8706007 cooldown=100
+53245.574 [0] DBG_DWM_INVALIDATE tag=dwm3000_driver_force_recovery active_phy=4 configured=1 awake=1
+53245.574 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+53245.574 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.574 [0] DBG_PROTOCOL_RX_RECOVERED owner=enumeration ret=-5 failure=3
+53245.574 [0] DBG_DWM_CH5_RX_HUNT_START acq=958 complete=15 cap=1020
+53245.579 [1] [00:02:40.927,947] <wrn> app_anchor: anchor UWB wake scan failure cooldown: ret=-5 rx_failure=frame_timeout reason=frame_timeout cooldown_ms=100 preambles=27 sfd_timeouts=0 frame_timeouts=1 crc_failure
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=13 rearm=1
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=6 rearm=3
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=5
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x04000100 fail=2 remain=4 rearm=4
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_FAIL ret=-116 status=0x00000100 last=0x00000100 fail=3 activity=1 rearm=4
+53245.620 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53245.620 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.620 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21026
+53245.620 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=1020
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=1000
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=1000
+53245.620 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=76 payload=74 status=0x00006f00 rearm=0 extended=1
+53245.626 [1] s=0
+53245.626 [1] [00:02:40.949,707] <wrn> dwm3000_driver: DWM3000 forced recovery completed: phy=4
+53245.626 [1] [00:02:41.019,989] <wrn> app_anchor: anchor UWB wake scan[0m
+53245.626 [1] [00:02:41.132,659] <wrn> dwm3000_driver: DWM3000 forced recovery completed: phy=4
+53245.626 [1] [00:02:41.196,014] <wrn> app_anchor: anchor UWB wake scan failure cooldown: ret=-5 rx_failure=sfd_timeout
+53245.664 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.664 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21057
+53245.664 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53245.664 [0] DBG_PROTOCOL_RX_CLICK_PROBE_DONE duration_ms=48 outcome=miss ret=0
+53245.664 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-5 len=74 fail=3 pre=1 q=100 rx_us=9664007 complete=15
+53245.664 [0] DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=-5 fail=3 reason=frame_timeout rx_us=9664007 cooldown=100
+53245.664 [0] DBG_DWM_INVALIDATE tag=dwm3000_driver_force_recovery active_phy=4 configured=1 awake=1
+53245.664 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+53245.664 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53245.664 [0] DBG_PROTOCOL_RX_RECOVERED owner=enumeration ret=-5 failure=3
+53245.664 [0] DBG_DWM_CH5_RX_HUNT_START acq=870 complete=15 cap=1020
+53245.666 [1] [0m
+53245.666 [1] timeout cooldown_ms=100 preambles=31 sfd_timeouts=2 frame_timeouts=3 crc_failures=0
+53245.701 [1] [00:02:41.303,466] <wrn> dwm3000_driver: DWM3000 forced recovery completed: phy=4
+53245.701 [1] [00:02:41.369,903] <wrn> app_anchor: anchor UWB wake scan failure cooldown: ret=-5 rx_failure=frame_timeout reason=frame_timeout cooldown_ms=100 preambles=32 sfd_timeouts=2 frame_timeou
+53245.735 [1] s=0
+53245.735 [1] [00:02:41.391,113] <wrn> dwm3000_driver: DWM3000 forced recovery complete
+53245.800 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53245.800 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53245.842 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=183 payload=181 status=0x00006f00 rearm=0 extended=1
+53245.842 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=181 fail=0 pre=1 q=100 rx_us=10534007 complete=15
+53245.842 [0] DBG_UWB_RX_CH5
+53245.842 [0] DBG_ANCHOR_CH5_FRAME len=181 q=100 wake_ret=-8
+53245.842 [0] DBG_UWB_RX_CH5
+53245.842 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=3 q=1
+53245.842 [0] DBG_ROUTE_ADV_QUEUED q=1 prev=0x9699122bd60a64e3 seq=3
+53245.842 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x3c
+53245.842 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=250 rf=0
+53245.842 [0] DBG_MESH_RX_WORK_WAIT q=1
+53245.842 [0] DBG_MESH_RX_WORK_ENTER q=1
+53245.842 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53245.842 [0] DBG_RX_HANDLE msg=0x3c act=0x00000040 st=-8 q=0 sel=1 next=0x9999888877776666 hop=0
+53245.842 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+53245.842 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53245.842 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53245.842 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53245.842 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53245.842 [0] DBG_ANCHOR_CH5_SCAN_ARM now=161545 win=716 complete=15 interval=380 wait=0 tx=0 response=0
+53245.842 [0] DBG_DWM_CH5_RX_HUNT_START acq=716 complete=15 cap=1020
+53246.102 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53246.102 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53246.102 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=183 payload=181 status=0x00006f00 rearm=0 extended=1
+53246.102 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=181 fail=0 pre=1 q=100 rx_us=716000 complete=15
+53246.102 [0] DBG_UWB_RX_CH5
+53246.102 [0] DBG_ANCHOR_CH5_FRAME len=181 q=100 wake_ret=-8
+53246.102 [0] DBG_UWB_RX_CH5
+53246.102 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=3 q=1
+53246.102 [0] DBG_ROUTE_ADV_QUEUED q=1 prev=0x9699122bd60a64e3 seq=3
+53246.102 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x3c
+53246.102 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53246.102 [0] DBG_MESH_RX_WORK_WAIT q=1
+53246.102 [0] DBG_MESH_RX_WORK_ENTER q=1
+53246.102 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53246.102 [0] DBG_RX_HANDLE msg=0x3c act=0x00000040 st=-8 q=0 sel=1 next=0x9999888877776666 hop=0
+53246.102 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+53246.102 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53246.102 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53246.102 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53246.102 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53246.233 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=85 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=161945
+53246.233 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=85 sample=85 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=161945
+53246.233 [0] DBG_STACK_ISR_CONFIG size=8192 run=85 sample=85
+53246.233 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=85 sample=85
+53246.233 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=85 sample=85
+53246.233 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=85 sample=85
+53246.233 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=85 sample=85
+53246.233 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=85 sample=85
+53246.262 [0] DBG_STACK_SAMPLE_END run=85 sample=85
+53246.262 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=85 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=88 short_drops=721 sequence=0 previous=0 uptime=161974
+53246.536 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=161814 e=162261 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53246.536 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53246.536 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53246.536 [0] DBG_ENUM_COMPACT_STATE_BEGIN epoch=22544409 parent=0x9999888877776666 hop=1 bytes=456 ret=0
+53246.618 [0] DBG_ENUM_COMPACT_TX epoch=22544409 parent=0x9999888877776666 hop=1 round=0 offset_ms=32 seq=0 records=1 ret=0
+53246.618 [0] DBG_ENUM_COMPACT_ACK_RX epoch=22544409 parent=0x9999888877776666 seq=0 matched=1
+53251.157 [0] DBG_ENUM_COMPACT_ACK_TX epoch=22544409 child=0x9699122bd60a64e3 seq=0 remaining=56 ret=0
+53251.157 [0] DBG_ENUM_COMPACT_BUNDLE_RX epoch=22544409 child=0x9699122bd60a64e3 seq=0 records=1 added=1 ack_ret=0
+53252.584 [0] DBG_ENUM_COMPACT_TX epoch=22544409 parent=0x9999888877776666 hop=2 round=12 offset_ms=10 seq=0 records=2 ret=0
+53252.614 [0] DBG_ENUM_COMPACT_ACK_RX epoch=22544409 parent=0x9999888877776666 seq=0 matched=1
+53260.353 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=170 fail=0 pre=1 q=100 rx_us=13790524 complete=1000
+53260.353 [0] DBG_UWB_RX_CH5
+53260.353 [0] DBG_ANCHOR_CH5_FRAME len=170 q=100 wake_ret=-8
+53260.353 [0] DBG_UWB_RX_CH5
+53260.353 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=4 q=1
+53260.353 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53260.353 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53260.353 [0] DBG_MESH_RX_WORK_WAIT q=1
+53260.353 [0] DBG_MESH_RX_WORK_ENTER q=1
+53260.353 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53260.353 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_contact_refresh reason=replace
+53260.353 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53260.353 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53260.353 [0] DBG_C5_FLOOD_WAIT now=176078 wake=176401 first=176401 msg=40 attempt=1/3 reason=broadcast-forward
+53260.353 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53260.353 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53260.353 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.421 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=170 fail=0 pre=1 q=100 rx_us=47363 complete=1000
+53260.421 [0] DBG_UWB_RX_CH5
+53260.421 [0] DBG_ANCHOR_CH5_FRAME len=170 q=100 wake_ret=-8
+53260.421 [0] DBG_UWB_RX_CH5
+53260.421 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=4 q=1
+53260.421 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53260.421 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53260.421 [0] DBG_MESH_RX_SUBMIT ret=2 q=1 routeq=1
+53260.421 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53260.421 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.421 [0] DBG_ENUM_COMPACT_RESUME epoch=22544409 records=2 acked=0x01
+53260.460 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=170 fail=0 pre=1 q=100 rx_us=26336 complete=1000
+53260.460 [0] DBG_UWB_RX_CH5
+53260.460 [0] DBG_ANCHOR_CH5_FRAME len=170 q=100 wake_ret=-8
+53260.460 [0] DBG_UWB_RX_CH5
+53260.460 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=4 q=2
+53260.460 [0] DBG_MESH_RX_DEFERRED q=2 msg=0x40
+53260.460 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=2 delay=380 rf=0
+53260.460 [0] DBG_MESH_RX_SUBMIT ret=0 q=2 routeq=1
+53260.460 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53260.460 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.680 [0] DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=4 active=1
+53260.680 [0] DBG_ENUM_RELAY_SCAN_PREEMPT msg=40 seq=4 active=1
+53260.680 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53260.680 [0] DBG_COORD state=mesh-rx owner=bounded-c5-flood reason=mesh-rx rx=2 tx=0 relay=0 route=0 ack=0 qack=0
+53260.680 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53260.680 [0] DBG_DISCOVERY_POLICY phase=2 epoch=22544409 ram_only=1
+53260.680 [0] DBG_DISCOVERY_SLOT_SAVE mode=ram epoch=22544409 pending_epoch=0 slot=0 slot_count=50 provisioned=1 pending=0
+53260.680 [0] DBG_DISCOVERY_SLOT_TABLE_COMMIT epoch=22544409 table_seq=22544418 provisioned=1 slot=0 slot_count=50
+53260.680 [0] DBG_ENUM_RX_ACTIVE epoch=22544409 budget=1800000 duplicate=1
+53260.680 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=0
+53260.680 [0] DBG_ENUM_RX_SURVEY_HANDOFF epoch=22544409 hold=19530
+53260.680 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=0 delay=0
+53260.680 [0] DBG_DISCOVERY_SLOT_TABLE_ACCEPT epoch=22544409 table_seq=22544418 listed=1 slot=0 anchors=2 replay=0
+53260.680 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53260.680 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=0 delay=0
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53260.723 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53260.723 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53260.723 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53260.723 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.723 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53260.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53260.768 [0] DBG_SCAN_SKIPPED reason=blocked
+53260.768 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53260.768 [0] DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=4 active=1
+53260.768 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=86 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=176478
+53260.810 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=86 sample=86 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=176479
+53260.810 [0] DBG_STACK_ISR_CONFIG size=8192 run=86 sample=86
+53260.810 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=86 sample=86
+53260.810 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=86 sample=86
+53260.810 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=86 sample=86
+53260.810 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=86 sample=86
+53260.810 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=86 sample=86
+53260.810 [0] DBG_STACK_SAMPLE_END run=86 sample=86
+53260.851 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=86 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=109 short_drops=762 sequence=0 previous=0 uptime=176511
+53260.851 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53260.851 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53260.851 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53260.936 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53260.936 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53260.936 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=172 payload=170 status=0x00006f00 rearm=0 extended=1
+53260.936 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=170 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53260.936 [0] DBG_UWB_RX_CH5
+53260.936 [0] DBG_ANCHOR_CH5_FRAME len=170 q=100 wake_ret=-8
+53260.936 [0] DBG_UWB_RX_CH5
+53260.936 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=4 q=1
+53260.936 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53260.936 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53260.936 [0] DBG_MESH_RX_WORK_WAIT q=1
+53260.936 [0] DBG_MESH_RX_WORK_ENTER q=1
+53260.936 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53260.936 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=gateway_command_flood reason=replace
+53260.936 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53260.936 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53260.936 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53260.982 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53260.982 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53260.982 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=172 payload=170 status=0x00006f00 rearm=0 extended=1
+53260.982 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=170 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53260.982 [0] DBG_UWB_RX_CH5
+53260.982 [0] DBG_ANCHOR_CH5_FRAME len=170 q=100 wake_ret=-8
+53260.982 [0] DBG_UWB_RX_CH5
+53260.982 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=4 q=1
+53260.982 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53260.982 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53260.982 [0] DBG_MESH_RX_WORK_WAIT q=1
+53260.982 [0] DBG_MESH_RX_WORK_ENTER q=1
+53260.982 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53260.982 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53260.982 [0] DBG_DISCOVERY_POLICY phase=2 epoch=22544409 ram_only=1
+53260.982 [0] DBG_ENUM_RX_ACTIVE epoch=22544409 budget=1800000 duplicate=1
+53260.982 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53260.982 [0] DBG_ENUM_RX_SURVEY_HANDOFF epoch=22544409 hold=19530
+53260.982 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=0 delay=0
+53261.068 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53261.068 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53261.068 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=172 payload=170 status=0x00006f00 rearm=0 extended=1
+53261.068 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=170 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53261.068 [0] DBG_UWB_RX_CH5
+53261.068 [0] DBG_ANCHOR_CH5_FRAME len=170 q=100 wake_ret=-8
+53261.068 [0] DBG_UWB_RX_CH5
+53261.068 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=4 q=1
+53261.068 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53261.068 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53261.068 [0] DBG_MESH_RX_WORK_WAIT q=1
+53261.068 [0] DBG_MESH_RX_WORK_ENTER q=1
+53261.068 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53261.068 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53261.068 [0] DBG_DISCOVERY_POLICY phase=2 epoch=22544409 ram_only=1
+53261.068 [0] DBG_ENUM_RX_ACTIVE epoch=22544409 budget=1800000 duplicate=1
+53261.068 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53261.068 [0] DBG_ENUM_RX_SURVEY_HANDOFF epoch=22544409 hold=19530
+53261.068 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=0 delay=0
+53262.583 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53262.583 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53262.583 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53262.583 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53262.583 [0] DBG_UWB_RX_CH5
+53262.583 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53262.583 [0] DBG_UWB_RX_CH5
+53262.583 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=5 q=1
+53262.583 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53262.583 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53262.583 [0] DBG_MESH_RX_WORK_WAIT q=1
+53262.583 [0] DBG_MESH_RX_WORK_ENTER q=1
+53262.583 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53262.583 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=replace
+53262.583 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53262.583 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53262.583 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53262.621 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53262.621 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53262.621 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53262.621 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53262.621 [0] DBG_UWB_RX_CH5
+53262.621 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53262.621 [0] DBG_UWB_RX_CH5
+53262.655 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=5 q=1
+53262.655 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53262.655 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53262.655 [0] DBG_MESH_RX_SUBMIT ret=2 q=1 routeq=1
+53262.655 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53262.655 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.655 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53262.693 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53262.693 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=14
+53262.693 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53262.693 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53262.693 [0] DBG_UWB_RX_CH5
+53262.693 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53262.693 [0] DBG_UWB_RX_CH5
+53262.693 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=5 q=2
+53262.693 [0] DBG_MESH_RX_DEFERRED q=2 msg=0x40
+53262.693 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=2 delay=380 rf=0
+53262.693 [0] DBG_MESH_RX_SUBMIT ret=0 q=2 routeq=1
+53262.693 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53262.693 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.693 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53262.759 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53262.759 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53262.759 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53262.759 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53262.759 [0] DBG_UWB_RX_CH5
+53262.759 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53262.759 [0] DBG_UWB_RX_CH5
+53262.759 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=5 q=3
+53262.759 [0] DBG_MESH_RX_DEFERRED q=3 msg=0x40
+53262.759 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=3 delay=380 rf=0
+53262.759 [0] DBG_MESH_RX_SUBMIT ret=0 q=3 routeq=1
+53262.759 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53262.759 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.759 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53262.796 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53262.796 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53262.796 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53262.796 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53262.796 [0] DBG_UWB_RX_CH5
+53262.796 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53262.796 [0] DBG_UWB_RX_CH5
+53262.796 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=5 q=4
+53262.796 [0] DBG_MESH_RX_DEFERRED q=4 msg=0x40
+53262.796 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=4 delay=380 rf=0
+53262.796 [0] DBG_MESH_RX_SUBMIT ret=0 q=4 routeq=1
+53262.796 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53262.796 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.796 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53262.868 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53262.868 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53262.868 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53262.868 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53262.868 [0] DBG_UWB_RX_CH5
+53262.868 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53262.868 [0] DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=5 active=1
+53262.868 [0] DBG_ENUM_RELAY_SCAN_PREEMPT msg=40 seq=5 active=1
+53262.868 [0] DBG_UWB_RX_CH5
+53262.868 [0] DBG_COORD state=mesh-rx owner=bounded-c5-flood reason=mesh-rx rx=4 tx=0 relay=0 route=0 ack=0 qack=0
+53262.868 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53262.868 [0] DBG_ENUM_RX_SURVEY_CONSUMED epoch=22544409
+53262.868 [0] DBG_SURVEY_TIMING ph=1 g=2 sl=0 h=1 n=178581 age=284 d=3290 s=181587 in=3006
+53262.868 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53262.868 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53262.868 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=5 q=0
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.916 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.916 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.916 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.916 [0] DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=5 active=1
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.916 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53262.916 [0] DBG_C5_TX_CONFIG ret=0 at=178633 ext=1 len=167 msg=40 reason=bounded-c5-flood
+53262.916 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.961 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.961 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.961 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53262.961 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.961 [0] DBG_SCAN_SKIPPED reason=blocked
+53262.961 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53262.997 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=87 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=178705
+53262.997 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=87 sample=87 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=178706
+53262.997 [0] DBG_STACK_ISR_CONFIG size=8192 run=87 sample=87
+53262.997 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=87 sample=87
+53262.997 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=87 sample=87
+53262.997 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=87 sample=87
+53262.997 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=87 sample=87
+53262.997 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=87 sample=87
+53263.041 [0] DBG_STACK_SAMPLE_END run=87 sample=87
+53263.041 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=87 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=151 short_drops=838 sequence=0 previous=0 uptime=178738
+53263.041 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53263.041 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53263.041 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-140 len=0 fail=0 pre=0 q=0 rx_us=2000000 complete=15
+53263.041 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53263.041 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53263.041 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53263.116 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53263.116 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53263.116 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53263.116 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53263.116 [0] DBG_UWB_RX_CH5
+53263.116 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53263.116 [0] DBG_UWB_RX_CH5
+53263.116 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=5 q=1
+53263.116 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53263.116 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53263.116 [0] DBG_MESH_RX_WORK_WAIT q=1
+53263.116 [0] DBG_MESH_RX_WORK_ENTER q=1
+53263.116 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53263.158 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=gateway_command_flood reason=replace
+53263.158 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53263.158 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53263.158 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53263.158 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53263.158 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53263.158 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53263.158 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53263.158 [0] DBG_UWB_RX_CH5
+53263.158 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53263.158 [0] DBG_UWB_RX_CH5
+53263.158 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=5 q=1
+53263.158 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53263.158 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53263.158 [0] DBG_MESH_RX_WORK_WAIT q=1
+53263.158 [0] DBG_MESH_RX_WORK_ENTER q=1
+53263.158 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53263.228 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53263.228 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53263.228 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=169 payload=167 status=0x00006f00 rearm=0 extended=1
+53263.228 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=167 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53263.228 [0] DBG_UWB_RX_CH5
+53263.228 [0] DBG_ANCHOR_CH5_FRAME len=167 q=100 wake_ret=-8
+53263.228 [0] DBG_UWB_RX_CH5
+53263.228 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=5 q=1
+53263.228 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53263.228 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53263.228 [0] DBG_MESH_RX_WORK_WAIT q=1
+53263.228 [0] DBG_MESH_RX_WORK_ENTER q=1
+53263.228 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53263.228 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53263.228 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+53263.228 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53263.228 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53263.228 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53263.228 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53263.228 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53263.870 [1] [00:02:58.579,315] <wrn> app_mesh_report: mesh UWB RX queue full; dropped msg=0x40 src=0x9999888877776666 dst=0x0000000000000000
+53265.227 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=178954 e=180954 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53265.227 [0] DBG_DWM_CH5_RX_HUNT_START acq=533 complete=15 cap=1020
+53265.755 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=180955 e=181488 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53265.755 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53266.067 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53266.095 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53266.095 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53266.095 [0] DBG_DWM_CH5_RX_HUNT_START acq=37 complete=1000 cap=49
+53266.124 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=181811 e=181848 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53266.124 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53266.150 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53266.150 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53266.150 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53266.185 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=88 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=181889
+53266.185 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=88 sample=88 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=181889
+53266.185 [0] DBG_STACK_ISR_CONFIG size=8192 run=88 sample=88
+53266.185 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=88 sample=88
+53266.185 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=88 sample=88
+53266.185 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=88 sample=88
+53266.185 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=88 sample=88
+53266.185 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=88 sample=88
+53266.220 [0] DBG_STACK_SAMPLE_END run=88 sample=88
+53266.220 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=88 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=151 short_drops=850 sequence=0 previous=0 uptime=181925
+53266.442 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53266.468 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53266.468 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21027
+53266.468 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53266.523 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=182191 e=182252 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53266.523 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53266.550 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53266.550 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21027
+53266.550 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53266.843 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53266.871 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53266.871 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53266.871 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53266.897 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53266.897 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53266.897 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53267.191 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53267.217 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53267.217 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53267.217 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53267.266 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=182940 e=183001 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53267.266 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53267.292 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53267.292 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53267.292 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53267.586 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53267.617 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53267.617 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53267.617 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53267.694 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=183346 e=183407 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53267.694 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53267.694 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53267.694 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53267.694 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53268.060 [0] DBG_SURVEY_LANE_ACK g=2 k=1 h=1 rec=1 t=150
+53268.209 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53268.209 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53268.237 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53268.237 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53268.289 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=183950 e=184011 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53268.289 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53268.317 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53268.317 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53268.317 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53268.607 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53268.637 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53268.637 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53268.637 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53268.689 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=184356 e=184417 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53268.689 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53268.716 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53268.716 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53268.716 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53269.006 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53269.034 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53269.034 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53269.034 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53269.112 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=184762 e=184823 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53269.112 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53269.112 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53269.112 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53269.112 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53269.430 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53269.430 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53269.430 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21026
+53269.458 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53269.510 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=185168 e=185229 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53269.510 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53269.510 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53269.537 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21027
+53269.537 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53269.832 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53269.832 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53269.865 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53269.865 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53269.920 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=185573 e=185634 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53269.920 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53269.920 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53269.920 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53269.920 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53270.237 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53270.237 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53270.267 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53270.267 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53270.318 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=185979 e=186040 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53270.318 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53270.346 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53270.346 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53270.346 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53270.636 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53270.665 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53270.665 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53270.665 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53270.716 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=186384 e=186445 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53270.716 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53270.744 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53270.744 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53270.744 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53271.033 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53271.061 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53271.061 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21575
+53271.061 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53271.138 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=186789 e=186850 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53271.138 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53271.138 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53271.138 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53271.138 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53271.172 [0] DBG_SURVEY_LANE_END g=2 k=1 h=1 rec=3 ack=150 dur=3250
+53271.172 [0] DBG_SURVEY_ANCHOR_WORK gen=2 action=1 ret=1
+53271.172 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=0 delay=0
+53271.172 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.172 [0] DBG_ANCHOR_CH5_SCAN_ARM now=186878 win=2000 complete=15 interval=380 wait=0 tx=0 response=0
+53271.172 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.557 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.557 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.557 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.557 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.557 [0] DBG_UWB_RX_CH5
+53271.557 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.557 [0] DBG_UWB_RX_CH5
+53271.557 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=6 q=1
+53271.557 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53271.557 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53271.557 [0] DBG_MESH_RX_WORK_WAIT q=1
+53271.557 [0] DBG_MESH_RX_WORK_ENTER q=1
+53271.557 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53271.557 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=replace
+53271.557 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53271.557 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=gateway_command_flood reason=c5-control-rx
+53271.557 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53271.620 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.620 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.620 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.620 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.620 [0] DBG_UWB_RX_CH5
+53271.620 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.620 [0] DBG_UWB_RX_CH5
+53271.620 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=6 q=1
+53271.620 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53271.620 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53271.620 [0] DBG_MESH_RX_SUBMIT ret=2 q=1 routeq=1
+53271.620 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53271.620 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.620 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.665 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.665 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.665 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.665 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.665 [0] DBG_UWB_RX_CH5
+53271.665 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.665 [0] DBG_UWB_RX_CH5
+53271.665 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=6 q=2
+53271.665 [0] DBG_MESH_RX_DEFERRED q=2 msg=0x40
+53271.665 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=2 delay=380 rf=0
+53271.665 [0] DBG_MESH_RX_SUBMIT ret=0 q=2 routeq=1
+53271.665 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53271.665 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.665 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.706 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.706 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.706 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.706 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.706 [0] DBG_UWB_RX_CH5
+53271.706 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.706 [0] DBG_UWB_RX_CH5
+53271.706 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=6 q=3
+53271.706 [0] DBG_MESH_RX_DEFERRED q=3 msg=0x40
+53271.706 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=3 delay=380 rf=0
+53271.706 [0] DBG_MESH_RX_SUBMIT ret=0 q=3 routeq=1
+53271.706 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53271.706 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.706 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.774 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.774 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.774 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.774 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.774 [0] DBG_UWB_RX_CH5
+53271.774 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.774 [0] DBG_UWB_RX_CH5
+53271.774 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9999888877776666 seq=6 q=4
+53271.774 [0] DBG_MESH_RX_DEFERRED q=4 msg=0x40
+53271.774 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=4 delay=380 rf=0
+53271.774 [0] DBG_MESH_RX_SUBMIT ret=0 q=4 routeq=1
+53271.774 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53271.774 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.774 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.814 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.814 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.814 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.814 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.814 [0] DBG_UWB_RX_CH5
+53271.814 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.814 [0] DBG_UWB_RX_CH5
+53271.814 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53271.814 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.814 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.885 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53271.885 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53271.885 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53271.885 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53271.885 [0] DBG_UWB_RX_CH5
+53271.885 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53271.885 [0] DBG_UWB_RX_CH5
+53271.885 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53271.885 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.885 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53271.885 [0] DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=6 active=1
+53271.885 [0] DBG_ENUM_RELAY_SCAN_PREEMPT msg=40 seq=6 active=1
+53271.885 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-140 len=0 fail=0 pre=0 q=0 rx_us=2000000 complete=15
+53271.885 [0] DBG_COORD state=mesh-rx owner=bounded-c5-flood reason=mesh-rx rx=4 tx=0 relay=0 route=0 ack=0 qack=0
+53271.885 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53271.885 [0] DBG_SURVEY_TIMING ph=2 g=2 sl=0 h=1 n=187609 age=336 d=3290 s=190563 in=2954 p=1 w=1
+53271.930 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=5 q=0
+53271.930 [0] DBG_MESH_RX_WORK_EXIT handled=5 q=0
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.930 [0] DBG_MESH_TX_AGE msg=40 seq=6 age=354 enc=187623 rf=187624 gap=1 air=4
+53271.930 [0] DBG_MESH_TX_STAGE stage=start msg=40 seq=6 ch=5 seen=1 at=187624
+53271.930 [0] DBG_MESH_TX_STAGE stage=complete msg=40 seq=6 ch=5 seen=1 at=187628 ret=0
+53271.930 [0] DBG_MESH_TX_STAGE stage=park msg=40 seq=6 ch=5 park_ret=0 release_ret=0
+53271.930 [0] DBG_UWB_TX_CH5
+53271.930 [0] DBG_ENUM_CONTROL_BURST state=end active=0
+53271.930 [0] DBG_C5_FLOOD_WAIT now=187630 wake=187673 first=187673 msg=40 attempt=2/3 reason=broadcast-forward
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53271.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53271.930 [0] DBG_SCAN_SKIPPED reason=blocked
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+53271.930 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.977 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53271.977 [0] DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=6 active=1
+53271.977 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+53271.977 [0] DBG_SCAN_SKIPPED reason=blocked
+53271.977 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+53271.977 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53271.977 [0] DBG_C5_TX_CONFIG ret=0 at=187681 ext=1 len=251 msg=40 reason=bounded-c5-flood
+53271.977 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=89 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=187683
+53271.977 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=89 sample=89 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=187683
+53271.977 [0] DBG_STACK_ISR_CONFIG size=8192 run=89 sample=89
+53272.022 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=89 sample=89
+53272.022 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=89 sample=89
+53272.022 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=89 sample=89
+53272.022 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=89 sample=89
+53272.022 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=89 sample=89
+53272.022 [0] DBG_STACK_SAMPLE_END run=89 sample=89
+53272.022 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=89 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=178 short_drops=878 sequence=0 previous=0 uptime=187720
+53272.022 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53272.022 [0] DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 tx=0 retry_gap=0 flood=1 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=0 retry=5 interval=380
+53272.022 [0] DBG_SCAN_SKIPPED reason=blocked
+53272.060 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53272.060 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53272.159 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53272.159 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53272.159 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53272.159 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53272.159 [0] DBG_UWB_RX_CH5
+53272.159 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53272.159 [0] DBG_UWB_RX_CH5
+53272.159 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=6 q=1
+53272.159 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53272.159 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53272.159 [0] DBG_MESH_RX_WORK_WAIT q=1
+53272.159 [0] DBG_MESH_RX_WORK_ENTER q=1
+53272.159 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53272.159 [0] DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=gateway_command_flood reason=replace
+53272.159 [0] DBG_C5_CONTACT phase=open state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53272.159 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53272.159 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53272.229 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53272.229 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53272.229 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53272.229 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53272.229 [0] DBG_UWB_RX_CH5
+53272.229 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53272.229 [0] DBG_UWB_RX_CH5
+53272.229 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=6 q=1
+53272.229 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53272.229 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53272.229 [0] DBG_MESH_RX_WORK_WAIT q=1
+53272.229 [0] DBG_MESH_RX_WORK_ENTER q=1
+53272.229 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53272.229 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53272.229 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+53272.229 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53272.229 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53272.229 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53272.229 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53272.229 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53272.298 [0] DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+53272.298 [0] DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+53272.298 [0] DBG_DWM_CH5_RX_ACTIVITY_DONE raw=253 payload=251 status=0x00006f00 rearm=0 extended=1
+53272.298 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=251 fail=0 pre=1 q=100 rx_us=2000000 complete=15
+53272.298 [0] DBG_UWB_RX_CH5
+53272.298 [0] DBG_ANCHOR_CH5_FRAME len=251 q=100 wake_ret=-8
+53272.298 [0] DBG_UWB_RX_CH5
+53272.298 [0] DBG_MESH_RX_QUEUED ch=5 msg=0x40 src=0x9999888877776666 dst=0x0 prev=0x9699122bd60a64e3 seq=6 q=1
+53272.298 [0] DBG_MESH_RX_DEFERRED q=1 msg=0x40
+53272.298 [0] DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=1 delay=380 rf=0
+53272.298 [0] DBG_MESH_RX_WORK_WAIT q=1
+53272.298 [0] DBG_MESH_RX_WORK_ENTER q=1
+53272.298 [0] DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+53272.298 [0] DBG_C5_CONTACT phase=accepted state=2 peer=0x9699122bd60a64e3 purpose=gateway_command_flood reason=c5-control-rx
+53272.298 [0] DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+53272.298 [0] DBG_MESH_RX_WORK_EXIT handled=1 q=0
+53272.298 [0] DBG_MESH_RX_SUBMIT ret=1 q=0 routeq=1
+53272.298 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53272.298 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53272.298 [0] DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=15 cap=1020
+53272.819 [1] [00:03:07.540,802] <wrn> app_mesh_report: mesh UWB RX queue full; dropped msg=0x40 src=0x9999888877776666 dst=0x0000000000000000
+53272.819 [1] [00:03:07.596,252] <wrn> app_mesh_report:
+53272.845 [1]  mesh UWB RX queue full; dropped msg=0x40 src=0x9999888877776666 dst=0x0000000000000000
+53274.302 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=188020 e=190020 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53274.302 [0] DBG_DWM_CH5_RX_HUNT_START acq=443 complete=15 cap=1020
+53274.734 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=190021 e=190464 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+53274.734 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=2 delay=0
+53274.832 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53274.860 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53274.860 [0] DBG_DWM_PHY_SWITCH from=4 to=1 fast=0 us=21606
+53274.860 [0] DBG_DS_RESP stage=arm evt=2 seq=1 round=0 now=190585 timeout=125
+53274.961 [0] DBG_DS_RESP stage=resp-armed now=190677 seq=1 round=0 tx_time=0x017f0048 resp_tx=0x7f0087d9
+53274.961 [0] DBG_DS_RESP stage=resp-raw poll_rx=0x60883b81 q=100 reply_uus=8000
+53274.961 [0] DBG_DS_RESP stage=final-decode status=0 now=190692 seq=1 round=0 final_rx=0x9d78ccef
+53274.961 [0] DBG_SURVEY_PROFILE kind=attempt r=R p=0 a=0 sd=-78 dur=107 fd=29 to=125 ret=0 st=0 mm=867
+53274.988 [0] DBG_DS_RESP stage=arm evt=2 seq=1 round=1 now=190718 timeout=80
+53275.041 [0] DBG_DS_RESP stage=resp-armed now=190758 seq=1 round=1 tx_time=0x02b17c1b resp_tx=0xb17c59d9
+53275.041 [0] DBG_DS_RESP stage=resp-raw poll_rx=0x93040eb1 q=100 reply_uus=8000
+53275.041 [0] DBG_DS_RESP stage=final-decode status=0 now=190773 seq=1 round=1 final_rx=0xcff4a036
+53275.041 [0] DBG_SURVEY_PROFILE kind=attempt r=R p=0 a=1 sd=-25 dur=55 fd=30 to=80 ret=0 st=0 mm=845
+53275.068 [0] DBG_DS_RESP stage=arm evt=2 seq=1 round=2 now=190798 timeout=80
+53275.119 [0] DBG_DS_RESP stage=resp-armed now=190837 seq=1 round=2 tx_time=0x03e0b9db resp_tx=0xe0ba19d9
+53275.119 [0] DBG_DS_RESP stage=resp-raw poll_rx=0xc241ce92 q=100 reply_uus=8000
+53275.119 [0] DBG_DS_RESP stage=final-decode status=0 now=190852 seq=1 round=2 final_rx=0xff325fec
+53275.119 [0] DBG_SURVEY_PROFILE kind=attempt r=R p=0 a=2 sd=-25 dur=54 fd=29 to=80 ret=0 st=0 mm=874
+53275.160 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=90 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=190865
+53275.160 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=90 sample=90 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=190865
+53275.160 [0] DBG_STACK_ISR_CONFIG size=8192 run=90 sample=90
+53275.160 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=90 sample=90
+53275.160 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=90 sample=90
+53275.160 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=90 sample=90
+53275.160 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=90 sample=90
+53275.160 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=90 sample=90
+53275.196 [0] DBG_STACK_SAMPLE_END run=90 sample=90
+53275.196 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=90 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=190901
+53275.196 [0] DBG_DS_RESP stage=resp-armed now=190918 seq=1 round=3 tx_time=0x05148e59 resp_tx=0x148e97d9
+53275.196 [0] DBG_DS_RESP stage=resp-raw poll_rx=0xf6164d41 q=100 reply_uus=8000
+53275.229 [0] DBG_DS_RESP stage=final-decode status=0 now=190933 seq=1 round=3 final_rx=0x3306dcbd
+53275.229 [0] DBG_SURVEY_PROFILE kind=attempt r=R p=0 a=3 sd=-25 dur=55 fd=30 to=80 ret=0 st=0 mm=879
+53275.229 [0] DBG_DS_RESP stage=arm evt=2 seq=1 round=4 now=190958 timeout=80
+53275.282 [0] DBG_DS_RESP stage=resp-armed now=190998 seq=1 round=4 tx_time=0x0643b335 resp_tx=0x43b373d9
+53275.282 [0] DBG_DS_RESP stage=resp-raw poll_rx=0x253b2904 q=100 reply_uus=8000
+53275.282 [0] DBG_DS_RESP stage=final-decode status=0 now=191013 seq=1 round=4 final_rx=0x622bb869
+53275.282 [0] DBG_SURVEY_PROFILE kind=attempt r=R p=0 a=4 sd=-25 dur=55 fd=30 to=80 ret=0 st=0 mm=875
+53275.282 [0] DBG_SURVEY_PROFILE kind=pair r=R p=0 cfg=22 cfg_end=22 end=450 slack=150
+53275.282 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53275.358 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=191014 e=191075 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53275.358 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53275.412 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=191076 e=191137 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53275.412 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53275.463 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=191138 e=191199 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53275.493 [0] DBG_DWM_CH5_RX_HUNT_START acq=4 complete=1000 cap=49
+53275.493 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=191200 e=191204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53275.493 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53275.493 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53275.493 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21027
+53275.493 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53275.620 [0] DBG_SURVEY_LANE_ACK g=2 k=2 h=1 rec=1 t=147
+53275.791 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53275.817 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53275.817 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53275.817 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53275.899 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=191548 e=191609 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53275.899 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53275.899 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53275.899 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21271
+53275.899 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53276.196 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53276.222 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53276.222 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53276.222 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53276.299 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=191953 e=192014 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53276.299 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53276.299 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53276.329 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53276.329 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53276.619 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53276.619 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53276.651 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53276.651 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53276.685 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=192359 e=192420 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53276.685 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53276.713 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53276.713 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53276.713 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53277.026 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53277.026 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53277.055 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53277.055 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53277.106 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=192765 e=192826 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53277.106 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53277.106 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53277.135 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53277.135 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53277.428 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53277.428 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53277.456 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53277.456 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53277.509 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=193170 e=193231 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53277.509 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53277.538 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53277.538 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53277.538 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53277.827 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53277.855 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53277.855 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53277.855 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53277.910 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=193575 e=193636 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53277.910 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53277.939 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53277.939 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53277.939 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53278.228 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53278.255 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53278.255 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53278.255 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53278.309 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=193981 e=194042 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53278.309 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53278.337 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53278.337 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53278.337 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53278.652 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53278.652 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53278.652 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53278.681 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53278.734 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194386 e=194447 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53278.734 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53278.734 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53278.734 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53278.734 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53278.734 [0] DBG_SURVEY_LANE_END g=2 k=2 h=1 rec=1 ack=147 dur=3266
+53278.788 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53278.817 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53278.817 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53278.817 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53278.872 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194536 e=194597 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53278.872 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53278.931 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194598 e=194659 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53278.931 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.006 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194660 e=194721 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.006 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.057 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194722 e=194783 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.057 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.109 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194784 e=194845 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.134 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.187 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194846 e=194907 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.187 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.249 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194908 e=194969 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.249 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.306 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=194970 e=195031 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.306 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.358 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=195032 e=195093 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.358 [0] DBG_DWM_CH5_RX_HUNT_START acq=60 complete=1000 cap=49
+53279.437 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=195094 e=195154 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.437 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53279.437 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53279.465 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21027
+53279.465 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53279.633 [0] DBG_SURVEY_LANE_ACK g=2 k=2 h=1 rec=1 t=203
+53279.758 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53279.758 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53279.786 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21576
+53279.786 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53279.838 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=195498 e=195559 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53279.838 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53279.867 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53279.867 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53279.867 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53280.161 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53280.189 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53280.189 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21576
+53280.189 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53280.241 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=195904 e=195965 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53280.241 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53280.270 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53280.270 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21576
+53280.270 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53280.561 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53280.590 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53280.590 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53280.590 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53280.643 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=196310 e=196371 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53280.643 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53280.678 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53280.678 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53280.678 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53280.970 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53280.998 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53280.998 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53280.998 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53281.050 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=196715 e=196776 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53281.050 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53281.079 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53281.079 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53281.079 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53281.371 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53281.404 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53281.404 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53281.404 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53281.459 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=197121 e=197182 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53281.459 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53281.488 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53281.488 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53281.488 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53281.780 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53281.808 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53281.808 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53281.808 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53281.860 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=197526 e=197587 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53281.860 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53281.889 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53281.889 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53281.889 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53282.185 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53282.217 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53282.217 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53282.217 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53282.269 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=197932 e=197993 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53282.269 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53282.298 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53282.298 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53282.298 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53282.589 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53282.617 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53282.617 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53282.617 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53282.669 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198338 e=198399 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53282.669 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53282.700 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53282.700 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53282.700 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53282.700 [0] DBG_SURVEY_LANE_END g=2 k=2 h=1 rec=1 ack=203 dur=3268
+53282.728 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53282.754 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53282.754 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21607
+53282.754 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53282.836 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198486 e=198547 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53282.836 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53282.888 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198548 e=198609 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53282.888 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53282.945 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198610 e=198671 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53282.945 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53282.997 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198672 e=198733 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53282.997 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53283.073 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198734 e=198795 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.073 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53283.125 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198796 e=198857 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.125 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53283.193 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198858 e=198919 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.193 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53283.252 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198920 e=198981 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.252 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53283.328 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=198982 e=199043 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.328 [0] DBG_DWM_CH5_RX_HUNT_START acq=60 complete=1000 cap=49
+53283.380 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=199044 e=199104 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.380 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53283.409 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53283.409 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20996
+53283.409 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53283.535 [0] DBG_SURVEY_LANE_ACK g=2 k=2 h=1 rec=1 t=164
+53283.705 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53283.733 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53283.733 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53283.733 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53283.785 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=199448 e=199509 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53283.785 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53283.814 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53283.814 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53283.814 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53284.105 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53284.132 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53284.132 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53284.132 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53284.190 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=199854 e=199915 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53284.190 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53284.224 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53284.224 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53284.224 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53284.513 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53284.541 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53284.541 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21027
+53284.541 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53284.594 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=200259 e=200320 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53284.594 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53284.623 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53284.623 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53284.623 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53284.913 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53284.945 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53284.945 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53284.945 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53284.999 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=200665 e=200726 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53284.999 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53285.027 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53285.027 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21606
+53285.027 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53285.319 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53285.347 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53285.347 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53285.347 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53285.400 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=201071 e=201132 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53285.400 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53285.430 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53285.430 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21027
+53285.430 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53285.724 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53285.751 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53285.751 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20935
+53285.751 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53285.805 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=201476 e=201537 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53285.805 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53285.834 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53285.834 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=20965
+53285.834 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53286.125 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53286.151 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53286.151 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53286.151 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53286.207 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=201881 e=201942 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53286.207 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53286.234 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53286.234 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53286.234 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53286.546 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53286.546 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53286.574 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=20996
+53286.574 [0] DBG_DWM_CH5_RX_HUNT_START acq=61 complete=1000 cap=49
+53286.626 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=202287 e=202348 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53286.626 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+53286.656 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53286.656 [0] DBG_DWM_PHY_SWITCH from=2 to=4 fast=0 us=21607
+53286.656 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+53286.656 [0] DBG_SURVEY_LANE_END g=2 k=2 h=1 rec=1 ack=164 dur=3267
+53286.656 [0] DBG_SURVEY_ANCHOR_WORK gen=2 action=2 ret=0
+53286.656 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=0 delay=0
+53286.656 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53286.656 [0] DBG_ANCHOR_CH5_SCAN_ARM now=202371 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53286.656 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+53286.656 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+53286.694 [0] DBG_DWM_PHY_SWITCH from=4 to=2 fast=0 us=21606
+53286.694 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53286.694 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=202393 e=202404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53286.694 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=11260 complete=1000
+53286.694 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53287.067 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53287.067 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53287.100 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=202794 e=202804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53287.100 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53287.100 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=91 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=202805
+53287.100 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=91 sample=91 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=202806
+53287.100 [0] DBG_STACK_ISR_CONFIG size=8192 run=91 sample=91
+53287.100 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=91 sample=91
+53287.100 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=91 sample=91
+53287.100 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=91 sample=91
+53287.134 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=91 sample=91
+53287.134 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=91 sample=91
+53287.134 [0] DBG_STACK_SAMPLE_END run=91 sample=91
+53287.134 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=91 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=202841
+53287.475 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53287.475 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53287.475 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=203194 e=203204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53287.475 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53287.863 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53287.863 [0] DBG_ANCHOR_CH5_SCAN_ARM now=203585 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53287.863 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53287.896 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=203594 e=203604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53287.896 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10681 complete=1000
+53287.896 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53288.262 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53288.262 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53288.296 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=203994 e=204004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53288.296 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53288.296 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=92 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=204006
+53288.296 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=92 sample=92 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=204006
+53288.296 [0] DBG_STACK_ISR_CONFIG size=8192 run=92 sample=92
+53288.296 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=92 sample=92
+53288.296 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=92 sample=92
+53288.296 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=92 sample=92
+53288.330 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=92 sample=92
+53288.330 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=92 sample=92
+53288.330 [0] DBG_STACK_SAMPLE_END run=92 sample=92
+53288.330 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=92 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=204037
+53288.650 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53288.676 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53288.676 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=204394 e=204404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53288.676 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53289.070 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53289.070 [0] DBG_ANCHOR_CH5_SCAN_ARM now=204786 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53289.070 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53289.070 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=204794 e=204804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53289.070 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53289.099 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53289.465 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53289.465 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53289.499 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=205194 e=205204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53289.499 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53289.499 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=93 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=205205
+53289.499 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=93 sample=93 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=205206
+53289.499 [0] DBG_STACK_ISR_CONFIG size=8192 run=93 sample=93
+53289.499 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=93 sample=93
+53289.499 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=93 sample=93
+53289.499 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=93 sample=93
+53289.533 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=93 sample=93
+53289.533 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=93 sample=93
+53289.533 [0] DBG_STACK_SAMPLE_END run=93 sample=93
+53289.533 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=93 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=205239
+53289.874 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53289.874 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53289.874 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=205594 e=205604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53289.874 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53290.270 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53290.270 [0] DBG_ANCHOR_CH5_SCAN_ARM now=205986 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53290.270 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53290.270 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=205994 e=206004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53290.270 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53290.298 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53290.662 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53290.662 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53290.702 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=206394 e=206404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53290.702 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53290.702 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=94 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=206405
+53290.702 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=94 sample=94 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=206406
+53290.702 [0] DBG_STACK_ISR_CONFIG size=8192 run=94 sample=94
+53290.702 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=94 sample=94
+53290.702 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=94 sample=94
+53290.702 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=94 sample=94
+53290.738 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=94 sample=94
+53290.738 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=94 sample=94
+53290.738 [0] DBG_STACK_SAMPLE_END run=94 sample=94
+53290.738 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=94 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=206443
+53291.059 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53291.059 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53291.086 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=206794 e=206804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53291.086 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53291.454 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53291.454 [0] DBG_ANCHOR_CH5_SCAN_ARM now=207186 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53291.484 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53291.484 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=207194 e=207204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53291.484 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10772 complete=1000
+53291.484 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53291.868 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53291.868 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53291.868 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=207594 e=207604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53291.900 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53291.900 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=95 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=207605
+53291.900 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=95 sample=95 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=207606
+53291.900 [0] DBG_STACK_ISR_CONFIG size=8192 run=95 sample=95
+53291.900 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=95 sample=95
+53291.900 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=95 sample=95
+53291.900 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=95 sample=95
+53291.900 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=95 sample=95
+53291.946 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=95 sample=95
+53291.946 [0] DBG_STACK_SAMPLE_END run=95 sample=95
+53291.946 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=95 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=207641
+53292.265 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53292.265 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53292.292 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=207994 e=208004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53292.292 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53292.655 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53292.655 [0] DBG_ANCHOR_CH5_SCAN_ARM now=208386 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53292.688 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53292.688 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=208394 e=208404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53292.688 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53292.688 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53293.062 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53293.062 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53293.097 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=208794 e=208804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53293.097 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53293.097 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=96 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=208806
+53293.097 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=96 sample=96 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=208806
+53293.097 [0] DBG_STACK_ISR_CONFIG size=8192 run=96 sample=96
+53293.097 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=96 sample=96
+53293.097 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=96 sample=96
+53293.097 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=96 sample=96
+53293.133 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=96 sample=96
+53293.133 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=96 sample=96
+53293.133 [0] DBG_STACK_SAMPLE_END run=96 sample=96
+53293.133 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=96 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=208837
+53293.452 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53293.484 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53293.484 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=209194 e=209204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53293.484 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53293.873 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53293.873 [0] DBG_ANCHOR_CH5_SCAN_ARM now=209586 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53293.873 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53293.873 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=209594 e=209604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53293.873 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53293.873 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53294.249 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53294.282 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53294.282 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=209994 e=210004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53294.282 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53294.282 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=97 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=210005
+53294.282 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=97 sample=97 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=210006
+53294.282 [0] DBG_STACK_ISR_CONFIG size=8192 run=97 sample=97
+53294.282 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=97 sample=97
+53294.282 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=97 sample=97
+53294.282 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=97 sample=97
+53294.319 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=97 sample=97
+53294.319 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=97 sample=97
+53294.319 [0] DBG_STACK_SAMPLE_END run=97 sample=97
+53294.319 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=97 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=210023
+53294.662 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53294.662 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53294.689 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=210394 e=210404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53294.689 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53295.054 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53295.054 [0] DBG_ANCHOR_CH5_SCAN_ARM now=210786 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53295.083 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53295.083 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=210794 e=210804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53295.083 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53295.083 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53295.449 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53295.487 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53295.487 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=211194 e=211204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53295.487 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53295.487 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=98 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=211206
+53295.487 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=98 sample=98 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=211206
+53295.487 [0] DBG_STACK_ISR_CONFIG size=8192 run=98 sample=98
+53295.487 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=98 sample=98
+53295.487 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=98 sample=98
+53295.487 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=98 sample=98
+53295.523 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=98 sample=98
+53295.523 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=98 sample=98
+53295.523 [0] DBG_STACK_SAMPLE_END run=98 sample=98
+53295.523 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=98 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=211229
+53295.861 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53295.861 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53295.889 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=211594 e=211604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53295.889 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53296.256 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53296.256 [0] DBG_ANCHOR_CH5_SCAN_ARM now=211986 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53296.285 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53296.285 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=211994 e=212004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53296.285 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53296.285 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53296.648 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53296.681 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53296.681 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=212394 e=212404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53296.681 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53296.681 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=99 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=212405
+53296.681 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=99 sample=99 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=212406
+53296.681 [0] DBG_STACK_ISR_CONFIG size=8192 run=99 sample=99
+53296.681 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=99 sample=99
+53296.681 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=99 sample=99
+53296.681 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=99 sample=99
+53296.715 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=99 sample=99
+53296.715 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=99 sample=99
+53296.715 [0] DBG_STACK_SAMPLE_END run=99 sample=99
+53296.715 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=99 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=212422
+53297.060 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53297.060 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53297.087 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=212794 e=212804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53297.087 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53297.455 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53297.455 [0] DBG_ANCHOR_CH5_SCAN_ARM now=213186 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53297.488 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53297.488 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=213194 e=213204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53297.488 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10772 complete=1000
+53297.488 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53297.851 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53297.883 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53297.883 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=213594 e=213604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53297.883 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53297.883 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=100 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=213605
+53297.883 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=100 sample=100 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=213606
+53297.883 [0] DBG_STACK_ISR_CONFIG size=8192 run=100 sample=100
+53297.883 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=100 sample=100
+53297.883 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=100 sample=100
+53297.883 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=100 sample=100
+53297.918 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=100 sample=100
+53297.918 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=100 sample=100
+53297.918 [0] DBG_STACK_SAMPLE_END run=100 sample=100
+53297.918 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=100 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=213624
+53298.264 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53298.264 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53298.292 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=213994 e=214004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53298.292 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53298.654 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53298.654 [0] DBG_ANCHOR_CH5_SCAN_ARM now=214386 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53298.682 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53298.682 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=214394 e=214404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53298.682 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10498 complete=1000
+53298.682 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53299.051 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53299.083 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53299.083 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=214794 e=214804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53299.083 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53299.083 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=101 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=214805
+53299.083 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=101 sample=101 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=214806
+53299.083 [0] DBG_STACK_ISR_CONFIG size=8192 run=101 sample=101
+53299.083 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=101 sample=101
+53299.083 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=101 sample=101
+53299.083 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=101 sample=101
+53299.118 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=101 sample=101
+53299.118 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=101 sample=101
+53299.118 [0] DBG_STACK_SAMPLE_END run=101 sample=101
+53299.118 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=101 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=214823
+53299.459 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53299.459 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53299.488 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=215194 e=215204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53299.488 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53299.853 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53299.853 [0] DBG_ANCHOR_CH5_SCAN_ARM now=215585 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53299.882 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53299.882 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=215594 e=215604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53299.882 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10528 complete=1000
+53299.882 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53300.249 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53300.281 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53300.281 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=215994 e=216004 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53300.281 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53300.281 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=102 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=216005
+53300.281 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=102 sample=102 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=216006
+53300.281 [0] DBG_STACK_ISR_CONFIG size=8192 run=102 sample=102
+53300.281 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=102 sample=102
+53300.281 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=102 sample=102
+53300.281 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=102 sample=102
+53300.318 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=102 sample=102
+53300.318 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=102 sample=102
+53300.318 [0] DBG_STACK_SAMPLE_END run=102 sample=102
+53300.318 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=102 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=216022
+53300.658 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53300.658 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53300.686 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=216394 e=216404 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53300.686 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53301.055 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53301.055 [0] DBG_ANCHOR_CH5_SCAN_ARM now=216786 win=10 complete=15 interval=380 wait=0 tx=0 response=0
+53301.083 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53301.083 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=216794 e=216804 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53301.083 [0] DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=10528 complete=1000
+53301.083 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53301.448 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53301.488 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53301.488 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=217194 e=217204 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53301.488 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+53301.488 [0] DBG_STACK_RUN_BEGIN epoch=14182356077763331003 run=103 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 sequence=0 previous=0 uptime=217205
+53301.488 [0] DBG_STACK_SAMPLE_BEGIN epoch=14182356077763331003 run=103 sample=103 kind=anchor_scan owner=anchor_uwb_scan queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 uptime=217206
+53301.488 [0] DBG_STACK_ISR_CONFIG size=8192 run=103 sample=103
+53301.488 [0] DBG_STACK name=anchor_uwb_scan tid=0x2000ca50 used=7952 free=2032 size=9984 ret=0 run=103 sample=103
+53301.488 [0] DBG_STACK name=mesh_route tid=0x2000b080 used=6976 free=2496 size=9472 ret=0 run=103 sample=103
+53301.488 [0] DBG_STACK name=sysworkq tid=0x2000d9c8 used=776 free=4600 size=5376 ret=0 run=103 sample=103
+53301.524 [0] DBG_STACK name=logging tid=0x2000cf08 used=520 free=1528 size=2048 ret=0 run=103 sample=103
+53301.524 [0] DBG_STACK name=idle tid=0x2000d798 used=64 free=256 size=320 ret=0 run=103 sample=103
+53301.524 [0] DBG_STACK_SAMPLE_END run=103 sample=103
+53301.524 [0] DBG_STACK_RUN_END epoch=14182356077763331003 run=103 kind=anchor_scan owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=1111608711777941592 dst=11068027678940948070 session=0 seq=0 type=48 samples=1 attempts=1 errors=0 last_error=0 mutex_drops=179 short_drops=903 sequence=0 previous=0 uptime=217230
+53301.863 [0] DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+53301.863 [0] DBG_DWM_CH5_RX_HUNT_START acq=10 complete=1000 cap=1020
+53301.890 [0] DBG_DWM_CH5_RX_HUNT_EMPTY s=217594 e=217604 ret=-116 sys=00000000 phy=2 cfg=1 aw=1 unk=0
+53301.890 [0] DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380

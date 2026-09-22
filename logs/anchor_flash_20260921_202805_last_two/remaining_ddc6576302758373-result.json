@@ -1,0 +1,21 @@
+{
+  "probe": "E4645C15CB365D30",
+  "previous_probe": "E46070D247233537",
+  "ficr": "0xddc6576302758373",
+  "storage_sha256": "753c4b9c16362abcd967a0b56be3fa39bbb6527485814075944f93c0944285a5",
+  "durable_roles": [
+    {
+      "role": 1,
+      "device": "0xddc6576302758373",
+      "count": 6
+    }
+  ],
+  "role": "mesh_anchor",
+  "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+  "readback_verified_bytes": 464840,
+  "storage_migration": "clicker storage backed up; six storage sectors erased and verified",
+  "node_id": "0x948b1220433bc071",
+  "startup_checked": true,
+  "scan_cycles": 61,
+  "startup_log": "startup/remaining_ddc6576302758373.log"
+}

@@ -1,0 +1,11 @@
+{
+  "sessions": 1,
+  "reports": 2,
+  "receipts": 2,
+  "each_session_two_anchors": true,
+  "all_six_samples": true,
+  "all_receipted": true,
+  "click_completions": {
+    "0": 1
+  }
+}

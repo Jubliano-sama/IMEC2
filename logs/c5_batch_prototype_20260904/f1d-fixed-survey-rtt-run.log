@@ -1,0 +1,11 @@
+logging to logs/c5_batch_prototype_20260904/f1d-fixed-survey-rtt
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/bench_rtt.py", line 197, in <module>
+    main()
+    ~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/bench_rtt.py", line 161, in main
+    probes.append(Probe(role, uid, out_dir / f"{role}.log", args.reset))
+                  ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/bench_rtt.py", line 62, in __init__
+    raise RuntimeError(f"{role}: RTT control block not found")
+RuntimeError: gateway: RTT control block not found

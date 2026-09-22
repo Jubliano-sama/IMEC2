@@ -1,0 +1,114 @@
+59597.858 [0] DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:b07e8f72520fee2300d33d4b08f2d87a2a2ec66c7a90d3ef360dcd9e2e5a8cd9 epoch=3611085259271220804 uptime=2
+59597.863 [1] *** Booting nRF Connect SDK v2.9.0-7787b2649840 ***
+59597.863 [1] *** Using Zephyr OS v3.7.99-1f8f3dc29142 ***
+59598.853 [0] mesh node identity: ficr=0xeefc9670907f2ef7 node=0x9999888877776666 preset=mesh_gateway
+59598.853 [0] DBG_LED_SELFTEST_CH5_RX
+59598.853 [0] DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+59598.853 [0] DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1009
+59598.878 [0] DBG_GATEWAY_BOOT stage=ble_begin uptime=1017
+59598.878 [0] DBG_GATEWAY_BLE stage=entry enabled=1 uptime=1017
+59598.878 [0] DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=1023
+59598.878 [0] DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=1024
+59598.878 [0] DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=1024
+59598.878 [0] DBG_GATEWAY_BOOT stage=ch9_begin uptime=1024
+59598.878 [0] DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+59598.878 [0] DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=1025
+59598.878 [0] DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+59598.878 [0] DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+59598.903 [0] DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+59598.903 [0] DBG_DWM_WAKE_MESH_CTRL_OK sfd=1033
+59598.903 [0] DBG_GWLAT_REARM at=1045 rem=500 frames=0 errors=0
+59599.390 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=1045 end=1546 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59599.413 [0] DBG_GWLAT_REARM at=1548 rem=500 frames=0 errors=0
+59599.902 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=1548 end=2049 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59599.902 [0] DBG_GWLAT_REARM at=2050 rem=500 frames=0 errors=0
+59600.411 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=2050 end=2551 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59600.411 [0] DBG_GWLAT_REARM at=2553 rem=500 frames=0 errors=0
+59600.898 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=2553 end=3054 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59600.922 [0] DBG_GWLAT_REARM at=3056 rem=500 frames=0 errors=0
+59601.410 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=3056 end=3557 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59601.410 [0] DBG_GWLAT_REARM at=3558 rem=500 frames=0 errors=0
+59601.920 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=3558 end=4059 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59601.920 [0] DBG_GWLAT_REARM at=4061 rem=500 frames=0 errors=0
+59602.406 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=4061 end=4562 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59602.406 [0] DBG_GWLAT_REARM at=4564 rem=500 frames=0 errors=0
+59602.916 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=4564 end=5064 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59602.916 [0] DBG_GWLAT_REARM at=5066 rem=500 frames=0 errors=0
+59603.426 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=5066 end=5567 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59603.426 [0] DBG_GWLAT_REARM at=5569 rem=500 frames=0 errors=0
+59603.933 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=5569 end=6070 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59603.933 [0] DBG_GWLAT_REARM at=6072 rem=500 frames=0 errors=0
+59604.419 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=6072 end=6572 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59604.419 [0] DBG_GWLAT_REARM at=6574 rem=500 frames=0 errors=0
+59604.926 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=6574 end=7075 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59604.926 [0] DBG_GWLAT_REARM at=7077 rem=500 frames=0 errors=0
+59605.433 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=7077 end=7578 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59605.433 [0] DBG_GWLAT_REARM at=7579 rem=500 frames=0 errors=0
+59605.940 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=7579 end=8080 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59605.940 [0] DBG_GWLAT_REARM at=8082 rem=500 frames=0 errors=0
+59606.426 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=8082 end=8583 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59606.449 [0] DBG_GWLAT_REARM at=8585 rem=500 frames=0 errors=0
+59606.935 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=8585 end=9085 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59606.935 [0] DBG_GWLAT_REARM at=9087 rem=500 frames=0 errors=0
+59607.442 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=9087 end=9588 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59607.442 [0] DBG_GWLAT_REARM at=9590 rem=500 frames=0 errors=0
+59607.950 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=9590 end=10091 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59607.950 [0] DBG_GWLAT_REARM at=10093 rem=500 frames=0 errors=0
+59608.437 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=10093 end=10593 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59608.460 [0] DBG_GWLAT_REARM at=10595 rem=500 frames=0 errors=0
+59608.948 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=10595 end=11096 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59608.948 [0] DBG_GWLAT_REARM at=11098 rem=500 frames=0 errors=0
+59609.455 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=11098 end=11599 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59609.455 [0] DBG_GWLAT_REARM at=11600 rem=500 frames=0 errors=0
+59609.961 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=11600 end=12101 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59609.961 [0] DBG_GWLAT_REARM at=12103 rem=500 frames=0 errors=0
+59610.447 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=12103 end=12604 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59610.470 [0] DBG_GWLAT_REARM at=12606 rem=500 frames=0 errors=0
+59610.957 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=12606 end=13107 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59610.957 [0] DBG_GWLAT_REARM at=13108 rem=500 frames=0 errors=0
+59611.467 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=13108 end=13609 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59611.467 [0] DBG_GWLAT_REARM at=13611 rem=500 frames=0 errors=0
+59611.956 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=13611 end=14112 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59611.956 [0] DBG_GWLAT_REARM at=14114 rem=500 frames=0 errors=0
+59612.464 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=14114 end=14615 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59612.464 [0] DBG_GWLAT_REARM at=14617 rem=500 frames=0 errors=0
+59612.971 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=14617 end=15117 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59612.971 [0] DBG_GWLAT_REARM at=15119 rem=500 frames=0 errors=0
+59613.477 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=15119 end=15620 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59613.477 [0] DBG_GWLAT_REARM at=15622 rem=500 frames=0 errors=0
+59613.984 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=15622 end=16123 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59613.984 [0] DBG_GWLAT_REARM at=16124 rem=500 frames=0 errors=0
+59614.470 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=16124 end=16625 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59614.493 [0] DBG_GWLAT_REARM at=16627 rem=500 frames=0 errors=0
+59614.981 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=16627 end=17128 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59614.981 [0] DBG_GWLAT_REARM at=17130 rem=500 frames=0 errors=0
+59615.490 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=17130 end=17631 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59615.490 [0] DBG_GWLAT_REARM at=17632 rem=500 frames=0 errors=0
+59615.975 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=17632 end=18133 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59615.998 [0] DBG_GWLAT_REARM at=18135 rem=500 frames=0 errors=0
+59616.485 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=18135 end=18636 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59616.485 [0] DBG_GWLAT_REARM at=18638 rem=500 frames=0 errors=0
+59616.993 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=18638 end=19138 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59616.993 [0] DBG_GWLAT_REARM at=19140 rem=500 frames=0 errors=0
+59617.501 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=19140 end=19641 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59617.501 [0] DBG_GWLAT_REARM at=19643 rem=500 frames=0 errors=0
+59617.987 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=19643 end=20144 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59618.009 [0] DBG_GWLAT_REARM at=20146 rem=500 frames=0 errors=0
+59618.497 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=20146 end=20647 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59618.497 [0] DBG_GWLAT_REARM at=20648 rem=500 frames=0 errors=0
+59619.010 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=20648 end=21149 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59619.010 [0] DBG_GWLAT_REARM at=21151 rem=500 frames=0 errors=0
+59619.497 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=21151 end=21652 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59619.497 [0] DBG_GWLAT_REARM at=21654 rem=500 frames=0 errors=0
+59620.004 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=21654 end=22155 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59620.004 [0] DBG_GWLAT_REARM at=22156 rem=500 frames=0 errors=0
+59620.515 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=22156 end=22657 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59620.515 [0] DBG_GWLAT_REARM at=22659 rem=500 frames=0 errors=0
+59621.022 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=22659 end=23160 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59621.022 [0] DBG_GWLAT_REARM at=23162 rem=500 frames=0 errors=0
+59621.508 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=23162 end=23662 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59621.508 [0] DBG_GWLAT_REARM at=23664 rem=500 frames=0 errors=0
+59622.015 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=23664 end=24165 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59622.015 [0] DBG_GWLAT_REARM at=24167 rem=500 frames=0 errors=0
+59622.522 [0] DBG_GATEWAY_CH9_RX_CONT_RESULT start=24167 end=24668 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+59622.522 [0] DBG_GWLAT_REARM at=24670 rem=500 frames=0 errors=0

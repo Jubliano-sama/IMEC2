@@ -1,0 +1,78 @@
+[34m0000501[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000534[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000549[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000550[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000552[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000558[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000585[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000592[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000594[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000595[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000598[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000600[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000604[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000604[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000604[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000606[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000611[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000612[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000631[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000631[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000632[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_DWM_CH5_RX_HUNT_EMPTY s=207795 e=209795 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=209796 e=211796 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=211797 e=213797 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=213798 e=215798 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=215799 e=217799 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=217800 e=219800 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=219801 e=221801 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_EMPTY s=301842 e=303842 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=303843 e=305843 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=305844 e=307844 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=307845 e=309845 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=309846 e=311846 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=311847 e=313847 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=313848 e=315848 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=315849 e=317849 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=317850 e=319850 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=319851 e=321851 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=321852 e=323852 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=323853 e=325853 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=325854 e=327854 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=327855 e=329855 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=329856 e=331856 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=331857 e=333857 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=333858 e=335858 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=335859 e=337859 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=337860 e=339860 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=339861 e=341861 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=341862 e=343862 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020
+DBG_DWM_CH5_RX_HUNT_EMPTY s=343863 e=345863 ret=-116 sys=00000000 phy=4 cfg=1 aw=1 unk=0
+DBG_DWM_CH5_RX_HUNT_START acq=2000 complete=1000 cap=1020

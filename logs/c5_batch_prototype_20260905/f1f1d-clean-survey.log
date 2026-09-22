@@ -1,0 +1,15 @@
+GUI_LOG level=event message=BLE state: connecting E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connecting", "elapsed_s": 0.1, "error": "", "status": "Disconnected", "survey_phase": "idle"}
+GUI_LOG level=event message=BLE state: connected E4:16:B7:C7:E6:95
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 1.6, "error": "", "status": "Connected to gateway 0x9999888877776666; packet notifications active", "survey_phase": "idle"}
+GUI_REBOOT_REQUESTED gateway=0x9999888877776666
+GUI_LOG level=info message=Sent reboot command to gateway board; board RAM cleared and reconnecting...
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 1.702, "error": "", "status": "Cleared host RAM and sent reboot command to gateway board.", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for Reboot gateway board: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT
+GUI_STATE {"command_active": true, "connection": "connected", "elapsed_s": 1.802, "error": "", "status": "BLE write complete for Reboot gateway board: 40 bytes in 1 ATT chunk(s); command outcome is pending COMMAND_RESULT", "survey_phase": "idle"}
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 6.703, "error": "", "status": "Gateway command timed out; controls are available again", "survey_phase": "idle"}
+HOST_PACKET command=REBOOT status=5 (TIMEOUT) reason=116
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 25.809, "error": "", "status": "Received COMMAND_RESULT seq=1", "survey_phase": "idle"}
+GUI_LOG level=tx message=BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation
+GUI_STATE {"command_active": false, "connection": "connected", "elapsed_s": 25.909, "error": "", "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "survey_phase": "idle"}
+GUI_FINAL {"command_status": {"4": 5}, "completed_batches": [], "connection": "connected", "elapsed_s": 30.01, "error": "", "exit_reason": "reboot-timeout", "generation": null, "neighbor_reports": null, "pairs": [], "partial_reasons": 0, "plan_command_successes": 0, "planned_pairs_by_batch": {}, "results": {}, "signal_measurements": 0, "status": "BLE write complete for gateway host receipt: 94 bytes in 1 ATT chunk(s); gateway will release custody after validation", "success": false}

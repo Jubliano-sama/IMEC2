@@ -1,0 +1,58 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "ficr": "0x989f3e5219ebd3ae",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "ac7f253763b2b8fe3eeb8c5edb6e887bf3c29d0fa28cf62885f36b9a8eac478c",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0x989f3e5219ebd3ae",
+        "count": 4
+      }
+    ]
+  },
+  {
+    "probe": "E46070D247394D36",
+    "ficr": "0x64feb35d48cef126",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "8b020e19b7c1a1e59e214205b29c6502e686eb337d6a84d01f363bfae0716961",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0x64feb35d48cef126",
+        "count": 4
+      }
+    ]
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "ficr": "0xbeb265a9c0f6547a",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "c029bb292de9c59863a1f6c0fa5fcdd3c707733034edc792b289c322b5ad8125",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0xbeb265a9c0f6547a",
+        "count": 6
+      }
+    ]
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "ficr": "0x725e11427ca1ee89",
+    "new_board": true,
+    "storage_blank": false,
+    "storage_sha256": "5f021e0407d5f1cfb4b5e3311a0cfea7ec64b01483b8378bc0cead78032177db",
+    "durable_roles": [
+      {
+        "role": 1,
+        "device": "0x725e11427ca1ee89",
+        "count": 4
+      }
+    ]
+  }
+]

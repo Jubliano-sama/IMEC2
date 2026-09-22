@@ -1,0 +1,50 @@
+[
+  {
+    "probe": "E46070D247233537",
+    "ficr": "0xb423da08310677f6",
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "storage_migration": "clicker to anchor; backup and erased partition verified",
+    "node_id": "0xfd6e9f4b704834f4",
+    "startup_log": "startup/anchor_3537.log",
+    "scan_cycles": 61,
+    "startup_checked": true
+  },
+  {
+    "probe": "E46070D247394D36",
+    "ficr": "0x636c31ee31bdd9f7",
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "storage_migration": "clicker to anchor; backup and erased partition verified",
+    "node_id": "0x2a2174ad70f39af5",
+    "startup_log": "startup/anchor_4d36.log",
+    "scan_cycles": 61,
+    "startup_checked": true
+  },
+  {
+    "probe": "E4645C15CB0F3B37",
+    "ficr": "0x6d286c02bda5c581",
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "storage_migration": "clicker to anchor; backup and erased partition verified",
+    "node_id": "0x24652941fceb8683",
+    "startup_log": "startup/anchor_3b37.log",
+    "scan_cycles": 61,
+    "startup_checked": true
+  },
+  {
+    "probe": "E4645C15CB365D30",
+    "ficr": "0x86837690927387c7",
+    "role": "mesh_anchor",
+    "hex_sha256": "9ffb981f7467bc5c7e0f252902373732830a28eec71dd65cd708c3fdc1c6e204",
+    "readback_verified_bytes": 464840,
+    "storage_migration": "clicker to anchor; backup and erased partition verified",
+    "node_id": "0xcfce33d3d33dc4c5",
+    "startup_log": "startup/anchor_5d30.log",
+    "scan_cycles": 61,
+    "startup_checked": true
+  }
+]

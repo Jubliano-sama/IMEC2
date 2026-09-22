@@ -1,0 +1,40 @@
+Script started on 2026-08-22 19:07:40+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway E0:85:31:10:C4:17 --command assign-slots --expected-anchors 3 --expected-direct-anchors 3 --expected-multihop-anchors 0 --deepest-hop 1 --require-assignment-success --assignment-timeout 240" <not executed on terminal>]
+BLE_CONNECTED gateway_id=0x9999888877776666 command=assign-slots session=429208096 frame=04c101400201010101010101116666777788889999203295192032011b010101081002040178020306ab04dc620607ae0b0101010304dc620605e803eada00
+BLE_CHUNK len=118 hex=47570128010601005604010001001c0166667777888899996666777788889999000000004e00420f014e010200000000040109002032951900000000203295192032000001001c01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+BLE_DECODE_ERROR gateway stream record decode failed: ACK-required gateway command event is not a durable assignment publisher item
+BLE_CHUNK len=118 hex=47570128010601005604010001001c0166667777888899996666777788889999000000004e00420f014e010200000000040109002032951900000000203295192032000001001c01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+BLE_DECODE_ERROR gateway stream record decode failed: ACK-required gateway command event is not a durable assignment publisher item
+BLE_CHUNK len=118 hex=47570128010601005604010001001c0166667777888899996666777788889999000000004e00420f014e010200000000040109002032951900000000203295192032000001001c01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+BLE_DECODE_ERROR gateway stream record decode failed: ACK-required gateway command event is not a durable assignment publisher item
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 2195, in <module>
+    main()
+    ~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 2191, in main
+    asyncio.run(run(args))
+    ~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1904, in run
+    qualification_deadline = await send_command(
+                             ^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1690, in send_command
+    raise_transport_errors(command_name)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1183, in raise_transport_errors
+    raise RuntimeError(
+        f"{label} failed: BLE decode errors: " + "; ".join(decode_errors)
+    )
+RuntimeError: assign-slots failed: BLE decode errors: gateway stream record decode failed: ACK-required gateway command event is not a durable assignment publisher item
+
+Script done on 2026-08-22 19:07:45+02:00 [COMMAND_EXIT_CODE="1"]

@@ -1,0 +1,8 @@
+{
+  "sessions": 10,
+  "reports": 20,
+  "receipts": 20,
+  "each_session_two_anchors": true,
+  "all_six_samples": true,
+  "all_receipted": true
+}
